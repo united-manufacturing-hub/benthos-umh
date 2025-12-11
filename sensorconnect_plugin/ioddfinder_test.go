@@ -17,15 +17,15 @@ package sensorconnect_plugin_test
 import (
 	"context"
 	"fmt"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
 	"github.com/united-manufacturing-hub/benthos-umh/sensorconnect_plugin"
 )
 
 var _ = Describe("IODD File Tests", func() {
-	var (
-		ctx context.Context
-	)
+	var ctx context.Context
 
 	BeforeEach(func() {
 		ctx = context.Background()

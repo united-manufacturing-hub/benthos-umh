@@ -22,12 +22,11 @@ import (
 	"time"
 
 	"github.com/gopcua/opcua/ua"
-
-	"github.com/redpanda-data/benthos/v4/public/service"
-	. "github.com/united-manufacturing-hub/benthos-umh/opcua_plugin"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/redpanda-data/benthos/v4/public/service"
+
+	. "github.com/united-manufacturing-hub/benthos-umh/opcua_plugin"
 )
 
 var _ = Describe("Test Against Siemens S7", FlakeAttempts(3), Serial, func() {

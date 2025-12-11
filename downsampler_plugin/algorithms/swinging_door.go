@@ -37,7 +37,7 @@ func init() {
 }
 
 // newSwingingDoor validates the user-supplied config and returns
-// a fully-initialised compressor instance.
+// a fully-initialized compressor instance.
 func newSwingingDoor(cfg map[string]interface{}) (StreamCompressor, error) {
 	const name = "swinging_door"
 
@@ -57,27 +57,27 @@ func newSwingingDoor(cfg map[string]interface{}) (StreamCompressor, error) {
 	// ---- optional: max_time ---------------------------------------
 	var maxT time.Duration
 	if mt, ok := cfg["max_time"]; ok {
-		if v, ok := mt.(time.Duration); ok {
-			if v < 0 {
-				return nil, fmt.Errorf("%s: invalid max_time: %v", name, v)
-			}
-			maxT = v
-		} else {
+		v, ok := mt.(time.Duration)
+		if !ok {
 			return nil, fmt.Errorf("%s: invalid max_time type: %T", name, mt)
 		}
+		if v < 0 {
+			return nil, fmt.Errorf("%s: invalid max_time: %v", name, v)
+		}
+		maxT = v
 	}
 
 	// ---- optional: min_time ---------------------------------------
 	var minT time.Duration
 	if mt, ok := cfg["min_time"]; ok {
-		if v, ok := mt.(time.Duration); ok {
-			if v < 0 {
-				return nil, fmt.Errorf("%s: invalid min_time: %v", name, v)
-			}
-			minT = v
-		} else {
+		v, ok := mt.(time.Duration)
+		if !ok {
 			return nil, fmt.Errorf("%s: invalid min_time type: %T", name, mt)
 		}
+		if v < 0 {
+			return nil, fmt.Errorf("%s: invalid min_time: %v", name, v)
+		}
+		minT = v
 	}
 
 	// ---- validate time constraints relationship ----------------------
@@ -90,7 +90,7 @@ func newSwingingDoor(cfg map[string]interface{}) (StreamCompressor, error) {
 		maxTime:   maxT,
 		minTime:   minT,
 	}
-	c.openDoor() // initialise slopes
+	c.openDoor() // initialize slopes
 	debugLog("Created SDT algorithm: threshold=%.3f, maxTime=%v, minTime=%v", thr, maxT, minT)
 	return c, nil
 }

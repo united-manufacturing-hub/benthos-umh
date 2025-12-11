@@ -266,7 +266,7 @@ func (u *UnsTopic) parse() (*proto.TopicInfo, error) {
 
 	// Validate the parsed components
 	if err := u.validateParsedInfo(info); err != nil {
-		return nil, fmt.Errorf("topic validation failed: %v (topic: %s)", err, u.raw)
+		return nil, fmt.Errorf("topic validation failed: %w (topic: %s)", err, u.raw)
 	}
 
 	return info, nil

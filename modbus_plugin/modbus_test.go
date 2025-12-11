@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/grid-x/modbus"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -30,7 +29,6 @@ import (
 )
 
 var _ = Describe("Test Against Docker Modbus Simulator", func() {
-
 	BeforeEach(func() {
 		testModbusSimulator := os.Getenv("TEST_MODBUS_SIMULATOR")
 
@@ -39,7 +37,6 @@ var _ = Describe("Test Against Docker Modbus Simulator", func() {
 			Skip("Skipping test: environment variables not set")
 			return
 		}
-
 	})
 
 	It("should connect and read discrete register", func() {
@@ -101,11 +98,11 @@ var _ = Describe("Test Against Docker Modbus Simulator", func() {
 			Expect(messageStruct).To(BeAssignableToTypeOf(true))
 			switch tagName {
 			case "firstFlagOfDiscreteInput":
-				Expect(messageStruct).To(Equal(true))
+				Expect(messageStruct).To(BeTrue())
 			case "secondFlagOfDiscreteInput":
-				Expect(messageStruct).To(Equal(false))
+				Expect(messageStruct).To(BeFalse())
 			case "fourthFlagOfDiscreteInput":
-				Expect(messageStruct).To(Equal(false))
+				Expect(messageStruct).To(BeFalse())
 			}
 
 			GinkgoWriter.Printf("Received message: %+v\n", messageStruct)
@@ -194,7 +191,6 @@ var _ = Describe("Test Against Docker Modbus Simulator", func() {
 })
 
 var _ = Describe("Test Against Wago-PLC", func() {
-
 	var wagoModbusEndpoint string
 
 	BeforeEach(func() {
@@ -205,7 +201,6 @@ var _ = Describe("Test Against Wago-PLC", func() {
 			Skip("Skipping test: environment variables not set")
 			return
 		}
-
 	})
 
 	type ModbusRegister struct {
@@ -269,7 +264,6 @@ var _ = Describe("Test Against Wago-PLC", func() {
 		// Close connection
 		err = input.Close(ctx)
 		Expect(err).NotTo(HaveOccurred())
-
 	},
 		Entry("discrete (input)",
 			ModbusRegister{

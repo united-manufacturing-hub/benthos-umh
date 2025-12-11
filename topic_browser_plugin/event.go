@@ -72,8 +72,9 @@ import (
 	"strconv"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
-	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 	"google.golang.org/protobuf/types/known/wrapperspb"
+
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
 const (
@@ -132,7 +133,7 @@ func messageToEvent(message *service.Message) (*proto.EventTableEntry, error) {
 	structured, err := message.AsStructured()
 	if err != nil {
 		// This is not valid JSON - return error for invalid format
-		return nil, fmt.Errorf("%w: %v", ErrInvalidJSON, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidJSON, err)
 	}
 
 	// 2. Relational data must be a JSON object (map), not arrays or primitives

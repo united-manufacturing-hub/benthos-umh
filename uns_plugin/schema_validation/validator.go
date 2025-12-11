@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 )
 
@@ -332,7 +333,7 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 		SchemaCheckBypassed: false,
 		ContractName:        contractName,
 		ContractVersion:     version,
-		Error:               fmt.Errorf("schema validation failed for contract '%s' version %d against all available schemas. Last error: %v", contractName, version, lastError),
+		Error:               fmt.Errorf("schema validation failed for contract '%s' version %d against all available schemas. Last error: %w", contractName, version, lastError),
 	}
 }
 
@@ -570,7 +571,7 @@ func (v *Validator) fetchLatestSchemaFromRegistry(subject string) ([]byte, bool,
 // ExtractSchemaVersionFromDataContract parses a data contract string to extract
 // the base contract name and version number.
 // Expected format: "contractname_v123" -> ("contractname", 123, nil)
-func (v *Validator) ExtractSchemaVersionFromDataContract(contract string) (contractName string, version uint64, err error) {
+func (v *Validator) ExtractSchemaVersionFromDataContract(contract string) (string, uint64, error) {
 	if contract == "" {
 		return "", 0, fmt.Errorf("contract string is empty")
 	}
@@ -580,8 +581,8 @@ func (v *Validator) ExtractSchemaVersionFromDataContract(contract string) (contr
 		return "", 0, fmt.Errorf("invalid data contract format '%s', expected format: 'name_v123'", contract)
 	}
 
-	contractName = matches[1]
-	version, err = strconv.ParseUint(matches[2], 10, 64)
+	contractName := matches[1]
+	version, err := strconv.ParseUint(matches[2], 10, 64)
 	if err != nil {
 		return "", 0, fmt.Errorf("invalid version number '%s' in contract '%s': %w", matches[2], contract, err)
 	}
@@ -743,7 +744,7 @@ func extractValidVirtualPaths(schemaBytes []byte) []string {
 }
 
 // enhanceVirtualPathError enhances the error message if it's about virtual_path validation
-func (v *Validator) enhanceVirtualPathError(originalError error, subjectName string, schemas map[string]*Schema, version uint64, userVirtualPath string) error {
+func (v *Validator) enhanceVirtualPathError(originalError error, _ string, schemas map[string]*Schema, version uint64, userVirtualPath string) error {
 	if originalError == nil {
 		return originalError
 	}

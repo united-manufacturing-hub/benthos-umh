@@ -23,7 +23,6 @@ import (
 // Set TEST_DOWNSAMPLER=1 to enable comprehensive end-to-end tests.
 
 var _ = Describe("Downsampler Behavior", Ordered, func() {
-
 	Describe("Basic Deadband Algorithm Behavior", func() {
 		Context("Numeric Threshold Filtering", func() {
 			DescribeTable("should filter messages based on numeric thresholds",
@@ -415,5 +414,4 @@ downsampler:
 			)
 		})
 	})
-
 })

@@ -29,7 +29,6 @@ func (g *OPCUAConnection) orderEndpoints(
 	endpoints []*ua.EndpointDescription,
 	selectedAuthentication ua.UserTokenType,
 ) []*ua.EndpointDescription {
-
 	var (
 		signAndEncryptBasic256Sha256Endpoints []*ua.EndpointDescription
 		signBasic256Sha256Endpoints           []*ua.EndpointDescription
@@ -127,7 +126,6 @@ func (g *OPCUAConnection) getEndpointIfExists(
 	securityMode string,
 	securityPolicy string,
 ) (*ua.EndpointDescription, error) {
-
 	// Return nil immediately if no endpoints are provided.
 	if len(endpoints) == 0 {
 		return nil, errors.New("no endpoints provided")
@@ -135,15 +133,12 @@ func (g *OPCUAConnection) getEndpointIfExists(
 
 	// Iterate over each endpoint to find a matching one.
 	for _, endpoint := range endpoints {
-
 		// Check each user identity token in the endpoint.
 		for _, userIdentity := range endpoint.UserIdentityTokens {
-
 			// Match the endpoint with the selected authentication type.
 			if selectedAuthentication == userIdentity.TokenType &&
 				endpoint.SecurityPolicyURI == ua.FormatSecurityPolicyURI(securityPolicy) &&
 				endpoint.SecurityMode == ua.MessageSecurityModeFromString(securityMode) {
-
 				return endpoint, nil
 			}
 		}
@@ -170,7 +165,7 @@ func (g *OPCUAConnection) hasUsernamePassword() bool {
 	return g.Username != "" && g.Password != ""
 }
 
-// explicitely check if security is selected + only allow specified settings
+// explicitly check if security is selected + only allow specified settings
 func (g *OPCUAConnection) isSecuritySelected() bool {
 	var (
 		securityModeOK   bool

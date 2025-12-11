@@ -68,17 +68,19 @@ import (
 	_ "github.com/redpanda-data/benthos/v4/public/components/io"
 	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
 	"github.com/redpanda-data/benthos/v4/public/service"
-	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/proto"
 
-	_ "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"     // Import to register
+	_ "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin" // Import to register
+	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	_ "github.com/united-manufacturing-hub/benthos-umh/tag_processor_plugin" // Import tag processor for full pipeline tests
 )
 
 // Package-level variables for test infrastructure
 // Simple test-specific MessageCapture - set by each test
-var currentTestCapture *MessageCapture
-var currentTestCaptureMu sync.RWMutex
+var (
+	currentTestCapture   *MessageCapture
+	currentTestCaptureMu sync.RWMutex
+)
 
 type MessageCapture struct {
 	messages chan *service.Message
@@ -209,7 +211,6 @@ func stopMosquittoContainer() {
 }
 
 var _ = Describe("Real MQTT Broker Integration", func() {
-
 	Context("End-to-End Message Processing", func() {
 		var (
 			brokerURL  string
@@ -1686,9 +1687,7 @@ logger:
 	})
 
 	Context("UMH Integration and Mapping", func() {
-		var (
-			brokerURL string
-		)
+		var brokerURL string
 
 		BeforeEach(func() {
 			brokerURL = os.Getenv("TEST_MQTT_BROKER")
@@ -2068,7 +2067,7 @@ logger:
 			timeout := time.After(10 * time.Second)
 			nbirthReceived := false
 
-		// waitForInitialNBirth:
+			// waitForInitialNBirth:
 			for !nbirthReceived {
 				select {
 				case msg := <-messageReceived:
@@ -2134,7 +2133,7 @@ logger:
 			timeout = time.After(10 * time.Second)
 			rebirthReceived := false
 
-		// waitForRebirth:
+			// waitForRebirth:
 			for !rebirthReceived {
 				select {
 				case msg := <-messageReceived:
@@ -2182,7 +2181,7 @@ logger:
 			By("Verifying rebirth behavior")
 
 			// Verify bdSeq was incremented
-			Expect(rebirthBdSeq).To(Equal(initialBdSeq + 1),
+			Expect(rebirthBdSeq).To(Equal(initialBdSeq+1),
 				fmt.Sprintf("bdSeq should increment from %d to %d on rebirth", initialBdSeq, initialBdSeq+1))
 
 			// Verify we received exactly 2 NBIRTHs (initial + rebirth)
@@ -2221,9 +2220,9 @@ logger:
 			// Track all message types and their sequences
 			var initialNBirthSeq uint64
 			_ = initialNBirthSeq // will be used later
-			var initialDBirthSeqs = make(map[string]uint64)
+			initialDBirthSeqs := make(map[string]uint64)
 			var postRebirthNBirthSeq uint64
-			var postRebirthDBirthSeqs = make(map[string]uint64)
+			postRebirthDBirthSeqs := make(map[string]uint64)
 			var allMessages []mqtt.Message
 			var nbirthTimestamps []uint64
 			var metricsBefore, metricsAfter map[string]interface{}
@@ -3036,7 +3035,8 @@ func validateLocationPathMapping(messages []*service.Message, expectedMappings [
 	virtualPath  string
 	tagName      string
 	value        float64
-}) error {
+},
+) error {
 	// UMH location path mapping validation for messages converted from Sparkplug B
 	// Validates that hierarchical paths are correctly preserved through Sparkplug B conversion
 

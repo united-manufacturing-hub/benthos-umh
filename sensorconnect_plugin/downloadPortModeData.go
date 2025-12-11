@@ -150,7 +150,6 @@ func (s *SensorConnectInput) GetConnectedDevices(ctx context.Context) ([]Connect
 
 		// Process other keys based on port mode
 		if deviceInfo.Mode == 3 { // IO-Link mode
-
 			// Process device ID
 			deviceIDKey := uri + "/iolinkdevice/deviceid"
 			deviceIDValue, exists := data[deviceIDKey]
@@ -238,7 +237,6 @@ func (s *SensorConnectInput) GetConnectedDevices(ctx context.Context) ([]Connect
 			} else {
 				s.logger.Warnf("Unexpected code for serial number on %s: %d", uri, serialValue.Code)
 			}
-
 		} else {
 			// For non-IO-Link modes, no product information is expected
 			s.logger.Debugf("%s is in mode %d, skipping product info", uri, deviceInfo.Mode)
@@ -375,7 +373,7 @@ type UPAMDatum struct {
 // extractUri extracts the unique URI from a data request path.
 // The result is used as a unique identifier to identify a connected sensor.
 func extractUri(input string) (string, error) {
-	rx := regexp.MustCompile("(.*port\\[\\d*])(.*$)")
+	rx := regexp.MustCompile(`(.*port\[\d*])(.*$)`)
 	matches := rx.FindStringSubmatch(input)
 
 	if len(matches) > 1 {
@@ -388,7 +386,7 @@ func extractUri(input string) (string, error) {
 // extractPort extracts the physical connected port id from the sensor uri
 // to append it later to message metadata
 func extractPort(input string) (string, error) {
-	rx := regexp.MustCompile("port\\[(\\d+)\\]")
+	rx := regexp.MustCompile(`port\[(\d+)\]`)
 	matches := rx.FindStringSubmatch(input)
 
 	if len(matches) > 1 {
@@ -401,7 +399,7 @@ func extractPort(input string) (string, error) {
 // extractBluetoothAdapter extracts the bluetooth adapter id from the sensor uri.
 // to append it later to message metadata
 func extractBluetoothAdapter(input string) (string, error) {
-	rx := regexp.MustCompile("mesh_adapter\\[(\\d+)\\]")
+	rx := regexp.MustCompile(`mesh_adapter\[(\d+)\]`)
 	matches := rx.FindStringSubmatch(input)
 
 	if len(matches) > 1 {

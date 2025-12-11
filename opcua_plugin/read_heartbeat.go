@@ -15,10 +15,10 @@
 package opcua_plugin
 
 import (
-	"golang.org/x/exp/slices"
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"golang.org/x/exp/slices"
 )
 
 // updateHeartbeatInMessageBatch processes the heartbeat message in a batch of messages.
@@ -54,11 +54,10 @@ func (g *OPCUAInput) updateHeartbeatInMessageBatch(msgs service.MessageBatch) se
 		newMsg.MetaSet("opcua_tag_name", "CurrentTime")
 		newMsg.MetaSet("opcua_heartbeat_message", "")
 		return append(msgs, newMsg)
-	} else {
-		g.Log.Debugf("Got heartbeat message. Renaming it.")
-		msgs[idx].MetaSet("opcua_tag_group", "heartbeat")
-		msgs[idx].MetaSet("opcua_tag_name", "CurrentTime")
-		msgs[idx].MetaSet("opcua_heartbeat_message", "")
-		return msgs
 	}
+	g.Log.Debugf("Got heartbeat message. Renaming it.")
+	msgs[idx].MetaSet("opcua_tag_group", "heartbeat")
+	msgs[idx].MetaSet("opcua_tag_name", "CurrentTime")
+	msgs[idx].MetaSet("opcua_heartbeat_message", "")
+	return msgs
 }

@@ -21,11 +21,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/redpanda-data/benthos/v4/public/service"
-
 	"github.com/gopcua/opcua"
 	"github.com/gopcua/opcua/errors"
 	"github.com/gopcua/opcua/ua"
+	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 const (
@@ -340,7 +339,6 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 
 		// Log operation limits
 		g.logServerCapabilities(caps)
-
 	}
 
 	// Create a subscription channel if needed
@@ -356,7 +354,13 @@ func (g *OPCUAInput) Connect(ctx context.Context) error {
 // It either subscribes to node updates or performs a pull-based read based on the configuration.
 // The function updates heartbeat information and monitors the connection's health.
 // If no messages or heartbeats are received within the expected timeframe, it closes the connection.
-func (g *OPCUAInput) ReadBatch(ctx context.Context) (msgs service.MessageBatch, ackFunc service.AckFunc, err error) {
+func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+	var (
+		msgs    service.MessageBatch
+		ackFunc service.AckFunc
+		err     error
+	)
+
 	if len(g.NodeList) == 0 {
 		g.Log.Debug("ReadBatch is called with empty nodelists. returning early from ReadBatch")
 		return nil, nil, nil
@@ -383,12 +387,11 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (msgs service.MessageBatch, 
 			g.Log.Error("No messages received (including heartbeat) for over 10 seconds. Closing connection.")
 			_ = g.Close(ctx)
 			return nil, nil, service.ErrNotConnected
+		}
+		if g.ServerInfo.ManufacturerName == "Prosys OPC Ltd." {
+			g.Log.Info("No heartbeat message (ServerTime) received for over 10 seconds. This is normal for your Prosys OPC UA server. Other messages are being received; continuing operations. ")
 		} else {
-			if g.ServerInfo.ManufacturerName == "Prosys OPC Ltd." {
-				g.Log.Info("No heartbeat message (ServerTime) received for over 10 seconds. This is normal for your Prosys OPC UA server. Other messages are being received; continuing operations. ")
-			} else {
-				g.Log.Warn("No heartbeat message (ServerTime) received for over 10 seconds. Other messages are being received; continuing operations.")
-			}
+			g.Log.Warn("No heartbeat message (ServerTime) received for over 10 seconds. Other messages are being received; continuing operations.")
 		}
 	}
 
@@ -486,7 +489,7 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 	// Wait for the configured poll rate before returning a message.
 	time.Sleep(time.Duration(g.PollRate) * time.Millisecond)
 
-	return msgs, func(ctx context.Context, err error) error {
+	return msgs, func(_ context.Context, _ error) error {
 		// Nacks are retried automatically when we use service.AutoRetryNacks
 		return nil
 	}, nil
@@ -543,7 +546,7 @@ func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBat
 			g.Log.Errorf("Unknown publish result %T", res.Value)
 		}
 
-		return msgs, func(ctx context.Context, err error) error {
+		return msgs, func(_ context.Context, _ error) error {
 			// Nacks are retried automatically when we use service.AutoRetryNacks
 			return nil
 		}, nil
@@ -618,7 +621,7 @@ func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef Nod
 
 // QueryServerCapabilities reads server capability information
 // to determine which deadband types are supported.
-func (o *OPCUAInput) QueryServerCapabilities(ctx context.Context) (*ServerCapabilities, error) {
+func (g *OPCUAInput) QueryServerCapabilities(ctx context.Context) (*ServerCapabilities, error) {
 	caps := &ServerCapabilities{
 		SupportsAbsoluteDeadband: true, // All OPC UA servers support absolute
 	}
@@ -632,14 +635,14 @@ func (o *OPCUAInput) QueryServerCapabilities(ctx context.Context) (*ServerCapabi
 		},
 	}
 
-	resp, err := o.Client.Read(ctx, req)
+	resp, err := g.Client.Read(ctx, req)
 	if err == nil && len(resp.Results) > 0 && resp.Results[0].Status == ua.StatusOK {
 		caps.SupportsPercentDeadband = true
 	}
 
 	// Query operation limits
-	if opLimits, err := o.queryOperationLimits(ctx); err != nil {
-		o.Log.Infof("OperationLimits not available (normal for many PLCs): %v - using profile defaults", err)
+	if opLimits, err := g.queryOperationLimits(ctx); err != nil {
+		g.Log.Infof("OperationLimits not available (normal for many PLCs): %v - using profile defaults", err)
 	} else if opLimits != nil {
 		// Merge operation limits into capabilities
 		caps.MaxNodesPerBrowse = opLimits.MaxNodesPerBrowse

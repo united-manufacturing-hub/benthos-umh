@@ -17,13 +17,14 @@ package pools
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/constants"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_security"
 	"strings"
 	"sync"
 
 	"github.com/dop251/goja"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/constants"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_security"
 )
 
 // ObjectPools provides pooled objects to reduce memory allocations
@@ -227,7 +228,7 @@ func (p *ObjectPools) UnmarshalFromJSON(data []byte, v interface{}) error {
 }
 
 // GetTopic gets a cached topic or constructs a new one
-func (p *ObjectPools) GetTopic(outputTopic, dataContract, virtualPath string) string {
+func (p *ObjectPools) GetTopic(outputTopic string, dataContract string, virtualPath string) string {
 	// Create cache key efficiently
 	sb := p.GetStringBuilder()
 	sb.WriteString(outputTopic)
@@ -251,7 +252,7 @@ func (p *ObjectPools) GetTopic(outputTopic, dataContract, virtualPath string) st
 
 // ClearTopicCache clears the topic cache (useful for config changes)
 func (p *ObjectPools) ClearTopicCache() {
-	p.topicCache.Range(func(key, value interface{}) bool {
+	p.topicCache.Range(func(key, _ interface{}) bool {
 		p.topicCache.Delete(key)
 		return true
 	})

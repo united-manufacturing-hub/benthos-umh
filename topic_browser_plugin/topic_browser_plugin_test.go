@@ -29,6 +29,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
@@ -53,11 +54,11 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// Process the message
 			var err error
 			processor.topicMetadataCache, err = lru.New(1)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			// With short emit intervals, emission happens immediately
 			result, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg})
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(result).To(HaveLen(1))    // [emission_batch] - ACKed in-place
 			Expect(result[0]).To(HaveLen(1)) // emission batch has 1 message
 
@@ -68,17 +69,17 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// Dump to disk for testing
 			/*
 				bytes, err := outputMsg.AsBytes()
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 				Expect(bytes).NotTo(BeNil())
 				err = os.WriteFile("single_message.proto", bytes, 0644)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 			*/
 		})
 
 		It("handles empty batch", func() {
 			result, err := processor.ProcessBatch(context.Background(), service.MessageBatch{})
-			Expect(err).To(BeNil())
-			Expect(result).To(HaveLen(0))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(result).To(BeEmpty())
 		})
 
 		It("handles message with missing required metadata", func() {
@@ -86,7 +87,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// No metadata set
 
 			result, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg})
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(result).To(Equal([]service.MessageBatch{}), "Should return empty slice when no metadata")
 		})
 
@@ -109,11 +110,11 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// Process both messages
 			var err error
 			processor.topicMetadataCache, err = lru.New(1)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			// With short emit intervals, emission happens immediately
 			result, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg1, msg2})
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(result).To(HaveLen(1))    // [emission_batch] - ACKed in-place
 			Expect(result[0]).To(HaveLen(1)) // emission batch has 1 message
 
@@ -125,15 +126,15 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 			/*
 				bytes, err := outputMsg.AsBytes()
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 				Expect(bytes).NotTo(BeNil())
 				err = os.WriteFile("multiple_messages.proto", bytes, 0644)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 			*/
 
 			// Parse the resulting message back
 			outBytes, err := outputMsg.AsBytes()
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(outBytes).NotTo(BeNil())
 
 			// The output shall look like this:
@@ -152,12 +153,12 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 			// Hex decode it
 			hexDecoded, err := hex.DecodeString(dataLine)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(hexDecoded).NotTo(BeNil())
 
 			// Decode it
 			decoded, err := ProtobufBytesToBundleWithCompression(hexDecoded)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(decoded).NotTo(BeNil())
 
 			Expect(decoded.Events.Entries).To(HaveLen(2))
@@ -194,7 +195,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			Expect(event2.RawKafkaMsg).NotTo(BeNil())
 		})
 
-		It("caches UNS map entries accross multiple invocations", func() {
+		It("caches UNS map entries across multiple invocations", func() {
 			// Create two messages with the same UNS tree ID
 			msg1 := service.NewMessage(nil)
 			msg1.MetaSet("umh_topic", "umh.v1.test-topic._historian.some_value")
@@ -215,7 +216,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 			// With short emit intervals, emission happens immediately
 			result, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg1})
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(result).To(HaveLen(1))    // [emission_batch] - ACKed in-place
 			Expect(result[0]).To(HaveLen(1)) // emission batch has 1 message
 
@@ -231,7 +232,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 			// With short emit intervals, emission happens immediately
 			result2, err := processor.ProcessBatch(context.Background(), service.MessageBatch{msg2})
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(result2).To(HaveLen(1))    // [emission_batch] - ACKed in-place
 			Expect(result2[0]).To(HaveLen(1)) // emission batch has 1 message
 
@@ -241,7 +242,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 			// Get the bytes and decode them
 			outBytes2, err := outputMsg2.AsBytes()
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(outBytes2).NotTo(BeNil())
 
 			// Let's only focus on the 2nd line (0a70 - uncompressed protobuf format)
@@ -251,12 +252,12 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 			// Hex decode it
 			hexDecoded, err := hex.DecodeString(dataLine)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(hexDecoded).NotTo(BeNil())
 
 			// Decode the protobuf message
 			decoded2, err := ProtobufBytesToBundleWithCompression(hexDecoded)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(decoded2).NotTo(BeNil())
 
 			// Verify the decoded bundle
@@ -285,10 +286,10 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// Dump to disk for testing
 			/*
 				bytes, err := outputMsg.AsBytes()
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 				Expect(bytes).NotTo(BeNil())
 				err = os.WriteFile("multiple_messages.proto", bytes, 0644)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 			*/
 		})
 	})
@@ -407,7 +408,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 			// Should get emission after crossing time boundary
 			if len(result) > 0 {
-				Expect(len(result)).To(BeNumerically(">", 0),
+				Expect(result).ToNot(BeEmpty(),
 					"Should emit buffered messages after crossing time boundary")
 			}
 		})
@@ -1043,7 +1044,6 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			By("Processing oversized time-series payload")
 			batch := service.MessageBatch{msg}
 			_, err := edgeProcessor.ProcessBatch(context.Background(), batch)
-
 			// The processor might handle this differently than expected
 			// Check if it processes successfully or returns an error
 			if err != nil {
@@ -1337,7 +1337,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			processor = NewTopicBrowserProcessor(nil, nil, 100, time.Millisecond, 10, 100)
 			var err error
 			processor.topicMetadataCache, err = lru.New(100)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 		})
 
 		It("should implement proper delayed ACK pattern - no raw message leakage", func() {
@@ -1431,7 +1431,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				msg := service.NewMessage(nil)
 				msg.MetaSet("umh_topic", fmt.Sprintf("umh.v1.test._historian.multi_%d", i))
 				msg.SetStructured(map[string]interface{}{
-					"timestamp_ms": int64(1647753600000 + int64(i)),
+					"timestamp_ms": 1647753600000 + int64(i),
 					"value":        fmt.Sprintf("ORIGINAL_VALUE_%d", i),
 				})
 				msgs[i] = msg
@@ -1634,7 +1634,6 @@ var _ = Describe("TopicBrowserProcessor", func() {
 	// This addresses the confusing mix of fast/slow intervals throughout tests
 	// by providing clear, separate test suites for different timing behaviors
 	Describe("E2E Organized Timing Scenarios", func() {
-
 		Describe("Fast Timing Scenarios (≤10ms intervals) - Immediate Emission", func() {
 			var fastProcessor *TopicBrowserProcessor
 

@@ -15,27 +15,27 @@
 package opcua_plugin
 
 import (
-	"os"
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/gopcua/opcua/ua"
 	"github.com/google/uuid"
+	"github.com/gopcua/opcua/ua"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
 // recordingLogger records all debug log calls for testing
 type recordingLogger struct {
-	mu          sync.Mutex
-	debugCalls  []string
-	infoCalls   []string
-	warnCalls   []string
-	errorCalls  []string
+	mu         sync.Mutex
+	debugCalls []string
+	infoCalls  []string
+	warnCalls  []string
+	errorCalls []string
 }
 
 func (r *recordingLogger) Debugf(format string, args ...interface{}) {
@@ -95,7 +95,7 @@ func (m *mockNodeBrowser) ID() *ua.NodeID {
 	return &ua.NodeID{}
 }
 
-func (m *mockNodeBrowser) Attributes(ctx context.Context, attrs ...ua.AttributeID) ([]*ua.DataValue, error) {
+func (m *mockNodeBrowser) Attributes(_ context.Context, attrs ...ua.AttributeID) ([]*ua.DataValue, error) {
 	// Return NodeClass if requested (for filtering tests)
 	// Default to Variable if not set
 	nodeClass := m.nodeClass
@@ -155,7 +155,7 @@ func (m *mockNodeBrowser) Attributes(ctx context.Context, attrs ...ua.AttributeI
 	return result, nil
 }
 
-func (m *mockNodeBrowser) BrowseName(ctx context.Context) (*ua.QualifiedName, error) {
+func (m *mockNodeBrowser) BrowseName(_ context.Context) (*ua.QualifiedName, error) {
 	name := m.browseName
 	if name == "" {
 		name = "MockNode"
@@ -163,7 +163,7 @@ func (m *mockNodeBrowser) BrowseName(ctx context.Context) (*ua.QualifiedName, er
 	return &ua.QualifiedName{Name: name}, nil
 }
 
-func (m *mockNodeBrowser) ReferencedNodes(ctx context.Context, refType uint32, browseDir ua.BrowseDirection, nodeClassMask ua.NodeClass, includeSubtypes bool) ([]NodeBrowser, error) {
+func (m *mockNodeBrowser) ReferencedNodes(_ context.Context, _ uint32, _ ua.BrowseDirection, _ ua.NodeClass, _ bool) ([]NodeBrowser, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.browseCalled = true
@@ -173,7 +173,7 @@ func (m *mockNodeBrowser) ReferencedNodes(ctx context.Context, refType uint32, b
 	return m.children, nil
 }
 
-func (m *mockNodeBrowser) Children(ctx context.Context, refs uint32, mask ua.NodeClass) ([]NodeBrowser, error) {
+func (m *mockNodeBrowser) Children(_ context.Context, _ uint32, _ ua.NodeClass) ([]NodeBrowser, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.browseCalled = true
@@ -203,7 +203,7 @@ func (m *mockNodeBrowser) ResetBrowseCalled() {
 func newTestTask(nodeID string, resultChan any) GlobalPoolTask {
 	// Use timeout context to prevent context pollution between tests
 	// 10 second timeout is much longer than test timeouts, ensures context doesn't fire early
-	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second) //nolint:govet // intentional: context must stay valid for task lifecycle
 	mockNode := &mockNodeBrowser{
 		id: ua.MustParseNodeID(nodeID),
 	}
@@ -213,29 +213,6 @@ func newTestTask(nodeID string, resultChan any) GlobalPoolTask {
 		Node:       mockNode,
 		ResultChan: resultChan,
 		ErrChan:    make(chan error, 10), // Buffered to prevent blocking
-	}
-}
-
-// newTestTaskWithContext creates a GlobalPoolTask with custom context (for cancellation tests)
-func newTestTaskWithContext(ctx context.Context, nodeID string, resultChan any) GlobalPoolTask {
-	mockNode := &mockNodeBrowser{
-		id: ua.MustParseNodeID(nodeID),
-	}
-	return GlobalPoolTask{
-		NodeID:     nodeID,
-		Ctx:        ctx,
-		Node:       mockNode,
-		ResultChan: resultChan,
-	}
-}
-
-// newTestTaskWithNode creates a GlobalPoolTask with specific mock node (for browse behavior tests)
-func newTestTaskWithNode(ctx context.Context, nodeID string, node NodeBrowser, resultChan any) GlobalPoolTask {
-	return GlobalPoolTask{
-		NodeID:     nodeID,
-		Ctx:        ctx,
-		Node:       node,
-		ResultChan: resultChan,
 	}
 }
 
@@ -320,7 +297,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 			profile := ServerProfile{MaxWorkers: 10}
 			pool := NewGlobalWorkerPool(profile, logger)
 			Expect(pool.taskChan).NotTo(BeNil())
-			Expect(cap(pool.taskChan)).To(Equal(MaxTagsToBrowse * 2)) // 200k buffer
+			Expect(pool.taskChan).To(HaveCap(MaxTagsToBrowse * 2)) // 200k buffer
 		})
 
 		It("should initialize workerControls map", func() {
@@ -551,7 +528,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 				Expect(spawned).To(Equal(20))
 				Expect(pool.currentWorkers).To(Equal(20))
-				Expect(len(pool.workerControls)).To(Equal(20))
+				Expect(pool.workerControls).To(HaveLen(20))
 			})
 		})
 
@@ -564,7 +541,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				spawned := pool.SpawnWorkers(3)
 
 				Expect(spawned).To(Equal(3))
-				Expect(len(pool.workerControls)).To(Equal(3))
+				Expect(pool.workerControls).To(HaveLen(3))
 
 				// Verify each UUID is unique
 				seenUUIDs := make(map[string]bool)
@@ -605,7 +582,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				// Verify total spawned matches what was possible
 				Expect(totalSpawned).To(Equal(10))
 				Expect(pool.currentWorkers).To(Equal(10))
-				Expect(len(pool.workerControls)).To(Equal(10))
+				Expect(pool.workerControls).To(HaveLen(10))
 			})
 		})
 
@@ -619,7 +596,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				spawned := pool.SpawnWorkers(3)
 				Expect(spawned).To(Equal(3))
 				Expect(pool.currentWorkers).To(Equal(3))
-				Expect(len(pool.workerControls)).To(Equal(3))
+				Expect(pool.workerControls).To(HaveLen(3))
 
 				// Get one worker's control channel
 				pool.mu.Lock()
@@ -2003,7 +1980,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 				Expect(ok).To(BeTrue())
 				Expect(val).NotTo(BeNil())
 			})
-
 		})
 
 		Context("when creating complete task with all fields", func() {
@@ -2064,41 +2040,6 @@ var _ = Describe("GlobalWorkerPool", func() {
 				}
 				Expect(taskExceeded.Level).To(BeNumerically(">", 25))
 			})
-		})
-
-		Context("field type correctness", func() {
-			It("should have Ctx as context.Context type", func() {
-				task := GlobalPoolTask{}
-				// Type assertion to verify field type
-				var _ context.Context = task.Ctx // Will fail if wrong type
-			})
-
-			It("should have Node as NodeBrowser interface type", func() {
-				task := GlobalPoolTask{}
-				// Type assertion to verify field type
-				var _ NodeBrowser = task.Node // Will fail if wrong type or not defined
-			})
-
-			It("should have Path as string type", func() {
-				task := GlobalPoolTask{}
-				var _ string = task.Path
-			})
-
-			It("should have Level as int type", func() {
-				task := GlobalPoolTask{}
-				var _ int = task.Level
-			})
-
-			It("should have ParentNodeID as string type", func() {
-				task := GlobalPoolTask{}
-				var _ string = task.ParentNodeID
-			})
-
-			It("should have Visited as *sync.Map type", func() {
-				task := GlobalPoolTask{}
-				var _ *sync.Map = task.Visited
-			})
-
 		})
 	})
 
@@ -2255,7 +2196,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				Eventually(func() uint64 {
 					metrics := pool.GetMetrics()
 					return metrics.TasksSubmitted
-				}).Within(2 * time.Second).Should(BeNumerically(">=", 4), "Should submit parent + 3 children")
+				}).Within(2*time.Second).Should(BeNumerically(">=", 4), "Should submit parent + 3 children")
 
 				// Should receive child results
 				Eventually(func() int {
@@ -2268,7 +2209,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 							return count
 						}
 					}
-				}).Within(3 * time.Second).Should(BeNumerically(">=", 3), "Should receive results for 3 children")
+				}).Within(3*time.Second).Should(BeNumerically(">=", 3), "Should receive results for 3 children")
 			})
 
 			It("should pass correct browse context to child tasks", func() {
@@ -2320,7 +2261,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 				// We verify this indirectly by checking that browse was called on child
 				Eventually(func() bool {
 					return child.WasBrowseCalled()
-				}).Within(2 * time.Second).Should(BeTrue(), "Child node should be browsed (Level=2)")
+				}).Within(2*time.Second).Should(BeTrue(), "Child node should be browsed (Level=2)")
 			})
 		})
 
@@ -2540,7 +2481,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 					return parent.WasBrowseCalled() &&
 						child.WasBrowseCalled() &&
 						grandchild.WasBrowseCalled()
-				}).Within(3 * time.Second).Should(BeTrue(), "Should browse all levels")
+				}).Within(3*time.Second).Should(BeTrue(), "Should browse all levels")
 
 				// Should submit 3 tasks total (parent + child + grandchild)
 				Eventually(func() uint64 {
@@ -2609,7 +2550,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 							return len(results)
 						}
 					}
-				}).Within(3 * time.Second).Should(BeNumerically(">=", 3),
+				}).Within(3*time.Second).Should(BeNumerically(">=", 3),
 					"Should receive at least 3 NodeDef results")
 
 				// Verify paths are built correctly
@@ -2780,7 +2721,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 					return parentNode.WasBrowseCalled() &&
 						child1.WasBrowseCalled() &&
 						child2.WasBrowseCalled()
-				}).Within(3 * time.Second).Should(BeTrue(), "Should browse all nodes including children")
+				}).Within(3*time.Second).Should(BeTrue(), "Should browse all nodes including children")
 			})
 		})
 
@@ -2986,7 +2927,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 
 			// Shutdown pool IMMEDIATELY while children are being submitted in worker
 			// With 1000 children, the submission loop will still be running
-			time.Sleep(1 * time.Millisecond) // Minimal delay - just let worker start browse
+			time.Sleep(1 * time.Millisecond)                     // Minimal delay - just let worker start browse
 			shutdownErr := pool.Shutdown(100 * time.Millisecond) // Short timeout to force early shutdown
 
 			// The shutdown may timeout if worker is still processing, which is expected
@@ -3118,7 +3059,7 @@ var _ = Describe("GlobalWorkerPool", func() {
 			// Expected: Only Sensor1, Sensor2, Sensor3 (Variables) = 3 nodes
 			//
 			// After fix: This assertion will PASS
-			Expect(len(results)).To(Equal(3), "Should receive exactly 3 Variable nodes (Sensor1, Sensor2, Sensor3)")
+			Expect(results).To(HaveLen(3), "Should receive exactly 3 Variable nodes (Sensor1, Sensor2, Sensor3)")
 
 			// ASSERT: Verify NO Object nodes were sent
 			for _, result := range results {

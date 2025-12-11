@@ -19,8 +19,9 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 	"google.golang.org/protobuf/types/known/wrapperspb"
+
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
 func createTestBundle() *proto.UnsBundle {

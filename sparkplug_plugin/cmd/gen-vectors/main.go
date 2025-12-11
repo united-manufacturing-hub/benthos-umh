@@ -24,8 +24,9 @@ import (
 	"log"
 	"time"
 
-	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/proto"
+
+	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
 
 // TestVector represents a test payload with metadata
@@ -217,7 +218,7 @@ func createNDeath(metrics []Metric) []byte {
 }
 
 func createProtoMetric(metric Metric, includeName bool) *sparkplugb.Payload_Metric {
-	datatype := uint32(metric.DataType)
+	datatype := metric.DataType
 	protoMetric := &sparkplugb.Payload_Metric{
 		Datatype: &datatype,
 	}

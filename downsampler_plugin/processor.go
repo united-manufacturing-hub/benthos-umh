@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/downsampler_plugin/algorithms"
 )
 
@@ -46,7 +47,7 @@ func NewMessageProcessor(processor *DownsamplerProcessor) *MessageProcessor {
 //   - Integration with downsampling algorithms via ACK buffering
 //
 // Returns MessageProcessingResult containing either processed messages, error, or filter status.
-func (mp *MessageProcessor) ProcessMessage(msg *service.Message, index int) MessageProcessingResult {
+func (mp *MessageProcessor) ProcessMessage(msg *service.Message, _ int) MessageProcessingResult {
 	result := MessageProcessingResult{
 		OriginalMessage: msg,
 	}
@@ -302,13 +303,12 @@ func (mp *MessageProcessor) processWithState(msg *service.Message, dataMap map[s
 			mp.processor.metrics.IncrementFiltered()
 			mp.processor.logger.Debugf("Message filtered and ACKed immediately for series '%s' (algorithm doesn't need buffering): value=%v, timestamp=%v", seriesID, value, timestamp)
 			return nil, nil // Return nil to let Benthos ACK the message automatically
-		} else {
-			// SDT and other emit-previous algorithms: stash message as candidate
-			state.stash(msg)
-			mp.processor.metrics.IncrementFiltered()
-			mp.processor.logger.Debugf("Message filtered and stashed for series '%s' (algorithm needs buffering): value=%v, timestamp=%v", seriesID, value, timestamp)
-			return nil, nil // No immediate output
 		}
+		// SDT and other emit-previous algorithms: stash message as candidate
+		state.stash(msg)
+		mp.processor.metrics.IncrementFiltered()
+		mp.processor.logger.Debugf("Message filtered and stashed for series '%s' (algorithm needs buffering): value=%v, timestamp=%v", seriesID, value, timestamp)
+		return nil, nil // No immediate output
 
 	case 1:
 		// Single point emitted - this could be current or previous point
@@ -322,28 +322,26 @@ func (mp *MessageProcessor) processWithState(msg *service.Message, dataMap map[s
 			mp.processor.updateProcessedTime(state, emittedPoint.Timestamp)
 			mp.processor.logger.Debugf("Current point emitted for series '%s': value=%v, timestamp=%v", seriesID, emittedPoint.Value, emittedPoint.Timestamp)
 			return mp.createOutputMessage(msg, dataMap, emittedPoints, state)
-		} else {
-			// Previous point emitted - emit buffered candidate, then stash current
-			bufferedMsg := state.releaseCandidate()
-			if bufferedMsg != nil {
-				// Clone template from buffered message and emit it with algorithm point
-				outputMsg, err := mp.cloneTemplate(bufferedMsg, emittedPoint, state)
-				if err != nil {
-					return nil, fmt.Errorf("failed to create output from buffered message: %w", err)
-				}
-				// Stash current message as new candidate
-				state.stash(msg)
-				mp.processor.metrics.IncrementProcessed()
-				mp.processor.updateProcessedTime(state, emittedPoint.Timestamp)
-				mp.processor.logger.Debugf("Previous point emitted for series '%s': value=%v, timestamp=%v (current stashed: %v)", seriesID, emittedPoint.Value, emittedPoint.Timestamp, value)
-				return outputMsg, nil
-			} else {
-				// No buffered message - this shouldn't happen in normal operation
-				mp.processor.logger.Warnf("Algorithm emitted previous point but no candidate was buffered for series '%s' - this indicates a potential algorithm issue", seriesID)
-				state.stash(msg)
-				return nil, nil
-			}
 		}
+		// Previous point emitted - emit buffered candidate, then stash current
+		bufferedMsg := state.releaseCandidate()
+		if bufferedMsg != nil {
+			// Clone template from buffered message and emit it with algorithm point
+			outputMsg, err := mp.cloneTemplate(bufferedMsg, emittedPoint, state)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create output from buffered message: %w", err)
+			}
+			// Stash current message as new candidate
+			state.stash(msg)
+			mp.processor.metrics.IncrementProcessed()
+			mp.processor.updateProcessedTime(state, emittedPoint.Timestamp)
+			mp.processor.logger.Debugf("Previous point emitted for series '%s': value=%v, timestamp=%v (current stashed: %v)", seriesID, emittedPoint.Value, emittedPoint.Timestamp, value)
+			return outputMsg, nil
+		}
+		// No buffered message - this shouldn't happen in normal operation
+		mp.processor.logger.Warnf("Algorithm emitted previous point but no candidate was buffered for series '%s' - this indicates a potential algorithm issue", seriesID)
+		state.stash(msg)
+		return nil, nil
 
 	case 2:
 		// Two points emitted (emit-previous scenario) - emit first (previous), stash current
@@ -363,13 +361,12 @@ func (mp *MessageProcessor) processWithState(msg *service.Message, dataMap map[s
 			mp.processor.updateProcessedTime(state, previousPoint.Timestamp)
 			mp.processor.logger.Debugf("Two points emitted for series '%s': emitting previous point value=%v, timestamp=%v (current stashed: %v)", seriesID, previousPoint.Value, previousPoint.Timestamp, currentPoint.Value)
 			return outputMsg, nil
-		} else {
-			// No buffered message - emit current point directly
-			mp.processor.logger.Warnf("Algorithm emitted two points but no candidate was buffered for series '%s' - emitting current point only", seriesID)
-			mp.processor.metrics.IncrementProcessed()
-			mp.processor.updateProcessedTime(state, currentPoint.Timestamp)
-			return mp.createOutputMessage(msg, dataMap, []algorithms.GenericPoint{currentPoint}, state)
 		}
+		// No buffered message - emit current point directly
+		mp.processor.logger.Warnf("Algorithm emitted two points but no candidate was buffered for series '%s' - emitting current point only", seriesID)
+		mp.processor.metrics.IncrementProcessed()
+		mp.processor.updateProcessedTime(state, currentPoint.Timestamp)
+		return mp.createOutputMessage(msg, dataMap, []algorithms.GenericPoint{currentPoint}, state)
 
 	default:
 		// Multiple points emitted (unusual) - emit all points to avoid data loss

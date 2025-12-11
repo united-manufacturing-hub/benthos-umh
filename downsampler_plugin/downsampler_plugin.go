@@ -56,6 +56,7 @@ import (
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/downsampler_plugin/algorithms"
 )
 
@@ -204,7 +205,7 @@ Use with tag_processor for UMH deployments to selectively bypass downsampling ba
 			Description("Topic-specific parameter overrides using pattern matching. Supports exact topic names and shell-style wildcards (* matches any sequence, ? matches any character).").
 			Optional()).
 		Field(service.NewBoolField("allow_meta_overrides").
-			Description("Honour per-message ds_* metadata.").
+			Description("Honor per-message ds_* metadata.").
 			Default(true))
 
 	err := service.RegisterBatchProcessor(
@@ -436,7 +437,7 @@ func (p *DownsamplerProcessor) flushIdleCandidates() {
 //   - Temporal ordering: previous flush before current batch.
 //   - ACK correctness  : Benthos sees zero‑error path; we record metrics.
 //   - Performance      : minimal locking, single pass.
-func (p *DownsamplerProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
+func (p *DownsamplerProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	var outBatches []service.MessageBatch
 	var outBatch service.MessageBatch
 	var processingErrors []error
@@ -558,11 +559,11 @@ func copyConfig(original map[string]interface{}) map[string]interface{} {
 		return nil
 	}
 
-	copy := make(map[string]interface{})
+	result := make(map[string]interface{})
 	for k, v := range original {
-		copy[k] = v
+		result[k] = v
 	}
-	return copy
+	return result
 }
 
 // getOrCreateSeriesState returns the state for a series, creating it if needed
@@ -662,7 +663,7 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string, msg *serv
 	defer p.stateMutex.Unlock()
 
 	// Check again in case another goroutine created it
-	if state, exists := p.seriesState[seriesID]; exists {
+	if state, exists = p.seriesState[seriesID]; exists {
 		return state, nil
 	}
 
@@ -674,8 +675,9 @@ func (p *DownsamplerProcessor) getOrCreateSeriesState(seriesID string, msg *serv
 	}
 
 	// Apply metadata overrides if enabled
+	var hints map[string]any
 	if p.config.AllowMeta {
-		if hints, err := extractMetaHints(msg); err != nil {
+		if hints, err = extractMetaHints(msg); err != nil {
 			p.logger.Warnf("Meta overrides ignored for series %s: %v", seriesID, err)
 			p.metrics.IncrementMetaOverrideRejected()
 		} else if hints != nil {
@@ -759,7 +761,7 @@ func (p *DownsamplerProcessor) updateProcessedTime(state *SeriesState, timestamp
 //
 // WHY still fail‑open here?
 //   - Better to risk duplicate data than to drop final points.
-func (p *DownsamplerProcessor) Close(ctx context.Context) error {
+func (p *DownsamplerProcessor) Close(_ context.Context) error {
 	// Use sync.Once to ensure closeChan is only closed once
 	p.closeOnce.Do(func() {
 		if p.closeChan != nil {
@@ -898,11 +900,10 @@ func extractMetaHints(msg *service.Message) (map[string]interface{}, error) {
 
 	// 1. algorithm
 	if algo, ok := msg.MetaGet("ds_algorithm"); ok {
-		if algo == "deadband" || algo == "swinging_door" {
-			hints["algorithm"] = algo
-		} else {
+		if algo != "deadband" && algo != "swinging_door" {
 			return nil, fmt.Errorf("invalid ds_algorithm %q", algo)
 		}
+		hints["algorithm"] = algo
 	}
 
 	// 2. numeric threshold
@@ -927,11 +928,10 @@ func extractMetaHints(msg *service.Message) (map[string]interface{}, error) {
 
 	// 5. late policy
 	if pol, ok := msg.MetaGet("ds_late_policy"); ok {
-		if pol == "passthrough" || pol == "drop" {
-			hints["late_policy"] = pol
-		} else {
+		if pol != "passthrough" && pol != "drop" {
 			return nil, fmt.Errorf("invalid ds_late_policy: %v", pol)
 		}
+		hints["late_policy"] = pol
 	}
 
 	if len(hints) == 0 {
@@ -943,7 +943,7 @@ func extractMetaHints(msg *service.Message) (map[string]interface{}, error) {
 // configsEqual compares two algorithm configurations to detect parameter changes.
 // Returns true if configurations are equivalent, false if they differ.
 // Handles type conversions between different numeric types and duration representations.
-func configsEqual(config1, config2 map[string]interface{}) bool {
+func configsEqual(config1 map[string]interface{}, config2 map[string]interface{}) bool {
 	if config1 == nil && config2 == nil {
 		return true
 	}
@@ -964,7 +964,7 @@ func configsEqual(config1, config2 map[string]interface{}) bool {
 
 // valuesEqual compares two configuration values with type conversion support.
 // Handles float64 vs int comparisons and duration vs string comparisons.
-func valuesEqual(v1, v2 interface{}) bool {
+func valuesEqual(v1 interface{}, v2 interface{}) bool {
 	if v1 == nil && v2 == nil {
 		return true
 	}
@@ -1008,11 +1008,11 @@ func isNumeric(v interface{}) bool {
 
 // isDuration checks if a value is a duration type or string
 func isDuration(v interface{}) bool {
-	switch v.(type) {
+	switch v := v.(type) {
 	case time.Duration:
 		return true
 	case string:
-		_, err := time.ParseDuration(v.(string))
+		_, err := time.ParseDuration(v)
 		return err == nil
 	default:
 		return false

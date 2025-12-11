@@ -61,7 +61,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -155,7 +155,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -250,7 +250,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -337,7 +337,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -392,7 +392,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -491,7 +491,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -576,7 +576,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -669,7 +669,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var count int64
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
 				atomic.AddInt64(&count, 1)
 				return nil
 			})
@@ -735,7 +735,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -818,7 +818,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -928,7 +928,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -1008,7 +1008,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -1239,7 +1239,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -1336,7 +1336,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -1398,7 +1398,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -1454,7 +1454,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -1498,7 +1498,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -1558,7 +1558,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -1623,7 +1623,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -1679,7 +1679,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -1735,7 +1735,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -1793,7 +1793,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -1849,7 +1849,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -1906,7 +1906,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -1967,7 +1967,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -2027,7 +2027,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -2086,7 +2086,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -2144,7 +2144,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -2217,7 +2217,7 @@ tag_processor:
 				Expect(err).NotTo(HaveOccurred())
 
 				var messages []*service.Message
-				err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 					messages = append(messages, msg)
 					return nil
 				})
@@ -2297,7 +2297,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -2398,7 +2398,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -2429,7 +2429,7 @@ tag_processor:
 			for i, msg := range messages {
 				GinkgoWriter.Printf("Verifying complex message %d\n", i+1)
 
-				msg.MetaWalk(func(key string, value string) error {
+				msg.MetaWalk(func(key, value string) error {
 					GinkgoWriter.Printf("Key: %s, Value: %s\n", key, value)
 					return nil
 				})
@@ -2480,7 +2480,7 @@ tag_processor:
 
 			var messages []*service.Message
 			var messageCount int64
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				atomic.AddInt64(&messageCount, 1)
 				return nil
@@ -2511,7 +2511,7 @@ tag_processor:
 			}).Should(Equal(int64(numMessages)))
 
 			// Verify all messages were processed correctly
-			Expect(len(messages)).To(Equal(numMessages))
+			Expect(messages).To(HaveLen(numMessages))
 
 			for i, msg := range messages {
 				GinkgoWriter.Printf("Verifying concurrent message %d\n", i+1)
@@ -2569,7 +2569,7 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})

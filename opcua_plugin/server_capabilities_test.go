@@ -15,8 +15,8 @@
 package opcua_plugin
 
 import (
-	"os"
 	"context"
+	"os"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -165,9 +165,9 @@ var _ = Describe("ServerCapabilities", func() {
 
 			// Verify fallback ServerCapabilities uses safe default
 			fallbackCaps := &ServerCapabilities{
-				MaxNodesPerBrowse:           100,
-				MaxMonitoredItemsPerCall:    1000,
-				SupportsDataChangeFilter:    false, // Safe default - MonitorBatched uses profile value
+				MaxNodesPerBrowse:        100,
+				MaxMonitoredItemsPerCall: 1000,
+				SupportsDataChangeFilter: false, // Safe default - MonitorBatched uses profile value
 			}
 
 			Expect(fallbackCaps.SupportsDataChangeFilter).To(BeFalse(),

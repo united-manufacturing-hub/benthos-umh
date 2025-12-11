@@ -17,13 +17,13 @@ package stream_processor_plugin_test
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
 	config2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_engine"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/mapping"
 )
 
 var _ = Describe("StreamProcessor", func() {
-
 	Describe("Configuration Validation", func() {
 		It("should reject invalid mode", func() {
 			config := config2.StreamProcessorConfig{

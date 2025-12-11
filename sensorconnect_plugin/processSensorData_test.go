@@ -16,19 +16,17 @@ package sensorconnect_plugin_test
 
 import (
 	"fmt"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 	"math"
 	"os"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	"github.com/united-manufacturing-hub/benthos-umh/sensorconnect_plugin"
 )
 
 var _ = Describe("ProcessSensorData", func() {
-
-	var (
-		s *sensorconnect_plugin.SensorConnectInput
-	)
+	var s *sensorconnect_plugin.SensorConnectInput
 
 	BeforeEach(func() {
 		endpoint := os.Getenv("TEST_DEBUG_IFM_ENDPOINT")
@@ -226,10 +224,7 @@ var _ = Describe("ProcessSensorData", func() {
 })
 
 var _ = Describe("float32T bug (ENG-2010)", func() {
-
-	var (
-		s *sensorconnect_plugin.SensorConnectInput
-	)
+	var s *sensorconnect_plugin.SensorConnectInput
 
 	BeforeEach(func() {
 		endpoint := os.Getenv("TEST_DEBUG_IFM_ENDPOINT")

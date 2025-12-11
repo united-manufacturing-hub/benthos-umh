@@ -16,11 +16,12 @@ package js_security
 
 import (
 	"fmt"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/constants"
 	"time"
 
 	"github.com/dop251/goja"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/constants"
 )
 
 // ConfigureJSRuntime sets up a Goja runtime with security constraints.
@@ -60,7 +61,7 @@ func ConfigureJSRuntime(runtime *goja.Runtime, logger *service.Logger) {
 // globals with functions that log security violations and throw errors when called.
 func CreateSecurityBlocker(runtime *goja.Runtime, logger *service.Logger) func(string) func(goja.FunctionCall) goja.Value {
 	return func(apiName string) func(goja.FunctionCall) goja.Value {
-		return func(call goja.FunctionCall) goja.Value {
+		return func(_ goja.FunctionCall) goja.Value {
 			// Log the security violation
 			if logger != nil {
 				logger.Warnf("Security violation: attempted to call disabled function '%s'", apiName)

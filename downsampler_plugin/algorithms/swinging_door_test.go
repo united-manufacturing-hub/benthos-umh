@@ -92,7 +92,6 @@ func runSwingingDoorTestCase(testCase SwingingDoorTestCase) {
 }
 
 var _ = Describe("Swinging Door Algorithm", func() {
-
 	Describe("Reference Implementation Test Cases", func() {
 		// These test cases are derived from gfoidl DataCompression library
 		// All expected results are verified against the reference implementation
@@ -509,7 +508,7 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				// Build a point exactly on both envelope lines where slope_low = slope_up
 				points, err = algo.Ingest(1.0, t0.Add(1*time.Second))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(points).To(HaveLen(0), "Point within envelope should not emit")
+				Expect(points).To(BeEmpty(), "Point within envelope should not emit")
 			})
 		})
 
@@ -534,14 +533,13 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				// Add a small change to create a candidate
 				points, err = algo.Ingest(5.1, t0.Add(50*time.Millisecond))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(points).To(HaveLen(0), "Small change should not emit yet")
+				Expect(points).To(BeEmpty(), "Small change should not emit yet")
 
 				// Now test max_time with another small change
 				points, err = algo.Ingest(5.2, t0.Add(150*time.Millisecond))
 				Expect(err).NotTo(HaveOccurred())
 				Expect(points).To(HaveLen(1), "Should force emit due to max_time constraint")
 			})
-
 		})
 
 		Context("State integrity validation", func() {
@@ -560,7 +558,7 @@ var _ = Describe("Swinging Door Algorithm", func() {
 
 				points, err = algo.Ingest(3.0, baseTime.Add(time.Second))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(points).To(HaveLen(0), "Point within envelope should not be emitted")
+				Expect(points).To(BeEmpty(), "Point within envelope should not be emitted")
 
 				algo.Reset()
 
@@ -714,7 +712,7 @@ var _ = Describe("Swinging Door Algorithm", func() {
 				// Algorithm should still work with valid values
 				points, err = algo.Ingest(11.0, baseTime.Add(2*time.Second))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(points).To(HaveLen(0)) // Within envelope, no emission expected
+				Expect(points).To(BeEmpty()) // Within envelope, no emission expected
 			})
 		})
 	})

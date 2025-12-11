@@ -18,16 +18,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/redpanda-data/benthos/v4/public/service"
 	"math"
 	"math/big"
 	"reflect"
 	"strconv"
+
+	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 // ProcessSensorData processes the downloaded information from one IO-Link master
 // and returns a message batch with one message per sensor (active port).
-func (s *SensorConnectInput) ProcessSensorData(ctx context.Context, connectedDevices []ConnectedDeviceInfo, sensorDataMap map[string]interface{}) (service.MessageBatch, error) {
+func (s *SensorConnectInput) ProcessSensorData(_ context.Context, connectedDevices []ConnectedDeviceInfo, sensorDataMap map[string]interface{}) (service.MessageBatch, error) {
 	// Initialize an empty MessageBatch to collect results from all ports
 	var batch service.MessageBatch
 
@@ -84,10 +85,6 @@ func (s *SensorConnectInput) ProcessSensorData(ctx context.Context, connectedDev
 				continue
 			}
 
-			// create IoddFilemapKey
-			var ioddFilemapKey IoddFilemapKey
-			ioddFilemapKey.DeviceId = int(device.DeviceID)
-			ioddFilemapKey.VendorId = int64(device.VendorID)
 			var payload map[string]interface{}
 
 			if !device.UseRawData {
@@ -164,8 +161,7 @@ func (s *SensorConnectInput) GetProcessedSensorDataFromRawSensorOutput(rawSensor
 	rawSensorOutputLength := len(rawSensorOutput)
 
 	outputBitLength := rawSensorOutputLength * 4
-	rawSensorOutputString := string(rawSensorOutput)
-	rawSensorOutputBinary, err := s.HexToBin(rawSensorOutputString)
+	rawSensorOutputBinary, err := s.HexToBin(rawSensorOutput)
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +227,6 @@ func (s *SensorConnectInput) extractIntFromSensorDataMap(key string, tag string,
 // ConvertBinaryValue converts a binary string to its corresponding value based on the datatype.
 // It handles both string and numeric data types and logs errors using the Benthos logger.
 func (s *SensorConnectInput) ConvertBinaryValue(binaryValue string, datatype string) (interface{}, error) {
-
 	if binaryValue == "" {
 		s.logger.Errorf("binaryValue is empty for datatype %s", datatype)
 		return nil, fmt.Errorf("binaryValue is empty")
@@ -372,8 +367,8 @@ func (s *SensorConnectInput) processData(
 	rawSensorOutputBinaryPadded string,
 	datatypeReferenceArray []Datatype,
 	nameTextId string,
-	primLangExternalTextCollection []Text) (map[string]interface{}, error) {
-
+	primLangExternalTextCollection []Text,
+) (map[string]interface{}, error) {
 	var payload map[string]interface{}
 	var err error
 
@@ -423,10 +418,9 @@ func (s *SensorConnectInput) processData(
 			return nil, err
 		}
 		return payload, nil
-	} else {
-		s.logger.Errorf("Missing input, neither SimpleDatatype, Datatype, nor DatatypeRef provided.")
-		return nil, fmt.Errorf("missing input, neither SimpleDatatype, Datatype, nor DatatypeRef provided")
 	}
+	s.logger.Errorf("Missing input, neither SimpleDatatype, Datatype, nor DatatypeRef provided.")
+	return nil, fmt.Errorf("missing input, neither SimpleDatatype, Datatype, nor DatatypeRef provided")
 }
 
 // getDatatypeFromDatatypeRef finds the actual Datatype description in the datatypeReferenceArray using the given DatatypeRef.
@@ -447,8 +441,8 @@ func (s *SensorConnectInput) ProcessSimpleDatatype(
 	rawSensorOutputBinaryPadded string,
 	bitOffset int,
 	nameTextId string,
-	primLangExternalTextCollection []Text) (map[string]interface{}, error) {
-
+	primLangExternalTextCollection []Text,
+) (map[string]interface{}, error) {
 	payload := make(map[string]interface{})
 
 	binaryValue := s.extractBinaryValueFromRawSensorOutput(
@@ -474,8 +468,8 @@ func (s *SensorConnectInput) extractBinaryValueFromRawSensorOutput(
 	bitLength uint,
 	fixedLength uint,
 	outputBitLength int,
-	bitOffset int) string {
-
+	bitOffset int,
+) string {
 	valueBitLength := s.DetermineValueBitLength(typeString, bitLength, fixedLength)
 
 	leftIndex := outputBitLength - int(valueBitLength) - bitOffset
@@ -492,8 +486,8 @@ func (s *SensorConnectInput) processDatatype(
 	bitOffset int,
 	datatypeReferenceArray []Datatype,
 	nameTextId string,
-	primLangExternalTextCollection []Text) (map[string]interface{}, error) {
-
+	primLangExternalTextCollection []Text,
+) (map[string]interface{}, error) {
 	if datatype.Type == "RecordT" {
 		payload, err := s.processRecordType(
 			datatype.RecordItemArray,
@@ -506,23 +500,22 @@ func (s *SensorConnectInput) processDatatype(
 			return nil, err
 		}
 		return payload, nil
-	} else {
-		binaryValue := s.extractBinaryValueFromRawSensorOutput(
-			rawSensorOutputBinaryPadded,
-			datatype.Type,
-			datatype.BitLength,
-			datatype.FixedLength,
-			outputBitLength,
-			bitOffset)
-		valueString, err := s.ConvertBinaryValue(binaryValue, datatype.Type)
-		if err != nil {
-			return nil, err
-		}
-		valueName := s.getNameFromExternalTextCollection(nameTextId, primLangExternalTextCollection)
-		payload := make(map[string]interface{})
-		payload[valueName] = valueString
-		return payload, nil
 	}
+	binaryValue := s.extractBinaryValueFromRawSensorOutput(
+		rawSensorOutputBinaryPadded,
+		datatype.Type,
+		datatype.BitLength,
+		datatype.FixedLength,
+		outputBitLength,
+		bitOffset)
+	valueString, err := s.ConvertBinaryValue(binaryValue, datatype.Type)
+	if err != nil {
+		return nil, err
+	}
+	valueName := s.getNameFromExternalTextCollection(nameTextId, primLangExternalTextCollection)
+	payload := make(map[string]interface{})
+	payload[valueName] = valueString
+	return payload, nil
 }
 
 // processRecordType iterates through the given RecordItemArray and processes each RecordItem.
@@ -531,8 +524,8 @@ func (s *SensorConnectInput) processRecordType(
 	outputBitLength int,
 	rawSensorOutputBinaryPadded string,
 	datatypeReferenceArray []Datatype,
-	primLangExternalTextCollection []Text) (map[string]interface{}, error) {
-
+	primLangExternalTextCollection []Text,
+) (map[string]interface{}, error) {
 	payload := make(map[string]interface{})
 
 	for _, element := range recordItemArray {

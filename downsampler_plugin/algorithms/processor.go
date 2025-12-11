@@ -139,15 +139,14 @@ func (p *ProcessorWrapper) Ingest(value interface{}, timestamp time.Time) ([]Gen
 					p.seriesID, p.algorithm.Name(), timestamp, timeDiff, p.lastTimestamp)
 			}
 			return []GenericPoint{{Value: value, Timestamp: timestamp}}, nil
-		} else {
-			// Drop out-of-order data
-			if p.logger != nil {
-				timeDiff := p.lastTimestamp.Sub(timestamp)
-				p.logger.Debugf("Late arrival drop for series '%s' (algorithm: %s): message timestamp %v is %v behind last processed %v - dropping message",
-					p.seriesID, p.algorithm.Name(), timestamp, timeDiff, p.lastTimestamp)
-			}
-			return []GenericPoint{}, nil
 		}
+		// Drop out-of-order data
+		if p.logger != nil {
+			timeDiff := p.lastTimestamp.Sub(timestamp)
+			p.logger.Debugf("Late arrival drop for series '%s' (algorithm: %s): message timestamp %v is %v behind last processed %v - dropping message",
+				p.seriesID, p.algorithm.Name(), timestamp, timeDiff, p.lastTimestamp)
+		}
+		return []GenericPoint{}, nil
 	}
 
 	// Update last timestamp and process

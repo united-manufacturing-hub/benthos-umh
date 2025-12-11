@@ -16,6 +16,7 @@ package opcua_plugin_test
 
 import (
 	"os"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -64,7 +65,7 @@ var _ = Describe("calculateBatches", func() {
 
 		It("should handle empty list (0 nodes)", func() {
 			batches := CalculateBatches(0, 100)
-			Expect(batches).To(HaveLen(0))
+			Expect(batches).To(BeEmpty())
 		})
 
 		It("should handle single node (1 node)", func() {

@@ -24,8 +24,9 @@ import (
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/redpanda-data/benthos/v4/public/service"
-	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/proto"
+
+	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
 
 // Sparkplug B Data Type Constants
@@ -261,7 +262,7 @@ func UpdateNodeState(nodeStates map[string]*NodeState, deviceKey string, current
 // - Increments the provided error counter
 //
 // Exported for testing to verify error logging behavior.
-func LogSequenceError(logger *service.Logger, counter Counter, deviceKey string, lastSeq, currentSeq uint8) {
+func LogSequenceError(logger *service.Logger, counter Counter, deviceKey string, lastSeq uint8, currentSeq uint8) {
 	// Calculate expected sequence with wraparound
 	expectedSeq := uint8((int(lastSeq) + 1) % 256)
 
@@ -409,7 +410,7 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 	return si, nil
 }
 
-func (s *sparkplugInput) Connect(ctx context.Context) error {
+func (s *sparkplugInput) Connect(_ context.Context) error {
 	s.logger.Infof("Connecting Sparkplug B input (role: %s)", s.config.Role)
 
 	// Prepare MQTT client configuration
@@ -430,7 +431,7 @@ func (s *sparkplugInput) Connect(ctx context.Context) error {
 		WillRetain:       true,
 		OnConnect:        s.onConnect,
 		OnConnectionLost: s.onConnectionLost,
-		MessageHandler: func(client mqtt.Client, msg mqtt.Message) {
+		MessageHandler: func(_ mqtt.Client, msg mqtt.Message) {
 			s.logger.Warnf("Received message on unhandled topic: %s", msg.Topic())
 		},
 	}
@@ -482,11 +483,11 @@ func (s *sparkplugInput) onConnect(client mqtt.Client) {
 	}
 }
 
-func (s *sparkplugInput) onConnectionLost(client mqtt.Client, err error) {
+func (s *sparkplugInput) onConnectionLost(_ mqtt.Client, err error) {
 	s.logger.Errorf("MQTT connection lost: %v", err)
 }
 
-func (s *sparkplugInput) messageHandler(client mqtt.Client, msg mqtt.Message) {
+func (s *sparkplugInput) messageHandler(_ mqtt.Client, msg mqtt.Message) {
 	// Check if we're shutting down
 	select {
 	case <-s.done:
@@ -540,12 +541,12 @@ func (s *sparkplugInput) ReadBatch(ctx context.Context) (service.MessageBatch, s
 			s.messagesErrored.Incr(1)
 			return nil, nil, err
 		}
-		if batch == nil || len(batch) == 0 {
+		if len(batch) == 0 {
 			s.logger.Debugf("⚠️ ReadBatch: no batch produced for message")
-			return nil, func(ctx context.Context, err error) error { return nil }, nil
+			return nil, func(_ context.Context, _ error) error { return nil }, nil
 		}
 		s.logger.Debugf("✅ ReadBatch: produced batch with %d messages", len(batch))
-		return batch, func(ctx context.Context, err error) error { return nil }, err
+		return batch, func(_ context.Context, _ error) error { return nil }, err
 	}
 }
 
@@ -620,7 +621,7 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 	}
 
 	// DEBUG: Log when pushing to Benthos pipeline as recommended in the plan
-	if batch != nil && len(batch) > 0 {
+	if len(batch) > 0 {
 		s.logger.Debugf("🚀 processSparkplugMessage: created batch with %d messages for Benthos pipeline", len(batch))
 	} else {
 		s.logger.Debugf("⚠️ processSparkplugMessage: no batch created - this might be the issue!")
@@ -636,7 +637,7 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 //
 // Key behavior: Caches alias → metric name mappings from BIRTH certificates
 // for use in subsequent DATA message resolution.
-func (s *sparkplugInput) processBirthMessage(deviceKey, msgType string, payload *sparkplugb.Payload) {
+func (s *sparkplugInput) processBirthMessage(deviceKey string, msgType string, payload *sparkplugb.Payload) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 
@@ -693,7 +694,7 @@ func (s *sparkplugInput) processBirthMessage(deviceKey, msgType string, payload 
 // - All state access protected by stateMu lock
 // - No I/O operations performed while holding lock
 // - Deterministic behavior ensured by UpdateNodeState pure function
-func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *sparkplugb.Payload) {
+func (s *sparkplugInput) processDataMessage(deviceKey string, msgType string, payload *sparkplugb.Payload) {
 	s.stateMu.Lock()
 
 	currentSeq := GetSequenceNumber(payload)
@@ -728,7 +729,7 @@ func (s *sparkplugInput) processDataMessage(deviceKey, msgType string, payload *
 	}
 }
 
-func (s *sparkplugInput) processDeathMessage(deviceKey, msgType string, payload *sparkplugb.Payload) {
+func (s *sparkplugInput) processDeathMessage(deviceKey string, msgType string, payload *sparkplugb.Payload) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 
@@ -779,7 +780,7 @@ func (s *sparkplugInput) processDeathMessage(deviceKey, msgType string, payload 
 	s.logger.Debugf("Processed %s for device %s", msgType, deviceKey)
 }
 
-func (s *sparkplugInput) processCommandMessage(deviceKey, msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
+func (s *sparkplugInput) processCommandMessage(deviceKey string, msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
 	s.logger.Debugf("⚡ processCommandMessage: processing %s for device %s with %d metrics", msgType, deviceKey, len(payload.Metrics))
 
 	// Update node state timestamp for activity tracking
@@ -815,7 +816,7 @@ func (s *sparkplugInput) processCommandMessage(deviceKey, msgType string, payloa
 	return batch
 }
 
-func (s *sparkplugInput) processStateMessage(deviceKey, msgType string, topicInfo *TopicInfo, originalTopic string, statePayload string) (service.MessageBatch, error) {
+func (s *sparkplugInput) processStateMessage(deviceKey string, msgType string, topicInfo *TopicInfo, originalTopic string, statePayload string) (service.MessageBatch, error) {
 	s.logger.Debugf("🏛️ processStateMessage: processing STATE message for device %s, state: %s", deviceKey, statePayload)
 
 	s.stateMu.Lock()
@@ -864,7 +865,7 @@ func (s *sparkplugInput) processStateMessage(deviceKey, msgType string, topicInf
 	if topicInfo.Device != "" {
 		msg.MetaSet("spb_device_id", topicInfo.Device)
 	}
-	
+
 	// Add pre-sanitized versions for state messages
 	msg.MetaSet("spb_group_id_sanitized", s.sanitizeForTopic(topicInfo.Group))
 	msg.MetaSet("spb_edge_node_id_sanitized", s.sanitizeForTopic(topicInfo.EdgeNode))
@@ -880,7 +881,7 @@ func (s *sparkplugInput) processStateMessage(deviceKey, msgType string, topicInf
 	return service.MessageBatch{msg}, nil
 }
 
-func (s *sparkplugInput) Close(ctx context.Context) error {
+func (s *sparkplugInput) Close(_ context.Context) error {
 	// Signal shutdown to all goroutines first
 	close(s.done)
 
@@ -964,7 +965,7 @@ func (s *sparkplugInput) parseSparkplugTopicDetailed(topic string) (string, stri
 }
 
 // Message creation methods
-func (s *sparkplugInput) createSplitMessages(payload *sparkplugb.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
+func (s *sparkplugInput) createSplitMessages(payload *sparkplugb.Payload, msgType string, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
 	var batch service.MessageBatch
 
 	for i, metric := range payload.Metrics {
@@ -981,7 +982,7 @@ func (s *sparkplugInput) createSplitMessages(payload *sparkplugb.Payload, msgTyp
 	return batch
 }
 
-func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string, metricIndex, totalMetrics int) *service.Message {
+func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload, msgType string, deviceKey string, topicInfo *TopicInfo, originalTopic string, metricIndex int, totalMetrics int) *service.Message {
 	// Extract metric value as JSON (always preserve Sparkplug B format)
 	value := s.extractMetricValue(metric)
 	if value == nil {
@@ -1060,7 +1061,7 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	return msg
 }
 
-func (s *sparkplugInput) createDeathEventMessage(msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
+func (s *sparkplugInput) createDeathEventMessage(msgType string, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
 	event := map[string]interface{}{
 		"event":        "DeviceOffline",
 		"device_key":   deviceKey,
@@ -1090,7 +1091,7 @@ func (s *sparkplugInput) createDeathEventMessage(msgType, deviceKey string, topi
 	if topicInfo.Device != "" {
 		msg.MetaSet("spb_device_id", topicInfo.Device)
 	}
-	
+
 	// Add pre-sanitized versions for death events
 	msg.MetaSet("spb_group_id_sanitized", s.sanitizeForTopic(topicInfo.Group))
 	msg.MetaSet("spb_edge_node_id_sanitized", s.sanitizeForTopic(topicInfo.EdgeNode))
@@ -1157,21 +1158,21 @@ func (s *sparkplugInput) sanitizeForTopic(input string) string {
 	if input == "" {
 		return ""
 	}
-	
+
 	var result strings.Builder
 	result.Grow(len(input))
-	
+
 	for _, char := range input {
 		if (char >= 'a' && char <= 'z') ||
-		   (char >= 'A' && char <= 'Z') ||
-		   (char >= '0' && char <= '9') ||
-		   char == '.' {
+			(char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') ||
+			char == '.' {
 			result.WriteRune(char)
 		} else {
 			result.WriteRune('_')
 		}
 	}
-	
+
 	return result.String()
 }
 
@@ -1218,7 +1219,7 @@ func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
 		s.rebirthsSuppressed.Incr(1)
 		return
 	}
-	
+
 	if s.client == nil || !s.client.IsConnected() {
 		return
 	}
@@ -1273,7 +1274,7 @@ func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
 		Value: &sparkplugb.Payload_Metric_BooleanValue{
 			BooleanValue: true,
 		},
-		Datatype: func() *uint32 { d := uint32(SparkplugDataTypeBoolean); return &d }(),
+		Datatype: func() *uint32 { d := SparkplugDataTypeBoolean; return &d }(),
 	}
 
 	cmdPayload := &sparkplugb.Payload{
@@ -1355,7 +1356,7 @@ func GetSequenceNumber(payload *sparkplugb.Payload) uint8 {
 // - Sequence numbers must arrive in sequential order (0, 1, 2, ... 255, 0, 1, ...)
 // - ANY gap in sequence numbers should trigger a rebirth request after a configurable timeout
 // - This function only validates strict sequential order; timeout-based reordering is handled elsewhere
-func ValidateSequenceNumber(lastSeq, currentSeq uint8) bool {
+func ValidateSequenceNumber(lastSeq uint8, currentSeq uint8) bool {
 	// Calculate expected next sequence with wraparound (0-255)
 	expectedNext := uint8((int(lastSeq) + 1) % 256)
 
@@ -1442,43 +1443,41 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 	// Store original values before any sanitization
 	originalMetricName := sparkplugMsg.MetricName
 	originalDeviceID := sparkplugMsg.DeviceID
-	
+
 	// Try UMH conversion - the converter will handle any necessary sanitization
 	umhMsg, err := converter.DecodeSparkplugToUMH(sparkplugMsg, "_raw")
 	if err != nil {
 		msg.MetaSet("umh_conversion_status", "failed")
 		msg.MetaSet("umh_conversion_error", err.Error())
 		s.logger.Debugf("UMH conversion failed for metric %s: %v", sparkplugMsg.MetricName, err)
-		
+
 		// Provide original values as fallback metadata
-		if sparkplugMsg != nil {
-			msg.MetaSet("spb_device_id", originalDeviceID)
-			msg.MetaSet("spb_metric_name", originalMetricName)
-		}
+		msg.MetaSet("spb_device_id", originalDeviceID)
+		msg.MetaSet("spb_metric_name", originalMetricName)
 		return
 	}
 
 	// Conversion successful - add UMH metadata
 	msg.MetaSet("umh_conversion_status", "success")
-	
+
 	// Build location path without trailing dots when LocationSublevels is empty
 	locationPath := umhMsg.TopicInfo.Level0
 	if len(umhMsg.TopicInfo.LocationSublevels) > 0 {
 		locationPath = locationPath + "." + strings.Join(umhMsg.TopicInfo.LocationSublevels, ".")
 	}
-	
+
 	// The converter has already sanitized all fields, so we can use them directly
 	msg.MetaSet("umh_location_path", locationPath)
 	msg.MetaSet("umh_tag_name", umhMsg.TopicInfo.Name)
 	msg.MetaSet("umh_data_contract", umhMsg.TopicInfo.DataContract)
-	
+
 	// Add virtual path if present
 	// Note: Benthos metadata cannot store empty strings (they become unset)
 	// YAML configs must use .or("") to handle missing virtual_path metadata
 	if umhMsg.TopicInfo.VirtualPath != nil {
 		msg.MetaSet("umh_virtual_path", *umhMsg.TopicInfo.VirtualPath)
 	}
-	
+
 	// Add debug metadata for traceability
 	if originalMetricName != sparkplugMsg.MetricName {
 		msg.MetaSet("spb_original_metric_name", originalMetricName)

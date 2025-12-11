@@ -29,7 +29,7 @@ install: install-tools
 
 .PHONY: clean
 clean:
-	@rm -rf tmp/bin tmp/benthos-*.zip
+	rm -rf tmp/bin tmp/benthos-*.zip .tools/*
 
 .PHONY: run
 run:
@@ -44,6 +44,19 @@ build:
        -X github.com/redpanda-data/benthos/v4/internal/cli.DateBuilt=$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
        -o $(BENTHOS_BIN) \
        cmd/benthos/main.go
+
+.PHONY: lint
+lint: $(LINT)
+	$(LINT) run
+
+.PHONY: lint-fix
+lint-fix: $(LINT)
+	$(LINT) run --fix
+
+.PHONY: fmt
+fmt: $(GOFUMPT) $(GCI)
+	$(GOFUMPT) -w .
+	$(GCI) write --skip-generated -s standard -s default -s 'prefix(github.com/united-manufacturing-hub/benthos-umh)' .
 
 .PHONY: license-fix
 license-fix:

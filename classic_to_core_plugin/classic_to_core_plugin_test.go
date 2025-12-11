@@ -42,7 +42,7 @@ var _ = Describe("ClassicToCoreProcessor", func() {
 
 	When("using a stream builder", func() {
 		DescribeTable("should convert Classic format to Core format",
-			func(config string, inputTopic string, inputPayload map[string]interface{}, expectedResults []map[string]interface{}) {
+			func(config, inputTopic string, inputPayload map[string]interface{}, expectedResults []map[string]interface{}) {
 				builder := service.NewStreamBuilder()
 
 				var msgHandler service.MessageHandlerFunc
@@ -53,7 +53,7 @@ var _ = Describe("ClassicToCoreProcessor", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				var messages []*service.Message
-				err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 					messages = append(messages, msg)
 					return nil
 				})
@@ -643,7 +643,7 @@ var _ = Describe("ClassicToCoreProcessor", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				var messages []*service.Message
-				err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 					messages = append(messages, msg)
 					return nil
 				})
@@ -831,7 +831,7 @@ classic_to_core:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -887,7 +887,7 @@ classic_to_core:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -948,7 +948,7 @@ classic_to_core:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -996,7 +996,7 @@ classic_to_core:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -1039,7 +1039,7 @@ classic_to_core:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -1104,7 +1104,7 @@ classic_to_core:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -1176,7 +1176,7 @@ classic_to_core:
 				Expect(err).NotTo(HaveOccurred())
 
 				var messages []*service.Message
-				err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 					messages = append(messages, msg)
 					return nil
 				})
@@ -1226,7 +1226,7 @@ classic_to_core:
 				Expect(err).NotTo(HaveOccurred())
 
 				var messages []*service.Message
-				err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 					messages = append(messages, msg)
 					return nil
 				})
@@ -1291,7 +1291,7 @@ classic_to_core:
 				Expect(err).NotTo(HaveOccurred())
 
 				var messages []*service.Message
-				err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 					messages = append(messages, msg)
 					return nil
 				})
@@ -1338,7 +1338,7 @@ classic_to_core:
 				Expect(err).NotTo(HaveOccurred())
 
 				var messages []*service.Message
-				err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 					messages = append(messages, msg)
 					return nil
 				})
@@ -1388,7 +1388,7 @@ classic_to_core:
 				Expect(err).NotTo(HaveOccurred())
 
 				var messages []*service.Message
-				err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 					messages = append(messages, msg)
 					return nil
 				})
@@ -1466,7 +1466,7 @@ classic_to_core:
 				Expect(err).NotTo(HaveOccurred())
 
 				var messages []*service.Message
-				err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 					messages = append(messages, msg)
 					return nil
 				})
@@ -1514,7 +1514,7 @@ classic_to_core:
 				Expect(err).NotTo(HaveOccurred())
 
 				var messages []*service.Message
-				err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 					messages = append(messages, msg)
 					return nil
 				})
@@ -1557,7 +1557,7 @@ classic_to_core:
 				Expect(err).NotTo(HaveOccurred())
 
 				var messages []*service.Message
-				err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 					messages = append(messages, msg)
 					return nil
 				})
@@ -1617,7 +1617,7 @@ classic_to_core:
 				Expect(err).NotTo(HaveOccurred())
 
 				var messages []*service.Message
-				err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 					messages = append(messages, msg)
 					return nil
 				})
@@ -1669,7 +1669,7 @@ classic_to_core:
 				Expect(err).NotTo(HaveOccurred())
 
 				var messages []*service.Message
-				err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 					messages = append(messages, msg)
 					return nil
 				})
@@ -1728,7 +1728,7 @@ classic_to_core:
 `)
 				Expect(err).NotTo(HaveOccurred())
 
-				err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+				err = builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
 					return nil
 				})
 				Expect(err).NotTo(HaveOccurred())
@@ -1750,7 +1750,6 @@ classic_to_core:
 				// Close method coverage is achieved through stream shutdown
 				Expect(true).To(BeTrue()) // Test passes if we get here
 			})
-
 		})
 
 		It("should handle edge cases for meta/metadata fields", func() {
@@ -1767,7 +1766,7 @@ classic_to_core:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -1821,7 +1820,7 @@ classic_to_core:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -1875,7 +1874,7 @@ classic_to_core:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -1928,7 +1927,7 @@ classic_to_core:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})

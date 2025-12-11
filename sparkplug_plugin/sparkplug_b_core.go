@@ -24,8 +24,9 @@ import (
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/redpanda-data/benthos/v4/public/service"
-	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/encoding/protojson"
+
+	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
 
 // TopicInfo contains parsed Sparkplug topic information extracted from MQTT topics.
@@ -113,7 +114,7 @@ func (ac *AliasCache) ResolveAliases(deviceKey string, metrics []*sparkplugb.Pay
 		ac.mu.RUnlock()
 		return 0
 	}
-	
+
 	// Create a copy of the alias map to avoid holding the lock during metric updates
 	aliasMapCopy := make(map[uint64]string, len(aliasMap))
 	for k, v := range aliasMap {
@@ -147,7 +148,7 @@ func (ac *AliasCache) Clear() {
 
 // SpbDeviceKey creates a unified device key for Sparkplug B
 // Format: <group>/<edge>/<device> – device == "" for node-level
-func SpbDeviceKey(gid, nid, did string) string {
+func SpbDeviceKey(gid string, nid string, did string) string {
 	if did == "" {
 		return gid + "/" + nid
 	}
@@ -208,7 +209,7 @@ func (tp *TopicParser) ParseSparkplugTopicDetailed(topic string) (string, string
 }
 
 // BuildTopic constructs a Sparkplug topic from components.
-func (tp *TopicParser) BuildTopic(groupID, msgType, edgeNodeID, deviceID string) string {
+func (tp *TopicParser) BuildTopic(groupID string, msgType string, edgeNodeID string, deviceID string) string {
 	if deviceID == "" {
 		return fmt.Sprintf("spBv1.0/%s/%s/%s", groupID, msgType, edgeNodeID)
 	}
@@ -267,7 +268,7 @@ func NewMessageProcessor(logger *service.Logger) *MessageProcessor {
 }
 
 // CreateSplitMessages creates individual messages for each metric.
-func (mp *MessageProcessor) CreateSplitMessages(originalMsg *service.Message, payload *sparkplugb.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
+func (mp *MessageProcessor) CreateSplitMessages(originalMsg *service.Message, payload *sparkplugb.Payload, msgType string, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
 	var batch service.MessageBatch
 
 	for _, metric := range payload.Metrics {
@@ -301,7 +302,7 @@ func (mp *MessageProcessor) CreateSplitMessages(originalMsg *service.Message, pa
 }
 
 // CreateSingleMessage creates a single message with the full payload.
-func (mp *MessageProcessor) CreateSingleMessage(originalMsg *service.Message, payload *sparkplugb.Payload, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
+func (mp *MessageProcessor) CreateSingleMessage(originalMsg *service.Message, payload *sparkplugb.Payload, msgType string, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
 	// Convert to JSON
 	jsonBytes, err := protojson.MarshalOptions{
 		UseProtoNames:   true,
@@ -322,7 +323,7 @@ func (mp *MessageProcessor) CreateSingleMessage(originalMsg *service.Message, pa
 }
 
 // setCommonMetadata sets common metadata fields for Sparkplug messages.
-func (mp *MessageProcessor) setCommonMetadata(msg *service.Message, msgType, deviceKey string, topicInfo *TopicInfo, originalTopic string) {
+func (mp *MessageProcessor) setCommonMetadata(msg *service.Message, msgType string, deviceKey string, topicInfo *TopicInfo, originalTopic string) {
 	msg.MetaSet("sparkplug_msg_type", msgType)
 	msg.MetaSet("sparkplug_device_key", deviceKey)
 	msg.MetaSet("group_id", topicInfo.Group)
@@ -420,7 +421,7 @@ func (sm *SequenceManager) SetSequence(seq uint8) {
 }
 
 // IsSequenceValid checks if a received sequence number is the expected next one.
-func (sm *SequenceManager) IsSequenceValid(expected, received uint8) bool {
+func (sm *SequenceManager) IsSequenceValid(expected uint8, received uint8) bool {
 	// Handle wrap-around case - uint8 automatically wraps at 255
 	expectedNext := expected + 1
 	return received == expectedNext

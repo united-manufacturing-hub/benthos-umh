@@ -18,8 +18,9 @@ import (
 	"maps"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
-	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 	protobuf "google.golang.org/protobuf/proto"
+
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
 // bufferMessage handles the buffering of a processed message and its topic information.
@@ -54,7 +55,6 @@ func (t *TopicBrowserProcessor) bufferMessage(msg *service.Message, event *proto
 			existingTopicInfo.DataContract == topicInfo.DataContract &&
 			existingTopicInfo.Name == topicInfo.Name &&
 			len(existingTopicInfo.LocationSublevels) == len(topicInfo.LocationSublevels) {
-
 			// Check location sublevels
 			locationMatch := true
 			for i, level := range topicInfo.LocationSublevels {
@@ -109,7 +109,6 @@ func (t *TopicBrowserProcessor) bufferMessage(msg *service.Message, event *proto
 			existingTopicInfo.DataContract == topicInfo.DataContract &&
 			existingTopicInfo.Name == topicInfo.Name &&
 			len(existingTopicInfo.LocationSublevels) == len(topicInfo.LocationSublevels) {
-
 			// Check location sublevels and virtual path again (defensive check)
 			canReuseStruct := true
 			for i, level := range topicInfo.LocationSublevels {

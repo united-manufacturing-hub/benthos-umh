@@ -37,12 +37,12 @@ package sparkplug_plugin_test
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
 	sparkplugplugin "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
 
 var _ = Describe("getSequenceNumber - seq=0 implicit behavior", func() {
-
 	Context("when payload.Seq is nil (older devices)", func() {
 		It("should return 0 (implied seq=0 for backwards compatibility)", func() {
 			// Given: Payload with nil seq field (older device behavior)
@@ -108,7 +108,6 @@ var _ = Describe("getSequenceNumber - seq=0 implicit behavior", func() {
 })
 
 var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages", func() {
-
 	Context("when processing NBIRTH with nil seq", func() {
 		It("should treat nil seq as 0 and update node state correctly", func() {
 			// Given: Mock sparkplug input

@@ -297,7 +297,6 @@ func parseTagsIntoMap(items []*CIPReadItem) (map[string]any, error) {
 		}
 
 		itemMap[item.TagName] = v
-
 	}
 
 	// should return nil for now, since not implemented
@@ -348,7 +347,7 @@ func (g *EIPInput) readAndConvertAttribute(item *CIPReadItem) (string, error) {
 	// convert the CIPItem into the corresponding data
 	data, err := item.ConverterFunc(resp)
 	if err != nil {
-		return "", fmt.Errorf("failed to convert CIPItem to corresponding data: %v", err)
+		return "", fmt.Errorf("failed to convert CIPItem to corresponding data: %w", err)
 	}
 
 	// convert the data into string

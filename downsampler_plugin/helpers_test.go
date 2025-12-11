@@ -71,7 +71,7 @@ func SetupDownsamplerStream(config string) (service.MessageHandlerFunc, *[]*serv
 	Expect(err).NotTo(HaveOccurred())
 
 	var messages []*service.Message
-	err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+	err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 		messages = append(messages, msg)
 		return nil
 	})
@@ -327,7 +327,7 @@ func RunStreamTestCase(testCase StreamTestCase) {
 		for _, shouldContain := range expectedMsg.ShouldContain {
 			found := false
 			// Check all metadata keys for the substring
-			(*messages)[i].MetaWalk(func(key, value string) error {
+			(*messages)[i].MetaWalk(func(_, value string) error {
 				if strings.Contains(value, shouldContain) {
 					found = true
 				}

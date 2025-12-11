@@ -21,11 +21,11 @@ import (
 	"time"
 
 	"github.com/gopcua/opcua/ua"
-	"github.com/redpanda-data/benthos/v4/public/service"
-	. "github.com/united-manufacturing-hub/benthos-umh/opcua_plugin"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/redpanda-data/benthos/v4/public/service"
+
+	. "github.com/united-manufacturing-hub/benthos-umh/opcua_plugin"
 )
 
 // These are tests which only use the KepServer itself and none of the underlying
@@ -260,7 +260,7 @@ var _ = Describe("Test underlying OPC-clients", FlakeAttempts(3), func() {
 		Expect(resp.Results[0].Status).To(Equal(ua.StatusOK))
 
 		namespaces, ok := resp.Results[0].Value.Value().([]string)
-		Expect(ok).To(Equal(true))
+		Expect(ok).To(BeTrue())
 
 		if !isNamespaceAvailable {
 			Expect(namespaces).NotTo(ContainElement(namespace))
@@ -328,10 +328,11 @@ func validateStaticAndChangingData(ctx context.Context, input *OPCUAInput, expec
 		messageBatch2    service.MessageBatch
 		storedMessage    any
 		assignableNumber json.Number = "10.0"
+		err              error
 	)
 	// read the first message batch
 	Eventually(func() (int, error) {
-		messageBatch, _, err := input.ReadBatch(ctx)
+		messageBatch, _, err = input.ReadBatch(ctx)
 		return len(messageBatch), err
 	}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(len(input.NodeIDs)))
 
@@ -354,7 +355,7 @@ func validateStaticAndChangingData(ctx context.Context, input *OPCUAInput, expec
 	// read a second message batch if we want to check on data changes
 	if isChangingValue {
 		Eventually(func() (int, error) {
-			messageBatch2, _, err := input.ReadBatch(ctx)
+			messageBatch2, _, err = input.ReadBatch(ctx)
 			return len(messageBatch2), err
 		}, 30*time.Second, 100*time.Millisecond).WithContext(ctx).Should(Equal(len(input.NodeIDs)))
 

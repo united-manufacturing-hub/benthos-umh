@@ -23,7 +23,6 @@ import (
 // Set TEST_DOWNSAMPLER=1 to enable comprehensive edge case testing.
 
 var _ = Describe("Downsampler Edge Cases", Ordered, func() {
-
 	Describe("Idle Timer Behavior", func() {
 		Context("Algorithm Max Time Behavior (New Message Triggers Flush)", func() {
 			DescribeTable("should flush previous message when new message exceeds max_time",

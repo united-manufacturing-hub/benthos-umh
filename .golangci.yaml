@@ -1,0 +1,162 @@
+# Copyright 2025 UMH Systems GmbH
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+version: "2"
+
+formatters:
+  enable:
+    - gci
+    - gofumpt
+
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/united-manufacturing-hub/benthos-umh)
+    gofumpt:
+      extra-rules: false
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+linters:
+  enable:
+    - errcheck
+    - errorlint
+    - exhaustive
+    - ginkgolinter
+    - govet
+    - ineffassign
+    - makezero
+    - misspell
+    - nolintlint
+    - nonamedreturns
+    - predeclared
+    - reassign
+    - revive
+    - staticcheck
+    - testifylint
+    - unconvert
+    - unused
+    - usestdlibvars
+    - wastedassign
+    - whitespace
+
+  exclusions:
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - errcheck
+        path: _test\.go$
+      - linters:
+          - revive
+        path: _test\.go$
+        text: "dot-imports"
+      - linters:
+          - decorder
+        path: _test\.go$
+      - linters:
+          - govet
+        path: _test\.go$
+        text: "shadow"
+    warn-unused: true
+
+  settings:
+    decorder:
+      disable-dec-order-check: false
+      disable-init-func-first-check: false
+    errcheck:
+      check-type-assertions: false
+      check-blank: false
+    errorlint:
+      asserts: true
+      comparison: true
+      errorf: true
+      errorf-multi: true
+    exhaustive:
+      default-signifies-exhaustive: true
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+    misspell:
+      ignore-rules:
+        - cancelled
+      locale: US
+    nolintlint:
+      require-specific: true
+    revive:
+      confidence: 0.8
+      rules:
+        - name: blank-imports
+          disabled: true
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: early-return
+          arguments:
+            - preserveScope
+        - name: empty-block
+        - name: enforce-repeated-arg-type-style
+          arguments:
+            - "full"
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+          arguments:
+            - preserveScope
+        - name: time-naming
+        - name: unexported-return
+        - name: unreachable-code
+        - name: unused-parameter
+        # - name: unused-receiver
+        # - name: use-any
+        # - name: use-errors-new
+        - name: var-declaration
+    staticcheck:
+      checks:
+        - all
+        - -ST1003
+        - -ST1005
+    testifylint:
+      enable-all: true
+
+output:
+  formats:
+    text:
+      path: stdout
+      print-linter-name: true
+      print-issued-lines: true
+  show-stats: false
+
+run:
+  allow-parallel-runners: true
+  concurrency: 4
+  modules-download-mode: readonly
+  issues-exit-code: 1
+  tests: true
+  timeout: 10m

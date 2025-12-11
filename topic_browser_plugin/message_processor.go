@@ -28,6 +28,7 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )

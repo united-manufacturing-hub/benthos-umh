@@ -74,8 +74,8 @@ var _ = Describe("MonitorBatched recursive retry bug reproduction", Label("recur
 			// Verify batch calculation
 			batches := CalculateBatches(totalNodes, maxBatchSize)
 			Expect(batches).To(HaveLen(2), "Should split 2000 nodes into 2 batches")
-			Expect(batches[0].End - batches[0].Start).To(Equal(1000), "Batch 1 should be 1000 nodes")
-			Expect(batches[1].End - batches[1].Start).To(Equal(1000), "Batch 2 should be 1000 nodes")
+			Expect(batches[0].End-batches[0].Start).To(Equal(1000), "Batch 1 should be 1000 nodes")
+			Expect(batches[1].End-batches[1].Start).To(Equal(1000), "Batch 2 should be 1000 nodes")
 
 			// =================================================================
 			// TRACK MONITOR CALLS
@@ -97,7 +97,7 @@ var _ = Describe("MonitorBatched recursive retry bug reproduction", Label("recur
 			//   - Nodes 0-1999: All StatusOK (no filter applied this time)
 
 			// Simulated Monitor call behavior
-			simulateMonitorCall := func(nodeList []NodeDef, shouldTrial bool) (monitoredCount int, duplicateNodeIDs []string) {
+			simulateMonitorCall := func(nodeList []NodeDef, _ bool) (int, []string) {
 				monitorCallCount++
 				monitored := 0
 				var duplicates []string
@@ -176,7 +176,7 @@ var _ = Describe("MonitorBatched recursive retry bug reproduction", Label("recur
 
 			// 3. FIXED: Should have NO duplicate NodeIDs
 			// The fix ensures we only retry from the failed node onwards
-			Expect(duplicates2).To(HaveLen(0), "FIXED: Should have NO duplicate NodeIDs")
+			Expect(duplicates2).To(BeEmpty(), "FIXED: Should have NO duplicate NodeIDs")
 
 			// 4. Verify no duplicate pattern
 			uniqueNodeIDs := make(map[string]bool)
@@ -188,7 +188,7 @@ var _ = Describe("MonitorBatched recursive retry bug reproduction", Label("recur
 				uniqueNodeIDs[nodeID] = true
 			}
 			Expect(duplicateCount).To(Equal(0), "FIXED: Should have NO duplicate entries in tracking")
-			Expect(len(uniqueNodeIDs)).To(Equal(2000), "Should have exactly 2000 unique NodeIDs")
+			Expect(uniqueNodeIDs).To(HaveLen(2000), "Should have exactly 2000 unique NodeIDs")
 
 			// =================================================================
 			// DOCUMENTED EXPECTED BEHAVIOR (after fix)
@@ -281,7 +281,7 @@ var _ = Describe("MonitorBatched recursive retry bug reproduction", Label("recur
 			}
 
 			Expect(duplicateCount).To(Equal(0), "CORRECT: No duplicates after fix")
-			Expect(len(uniqueNodeIDs)).To(Equal(2000), "CORRECT: All 2000 unique nodes monitored")
+			Expect(uniqueNodeIDs).To(HaveLen(2000), "CORRECT: All 2000 unique nodes monitored")
 
 			GinkgoWriter.Printf("\n=== CORRECT BEHAVIOR DOCUMENTED ===\n")
 			GinkgoWriter.Printf("Monitor calls: %d\n", monitorCallCount)
@@ -332,7 +332,7 @@ var _ = Describe("MonitorBatched recursive retry bug reproduction", Label("recur
 			// FIXED ASSERTIONS
 			Expect(monitorCallCount).To(Equal(3), "Should have 3 calls: batch1 + batch2 + recursive")
 			Expect(totalMonitoredItems).To(Equal(2950), "FIXED: 1000 + 1000 + 950 = 2950 (no duplicates)")
-			Expect(len(recursiveNodes)).To(Equal(950), "FIXED: Recursive call should only process 950 remaining nodes")
+			Expect(recursiveNodes).To(HaveLen(950), "FIXED: Recursive call should only process 950 remaining nodes")
 
 			// Fixed behavior:
 			// CALL 3 processes nodes[1050:] (950 nodes)
@@ -372,4 +372,3 @@ var _ = Describe("MonitorBatched recursive retry bug reproduction", Label("recur
 		})
 	})
 })
-

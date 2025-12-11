@@ -90,6 +90,10 @@ func opcuaOutputConfig() *service.ConfigSpec {
 
 // newOPCUAOutput creates a new OPC UA output based on the provided configuration
 func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.Output, error) {
+	var (
+		nodeIDInterp, dataTypeInterp *service.InterpolatedString
+		valueFrom                    string
+	)
 	// Parse the shared connection configuration
 	conn, err := ParseConnectionConfig(conf, mgr)
 	if err != nil {
@@ -115,7 +119,7 @@ func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		mapConf := nodeMappingsConf[i]
 
 		// Get nodeId as InterpolatedString
-		nodeIDInterp, err := mapConf.FieldInterpolatedString("nodeId")
+		nodeIDInterp, err = mapConf.FieldInterpolatedString("nodeId")
 		if err != nil {
 			return nil, fmt.Errorf("nodeId is required in node mapping %d: %w", i, err)
 		}
@@ -125,13 +129,13 @@ func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		staticNodeID, exists := nodeIDInterp.Static()
 		if exists && staticNodeID != "" {
 			// Validate static nodeId format
-			if _, err := ua.ParseNodeID(staticNodeID); err != nil {
-				return nil, fmt.Errorf("invalid nodeId format in node mapping %d: %s. Expected format examples: 'ns=2;s=MyVariable', 'i=85', 'ns=3;i=1000'. Error: %v", i, staticNodeID, err)
+			if _, err = ua.ParseNodeID(staticNodeID); err != nil {
+				return nil, fmt.Errorf("invalid nodeId format in node mapping %d: %s. Expected format examples: 'ns=2;s=MyVariable', 'i=85', 'ns=3;i=1000'. Error: %w", i, staticNodeID, err)
 			}
 		}
 
 		// Get valueFrom and validate it
-		valueFrom, err := mapConf.FieldString("valueFrom")
+		valueFrom, err = mapConf.FieldString("valueFrom")
 		if err != nil {
 			return nil, fmt.Errorf("valueFrom is required in node mapping %d: %w", i, err)
 		}
@@ -140,7 +144,7 @@ func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		}
 
 		// Get dataType as InterpolatedString
-		dataTypeInterp, err := mapConf.FieldInterpolatedString("dataType")
+		dataTypeInterp, err = mapConf.FieldInterpolatedString("dataType")
 		if err != nil {
 			return nil, fmt.Errorf("dataType is required in node mapping %d: %w", i, err)
 		}
@@ -263,19 +267,19 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 		}
 
 		// Try to get the value from the structured content
-		if contentMap, ok := content.(map[string]interface{}); ok {
-			if val, exists := contentMap[mapping.ValueFrom]; exists {
-				writes = append(writes, nodeWrite{
-					nodeID:   nodeID,
-					value:    val,
-					dataType: dataType,
-				})
-			} else {
-				return fmt.Errorf("field %s not found in message", mapping.ValueFrom)
-			}
-		} else {
+		contentMap, ok := content.(map[string]interface{})
+		if !ok {
 			return fmt.Errorf("message content is not a map")
 		}
+		val, exists := contentMap[mapping.ValueFrom]
+		if !exists {
+			return fmt.Errorf("field %s not found in message", mapping.ValueFrom)
+		}
+		writes = append(writes, nodeWrite{
+			nodeID:   nodeID,
+			value:    val,
+			dataType: dataType,
+		})
 	}
 
 	// Write values to OPC UA nodes
@@ -342,7 +346,7 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 			}
 
 			if resp.Results[0] != ua.StatusOK {
-				writeErr = fmt.Errorf("write failed for node %s with status %v (attempt %d/%d)",
+				writeErr = fmt.Errorf("write failed for node %s with status %w (attempt %d/%d)",
 					write.nodeID, resp.Results[0], attempt, o.MaxWriteAttempts)
 				o.Log.Warnf("%v", writeErr)
 				if attempt < o.MaxWriteAttempts {
@@ -803,7 +807,7 @@ func (o *OPCUAOutput) verifyWrite(ctx context.Context, nodeID *ua.NodeID, expect
 	}
 
 	if resp.Results[0].Status != ua.StatusOK {
-		return fmt.Errorf("read-back failed with status %v", resp.Results[0].Status)
+		return fmt.Errorf("read-back failed with status %w", resp.Results[0].Status)
 	}
 
 	// Compare the values
@@ -815,7 +819,7 @@ func (o *OPCUAOutput) verifyWrite(ctx context.Context, nodeID *ua.NodeID, expect
 }
 
 // variantEqual compares two OPC UA variants for equality
-func variantEqual(v1, v2 *ua.Variant) bool {
+func variantEqual(v1 *ua.Variant, v2 *ua.Variant) bool {
 	// Check if either variant is nil
 	if v1 == nil || v2 == nil {
 		return v1 == v2
@@ -834,7 +838,7 @@ func init() {
 	err := service.RegisterOutput(
 		"opcua",
 		opcuaOutputConfig(),
-		func(conf *service.ParsedConfig, mgr *service.Resources) (out service.Output, maxInFlight int, err error) {
+		func(conf *service.ParsedConfig, mgr *service.Resources) (service.Output, int, error) {
 			output, err := newOPCUAOutput(conf, mgr)
 			if err != nil {
 				return nil, 0, err

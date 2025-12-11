@@ -30,7 +30,7 @@ var _ = Describe("Raw Kafka Message Processing", func() {
 
 			// Process the message
 			kafkaMsg, err := messageToRawKafkaMsg(msg)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(kafkaMsg).NotTo(BeNil())
 
 			// Verify headers
@@ -48,7 +48,7 @@ var _ = Describe("Raw Kafka Message Processing", func() {
 
 			// Process the message
 			kafkaMsg, err := messageToRawKafkaMsg(msg)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(kafkaMsg).NotTo(BeNil())
 
 			// Verify headers are empty
@@ -65,7 +65,7 @@ var _ = Describe("Raw Kafka Message Processing", func() {
 
 			// Process the message
 			kafkaMsg, err := messageToRawKafkaMsg(msg)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(kafkaMsg).NotTo(BeNil())
 
 			// Verify headers
@@ -85,7 +85,7 @@ var _ = Describe("Raw Kafka Message Processing", func() {
 
 			// Process the message
 			kafkaMsg, err := messageToRawKafkaMsg(msg)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(kafkaMsg).NotTo(BeNil())
 
 			// Verify headers
@@ -106,7 +106,7 @@ var _ = Describe("Raw Kafka Message Processing", func() {
 
 			// Process the message
 			kafkaMsg, err := messageToRawKafkaMsg(msg)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(kafkaMsg).NotTo(BeNil())
 
 			// Verify headers

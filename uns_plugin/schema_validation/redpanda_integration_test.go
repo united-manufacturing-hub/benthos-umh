@@ -27,6 +27,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/redpanda"
+
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 )
 
@@ -185,7 +186,7 @@ func (c *RedpandaSchemaRegistryClient) Close() {
 	}
 }
 
-func (c *RedpandaSchemaRegistryClient) RegisterSchema(subject string, version int, schema string) error {
+func (c *RedpandaSchemaRegistryClient) RegisterSchema(subject string, _ int, schema string) error {
 	// Schema must be properly escaped as a JSON string
 	// Create the schema registration payload with properly escaped JSON
 	payload := map[string]interface{}{
@@ -200,7 +201,7 @@ func (c *RedpandaSchemaRegistryClient) RegisterSchema(subject string, version in
 
 	// Register the schema with a specific version
 	url := fmt.Sprintf("%s/subjects/%s/versions", c.baseURL, subject)
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(payloadBytes))
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(payloadBytes))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -213,7 +214,7 @@ func (c *RedpandaSchemaRegistryClient) RegisterSchema(subject string, version in
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		// Read response body for debugging
 		bodyBytes := make([]byte, 1024)
 		resp.Body.Read(bodyBytes)
@@ -227,7 +228,7 @@ func (c *RedpandaSchemaRegistryClient) WaitForReady() error {
 	ready := false
 	Eventually(func() bool {
 		resp, err := c.httpClient.Get(c.baseURL + "/subjects")
-		if err == nil && resp.StatusCode == 200 {
+		if err == nil && resp.StatusCode == http.StatusOK {
 			resp.Body.Close()
 			ready = true
 			return true
@@ -252,7 +253,7 @@ func (c *RedpandaSchemaRegistryClient) DeleteAllSubjects() error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to get subjects, status: %d", resp.StatusCode)
 	}
 
@@ -264,7 +265,7 @@ func (c *RedpandaSchemaRegistryClient) DeleteAllSubjects() error {
 	// Delete each subject (hard delete)
 	for _, subject := range subjects {
 		// First do a soft delete
-		req, err := http.NewRequest("DELETE", c.baseURL+"/subjects/"+subject, nil)
+		req, err := http.NewRequest(http.MethodDelete, c.baseURL+"/subjects/"+subject, nil)
 		if err != nil {
 			continue
 		}
@@ -275,7 +276,7 @@ func (c *RedpandaSchemaRegistryClient) DeleteAllSubjects() error {
 		resp.Body.Close()
 
 		// Then do a hard delete to permanently remove
-		req, err = http.NewRequest("DELETE", c.baseURL+"/subjects/"+subject+"?permanent=true", nil)
+		req, err = http.NewRequest(http.MethodDelete, c.baseURL+"/subjects/"+subject+"?permanent=true", nil)
 		if err != nil {
 			continue
 		}
@@ -351,7 +352,7 @@ func setupRedpandaSchemas() error {
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode != 200 {
+		if resp.StatusCode != http.StatusOK {
 			return false
 		}
 
@@ -442,7 +443,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 		It("should successfully validate sensor data v1", func() {
 			// Create UNS topic - note that the topic still uses the original contract format
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			// Create valid payload - raw payload that will be wrapped by validator
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
@@ -458,7 +459,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 
 			Expect(result.SchemaCheckPassed).To(BeTrue())
 			Expect(result.SchemaCheckBypassed).To(BeFalse())
-			Expect(result.Error).To(BeNil())
+			Expect(result.Error).ToNot(HaveOccurred())
 			Expect(result.ContractName).To(Equal("_sensor_data"))
 			Expect(result.ContractVersion).To(Equal(uint64(1)))
 		})
@@ -466,7 +467,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 		It("should reject invalid virtual path for sensor data v1", func() {
 			// Load schema first by validating a valid message
 			validTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			validPayload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			// Trigger schema load if not already loaded
@@ -481,7 +482,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 
 			// Now test invalid virtual path
 			invalidTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.humidity")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			// Invalid payload - raw payload for humidity topic (which is not allowed in v1)
 			invalidPayload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
@@ -495,7 +496,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 		It("should validate sensor data v2 with expanded virtual paths", func() {
 			// Test temperature (allowed in both v1 and v2)
 			tempTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v2.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			result := validator.Validate(tempTopic, payload)
@@ -516,7 +517,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 
 			// Test humidity (allowed in v2 but not v1)
 			humidityTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v2.humidity")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			humidityPayload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			result = validator.Validate(humidityTopic, humidityPayload)
@@ -525,7 +526,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 
 			// Test pressure (allowed in v2 but not v1)
 			pressureTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v2.pressure")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			pressurePayload := []byte(`{"timestamp_ms": 1719859200000, "value": 1013.25}`)
 
 			result = validator.Validate(pressureTopic, pressurePayload)
@@ -536,7 +537,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 		It("should validate pump data with complex virtual paths", func() {
 			// Test vibration.x-axis
 			xAxisTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data_v1.vibration.x-axis")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 0.5}`)
 
 			result := validator.Validate(xAxisTopic, payload)
@@ -557,7 +558,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 
 			// Test vibration.y-axis
 			yAxisTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data_v1.vibration.y-axis")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			yAxisPayload := []byte(`{"timestamp_ms": 1719859200000, "value": 0.5}`)
 
 			result = validator.Validate(yAxisTopic, yAxisPayload)
@@ -565,7 +566,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 
 			// Test count
 			countTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data_v1.count")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			countPayload := []byte(`{"timestamp_ms": 1719859200000, "value": 1542}`)
 
 			result = validator.Validate(countTopic, countPayload)
@@ -575,7 +576,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 		It("should validate string data types correctly", func() {
 			// Test serialNumber
 			serialTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._string_data_v1.serialNumber")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": "SN123456789"}`)
 
 			Eventually(func() bool {
@@ -589,7 +590,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 
 			// Test status
 			statusTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._string_data_v1.status")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			statusPayload := []byte(`{"timestamp_ms": 1719859200000, "value": "RUNNING"}`)
 
 			result = validator.Validate(statusTopic, statusPayload)
@@ -599,7 +600,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 		It("should reject invalid payload formats", func() {
 			// Load schema first
 			validTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			validPayload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			Eventually(func() bool {
@@ -626,7 +627,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 		It("should reject wrong data types for string fields", func() {
 			// Load schema first
 			validTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._string_data_v1.serialNumber")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			validPayload := []byte(`{"timestamp_ms": 1719859200000, "value": "SN123456789"}`)
 
 			Eventually(func() bool {
@@ -647,7 +648,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 		It("should handle non-existent schemas gracefully", func() {
 			// Test with a contract that doesn't exist
 			nonExistentTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._non_existent_contract_v1.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			result := validator.Validate(nonExistentTopic, payload)
@@ -667,20 +668,20 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 		It("should handle unversioned contracts gracefully", func() {
 			// Test with an unversioned contract
 			unversionedTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._unversioned_contract.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			result := validator.Validate(unversionedTopic, payload)
 			Expect(result.SchemaCheckPassed).To(BeFalse())
 			Expect(result.SchemaCheckBypassed).To(BeTrue())
 			Expect(result.BypassReason).To(ContainSubstring("unversioned contract '_unversioned_contract' - bypassing validation (no latest fetching)"))
-			Expect(result.Error).To(BeNil())
+			Expect(result.Error).ToNot(HaveOccurred())
 		})
 
 		It("should validate pump data with string values", func() {
 			// Test serialNumber (string value)
 			serialTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data_v1.serialNumber")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			serialPayload := []byte(`{"timestamp_ms": 1719859200000, "value": "P001-SN123456789"}`)
 
 			result := validator.Validate(serialTopic, serialPayload)
@@ -698,7 +699,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 
 			// Test status (string value)
 			statusTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_data_v1.status")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			statusPayload := []byte(`{"timestamp_ms": 1719859200000, "value": "RUNNING"}`)
 
 			result = validator.Validate(statusTopic, statusPayload)
@@ -722,7 +723,7 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 
 			// Create topic that will trigger foreground fetch
 			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._sensor_data_v1.temperature")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
 
 			// First validation should not bypass

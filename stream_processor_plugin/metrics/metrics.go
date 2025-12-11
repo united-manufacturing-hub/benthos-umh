@@ -114,7 +114,7 @@ func (m *ProcessorMetrics) LogBatchProcessing(processingTime time.Duration) {
 }
 
 // UpdateActiveMetrics updates gauge metrics for active resources
-func (m *ProcessorMetrics) UpdateActiveMetrics(totalMappings, totalVariables int64) {
+func (m *ProcessorMetrics) UpdateActiveMetrics(totalMappings int64, totalVariables int64) {
 	m.ActiveMappings.Set(totalMappings)
 	m.ActiveVariables.Set(totalVariables)
 }

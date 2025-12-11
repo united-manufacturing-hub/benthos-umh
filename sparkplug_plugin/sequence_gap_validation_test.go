@@ -65,14 +65,13 @@ package sparkplug_plugin_test
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
 	sparkplugplugin "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
 
 var _ = Describe("Sequence Gap Validator - Message Drop Investigation (ENG-3720)", func() {
-
 	Context("when ValidateSequenceNumber detects a sequence gap", func() {
-
 		It("should NOT drop the message - validation failure does not prevent processing", func() {
 			// Given: NDATA message with sequence GAP
 			// Simulating: expected seq=5 (after previous seq=4), but received seq=10 (gap of 5)
@@ -205,7 +204,6 @@ var _ = Describe("Sequence Gap Validator - Message Drop Investigation (ENG-3720)
 	})
 
 	Context("ValidateSequenceNumber function behavior", func() {
-
 		It("should return false for sequence gaps but not prevent message processing", func() {
 			// Direct test of ValidateSequenceNumber function
 			// This proves the validator ONLY returns true/false, it does not drop messages

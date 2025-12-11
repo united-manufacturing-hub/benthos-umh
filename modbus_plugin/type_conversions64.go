@@ -49,7 +49,7 @@ func endiannessConverter64(byteOrder string) (convert64, error) {
 }
 
 // I64 - no scale
-func determineConverterI64(outType, byteOrder string) (converterFunc, error) {
+func determineConverterI64(outType string, byteOrder string) (converterFunc, error) {
 	tohost, err := endiannessConverter64(byteOrder)
 	if err != nil {
 		return nil, err
@@ -75,7 +75,7 @@ func determineConverterI64(outType, byteOrder string) (converterFunc, error) {
 }
 
 // U64 - no scale
-func determineConverterU64(outType, byteOrder string) (converterFunc, error) {
+func determineConverterU64(outType string, byteOrder string) (converterFunc, error) {
 	tohost, err := endiannessConverter64(byteOrder)
 	if err != nil {
 		return nil, err
@@ -99,7 +99,7 @@ func determineConverterU64(outType, byteOrder string) (converterFunc, error) {
 }
 
 // F64 - no scale
-func determineConverterF64(outType, byteOrder string) (converterFunc, error) {
+func determineConverterF64(outType string, byteOrder string) (converterFunc, error) {
 	tohost, err := endiannessConverter64(byteOrder)
 	if err != nil {
 		return nil, err
@@ -116,7 +116,7 @@ func determineConverterF64(outType, byteOrder string) (converterFunc, error) {
 }
 
 // I64 - scale
-func determineConverterI64Scale(outType, byteOrder string, scale float64) (converterFunc, error) {
+func determineConverterI64Scale(outType string, byteOrder string, scale float64) (converterFunc, error) {
 	tohost, err := endiannessConverter64(byteOrder)
 	if err != nil {
 		return nil, err
@@ -148,7 +148,7 @@ func determineConverterI64Scale(outType, byteOrder string, scale float64) (conve
 }
 
 // U64 - scale
-func determineConverterU64Scale(outType, byteOrder string, scale float64) (converterFunc, error) {
+func determineConverterU64Scale(outType string, byteOrder string, scale float64) (converterFunc, error) {
 	tohost, err := endiannessConverter64(byteOrder)
 	if err != nil {
 		return nil, err
@@ -180,7 +180,7 @@ func determineConverterU64Scale(outType, byteOrder string, scale float64) (conve
 }
 
 // F64 - scale
-func determineConverterF64Scale(outType, byteOrder string, scale float64) (converterFunc, error) {
+func determineConverterF64Scale(outType string, byteOrder string, scale float64) (converterFunc, error) {
 	tohost, err := endiannessConverter64(byteOrder)
 	if err != nil {
 		return nil, err

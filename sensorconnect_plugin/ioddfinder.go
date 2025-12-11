@@ -21,16 +21,17 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"math"
 	"math/rand"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
-func (s *SensorConnectInput) FetchAndStoreIoDDFile(ctx context.Context, vendorId int64, deviceId int) (err error) {
+func (s *SensorConnectInput) FetchAndStoreIoDDFile(ctx context.Context, vendorId int64, deviceId int) error {
 	// download iodd file
 	s.logger.Infof("Downloading iodd file for vendorId: %v, deviceId: %v", vendorId, deviceId)
 	fileMap, err := s.GetIoddFile(ctx, vendorId, deviceId)
@@ -60,25 +61,23 @@ func (s *SensorConnectInput) FetchAndStoreIoDDFile(ctx context.Context, vendorId
 	}
 
 	s.IoDeviceMap.Store(fileMapKey, payload)
-	return
+	return nil
 }
 
 // GetIoddFile downloads a ioddfiles from ioddfinder and returns a list of valid files for the request (This can be multiple, if the vendor has multiple languages or versions published)
-func (s *SensorConnectInput) GetIoddFile(ctx context.Context, vendorId int64, deviceId int) (files []IoDDFile, err error) {
-	var body []byte
-	body, err = s.GetUrlWithRetry(ctx,
+func (s *SensorConnectInput) GetIoddFile(ctx context.Context, vendorId int64, deviceId int) ([]IoDDFile, error) {
+	body, err := s.GetUrlWithRetry(ctx,
 		fmt.Sprintf(
 			// "https://ioddfinder.io-link.com/api/drivers?page=0&size=2000&status=APPROVED&status=UPLOADED&deviceIdString=%d",
 			"%s/drivers?page=0&size=2000&status=APPROVED&status=UPLOADED&deviceIdString=%d",
 			s.IODDAPI,
 			deviceId))
 	if err != nil {
-		return
+		return nil, err
 	}
-	var ioddfinder Ioddfinder
-	ioddfinder, err = UnmarshalIoddfinder(body)
+	ioddfinder, err := UnmarshalIoddfinder(body)
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	validIds := make([]int, 0)
@@ -90,16 +89,14 @@ func (s *SensorConnectInput) GetIoddFile(ctx context.Context, vendorId int64, de
 	}
 
 	if len(validIds) == 0 {
-		err = fmt.Errorf("No IODD file for vendorID [%d] and deviceID [%d]", vendorId, deviceId)
-		return
+		return nil, fmt.Errorf("No IODD file for vendorID [%d] and deviceID [%d]", vendorId, deviceId)
 	}
 
-	files = make([]IoDDFile, 0)
+	files := make([]IoDDFile, 0)
 
 	for _, id := range validIds {
 		ioddId := ioddfinder.Content[id].IoddID
-		var ioddzip []byte
-		ioddzip, err = s.GetUrlWithRetry(ctx,
+		ioddzip, err := s.GetUrlWithRetry(ctx,
 			fmt.Sprintf(
 				//"https://ioddfinder.io-link.com/api/vendors/%d/iodds/%d/files/zip/rated",
 				"%s/vendors/%d/iodds/%d/files/zip/rated",
@@ -107,20 +104,18 @@ func (s *SensorConnectInput) GetIoddFile(ctx context.Context, vendorId int64, de
 				vendorId,
 				ioddId))
 		if err != nil {
-			return
+			return nil, err
 		}
-		var zipReader *zip.Reader
-		zipReader, err = zip.NewReader(bytes.NewReader(ioddzip), int64(len(ioddzip)))
+		zipReader, err := zip.NewReader(bytes.NewReader(ioddzip), int64(len(ioddzip)))
 		if err != nil {
-			return
+			return nil, err
 		}
 
 		for _, zipFile := range zipReader.File {
 			if strings.HasSuffix(zipFile.Name, "xml") {
-				var file []byte
-				file, err = readZipFile(zipFile)
+				file, err := readZipFile(zipFile)
 				if err != nil {
-					return
+					return nil, err
 				}
 				files = append(
 					files, IoDDFile{
@@ -132,7 +127,7 @@ func (s *SensorConnectInput) GetIoddFile(ctx context.Context, vendorId int64, de
 		}
 	}
 
-	return
+	return files, nil
 }
 
 // IoDDFile is a helper structure with the name, file and additional context of the iodd file
@@ -164,7 +159,7 @@ func (s *SensorConnectInput) GetUrlWithRetry(ctx context.Context, url string) ([
 	maxBackoff := 60 * time.Second
 
 	for i := 0; i < maxRetries; i++ {
-		body, err, status = s.GetUrl(ctx, url)
+		body, status, err = s.GetUrl(ctx, url)
 		if err != nil {
 			s.logger.Errorf("Error fetching URL %s: %v", url, err)
 			return nil, err
@@ -188,33 +183,33 @@ func (s *SensorConnectInput) GetUrlWithRetry(ctx context.Context, url string) ([
 }
 
 // GetUrl executes a GET request to the specified URL and returns the response body and status code.
-func (s *SensorConnectInput) GetUrl(ctx context.Context, url string) ([]byte, error, int) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+func (s *SensorConnectInput) GetUrl(ctx context.Context, url string) ([]byte, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		s.logger.Warnf("Failed to create GET request for URL %s: %v", url, err)
-		return nil, err, 0
+		return nil, 0, err
 	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		s.logger.Debugf("No response from URL %s: %v", url, err)
-		return nil, err, 0
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
 	status := resp.StatusCode
 	if status != http.StatusOK {
 		s.logger.Debugf("Received non-200 status code %d for URL %s", status, url)
-		return nil, nil, status
+		return nil, status, nil
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		s.logger.Errorf("Failed to read response body from URL %s: %v", url, err)
-		return nil, err, status
+		return nil, status, err
 	}
 
-	return body, nil, status
+	return body, status, nil
 }
 
 func UnmarshalIoddfinder(data []byte) (Ioddfinder, error) {
@@ -225,17 +220,16 @@ func UnmarshalIoddfinder(data []byte) (Ioddfinder, error) {
 }
 
 func (r *Ioddfinder) Marshal() ([]byte, error) {
-
 	return json.Marshal(r)
 }
 
 // GetBackoffTime calculates the backoff duration based on the attempt number.
 // It uses exponential backoff with jitter, bounded by min and max durations.
-func GetBackoffTime(attempt int64, min, max time.Duration) time.Duration {
+func GetBackoffTime(attempt int64, minDuration time.Duration, maxDuration time.Duration) time.Duration {
 	exponent := float64(attempt)
-	backoff := time.Duration(float64(min) * math.Pow(2, exponent))
-	if backoff > max {
-		backoff = max
+	backoff := time.Duration(float64(minDuration) * math.Pow(2, exponent))
+	if backoff > maxDuration {
+		backoff = maxDuration
 	}
 	// Add jitter: random duration between 0 and backoff
 	jitter := time.Duration(rand.Int63n(int64(backoff)))

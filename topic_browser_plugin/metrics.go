@@ -34,7 +34,7 @@ func (t *TopicBrowserProcessor) updateAdaptiveMetrics() {
 	// Update active emit interval gauge (convert seconds to milliseconds as int64)
 	if controller != nil && t.activeIntervalGauge != nil {
 		currentInterval := controller.GetCurrentInterval()
-		intervalMs := int64(currentInterval.Milliseconds())
+		intervalMs := currentInterval.Milliseconds()
 		t.activeIntervalGauge.Set(intervalMs)
 	}
 

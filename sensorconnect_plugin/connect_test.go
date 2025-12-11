@@ -25,18 +25,17 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
 	"github.com/united-manufacturing-hub/benthos-umh/sensorconnect_plugin"
 )
 
 var _ = Describe("SensorConnect Plugin Unittests", func() {
-
 	var (
 		testServer *httptest.Server
 		address    string
 	)
 
 	BeforeEach(func() {
-
 		endpoint := os.Getenv("TEST_DEBUG_IFM_ENDPOINT")
 
 		// Check if environment variables are set
@@ -94,7 +93,6 @@ var _ = Describe("SensorConnect Plugin Unittests", func() {
 	Describe("GetDeviceInformation", func() {
 		Context("when the device responds successfully", func() {
 			It("should successfully retrieve device information and validate cid", func() {
-
 				// Initialize SensorConnectInput
 				input := &sensorconnect_plugin.SensorConnectInput{
 					DeviceAddress: address,
@@ -111,14 +109,13 @@ var _ = Describe("SensorConnect Plugin Unittests", func() {
 
 		Context("when the device returns an error", func() {
 			BeforeEach(func() {
-				testServer.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				testServer.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusInternalServerError)
 					fmt.Fprintln(w, "Internal Server Error")
 				})
 			})
 
 			It("should return an error", func() {
-
 				input := &sensorconnect_plugin.SensorConnectInput{
 					DeviceAddress: address,
 					CurrentCid:    0,
@@ -168,7 +165,6 @@ var _ = Describe("SensorConnect Plugin Unittests", func() {
 			})
 
 			It("should return an error due to cid mismatch", func() {
-
 				input := &sensorconnect_plugin.SensorConnectInput{
 					DeviceAddress: address,
 					CurrentCid:    0,
@@ -222,7 +218,6 @@ var _ = Describe("SensorConnect Plugin Unittests", func() {
 		})
 
 		It("should return an error due to non-200 code in data points", func() {
-
 			input := &sensorconnect_plugin.SensorConnectInput{
 				DeviceAddress: address,
 				CurrentCid:    0,
@@ -236,7 +231,6 @@ var _ = Describe("SensorConnect Plugin Unittests", func() {
 })
 
 var _ = Describe("SensorConnect Integration Tests", func() {
-
 	var endpoint string
 
 	BeforeEach(func() {
@@ -247,7 +241,6 @@ var _ = Describe("SensorConnect Integration Tests", func() {
 			Skip("Skipping test: environment variables not set")
 			return
 		}
-
 	})
 
 	AfterEach(func() {

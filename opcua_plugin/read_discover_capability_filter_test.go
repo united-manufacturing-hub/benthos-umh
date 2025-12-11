@@ -16,10 +16,10 @@ package opcua_plugin
 
 import (
 	"os"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 
 	"github.com/gopcua/opcua/ua"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 // TestMonitorRequestFilterCreation validates that the MonitorBatched function
@@ -43,9 +43,9 @@ var _ = Describe("MonitorBatched Filter Creation Logic", func() {
 			func(profileSupport bool, runtimeSupport *bool, nodeType ua.TypeID, deadbandType string, deadbandValue float64, expectFilter bool) {
 				// Setup OPCUAInput with capability configuration
 				g := &OPCUAInput{
-					DeadbandType:  deadbandType,
-					DeadbandValue: deadbandValue,
-					QueueSize:     1,
+					DeadbandType:     deadbandType,
+					DeadbandValue:    deadbandValue,
+					QueueSize:        1,
 					SamplingInterval: 1000.0,
 					ServerProfile: ServerProfile{
 						Name:                     "test-profile",

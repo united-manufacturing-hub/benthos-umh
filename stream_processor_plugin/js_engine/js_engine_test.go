@@ -15,14 +15,15 @@
 package js_engine_test
 
 import (
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_engine"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_engine"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
 )
 
 var _ = Describe("JSEngine", func() {

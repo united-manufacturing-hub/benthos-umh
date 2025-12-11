@@ -17,13 +17,12 @@ package state_test
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/state"
 )
 
 var _ = Describe("State Coverage Tests", func() {
-	var (
-		processorState *state.ProcessorState
-	)
+	var processorState *state.ProcessorState
 
 	BeforeEach(func() {
 		processorState = state.NewProcessorState()

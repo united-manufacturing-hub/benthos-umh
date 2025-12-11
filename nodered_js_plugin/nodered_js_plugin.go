@@ -16,6 +16,7 @@ package nodered_js_plugin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"math"
@@ -47,7 +48,7 @@ func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service
 	// Compile the JavaScript code once
 	program, err := goja.Compile("nodered-fn.js", code, false)
 	if err != nil {
-		return nil, fmt.Errorf("failed to compile JavaScript code: %v", err)
+		return nil, fmt.Errorf("failed to compile JavaScript code: %w", err)
 	}
 
 	processor := &NodeREDJSProcessor{
@@ -115,7 +116,7 @@ func ConvertMessageToJSObject(msg *service.Message) (map[string]interface{}, err
 		// If message can't be converted to structured format, wrap raw bytes in a payload field
 		bytes, err := msg.AsBytes()
 		if err != nil {
-			return nil, fmt.Errorf("failed to convert message to bytes: %v", err)
+			return nil, fmt.Errorf("failed to convert message to bytes: %w", err)
 		}
 		return map[string]interface{}{
 			"payload": string(bytes),
@@ -176,7 +177,7 @@ func escapeString(data string) string {
 // implementation formats objects. This format is optimized to have as few escaped
 // characters as possible when it is embedded within a JSON payload.
 func stringify(data any, depth uint8) (string, error) {
-	depth += 1
+	depth++
 	if depth == math.MaxUint8 {
 		return "", fmt.Errorf("maximum depth reached")
 	}
@@ -299,7 +300,7 @@ func stringify(data any, depth uint8) (string, error) {
 func (u *NodeREDJSProcessor) SetupJSEnvironment(vm *goja.Runtime, jsMsg map[string]interface{}) error {
 	// Set up the msg variable in the JS environment
 	if err := vm.Set("msg", jsMsg); err != nil {
-		return fmt.Errorf("failed to set message in JS environment: %v", err)
+		return fmt.Errorf("failed to set message in JS environment: %w", err)
 	}
 
 	// Set up console for logging that uses Benthos logger
@@ -312,7 +313,7 @@ func (u *NodeREDJSProcessor) SetupJSEnvironment(vm *goja.Runtime, jsMsg map[stri
 	}
 
 	if err := vm.Set("console", console); err != nil {
-		return fmt.Errorf("failed to set console in JS environment: %v", err)
+		return fmt.Errorf("failed to set console in JS environment: %w", err)
 	}
 
 	return nil
@@ -364,7 +365,7 @@ func FormatConsoleLogMsg(data []any) string {
 }
 
 // ProcessBatch applies the JavaScript code to each message in the batch.
-func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
+func (u *NodeREDJSProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	var resultBatch service.MessageBatch
 
 	for _, msg := range batch {
@@ -402,7 +403,7 @@ func (u *NodeREDJSProcessor) processSingleMessage(msg *service.Message) (*servic
 
 	// Add metadata to the message wrapper
 	meta := make(map[string]interface{})
-	if err := msg.MetaWalkMut(func(key string, value any) error {
+	if err = msg.MetaWalkMut(func(key string, value any) error {
 		meta[key] = value
 		return nil
 	}); err != nil {
@@ -413,7 +414,7 @@ func (u *NodeREDJSProcessor) processSingleMessage(msg *service.Message) (*servic
 	jsMsg["meta"] = meta
 
 	// Setup JS environment
-	if err := u.SetupJSEnvironment(vm, jsMsg); err != nil {
+	if err = u.SetupJSEnvironment(vm, jsMsg); err != nil {
 		u.messagesErrored.Incr(1)
 		u.logger.Errorf("%v\nMessage content: %v", err, jsMsg)
 		return nil, false, nil
@@ -440,7 +441,8 @@ func (u *NodeREDJSProcessor) processSingleMessage(msg *service.Message) (*servic
 
 // Helper function to log JavaScript errors
 func (u *NodeREDJSProcessor) logJSError(err error, jsMsg interface{}) {
-	if jsErr, ok := err.(*goja.Exception); ok {
+	jsErr := &goja.Exception{}
+	if errors.As(err, &jsErr) {
 		stack := jsErr.String()
 		u.logger.Errorf(`JavaScript execution failed:
 Error: %v
@@ -465,7 +467,7 @@ Message content: %v`,
 }
 
 // Close gracefully shuts down the processor.
-func (u *NodeREDJSProcessor) Close(ctx context.Context) error {
+func (u *NodeREDJSProcessor) Close(_ context.Context) error {
 	return nil
 }
 

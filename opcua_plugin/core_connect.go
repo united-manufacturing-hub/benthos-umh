@@ -27,10 +27,9 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/crypto/sha3"
-
 	"github.com/gopcua/opcua"
 	"github.com/gopcua/opcua/ua"
+	"golang.org/x/crypto/sha3"
 )
 
 // parseBase64PEMBundle takes a base64-encoded string of a PEM bundle (containing both
@@ -82,9 +81,9 @@ func (g *OPCUAConnection) GetOPCUAClientOptions(
 	selectedEndpoint *ua.EndpointDescription,
 	selectedAuthentication ua.UserTokenType,
 	discoveryOnly bool,
-) (opts []opcua.Option, err error) {
+) ([]opcua.Option, error) {
 	// Basic security from the endpoint + user token type
-	opts = append(opts, opcua.SecurityFromEndpoint(selectedEndpoint, selectedAuthentication))
+	opts := []opcua.Option{opcua.SecurityFromEndpoint(selectedEndpoint, selectedAuthentication)}
 
 	// Set additional options based on the authentication method
 	switch selectedAuthentication {
@@ -97,9 +96,11 @@ func (g *OPCUAConnection) GetOPCUAClientOptions(
 		g.Log.Info("Using User Certificate based authentication")
 		userCertificateOpts, err := g.parseUserCertificateOptions()
 		if err != nil {
-			return nil, fmt.Errorf("error while parsing user certificate options: %v", err)
+			return nil, fmt.Errorf("error while parsing user certificate options: %w", err)
 		}
 		opts = append(opts, userCertificateOpts...)
+	default:
+		return nil, fmt.Errorf("unsupported authentication type: %v", selectedAuthentication)
 	}
 
 	// If the endpoint's security policy is not None, we must attach a certificate
@@ -116,7 +117,6 @@ func (g *OPCUAConnection) GetOPCUAClientOptions(
 					return nil, err
 				}
 				g.CachedTLSCertificate = cert
-
 			} else {
 				g.Log.Infof("No base64-encoded certificate provided, generating a new one...")
 
@@ -467,13 +467,13 @@ func (g *OPCUAConnection) storeServerCertificateFingerprint(endpoint *ua.Endpoin
 	// decode the certificate from base64 to DER format
 	block, _ := pem.Decode(pemCert)
 	if block == nil {
-		return fmt.Errorf("Could not decode server certificate.")
+		return fmt.Errorf("could not decode server certificate")
 	}
 
 	// parse the DER-format certificate
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return fmt.Errorf("Error while parsing server certificate.")
+		return fmt.Errorf("error while parsing server certificate")
 	}
 
 	// calculating the checksum of the certificate (sha3 is needed here)
@@ -516,10 +516,8 @@ func (g *OPCUAConnection) handleSingleEndpointDiscovery(ctx context.Context, end
 			updatedEndpoints = append(updatedEndpoints, endpoint)
 
 			return updatedEndpoints, nil
-
-		} else {
-			g.Log.Errorf("Invalid endpoint configuration")
 		}
+		g.Log.Errorf("Invalid endpoint configuration")
 		return nil, errors.New("invalid endpoint configuration")
 	}
 
@@ -574,7 +572,7 @@ func (g *OPCUAConnection) ReplaceHostInEndpoints(endpoints []*ua.EndpointDescrip
 // This function parses the provided endpoint URL, substitutes the host component with a new host, and reconstructs
 // the URL while preserving the original path and query parameters. It ensures that the modified URL remains
 // valid and compatible with OPC UA communication protocols.
-func (g *OPCUAConnection) ReplaceHostInEndpointURL(endpointURL, newHost string) (string, error) {
+func (g *OPCUAConnection) ReplaceHostInEndpointURL(endpointURL string, newHost string) (string, error) {
 	// Remove the "opc.tcp://" prefix to simplify parsing.
 	newHost = strings.TrimPrefix(newHost, "opc.tcp://")
 
@@ -654,7 +652,7 @@ func (g *OPCUAConnection) connectWithoutSecurity(
 				return c, nil
 			}
 
-			// case where an error occured
+			// case where an error occurred
 			g.CloseExpected(ctx)
 			g.Log.Infof("Failed to connect, but continue anyway: %v", err)
 

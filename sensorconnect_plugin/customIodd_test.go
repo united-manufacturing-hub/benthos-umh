@@ -24,6 +24,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
 	"github.com/united-manufacturing-hub/benthos-umh/sensorconnect_plugin"
 )
 
@@ -57,7 +58,7 @@ var _ = Describe("FetchAndStoreCustomIODD", func() {
 		}
 
 		// Setup mock server to simulate IODD URL responses
-		mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			// Customize response based on URL or request parameters if needed
 			// For simplicity, return a static XML response
 			ioddXML := `
@@ -113,7 +114,7 @@ var _ = Describe("FetchAndStoreCustomIODD", func() {
 			It("should return an error when the IODD XML is malformed", func() {
 				// Reconfigure the mock server to return invalid XML
 				mockServer.Close()
-				mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					invalidXML := `<IoDevice><Name>Test Device</Name><Description>Missing closing tag`
 					w.Header().Set("Content-Type", "application/xml")
 					fmt.Fprintln(w, invalidXML)
@@ -127,6 +128,5 @@ var _ = Describe("FetchAndStoreCustomIODD", func() {
 				Expect(err.Error()).To(ContainSubstring("failed to unmarshal IODD XML"))
 			})
 		})
-
 	})
 })

@@ -21,10 +21,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
 	processor2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
-
-	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 // BenchmarkProcessBatch measures the performance of batch message processing

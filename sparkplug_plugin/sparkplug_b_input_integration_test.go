@@ -53,16 +53,14 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
-	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/proto"
 
 	_ "github.com/united-manufacturing-hub/benthos-umh/downsampler_plugin" // Import downsampler for pipeline
+	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
 
 var _ = Describe("End-to-End Device Processing Pipeline (ENG-3720)", Serial, func() {
-
 	Context("Full Pipeline Validation: SparkplugB → tag_processor → downsampler", func() {
-
 		var (
 			ctx             context.Context
 			cancel          context.CancelFunc
@@ -178,7 +176,7 @@ logger:
 
 			publisherClient = mqtt.NewClient(opts)
 			token := publisherClient.Connect()
-			Expect(token.WaitTimeout(30 * time.Second)).To(BeTrue(), "Publisher should connect to broker")
+			Expect(token.WaitTimeout(30*time.Second)).To(BeTrue(), "Publisher should connect to broker")
 			Expect(token.Error()).NotTo(HaveOccurred(), "Publisher connection should succeed")
 
 			By("Creating sanitized NDATA messages for test devices")
@@ -230,7 +228,7 @@ logger:
 
 				// Publish to MQTT broker
 				token := publisherClient.Publish(topic, 1, false, payloadBytes)
-				Expect(token.WaitTimeout(5 * time.Second)).To(BeTrue(), fmt.Sprintf("Publish %d should complete", i))
+				Expect(token.WaitTimeout(5*time.Second)).To(BeTrue(), fmt.Sprintf("Publish %d should complete", i))
 				Expect(token.Error()).NotTo(HaveOccurred(), fmt.Sprintf("Publish %d should succeed", i))
 
 				GinkgoWriter.Printf("Published NDATA %d for device %s to topic: %s\n", i, msg.deviceID, topic)
@@ -341,7 +339,7 @@ logger:
 func createDeviceNDATAMessages(deviceID string, count int) []*sparkplugb.Payload {
 	messages := make([]*sparkplugb.Payload, count)
 	baseTimestamp := uint64(1730986400000) // Fixed base timestamp
-	baseSeq := uint64(100)                  // Starting sequence number
+	baseSeq := uint64(100)                 // Starting sequence number
 
 	for i := 0; i < count; i++ {
 		seq := baseSeq + uint64(i)

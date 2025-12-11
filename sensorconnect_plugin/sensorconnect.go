@@ -17,9 +17,10 @@ package sensorconnect_plugin
 import (
 	"context"
 	"fmt"
-	"github.com/redpanda-data/benthos/v4/public/service"
 	"sync"
 	"time"
+
+	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 type SensorConnectInput struct {
@@ -128,7 +129,6 @@ func NewSensorConnectInput(conf *service.ParsedConfig, mgr *service.Resources) (
 		if err != nil {
 			return nil, err
 		}
-
 	}
 
 	return input, nil
@@ -193,7 +193,6 @@ func (s *SensorConnectInput) Connect(ctx context.Context) error {
 
 // ReadBatch reads data from sensors and returns it as a batch of messages
 func (s *SensorConnectInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
-
 	timeSinceLastUpdate := time.Since(s.lastPortMapTime)
 	if timeSinceLastUpdate >= 10*time.Second {
 		s.logger.Infof("10 seconds elapsed since last port map update. Updating port map for device at %s.", s.DeviceAddress)
@@ -235,7 +234,6 @@ func (s *SensorConnectInput) ReadBatch(ctx context.Context) (service.MessageBatc
 
 			s.mu.Unlock()
 		}()
-
 	}
 
 	// Read sensor data
@@ -254,14 +252,14 @@ func (s *SensorConnectInput) ReadBatch(ctx context.Context) (service.MessageBatc
 		time.Sleep(1000 * time.Millisecond) // Sleep for 1000ms as a workaround for the Crash Bug bug in the firmware
 	}
 
-	return msgBatch, func(ctx context.Context, err error) error {
+	return msgBatch, func(_ context.Context, _ error) error {
 		// Nacks are retried automatically when we use service.AutoRetryNacks
 		return nil
 	}, nil
 }
 
 // Close cleans up resources
-func (s *SensorConnectInput) Close(ctx context.Context) error {
+func (s *SensorConnectInput) Close(_ context.Context) error {
 	return nil
 }
 

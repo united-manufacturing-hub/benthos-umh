@@ -48,7 +48,7 @@ var _ = Describe("Builder", func() {
 
 	Describe("SetLocationPath", func() {
 		DescribeTable("should correctly parse location paths",
-			func(locationPath, expectedPath string, expectedLevels int) {
+			func(locationPath, expectedPath string, _ int) {
 				builder := NewBuilder()
 				result := builder.SetLocationPath(locationPath)
 
@@ -102,7 +102,7 @@ var _ = Describe("Builder", func() {
 
 	Describe("SetVirtualPath", func() {
 		DescribeTable("should correctly set virtual paths",
-			func(virtualPath string, shouldHaveVirtualPath bool) {
+			func(virtualPath string, _ bool) {
 				builder := NewBuilder()
 				result := builder.SetVirtualPath(virtualPath)
 
@@ -133,7 +133,7 @@ var _ = Describe("Builder", func() {
 				result := builder.GetLocationPath()
 				Expect(result).To(Equal(expectedPath))
 			},
-			Entry("empty builder", func(b *Builder) {}, ""),
+			Entry("empty builder", func(_ *Builder) {}, ""),
 			Entry("only level0", func(b *Builder) {
 				b.SetLevel0("enterprise")
 			}, "enterprise"),
@@ -310,7 +310,7 @@ var _ = Describe("Builder", func() {
 			done := make(chan bool, numGoroutines)
 
 			for i := 0; i < numGoroutines; i++ {
-				go func(id int) {
+				go func() {
 					defer func() { done <- true }()
 
 					// Each goroutine uses its own builder instance
@@ -328,7 +328,7 @@ var _ = Describe("Builder", func() {
 						expected := "umh.v1.enterprise.site._historian.temperature"
 						Expect(topic.String()).To(Equal(expected))
 					}
-				}(i)
+				}()
 			}
 
 			for i := 0; i < numGoroutines; i++ {
@@ -412,14 +412,7 @@ func strPtr(s string) *string {
 	return &s
 }
 
-func ptrStr(s *string) string {
-	if s == nil {
-		return "<nil>"
-	}
-	return *s
-}
-
-func sliceEqual(a, b []string) bool {
+func sliceEqual(a []string, b []string) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -431,7 +424,7 @@ func sliceEqual(a, b []string) bool {
 	return true
 }
 
-func equalStringPtr(a, b *string) bool {
+func equalStringPtr(a *string, b *string) bool {
 	if a == nil && b == nil {
 		return true
 	}

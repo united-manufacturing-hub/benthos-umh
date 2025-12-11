@@ -70,7 +70,7 @@ func NewUnsInput(client MessageConsumer, config UnsInputConfig, logger *service.
 	// Create a message processor
 	processor, err := NewMessageProcessor(config.umhTopics, metrics, config.metadataFormat)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create message processor: %v", err)
+		return nil, fmt.Errorf("failed to create message processor: %w", err)
 	}
 
 	// Create the UnsInput
@@ -92,7 +92,7 @@ func NewUnsInput(client MessageConsumer, config UnsInputConfig, logger *service.
 }
 
 // Connect establishes a connection to the Kafka broker
-func (u *UnsInput) Connect(ctx context.Context) error {
+func (u *UnsInput) Connect(_ context.Context) error {
 	u.log.Infof("Connecting to uns plugin kafka broker: %v", u.config.brokerAddress)
 
 	if u.client == nil {
@@ -121,7 +121,7 @@ func (u *UnsInput) Connect(ctx context.Context) error {
 		kgo.FetchMaxWait(defaultFetchMaxWaitTime),                 // Maximum time the broker will wait for FetchMinBytes to be reached before responding
 	)
 	if err != nil {
-		return fmt.Errorf("error while creating a kafka client with broker %s: %v", u.config.brokerAddress, err)
+		return fmt.Errorf("error while creating a kafka client with broker %s: %w", u.config.brokerAddress, err)
 	}
 
 	u.metrics.LogConnectionEstablished(connectStart)
@@ -130,7 +130,7 @@ func (u *UnsInput) Connect(ctx context.Context) error {
 }
 
 // Close closes the connection to the Kafka broker
-func (u *UnsInput) Close(ctx context.Context) error {
+func (u *UnsInput) Close(_ context.Context) error {
 	if u.client != nil {
 		u.client.Close()
 	}

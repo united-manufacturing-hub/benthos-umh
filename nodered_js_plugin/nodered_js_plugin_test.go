@@ -31,6 +31,7 @@ import (
 	_ "github.com/redpanda-data/benthos/v4/public/components/io"
 	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin"
 )
 
@@ -63,7 +64,7 @@ nodered_js:
 
 			// Capture messages for validation
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -117,7 +118,7 @@ nodered_js:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -169,7 +170,7 @@ nodered_js:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -223,7 +224,7 @@ nodered_js:
 			Expect(err).NotTo(HaveOccurred())
 
 			var count int64
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
 				atomic.AddInt64(&count, 1)
 				return nil
 			})
@@ -272,7 +273,7 @@ nodered_js:
 `)
 			Expect(err).NotTo(HaveOccurred())
 
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -317,7 +318,7 @@ nodered_js:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -367,7 +368,7 @@ nodered_js:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -424,7 +425,7 @@ nodered_js:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -483,7 +484,7 @@ nodered_js:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -538,7 +539,7 @@ nodered_js:
 			Expect(err).NotTo(HaveOccurred())
 
 			var jsMessages []*service.Message
-			err = jsBuilder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = jsBuilder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				jsMessages = append(jsMessages, msg)
 				return nil
 			})
@@ -583,7 +584,7 @@ bloblang: 'root = this * 2'
 			Expect(err).NotTo(HaveOccurred())
 
 			var bloblangMessages []*service.Message
-			err = bloblangBuilder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = bloblangBuilder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				bloblangMessages = append(bloblangMessages, msg)
 				return nil
 			})
@@ -657,7 +658,7 @@ nodered_js:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -732,7 +733,7 @@ nodered_js:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messages = append(messages, msg)
 				return nil
 			})
@@ -758,7 +759,7 @@ nodered_js:
 			time.Sleep(100 * time.Millisecond)
 
 			// Verify no messages were processed due to the strict mode error
-			Expect(len(messages)).To(Equal(0))
+			Expect(messages).To(BeEmpty())
 		})
 
 		It("should handle concurrent processing safely", func() {
@@ -785,7 +786,7 @@ nodered_js:
 
 			var messages []*service.Message
 			var messagesMutex sync.Mutex
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				messagesMutex.Lock()
 				messages = append(messages, msg)
 				messagesMutex.Unlock()
@@ -841,7 +842,7 @@ nodered_js:
 			messagesMutex.Unlock()
 
 			// Verify we have the expected number of unique processed messages
-			Expect(len(processedPayloads)).To(Equal(numMessages))
+			Expect(processedPayloads).To(HaveLen(numMessages))
 		})
 	})
 })

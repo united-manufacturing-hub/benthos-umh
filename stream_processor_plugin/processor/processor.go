@@ -20,13 +20,13 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_engine"
 	metrics2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/metrics"
 	pools2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/state"
-
-	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 // StreamProcessor is the main processor implementation
@@ -92,7 +92,7 @@ func NewStreamProcessor(cfg config.StreamProcessorConfig, logger *service.Logger
 }
 
 // ProcessBatch processes a batch of messages according to the stream processing workflow
-func (p *StreamProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
+func (p *StreamProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	batchStart := time.Now()
 	p.logger.Debugf("Processing batch of %d messages", len(batch))
 
@@ -402,7 +402,7 @@ func (p *StreamProcessor) createOutputMessage(metadata map[string]string, virtua
 }
 
 // Close closes the processor
-func (p *StreamProcessor) Close(ctx context.Context) error {
+func (p *StreamProcessor) Close(_ context.Context) error {
 	p.logger.Debug("Closing stream processor")
 
 	// Clean up JavaScript engine resources

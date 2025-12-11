@@ -37,11 +37,13 @@ type TestMessageConsumer interface {
 	MessageConsumer
 }
 
-type PollFetchesFunc func(context.Context) Fetches
-type CommitRecordsFunc func(context.Context) error
+type (
+	PollFetchesFunc   func(context.Context) Fetches
+	CommitRecordsFunc func(context.Context) error
+)
 
 type MockKafkaConsumerClient struct {
-	// Mock behaviours
+	// Mock behaviors
 	connectFunc       ConnectFunc
 	closeFunc         CloseFunc
 	pollFetchesFunc   PollFetchesFunc
@@ -154,7 +156,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 	}
 
 	BeforeEach(func() {
-		// Default mock behaviours for the happy path
+		// Default mock behaviors for the happy path
 		mockClient = &MockKafkaConsumerClient{
 			connectFunc: func(...kgo.Opt) error {
 				return nil
@@ -162,13 +164,13 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 			closeFunc: func() error {
 				return nil
 			},
-			pollFetchesFunc: func(ctx context.Context) Fetches {
+			pollFetchesFunc: func(_ context.Context) Fetches {
 				// Return an empty fetches object by default
 				return &MockFetches{
 					empty: true,
 				}
 			},
-			commitRecordsFunc: func(ctx context.Context) error {
+			commitRecordsFunc: func(_ context.Context) error {
 				return nil
 			},
 		}
@@ -176,7 +178,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 		resources = service.MockResources()
 		var err error
 		inputPlugin, err = NewUnsInput(mockClient, inputConfig, resources.Logger(), resources.Metrics())
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		unsClient = inputPlugin.(*UnsInput)
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 	})
@@ -190,7 +192,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 	Context("calling Connect function", func() {
 		It("should initialize the kafka client", func() {
 			err := inputPlugin.Connect(ctx)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			client, ok := unsClient.client.(TestMessageConsumer)
 			Expect(ok).To(BeTrue())
@@ -199,7 +201,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 
 		When("the internal kafka client throws error", func() {
 			JustBeforeEach(func() {
-				mockClient.WithConnectFunc(func(o ...kgo.Opt) error {
+				mockClient.WithConnectFunc(func(_ ...kgo.Opt) error {
 					return errors.New("mock kafka client error: no valid seedbrokers")
 				})
 			})
@@ -219,7 +221,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 
 		It("should close the underlying kafka client", func() {
 			err := inputPlugin.Close(ctx)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			client, ok := unsClient.client.(TestMessageConsumer)
 			Expect(ok).To(BeTrue())
@@ -235,7 +237,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 
 		When("poll fetches returns empty", func() {
 			BeforeEach(func() {
-				mockClient.WithPollFetchesFunc(func(ctx context.Context) Fetches {
+				mockClient.WithPollFetchesFunc(func(_ context.Context) Fetches {
 					return &MockFetches{
 						empty: true,
 					}
@@ -244,7 +246,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 
 			It("should return nil batch", func() {
 				batch, ackFn, err := inputPlugin.ReadBatch(ctx)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 				Expect(batch).To(BeNil())
 				Expect(ackFn).To(BeNil())
 			})
@@ -252,7 +254,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 
 		When("poll fetches returns error", func() {
 			BeforeEach(func() {
-				mockClient.WithPollFetchesFunc(func(ctx context.Context) Fetches {
+				mockClient.WithPollFetchesFunc(func(_ context.Context) Fetches {
 					return &MockFetches{
 						empty: false,
 						err:   errors.New("mock fetch error"),
@@ -262,7 +264,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 
 			It("should return the error", func() {
 				batch, ackFn, err := inputPlugin.ReadBatch(ctx)
-				Expect(err).NotTo(BeNil())
+				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(Equal("mock fetch error"))
 				Expect(batch).To(BeNil())
 				Expect(ackFn).To(BeNil())
@@ -271,7 +273,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 
 		When("poll fetches returns records", func() {
 			BeforeEach(func() {
-				mockClient.WithPollFetchesFunc(func(ctx context.Context) Fetches {
+				mockClient.WithPollFetchesFunc(func(_ context.Context) Fetches {
 					records := []*kgo.Record{
 						{
 							Key:   []byte("umh.v1.acme.berlin.assembly.temperature"),
@@ -296,13 +298,13 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 
 			It("should filter records based on topic regex and return a batch", func() {
 				batch, ackFn, err := inputPlugin.ReadBatch(ctx)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 				Expect(batch).NotTo(BeNil())
-				Expect(len(batch)).To(Equal(2))
+				Expect(batch).To(HaveLen(2))
 
 				// Check first message
 				b, err := batch[0].AsBytes()
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 				Expect(string(b)).To(Equal(`{"value": 23.5}`))
 				kafka_key, ok := batch[0].MetaGet("kafka_msg_key")
 				Expect(kafka_key).To(Equal("umh.v1.acme.berlin.assembly.temperature"))
@@ -313,7 +315,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 
 				// Check second message
 				b, err = batch[1].AsBytes()
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 				Expect(string(b)).To(Equal(`{"value": 1013.25}`))
 				kafka_key, ok = batch[1].MetaGet("kafka_msg_key")
 				Expect(kafka_key).To(Equal("umh.v1.acme.berlin.assembly.pressure"))
@@ -325,7 +327,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 				// Test ack function
 				Expect(ackFn).NotTo(BeNil())
 				err = ackFn(ctx, nil)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 
 				client, ok := unsClient.client.(TestMessageConsumer)
 				Expect(ok).To(BeTrue())
@@ -344,15 +346,15 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 					resources = service.MockResources()
 					var err error
 					inputPlugin, err = NewUnsInput(mockClient, inputConfig, resources.Logger(), resources.Metrics())
-					Expect(err).To(BeNil())
+					Expect(err).ToNot(HaveOccurred())
 					unsClient = inputPlugin.(*UnsInput)
 				})
 
 				It("should only return records matching the filter", func() {
 					batch, _, err := inputPlugin.ReadBatch(ctx)
-					Expect(err).To(BeNil())
+					Expect(err).ToNot(HaveOccurred())
 					Expect(batch).NotTo(BeNil())
-					Expect(len(batch)).To(Equal(1))
+					Expect(batch).To(HaveLen(1))
 					kafka_key, ok := batch[0].MetaGet("kafka_msg_key")
 					Expect(kafka_key).To(Equal("umh.v1.acme.berlin.assembly.temperature"))
 					Expect(ok).To(BeTrue())
@@ -375,11 +377,11 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 					resources = service.MockResources()
 					var err error
 					inputPlugin, err = NewUnsInput(mockClient, inputConfig, resources.Logger(), resources.Metrics())
-					Expect(err).To(BeNil())
+					Expect(err).ToNot(HaveOccurred())
 					unsClient = inputPlugin.(*UnsInput)
 
 					// Set up mock with multiple records - some matching, some not
-					mockClient.WithPollFetchesFunc(func(ctx context.Context) Fetches {
+					mockClient.WithPollFetchesFunc(func(_ context.Context) Fetches {
 						records := []*kgo.Record{
 							{
 								Key:   []byte("umh.v1.acme.berlin.assembly.temperature"), // Matches first pattern
@@ -421,9 +423,9 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 
 				It("should return only records matching any of the filters", func() {
 					batch, _, err := inputPlugin.ReadBatch(ctx)
-					Expect(err).To(BeNil())
+					Expect(err).ToNot(HaveOccurred())
 					Expect(batch).NotTo(BeNil())
-					Expect(len(batch)).To(Equal(4)) // 4 records should match the patterns
+					Expect(batch).To(HaveLen(4)) // 4 records should match the patterns
 
 					// Verify the matching records
 					expectedKeys := []string{
@@ -448,7 +450,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 		When("ack function is called with error", func() {
 			BeforeEach(func() {
 				// Return records so ack function is created
-				mockClient.WithPollFetchesFunc(func(ctx context.Context) Fetches {
+				mockClient.WithPollFetchesFunc(func(_ context.Context) Fetches {
 					records := []*kgo.Record{
 						{
 							Key:   []byte("umh.v1.test"),
@@ -479,7 +481,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 		When("commit records fails", func() {
 			BeforeEach(func() {
 				// Return records so ack function is created
-				mockClient.WithPollFetchesFunc(func(ctx context.Context) Fetches {
+				mockClient.WithPollFetchesFunc(func(_ context.Context) Fetches {
 					records := []*kgo.Record{
 						{
 							Key:   []byte("umh.v1.test"),
@@ -493,7 +495,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 					}
 				})
 
-				mockClient.WithCommitRecordsFunc(func(ctx context.Context) error {
+				mockClient.WithCommitRecordsFunc(func(_ context.Context) error {
 					return errors.New("commit error")
 				})
 			})
@@ -501,7 +503,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 			It("should return the commit error", func() {
 				_, ackFn, _ := inputPlugin.ReadBatch(ctx)
 				err := ackFn(ctx, nil)
-				Expect(err).NotTo(BeNil())
+				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(Equal("commit error"))
 			})
 		})
@@ -519,9 +521,8 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 				// We need to re-initialize the input plugin with the new config
 				var err error
 				inputPlugin, err = NewUnsInput(mockClient, invalidInputConfig, resources.Logger(), resources.Metrics())
-				Expect(err).NotTo(BeNil())
+				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("error parsing regex"))
-
 			})
 		})
 
@@ -538,11 +539,11 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 				resources = service.MockResources()
 				var err error
 				inputPlugin, err = NewUnsInput(mockClient, inputConfig, resources.Logger(), resources.Metrics())
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 				unsClient = inputPlugin.(*UnsInput)
 
 				// Set up mock with both _mitarbeiter and _maschine topics
-				mockClient.WithPollFetchesFunc(func(ctx context.Context) Fetches {
+				mockClient.WithPollFetchesFunc(func(_ context.Context) Fetches {
 					records := []*kgo.Record{
 						{
 							Key:   []byte("umh.v1.umh-ep.1000.000902._mitarbeiter.setzeStatus"), // Should match
@@ -579,9 +580,9 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 
 			It("should only return _mitarbeiter topics and filter out _maschine topics", func() {
 				batch, _, err := inputPlugin.ReadBatch(ctx)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 				Expect(batch).NotTo(BeNil())
-				Expect(len(batch)).To(Equal(2), "Should only match 2 _mitarbeiter topics")
+				Expect(batch).To(HaveLen(2), "Should only match 2 _mitarbeiter topics")
 
 				// Verify only _mitarbeiter topics are returned
 				expectedKeys := []string{
@@ -606,9 +607,7 @@ var _ = Describe("Initializing uns input plugin", Label("uns_input"), func() {
 })
 
 var _ = Describe("ParseFromBenthos config parsing", Label("config_parsing"), func() {
-	var (
-		logger *service.Logger
-	)
+	var logger *service.Logger
 
 	BeforeEach(func() {
 		resources := service.MockResources()
@@ -622,10 +621,10 @@ var _ = Describe("ParseFromBenthos config parsing", Label("config_parsing"), fun
 broker_address: "localhost:9092"
 consumer_group: "test_group"
 `, nil)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			config, err := ParseFromBenthos(parsedConfig, logger)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(config.metadataFormat).To(Equal(MetadataFormatString))
 		})
 
@@ -636,10 +635,10 @@ broker_address: "localhost:9092"
 consumer_group: "test_group"
 metadata_format: "string"
 `, nil)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			config, err := ParseFromBenthos(parsedConfig, logger)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(config.metadataFormat).To(Equal(MetadataFormatString))
 		})
 
@@ -650,10 +649,10 @@ broker_address: "localhost:9092"
 consumer_group: "test_group"
 metadata_format: "bytes"
 `, nil)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			config, err := ParseFromBenthos(parsedConfig, logger)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(config.metadataFormat).To(Equal(MetadataFormatBytes))
 		})
 
@@ -664,10 +663,10 @@ broker_address: "localhost:9092"
 consumer_group: "test_group"
 metadata_format: "invalid"
 `, nil)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			_, err = ParseFromBenthos(parsedConfig, logger)
-			Expect(err).NotTo(BeNil())
+			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("metadata_format"))
 			Expect(err.Error()).To(ContainSubstring("must be 'string' or 'bytes'"))
 		})
@@ -675,9 +674,7 @@ metadata_format: "invalid"
 })
 
 var _ = Describe("MessageProcessor metadata format conversion", Label("message_processor"), func() {
-	var (
-		metrics *UnsInputMetrics
-	)
+	var metrics *UnsInputMetrics
 
 	BeforeEach(func() {
 		resources := service.MockResources()
@@ -687,7 +684,7 @@ var _ = Describe("MessageProcessor metadata format conversion", Label("message_p
 	Context("when metadataFormat is 'string'", func() {
 		It("should convert Kafka headers to string values", func() {
 			processor, err := NewMessageProcessor([]string{".*"}, metrics, MetadataFormatString)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			record := &kgo.Record{
 				Key:   []byte("umh.v1.enterprise.site.area.line._raw.temperature"),
@@ -723,7 +720,7 @@ var _ = Describe("MessageProcessor metadata format conversion", Label("message_p
 	Context("when metadataFormat is 'bytes'", func() {
 		It("should keep Kafka headers as byte arrays", func() {
 			processor, err := NewMessageProcessor([]string{".*"}, metrics, MetadataFormatBytes)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			record := &kgo.Record{
 				Key:   []byte("umh.v1.enterprise.site.area.line._raw.temperature"),
@@ -766,7 +763,7 @@ var _ = Describe("MessageProcessor regex filtering", Label("message_processor"),
 				metrics,
 				defaultMetadataFormat,
 			)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 		})
 
 		It("should match _mitarbeiter topics", func() {
@@ -869,5 +866,4 @@ var _ = Describe("MessageProcessor regex filtering", Label("message_processor"),
 			}
 		})
 	})
-
 })

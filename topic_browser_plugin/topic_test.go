@@ -18,6 +18,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 )
 
@@ -28,7 +29,7 @@ var _ = Describe("Uns", func() {
 			msg.MetaSet("umh_topic", "test.topic")
 
 			topic, err := extractTopicFromMessage(msg)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(topic).To(Equal("test.topic"))
 		})
 
@@ -47,7 +48,7 @@ var _ = Describe("Uns", func() {
 
 			unsTopic, err := topic.NewUnsTopic(t)
 			unsInfo := unsTopic.Info()
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(unsInfo.Level0).To(Equal("enterprise"))
 			Expect(unsInfo.LocationSublevels).To(Equal([]string{"site", "area", "line", "workcell", "originid"}))
 			Expect(unsInfo.DataContract).To(Equal("_schema"))
@@ -60,7 +61,7 @@ var _ = Describe("Uns", func() {
 
 			unsTopic, err := topic.NewUnsTopic(t)
 			unsInfo := unsTopic.Info()
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(unsInfo.Level0).To(Equal("enterprise"))
 			Expect(unsInfo.LocationSublevels).To(BeEmpty())
 			Expect(unsInfo.DataContract).To(Equal("_schema"))
@@ -91,7 +92,7 @@ var _ = Describe("Uns", func() {
 
 			unsTopic, err := topic.NewUnsTopic(t)
 			unsInfo := unsTopic.Info()
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(unsInfo.Level0).To(Equal("enterprise"))
 			Expect(unsInfo.LocationSublevels).To(Equal([]string{"site", "area"}))
 			Expect(unsInfo.DataContract).To(Equal("_historian"))
@@ -123,7 +124,7 @@ var _ = Describe("Uns", func() {
 
 		It("should allow names starting with underscore (per UMH specification)", func() {
 			unsTopic, err := topic.NewUnsTopic("umh.v1.ent._hist._temp")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(unsTopic).NotTo(BeNil())
 			unsInfo := unsTopic.Info()
 			Expect(unsInfo.Name).To(Equal("_temp"))
@@ -153,7 +154,7 @@ var _ = Describe("Uns", func() {
 					}
 					unsInfo := unsTopic.Info()
 
-					Expect(err).To(BeNil())
+					Expect(err).ToNot(HaveOccurred())
 					Expect(unsInfo).ToNot(BeNil())
 					Expect(unsInfo.Level0).To(Equal(tc.expectedLevel0))
 					Expect(unsInfo.LocationSublevels).To(Equal(tc.expectedSublevels))
@@ -262,6 +263,5 @@ var _ = Describe("Uns", func() {
 				}),
 			)
 		})
-
 	})
 })

@@ -19,12 +19,12 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
-	processor2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
+	processor2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
 )
 
 var _ = Describe("Example Config Test", func() {
@@ -71,7 +71,7 @@ var _ = Describe("Example Config Test", func() {
 	AfterEach(func() {
 		if processor != nil {
 			err := processor.Close(ctx)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 		}
 		cancel()
 	})
@@ -207,7 +207,7 @@ var _ = Describe("Example Config Test", func() {
 		outputs := extractOutputs(batches)
 
 		// Only static mappings should be present
-		Expect(len(outputs)).To(Equal(2))
+		Expect(outputs).To(HaveLen(2))
 		Expect(outputs).To(HaveKey("umh.v1.corpA.plant-A.aawd._pump_v1.serialNumber"))
 		Expect(outputs).To(HaveKey("umh.v1.corpA.plant-A.aawd._pump_v1.deviceType"))
 

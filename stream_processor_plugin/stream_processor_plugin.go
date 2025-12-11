@@ -16,10 +16,11 @@ package stream_processor_plugin
 
 import (
 	"fmt"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
 )
 
 func init() {
@@ -98,11 +99,11 @@ Where data_contract is "_<model_name>_<model_version>" and virtual_path is the m
 				if err != nil {
 					return nil, err
 				}
-				if m, ok := mappingAny.(map[string]interface{}); ok {
-					mapping = m
-				} else {
+				m, ok := mappingAny.(map[string]interface{})
+				if !ok {
 					return nil, fmt.Errorf("mapping field must be an object")
 				}
+				mapping = m
 			}
 
 			cfg := config.StreamProcessorConfig{

@@ -17,8 +17,9 @@ package topic_browser_plugin
 import (
 	"fmt"
 
-	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 	protobuf "google.golang.org/protobuf/proto"
+
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
 /*

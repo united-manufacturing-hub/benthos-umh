@@ -20,14 +20,14 @@ import (
 	"fmt"
 	"time"
 
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_engine"
 	pools2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
 	processor2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
-
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 var _ = Describe("Integration Tests - Message Processing", func() {
@@ -78,7 +78,7 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 	AfterEach(func() {
 		if processor != nil {
 			err := processor.Close(ctx)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 		}
 		cancel()
 	})
@@ -327,7 +327,7 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 				Expect(err).ToNot(HaveOccurred())
 				defer func() {
 					err := complexProcessor.Close(ctx)
-					Expect(err).To(BeNil())
+					Expect(err).ToNot(HaveOccurred())
 				}()
 
 				inputPayload := processor2.TimeseriesMessage{
@@ -415,7 +415,7 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 				Expect(err).ToNot(HaveOccurred())
 				defer func() {
 					err := dependentProcessor.Close(ctx)
-					Expect(err).To(BeNil())
+					Expect(err).ToNot(HaveOccurred())
 				}()
 
 				// Send only press, not tF
@@ -563,7 +563,7 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 			Expect(err).ToNot(HaveOccurred())
 			defer func() {
 				err := errorProcessor.Close(ctx)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 			}()
 
 			inputPayload := processor2.TimeseriesMessage{
@@ -621,7 +621,7 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 
 			// Should have outputs from the valid message
 			Expect(batches).ToNot(BeEmpty())
-			Expect(len(batches[0])).To(BeNumerically(">", 0))
+			Expect(batches[0]).ToNot(BeEmpty())
 		})
 	})
 
@@ -744,7 +744,7 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 
 				// Clean up
 				err = dangerousProcessor.Close(ctx)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 			}
 		})
 
@@ -763,7 +763,7 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 			Expect(err).ToNot(HaveOccurred())
 			defer func() {
 				err := safeProcessor.Close(ctx)
-				Expect(err).To(BeNil())
+				Expect(err).ToNot(HaveOccurred())
 			}()
 
 			inputPayload := processor2.TimeseriesMessage{

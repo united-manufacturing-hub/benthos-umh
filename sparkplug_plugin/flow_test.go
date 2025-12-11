@@ -25,15 +25,15 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"google.golang.org/protobuf/proto"
+
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"
 	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
-	"google.golang.org/protobuf/proto"
 )
 
 // Flow lifecycle tests - integrated into main test suite
 
 var _ = Describe("Lifecycle Flow Tests", func() {
-
 	Context("Basic Message Lifecycle", func() {
 		It("should handle NBIRTH → NDATA sequence", func() {
 			// Test basic lifecycle flow (migrated from old integration tests)
@@ -403,12 +403,12 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 			resolvedCount := cache.ResolveAliases(deviceKey, dataMetrics)
 			Expect(resolvedCount).To(Equal(0))
 		})
-		
+
 		It("should validate sequence numbers using production ValidateSequenceNumber per Sparkplug B spec", func() {
 			By("Testing production sequence validation logic per Sparkplug B specification")
 			// Using the exported ValidateSequenceNumber function from sparkplug_b_input.go
 			// Reference: https://github.com/eclipse-sparkplug/sparkplug/blob/master/specification/src/main/asciidoc/chapters/Sparkplug_5_Operational_Behavior.adoc
-			
+
 			testCases := []struct {
 				name        string
 				lastSeq     uint8
@@ -423,7 +423,7 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 				{"near_boundary", 254, 255, true, "Approaching wraparound boundary", "Sequential order is required per spec"},
 				{"valid_wraparound", 255, 0, true, "Valid wraparound from 255 to 0", "Wraparound from 255 to 0 is defined behavior"},
 				{"after_wraparound", 0, 1, true, "Continue after wraparound", "Sequential order continues after wraparound"},
-				
+
 				// Invalid cases - ANY gap should be invalid per Sparkplug B spec
 				{"small_gap_1", 10, 12, false, "Small gap (missing seq 11)", "ANY gap triggers rebirth request per spec"},
 				{"small_gap_2", 10, 13, false, "Gap of 2 (missing seq 11,12)", "ANY gap triggers rebirth request per spec"},
@@ -433,17 +433,17 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 				{"gap_before_wrap", 250, 255, false, "Gap before wraparound (missing seq 251-254)", "ANY gap triggers rebirth request per spec"},
 				{"gap_after_wrap", 0, 5, false, "Gap after wraparound (missing seq 1-4)", "ANY gap triggers rebirth request per spec"},
 				{"gap_across_wrap", 253, 2, false, "Gap across wraparound boundary", "ANY gap triggers rebirth request per spec"},
-				
+
 				// Invalid backwards jumps
 				{"backward_jump", 100, 50, false, "Invalid backward jump", "Backwards sequence numbers are invalid"},
 				{"backward_near_zero", 5, 0, false, "Invalid backward jump to 0", "Backwards sequence numbers are invalid (not wraparound)"},
 				{"backward_from_wrap", 2, 254, false, "Invalid backward jump across boundary", "Backwards sequence numbers are invalid"},
-				
+
 				// Invalid duplicates
 				{"duplicate_seq", 50, 50, false, "Duplicate sequence number", "Duplicate sequence numbers are invalid"},
 				{"duplicate_at_zero", 0, 0, false, "Duplicate at zero", "Duplicate sequence numbers are invalid"},
 				{"duplicate_at_max", 255, 255, false, "Duplicate at max", "Duplicate sequence numbers are invalid"},
-				
+
 				// Edge case: skip to wraparound
 				{"skip_to_wrap", 100, 255, false, "Skip directly to wraparound", "ANY gap triggers rebirth request per spec"},
 				{"skip_from_wrap", 255, 5, false, "Skip after wraparound", "ANY gap triggers rebirth request per spec"},
@@ -451,57 +451,57 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 				// ENG-3720: Device 702 non-conformant behavior - skips sequence 0
 				{"non_conformant_255_to_1", 255, 1, false, "Non-conformant wraparound skipping 0 (255→1)", "Device skips seq 0, triggers rebirth per spec"},
 			}
-			
+
 			for _, tc := range testCases {
 				By(fmt.Sprintf("Testing case: %s - %s (%s)", tc.name, tc.description, tc.specReason))
-				
+
 				// Use the actual production ValidateSequenceNumber function
 				isValid := sparkplug_plugin.ValidateSequenceNumber(tc.lastSeq, tc.currentSeq)
-				
+
 				if tc.isValid {
-					Expect(isValid).To(BeTrue(), 
-						"Expected valid transition from %d to %d for %s: %s", 
+					Expect(isValid).To(BeTrue(),
+						"Expected valid transition from %d to %d for %s: %s",
 						tc.lastSeq, tc.currentSeq, tc.name, tc.specReason)
 				} else {
-					Expect(isValid).To(BeFalse(), 
-						"Expected invalid transition from %d to %d for %s: %s", 
+					Expect(isValid).To(BeFalse(),
+						"Expected invalid transition from %d to %d for %s: %s",
 						tc.lastSeq, tc.currentSeq, tc.name, tc.specReason)
 				}
 			}
 		})
-		
+
 		It("should detect all sequence gaps per Sparkplug B spec requirements", func() {
 			// Test sequence validation using the actual ValidateSequenceNumber function
 			// Per Sparkplug B spec: ANY gap should be invalid and trigger rebirth requests
 			messageSequence := []uint8{
-				0, 1, 2, 3,      // Normal start (all valid)
-				5, 6,            // Gap: missing 4 (invalid per spec)
-				10,              // Gap: missing 7, 8, 9 (invalid per spec)
-				11, 12,          // Continue normally (valid)
-				255,             // Jump to boundary (invalid per spec)
-				0, 1,            // Valid wraparound (valid)
-				3,               // Gap after wraparound: missing 2 (invalid per spec)
-				4, 5,            // Continue (valid)
-				100,             // Large jump (invalid per spec)
-				101, 102,        // Continue from jump (valid)
-				254, 255, 0, 1,  // Another wraparound cycle (invalid jump, then valid wraparound, then valid)
+				0, 1, 2, 3, // Normal start (all valid)
+				5, 6, // Gap: missing 4 (invalid per spec)
+				10,     // Gap: missing 7, 8, 9 (invalid per spec)
+				11, 12, // Continue normally (valid)
+				255,  // Jump to boundary (invalid per spec)
+				0, 1, // Valid wraparound (valid)
+				3,    // Gap after wraparound: missing 2 (invalid per spec)
+				4, 5, // Continue (valid)
+				100,      // Large jump (invalid per spec)
+				101, 102, // Continue from jump (valid)
+				254, 255, 0, 1, // Another wraparound cycle (invalid jump, then valid wraparound, then valid)
 			}
-			
+
 			validCount := 0
 			invalidCount := 0
 			wrapCount := 0
 			var lastSeq *uint8
-			
+
 			for i, seq := range messageSequence {
 				if lastSeq != nil {
 					// Use production validation per Sparkplug B spec
 					isValid := sparkplug_plugin.ValidateSequenceNumber(*lastSeq, seq)
-					
+
 					if seq == 0 && *lastSeq == 255 {
 						wrapCount++
 						By(fmt.Sprintf("Valid wraparound detected at index %d: 255 → 0", i))
 					}
-					
+
 					if isValid {
 						validCount++
 					} else {
@@ -511,24 +511,24 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 				}
 				lastSeq = &seq
 			}
-			
+
 			// Verify expected behavior based on Sparkplug B specification
 			Expect(wrapCount).To(Equal(2), "Should detect exactly 2 valid wraparounds")
 			// Per spec, ALL gaps are invalid - counting expected invalid sequences:
 			// 1. 3→5 (gap), 2. 6→10 (gap), 3. 12→255 (gap), 4. 1→3 (gap), 5. 5→100 (gap), 6. 102→254 (gap)
 			Expect(invalidCount).To(Equal(6), "Should detect all sequence gaps as invalid per Sparkplug B spec")
 		})
-		
+
 		It("should handle rapid sequence number changes under load using production validation", func() {
 			// Test production ValidateSequenceNumber with rapid message processing
 			const messageCount = 1000
 			sequences := make([]uint8, messageCount)
-			
+
 			// Generate continuous sequence with wraparounds
 			for i := 0; i < messageCount; i++ {
 				sequences[i] = uint8(i % 256)
 			}
-			
+
 			// Process sequences and track statistics
 			var stats struct {
 				totalMessages int
@@ -536,66 +536,66 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 				invalidCount  int
 				wraparounds   int
 			}
-			
+
 			stats.totalMessages = len(sequences)
 			var lastSeq *uint8
-			
+
 			for _, seq := range sequences {
 				if lastSeq != nil {
 					// Use production validation
 					isValid := sparkplug_plugin.ValidateSequenceNumber(*lastSeq, seq)
-					
+
 					if isValid {
 						stats.validCount++
 					} else {
 						stats.invalidCount++
 					}
-					
+
 					if seq == 0 && *lastSeq == 255 {
 						stats.wraparounds++
 					}
 				}
 				lastSeq = &seq
 			}
-			
+
 			// Validate expected patterns
 			expectedWraps := (messageCount - 1) / 256
-			Expect(stats.wraparounds).To(Equal(expectedWraps), 
+			Expect(stats.wraparounds).To(Equal(expectedWraps),
 				"Should have correct number of wraparounds for %d messages", messageCount)
-			Expect(stats.invalidCount).To(Equal(0), 
+			Expect(stats.invalidCount).To(Equal(0),
 				"Should have no invalid sequences in continuous sequence")
-			Expect(stats.validCount).To(Equal(messageCount-1), 
+			Expect(stats.validCount).To(Equal(messageCount-1),
 				"All sequences should be valid (except first which has no predecessor)")
 		})
-		
+
 		It("should validate sequence numbers in concurrent scenarios using production logic", func() {
 			// Test thread safety of ValidateSequenceNumber function
 			const goroutines = 10
 			const messagesPerRoutine = 100
-			
+
 			type sequenceValidation struct {
 				lastSeq    uint8
 				currentSeq uint8
 				isValid    bool
 			}
-			
+
 			// Channel to collect validation results
 			resultChan := make(chan sequenceValidation, goroutines*messagesPerRoutine)
 			done := make(chan bool, goroutines)
-			
+
 			// Launch concurrent validation tests
 			for g := 0; g < goroutines; g++ {
 				go func(routineID int) {
 					defer GinkgoRecover()
 					startSeq := uint8(routineID * 25) // Spread starting points
-					
+
 					for i := 0; i < messagesPerRoutine; i++ {
 						lastSeq := uint8((int(startSeq) + i) % 256)
 						currentSeq := uint8((int(startSeq) + i + 1) % 256)
-						
+
 						// Use production validation
 						isValid := sparkplug_plugin.ValidateSequenceNumber(lastSeq, currentSeq)
-						
+
 						resultChan <- sequenceValidation{
 							lastSeq:    lastSeq,
 							currentSeq: currentSeq,
@@ -605,13 +605,13 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 					done <- true
 				}(g)
 			}
-			
+
 			// Wait for all routines to complete
 			for i := 0; i < goroutines; i++ {
 				<-done
 			}
 			close(resultChan)
-			
+
 			// Collect and verify all results
 			validCount := 0
 			totalCount := 0
@@ -621,25 +621,23 @@ var _ = Describe("Lifecycle Flow Tests", func() {
 					validCount++
 				}
 			}
-			
+
 			// Verify results
 			Expect(totalCount).To(Equal(goroutines * messagesPerRoutine))
 			// All should be valid since we're doing continuous increments
-			Expect(validCount).To(Equal(totalCount), 
+			Expect(validCount).To(Equal(totalCount),
 				"All concurrent validations should pass for continuous sequences")
 		})
 	})
 })
+
 // Note: Tests that were using test-only simulation functions have been removed.
 // These tests should be reimplemented using the actual production code from:
 // - sparkplug_plugin.NewTopicParser() for topic parsing
 // - sparkplug_plugin.NewMessageProcessor() for message processing
 // - sparkplug_plugin.NewFormatConverter() for format conversion
 
-
-
 var _ = Describe("Device-Level Message Handling", func() {
-
 	Context("DBIRTH and DDATA Processing", func() {
 		It("should handle DBIRTH → DDATA device lifecycle", func() {
 			// Test device-level message flow
@@ -808,10 +806,5 @@ var _ = Describe("Device-Level Message Handling", func() {
 		})
 	})
 })
-
-
-
-
-
 
 // Note: Helper functions stringPtr, uint32Ptr, uint64Ptr are defined in unit_test.go

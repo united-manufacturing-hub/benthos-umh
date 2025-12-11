@@ -159,14 +159,14 @@ func ParseAddresses(addresses []string, batchMaxSize int) ([][]S7DataItemWithAdd
 	parsedAddresses := make([]S7DataItemWithAddressAndConverter, 0, len(addresses))
 
 	for _, address := range addresses {
-		item, converterFunc, err := handleFieldAddress(address)
+		item, converter, err := handleFieldAddress(address)
 		if err != nil {
 			return nil, fmt.Errorf("address %q: %w", address, err)
 		}
 
 		newS7DataItemWithAddressAndConverter := S7DataItemWithAddressAndConverter{
 			Address:       address,
-			ConverterFunc: converterFunc,
+			ConverterFunc: converter,
 			Item:          *item,
 		}
 
@@ -212,7 +212,7 @@ func init() {
 	}
 }
 
-func (g *S7CommInput) Connect(ctx context.Context) error {
+func (g *S7CommInput) Connect(_ context.Context) error {
 	g.Handler = gos7.NewTCPClientHandler(g.TcpDevice, g.Rack, g.Slot)
 	g.Handler.Timeout = g.Timeout
 	g.Handler.IdleTimeout = g.Timeout
@@ -239,14 +239,13 @@ func (g *S7CommInput) Connect(ctx context.Context) error {
 	return nil
 }
 
-func (g *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+func (g *S7CommInput) ReadBatch(_ context.Context) (service.MessageBatch, service.AckFunc, error) {
 	if g.Client == nil {
 		return nil, nil, fmt.Errorf("S7Comm client is not initialized")
 	}
 
 	msgs := make(service.MessageBatch, 0)
 	for i, b := range g.Batches {
-
 		// Create a new batch to read
 		batchToRead := make([]gos7.S7DataItem, len(b))
 		for i, item := range b {
@@ -287,12 +286,12 @@ func (g *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 
 	time.Sleep(time.Second)
 
-	return msgs, func(ctx context.Context, err error) error {
+	return msgs, func(_ context.Context, _ error) error {
 		return nil // Acknowledgment handling here if needed
 	}, nil
 }
 
-func (g *S7CommInput) Close(ctx context.Context) error {
+func (g *S7CommInput) Close(_ context.Context) error {
 	if g.Handler != nil {
 		g.Handler.Close()
 		g.Handler = nil

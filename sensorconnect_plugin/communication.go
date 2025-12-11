@@ -40,7 +40,7 @@ func (s *SensorConnectInput) SendRequestToDevice(ctx context.Context, requestDat
 
 	url := fmt.Sprintf("http://%s", s.DeviceAddress)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(payloadBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(payloadBytes))
 	if err != nil {
 		s.logger.Warnf("Failed to create request for %s: %v", url, err)
 		return nil, err

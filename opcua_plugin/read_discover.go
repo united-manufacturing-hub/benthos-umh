@@ -135,9 +135,9 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, error) {
 			Level:        0,  // Start at recursion level 0
 			ParentNodeID: nodeID.String(),
 			Visited:      &g.visited,
-			ResultChan:   nodeChan,      // Workers send NodeDef results here
-			ErrChan:      errChan,       // Workers send errors here
-			ProgressChan: nil,           // No progress reporting in production
+			ResultChan:   nodeChan, // Workers send NodeDef results here
+			ErrChan:      errChan,  // Workers send errors here
+			ProgressChan: nil,      // No progress reporting in production
 		}
 
 		if err := pool.SubmitTask(task); err != nil {
@@ -230,14 +230,12 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 			g.Log.Infof("error while getting the node list: %v", err)
 			return err
 		}
-
 	}
 
 	// Now add i=2258 to the nodeList, which is the CurrentTime node, which is used for heartbeats
 	// This is only added if the heartbeat is enabled
 	// instead of i=2258 the g.HeartbeatNodeId is used, which can be different in tests
 	if g.UseHeartbeat {
-
 		// Check if the node is already in the list
 		for _, node := range nodeList {
 			if node.NodeID.Namespace() == g.HeartbeatNodeId.Namespace() && node.NodeID.IntID() == g.HeartbeatNodeId.IntID() {
@@ -256,7 +254,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 
 			heartbeatPool := NewGlobalWorkerPool(g.ServerProfile, g.Log)
 			defer func() {
-				if err := heartbeatPool.Shutdown(DefaultPoolShutdownTimeout); err != nil {
+				if err = heartbeatPool.Shutdown(DefaultPoolShutdownTimeout); err != nil {
 					g.Log.Warnf("Heartbeat pool shutdown timeout: %v", err)
 				}
 			}()
@@ -281,11 +279,11 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 				ProgressChan: nil, // No progress reporting in production
 			}
 
-			if err := heartbeatPool.SubmitTask(task); err != nil {
+			if err = heartbeatPool.SubmitTask(task); err != nil {
 				g.Log.Warnf("Failed to submit heartbeat task: %v", err)
 			} else {
 				// Wait for heartbeat task to complete
-				if err := heartbeatPool.WaitForCompletion(DefaultPoolShutdownTimeout); err != nil {
+				if err = heartbeatPool.WaitForCompletion(DefaultPoolShutdownTimeout); err != nil {
 					g.Log.Warnf("Heartbeat pool completion wait error: %v", err)
 				}
 			}
@@ -336,7 +334,6 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) (err error)
 		}
 
 		g.Log.Infof("Subscribed to %d nodes!", monitoredNodes)
-
 	}
 
 	return nil
@@ -368,7 +365,7 @@ type BatchRange struct {
 }
 
 // CalculateBatches splits totalNodes into batches of maxBatchSize and returns the ranges
-func CalculateBatches(totalNodes, maxBatchSize int) []BatchRange {
+func CalculateBatches(totalNodes int, maxBatchSize int) []BatchRange {
 	var batches []BatchRange
 	for startIdx := 0; startIdx < totalNodes; startIdx += maxBatchSize {
 		endIdx := startIdx + maxBatchSize
@@ -408,7 +405,7 @@ func (g *OPCUAInput) decideDataChangeFilterSupport() (bool, bool) {
 
 		// Trial if not yet attempted this connection
 		if !g.ServerCapabilities.hasTrialedThisConnection {
-			return true, true  // Trial attempt
+			return true, true // Trial attempt
 		}
 
 		// Use cached trial result
@@ -520,6 +517,7 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		} else {
 			g.Log.Debugf("DataChangeFilter: Using cached trial result=%v (profile=%s, FilterCapability=FilterUnknown)", supportsFilter, g.ServerProfile.Name)
 		}
+	default:
 	}
 
 	g.Log.With("batchSize", maxBatchSize).
@@ -651,7 +649,7 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 				if closeErr := g.Close(ctx); closeErr != nil {
 					g.Log.Errorf("Failed to close OPC UA connection: %v", closeErr)
 				}
-				return totalMonitored, fmt.Errorf("monitoring failed for node %s: %v", failedNode, result.StatusCode)
+				return totalMonitored, fmt.Errorf("monitoring failed for node %s: %w", failedNode, result.StatusCode)
 			}
 		}
 
@@ -709,7 +707,7 @@ func UpdateNodePaths(nodes []NodeDef) {
 // and returns a slice of NodeDef from all cached nodes.
 func (g *OPCUAInput) buildNodeListFromCache() []NodeDef {
 	var nodeList []NodeDef
-	g.visited.Range(func(k, v any) bool {
+	g.visited.Range(func(_, v any) bool {
 		vni, ok := v.(VisitedNodeInfo)
 		if !ok {
 			return true

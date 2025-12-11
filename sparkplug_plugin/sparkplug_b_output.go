@@ -46,16 +46,17 @@ import (
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/redpanda-data/benthos/v4/public/service"
-	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
 
 func init() {
 	outputSpec := service.NewConfigSpec().
 		Version("1.0.0").
 		Summary("Sparkplug B MQTT output acting as Edge Node").
-		Description(`The Sparkplug B output acts as an Edge Node, publishing data to Sparkplug MQTT topics 
-with complete session lifecycle management. It handles BIRTH/DEATH certificates, maintains sequence 
+		Description(`The Sparkplug B output acts as an Edge Node, publishing data to Sparkplug MQTT topics
+with complete session lifecycle management. It handles BIRTH/DEATH certificates, maintains sequence
 numbers, manages alias mappings, and ensures full Sparkplug B compliance.
 
 Key features:
@@ -134,8 +135,8 @@ and then publishes DATA messages as Benthos messages flow through the pipeline.`
 				Default("value")).
 			Description("Metric definitions for BIRTH messages and alias mapping").
 			Optional()).
-		// Behaviour Configuration
-		Field(service.NewObjectField("behaviour",
+		// Behavior Configuration
+		Field(service.NewObjectField("behavior",
 			service.NewBoolField("auto_extract_tag_name").
 				Description("Whether to automatically extract tag_name from message metadata").
 				Default(true),
@@ -231,7 +232,10 @@ type sparkplugOutput struct {
 
 func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sparkplugOutput, error) {
 	// Parse the idiomatic configuration structure using namespace approach
-	var config Config
+	var (
+		config             Config
+		username, password string
+	)
 
 	// Parse MQTT section using namespace
 	mqttConf := conf.Namespace("mqtt")
@@ -249,11 +253,11 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 	// Parse credentials section if present
 	if mqttConf.Contains("credentials") {
 		credsConf := mqttConf.Namespace("credentials")
-		username, err := credsConf.FieldString("username")
+		username, err = credsConf.FieldString("username")
 		if err == nil {
 			config.MQTT.Credentials.Username = username
 		}
-		password, err := credsConf.FieldString("password")
+		password, err = credsConf.FieldString("password")
 		if err == nil {
 			config.MQTT.Credentials.Password = password
 		}
@@ -301,10 +305,10 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 	// Output plugin always acts as edge_node (no role configuration needed)
 	config.Role = RoleEdgeNode
 
-	// Parse behaviour section using namespace (optional)
+	// Parse behavior section using namespace (optional)
 	var autoExtractTagName, retainLastValues bool
-	if conf.Contains("behaviour") {
-		behaviourConf := conf.Namespace("behaviour")
+	if conf.Contains("behavior") {
+		behaviourConf := conf.Namespace("behavior")
 		autoExtractTagName, err = behaviourConf.FieldBool("auto_extract_tag_name")
 		if err != nil {
 			autoExtractTagName = true // default
@@ -418,7 +422,7 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 	}, nil
 }
 
-func (s *sparkplugOutput) Connect(ctx context.Context) error {
+func (s *sparkplugOutput) Connect(_ context.Context) error {
 	s.logger.Info("Connecting Sparkplug B output as Edge Node")
 
 	// Set up DEATH Last Will Testament
@@ -491,11 +495,11 @@ func (s *sparkplugOutput) onConnect(client mqtt.Client) {
 		s.logger.Info("Successfully published BIRTH message")
 	}
 
-	// Subscribe to node rebirth commands (NCMD) 
+	// Subscribe to node rebirth commands (NCMD)
 	// Edge Nodes must listen for rebirth requests from Host applications
 	ncmdTopic := fmt.Sprintf("spBv1.0/%s/NCMD/%s", s.config.Identity.GroupID, s.config.Identity.EdgeNodeID)
 	s.logger.Infof("Subscribing to node rebirth commands on topic: %s", ncmdTopic)
-	
+
 	token := client.Subscribe(ncmdTopic, 1, s.handleRebirthCommand)
 	if token.Wait() && token.Error() != nil {
 		s.logger.Errorf("Failed to subscribe to rebirth commands: %v", token.Error())
@@ -505,7 +509,7 @@ func (s *sparkplugOutput) onConnect(client mqtt.Client) {
 	}
 }
 
-func (s *sparkplugOutput) onConnectionLost(client mqtt.Client, err error) {
+func (s *sparkplugOutput) onConnectionLost(_ mqtt.Client, err error) {
 	s.logger.Errorf("MQTT connection lost: %v", err)
 
 	// Reset NBIRTH flag so it will be republished on reconnection
@@ -515,7 +519,7 @@ func (s *sparkplugOutput) onConnectionLost(client mqtt.Client, err error) {
 }
 
 // handleRebirthCommand processes incoming NCMD messages with rebirth requests
-func (s *sparkplugOutput) handleRebirthCommand(client mqtt.Client, msg mqtt.Message) {
+func (s *sparkplugOutput) handleRebirthCommand(_ mqtt.Client, msg mqtt.Message) {
 	s.logger.Infof("Received rebirth command on topic: %s", msg.Topic())
 
 	// Debug: Log raw payload bytes for troubleshooting
@@ -553,7 +557,7 @@ func (s *sparkplugOutput) handleRebirthCommand(client mqtt.Client, msg mqtt.Mess
 	rebirthRequested := false
 	for _, metric := range payload.Metrics {
 		isRebirthMetric := false
-		
+
 		// Check named metric first (spec compliant approach)
 		if metric.Name != nil && *metric.Name == "Node Control/Rebirth" {
 			isRebirthMetric = true
@@ -562,11 +566,11 @@ func (s *sparkplugOutput) handleRebirthCommand(client mqtt.Client, msg mqtt.Mess
 			// Alias 1 is reserved for "Node Control/Rebirth" in NBIRTH
 			isRebirthMetric = true
 		}
-		
+
 		// If this is a rebirth metric with boolean true value
 		if isRebirthMetric && metric.GetBooleanValue() {
 			rebirthRequested = true
-			s.logger.Infof("Found rebirth request - name: %v, alias: %v, boolean: %v", 
+			s.logger.Infof("Found rebirth request - name: %v, alias: %v, boolean: %v",
 				metric.Name, metric.Alias, metric.GetBooleanValue())
 			break
 		}
@@ -598,7 +602,7 @@ func (s *sparkplugOutput) handleRebirthCommand(client mqtt.Client, msg mqtt.Mess
 	s.deviceStateMu.Lock()
 	// Reset device state to allow DBIRTH republishing
 	s.seenDevices = make(map[string]bool)
-	
+
 	// Collect known devices
 	knownDevices := make([]string, 0, len(s.deviceMetrics))
 	for deviceID := range s.deviceMetrics {
@@ -611,12 +615,12 @@ func (s *sparkplugOutput) handleRebirthCommand(client mqtt.Client, msg mqtt.Mess
 	// Publish DBIRTH for all known devices immediately
 	for _, deviceID := range knownDevices {
 		s.logger.Infof("Publishing DBIRTH for device '%s' after rebirth", deviceID)
-		
+
 		// Get all cached metrics for this device
 		s.deviceStateMu.RLock()
 		deviceCache := s.deviceMetrics[deviceID]
 		s.deviceStateMu.RUnlock()
-		
+
 		// Convert cached metrics to format expected by getAllDeviceMetrics
 		allDeviceMetrics := make(map[string]interface{})
 		if s.deviceLastValues != nil {
@@ -628,13 +632,13 @@ func (s *sparkplugOutput) handleRebirthCommand(client mqtt.Client, msg mqtt.Mess
 			}
 			s.deviceStateMu.RUnlock()
 		}
-		
+
 		// If we have cached metrics but no last values, use empty data to trigger DBIRTH
 		if len(deviceCache) > 0 && len(allDeviceMetrics) == 0 {
 			// Use empty metrics map to get all known metrics for DBIRTH
 			allDeviceMetrics = s.getAllDeviceMetrics(deviceID, make(map[string]interface{}))
 		}
-		
+
 		if len(allDeviceMetrics) > 0 {
 			if err := s.publishDBIRTH(deviceID, allDeviceMetrics); err != nil {
 				s.logger.Errorf("Failed to publish DBIRTH for device '%s' after rebirth: %v", deviceID, err)
@@ -648,11 +652,11 @@ func (s *sparkplugOutput) handleRebirthCommand(client mqtt.Client, msg mqtt.Mess
 			s.logger.Warnf("No metrics found for device '%s', skipping DBIRTH after rebirth", deviceID)
 		}
 	}
-	
+
 	s.logger.Infof("Completed rebirth - published DBIRTH for %d devices", len(knownDevices))
 }
 
-func (s *sparkplugOutput) Write(ctx context.Context, msg *service.Message) error {
+func (s *sparkplugOutput) Write(_ context.Context, msg *service.Message) error {
 	// Wait for NBIRTH to be published before allowing any device messages
 	// This prevents DBIRTH from being published before NBIRTH (Sparkplug B violation)
 	s.nbirthMu.Lock()
@@ -751,7 +755,7 @@ nbirthReady:
 	return nil
 }
 
-func (s *sparkplugOutput) Close(ctx context.Context) error {
+func (s *sparkplugOutput) Close(_ context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -894,21 +898,19 @@ func (s *sparkplugOutput) getAllDeviceMetrics(deviceID string, currentData map[s
 	}
 
 	// Add cached metrics with their last known values (preserves state for DBIRTH)
-	if deviceCache != nil {
-		for metricName := range deviceCache {
-			if _, exists := allMetrics[metricName]; !exists {
-				// Use last known value for this device if available
-				if deviceLastValues != nil {
-					if lastValue, hasLastValue := deviceLastValues[metricName]; hasLastValue {
-						allMetrics[metricName] = lastValue
-					} else {
-						// No last value known, use null (DBIRTH spec compliance)
-						allMetrics[metricName] = nil
-					}
+	for metricName := range deviceCache {
+		if _, exists := allMetrics[metricName]; !exists {
+			// Use last known value for this device if available
+			if deviceLastValues != nil {
+				if lastValue, hasLastValue := deviceLastValues[metricName]; hasLastValue {
+					allMetrics[metricName] = lastValue
 				} else {
-					// No last values stored for this device, use null
+					// No last value known, use null (DBIRTH spec compliance)
 					allMetrics[metricName] = nil
 				}
+			} else {
+				// No last values stored for this device, use null
+				allMetrics[metricName] = nil
 			}
 		}
 	}
@@ -972,7 +974,7 @@ func (s *sparkplugOutput) getStaticEdgeNodeID() string {
 // Returns:
 
 // Private methods for the rest of the implementation...
-func (s *sparkplugOutput) createDeathMessage(msg *service.Message) (string, []byte) {
+func (s *sparkplugOutput) createDeathMessage(_ *service.Message) (string, []byte) {
 	// Phase 3: Always use static Edge Node ID for Sparkplug B compliance
 	// This ensures DEATH messages use the same Edge Node ID as BIRTH/DATA messages
 	eonNodeID := s.getStaticEdgeNodeID()
@@ -1045,7 +1047,7 @@ func (s *sparkplugOutput) publishDBIRTH(deviceID string, data map[string]interfa
 		} else {
 			metric.IsNull = func() *bool { b := true; return &b }()
 		}
-		
+
 		s.setDBirthMetricTimestamp(metric)
 		metrics = append(metrics, metric)
 	}
@@ -1186,7 +1188,7 @@ func (s *sparkplugOutput) publishBirthMessage() error {
 		} else {
 			metric.IsNull = func() *bool { b := true; return &b }()
 		}
-		
+
 		s.setDBirthMetricTimestamp(metric)
 		metrics = append(metrics, metric)
 	}
@@ -1333,10 +1335,9 @@ func (s *sparkplugOutput) publishDataMessage(data map[string]interface{}, msg *s
 			// Next DATA messages will include the new metrics normally
 			s.logger.Debug("Skipping DATA message during rebirth sequence")
 			return nil
-		} else {
-			s.logger.Debug("Rebirth debounced or already pending, skipping new metrics for now")
-			// Continue with existing metrics only
 		}
+		s.logger.Debug("Rebirth debounced or already pending, skipping new metrics for now")
+		// Continue with existing metrics only
 	}
 
 	// Check if rebirth is pending - if so, skip DATA messages
@@ -1473,7 +1474,7 @@ func (s *sparkplugOutput) setMetricValue(metric *sparkplugb.Payload_Metric, valu
 func (s *sparkplugOutput) setMetricTimestamp(metric *sparkplugb.Payload_Metric, msg *service.Message) {
 	// Get current timestamp in milliseconds
 	timestamp := uint64(time.Now().UnixMilli())
-	
+
 	// Check for timestamp_ms in the message payload first (UMH-Core format)
 	if structured, err := msg.AsStructured(); err == nil {
 		if structMap, ok := structured.(map[string]interface{}); ok {
@@ -1497,7 +1498,7 @@ func (s *sparkplugOutput) setMetricTimestamp(metric *sparkplugb.Payload_Metric, 
 			}
 		}
 	}
-	
+
 	// Direct field assignment using the complete protobuf definition
 	metric.Timestamp = &timestamp
 	s.logger.Debugf("Set metric timestamp: %d", timestamp)
@@ -1506,7 +1507,7 @@ func (s *sparkplugOutput) setMetricTimestamp(metric *sparkplugb.Payload_Metric, 
 // setDBirthMetricTimestamp sets the timestamp field on a DBIRTH metric using current time
 func (s *sparkplugOutput) setDBirthMetricTimestamp(metric *sparkplugb.Payload_Metric) {
 	timestamp := uint64(time.Now().UnixMilli())
-	
+
 	// Direct field assignment using the complete protobuf definition
 	metric.Timestamp = &timestamp
 }

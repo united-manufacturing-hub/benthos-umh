@@ -25,9 +25,7 @@ import (
 )
 
 var _ = Describe("Topic Browser Integration Tests", func() {
-
 	Describe("Pipeline Configuration", func() {
-
 		It("should emit UNS bundles at regular intervals when implemented", func() {
 			Skip("FIXME: Current implementation emits on every batch, but should buffer and emit once per second")
 
@@ -56,7 +54,7 @@ topic_browser:
 			var outputTimestamps []time.Time
 			var outputMutex sync.Mutex
 
-			err = builder.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
 				outputMutex.Lock()
 				outputMessages = append(outputMessages, msg)
 				outputTimestamps = append(outputTimestamps, time.Now())

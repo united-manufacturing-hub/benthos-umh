@@ -33,10 +33,12 @@ func (m *MockCIPReader) Connect() error {
 	m.Connected = true
 	return nil
 }
+
 func (m *MockCIPReader) Disconnect() error {
 	m.Connected = false
 	return nil
 }
+
 func (m *MockCIPReader) Read(tag string, data any) error {
 	val, ok := m.Tags[tag]
 	if !ok {
@@ -218,7 +220,7 @@ func (m *MockCIPReader) Read(tag string, data any) error {
 }
 
 // currently not used
-func (m *MockCIPReader) GetAttrSingle(cls gologix.CIPClass, inst gologix.CIPInstance, attr gologix.CIPAttribute) (*gologix.CIPItem, error) {
+func (m *MockCIPReader) GetAttrSingle(_ gologix.CIPClass, _ gologix.CIPInstance, _ gologix.CIPAttribute) (*gologix.CIPItem, error) {
 	//	key := [3]uint16{uint16(cls), uint16(inst), uint16(attr)}
 	//
 	//	item, ok := m.Attrs[key]

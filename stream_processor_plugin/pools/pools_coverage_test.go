@@ -18,6 +18,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_security"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/metrics"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
@@ -39,7 +40,7 @@ var _ = Describe("ObjectPools Coverage Tests", func() {
 			// Get a buffer
 			buf1 := objectPools.GetByteBuffer()
 			Expect(buf1).ToNot(BeNil())
-			Expect(len(buf1)).To(Equal(0))
+			Expect(buf1).To(BeEmpty())
 
 			// Get another buffer
 			buf2 := objectPools.GetByteBuffer()
@@ -112,7 +113,7 @@ var _ = Describe("ObjectPools Coverage Tests", func() {
 			// Get another map - should be cleared
 			map2 := objectPools.GetMetadataMap()
 			Expect(map2).ToNot(BeNil())
-			Expect(len(map2)).To(Equal(0)) // Should be cleared
+			Expect(map2).To(BeEmpty()) // Should be cleared
 		})
 
 		It("should reuse variable contexts", func() {
@@ -126,7 +127,7 @@ var _ = Describe("ObjectPools Coverage Tests", func() {
 			// Get another context - should be cleared
 			ctx2 := objectPools.GetVariableContext()
 			Expect(ctx2).ToNot(BeNil())
-			Expect(len(ctx2)).To(Equal(0)) // Should be cleared
+			Expect(ctx2).To(BeEmpty()) // Should be cleared
 		})
 
 		It("should reuse string builders", func() {

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
@@ -124,7 +125,6 @@ func (t *TopicBrowserProcessor) getLatestEventsForTopic(topic string) []*proto.E
 //   - []service.MessageBatch: [emission_message] if data exists to emit
 //   - error: Emission failure
 func (t *TopicBrowserProcessor) flushBufferLocked() ([]service.MessageBatch, error) {
-
 	// Collect all events from ring buffers (already rate-limited by buffer size)
 	allEvents := make([]*proto.EventTableEntry, 0)
 	for topic := range t.topicBuffers {

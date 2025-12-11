@@ -170,9 +170,9 @@ var (
 		MaxBatchSize:             50,
 		MaxWorkers:               5,
 		MinWorkers:               1,
-		MaxMonitoredItems:        0,              // No limit (unlimited subscription capacity)
-		FilterCapability:         FilterUnknown,  // Sane default: trial-based discovery for unknown servers
-		SupportsDataChangeFilter: false,          // DEPRECATED: Use FilterCapability instead
+		MaxMonitoredItems:        0,             // No limit (unlimited subscription capacity)
+		FilterCapability:         FilterUnknown, // Sane default: trial-based discovery for unknown servers
+		SupportsDataChangeFilter: false,         // DEPRECATED: Use FilterCapability instead
 	}
 
 	profileHighPerformance = ServerProfile{
@@ -182,9 +182,9 @@ var (
 		MaxBatchSize:             1000,
 		MaxWorkers:               50,
 		MinWorkers:               10,
-		MaxMonitoredItems:        0,                 // No limit (unlimited subscription capacity)
-		FilterCapability:         FilterSupported,   // VM servers typically support Standard facet
-		SupportsDataChangeFilter: true,              // DEPRECATED: Use FilterCapability instead
+		MaxMonitoredItems:        0,               // No limit (unlimited subscription capacity)
+		FilterCapability:         FilterSupported, // VM servers typically support Standard facet
+		SupportsDataChangeFilter: true,            // DEPRECATED: Use FilterCapability instead
 	}
 
 	profileIgnition = ServerProfile{
@@ -198,9 +198,9 @@ var (
 		MaxBatchSize:             100,
 		MaxWorkers:               20,
 		MinWorkers:               5,
-		MaxMonitoredItems:        0,                 // No limit (unlimited subscription capacity)
-		FilterCapability:         FilterSupported,   // Eclipse Milo implements Standard facet
-		SupportsDataChangeFilter: true,              // DEPRECATED: Use FilterCapability instead
+		MaxMonitoredItems:        0,               // No limit (unlimited subscription capacity)
+		FilterCapability:         FilterSupported, // Eclipse Milo implements Standard facet
+		SupportsDataChangeFilter: true,            // DEPRECATED: Use FilterCapability instead
 	}
 
 	profileKepware = ServerProfile{
@@ -210,9 +210,9 @@ var (
 		MaxBatchSize:             1000,
 		MaxWorkers:               40,
 		MinWorkers:               5,
-		MaxMonitoredItems:        0,                 // No limit (unlimited subscription capacity)
-		FilterCapability:         FilterSupported,   // Standard OPC UA server with full support
-		SupportsDataChangeFilter: true,              // DEPRECATED: Use FilterCapability instead
+		MaxMonitoredItems:        0,               // No limit (unlimited subscription capacity)
+		FilterCapability:         FilterSupported, // Standard OPC UA server with full support
+		SupportsDataChangeFilter: true,            // DEPRECATED: Use FilterCapability instead
 	}
 
 	profileS71200 = ServerProfile{
@@ -227,9 +227,9 @@ var (
 		MaxBatchSize:             100,
 		MaxWorkers:               10,
 		MinWorkers:               3,
-		MaxMonitoredItems:        1000,                // Hardware limit
-		FilterCapability:         FilterUnsupported,   // Micro Embedded Device 2017 profile lacks Standard facet
-		SupportsDataChangeFilter: false,               // DEPRECATED: Use FilterCapability instead
+		MaxMonitoredItems:        1000,              // Hardware limit
+		FilterCapability:         FilterUnsupported, // Micro Embedded Device 2017 profile lacks Standard facet
+		SupportsDataChangeFilter: false,             // DEPRECATED: Use FilterCapability instead
 	}
 
 	profileS71500 = ServerProfile{
@@ -239,9 +239,9 @@ var (
 		MaxBatchSize:             500,
 		MaxWorkers:               20,
 		MinWorkers:               5,
-		MaxMonitoredItems:        10000,             // Hardware limit
-		FilterCapability:         FilterSupported,   // Standard facet with DataChangeFilter support
-		SupportsDataChangeFilter: true,              // DEPRECATED: Use FilterCapability instead
+		MaxMonitoredItems:        10000,           // Hardware limit
+		FilterCapability:         FilterSupported, // Standard facet with DataChangeFilter support
+		SupportsDataChangeFilter: true,            // DEPRECATED: Use FilterCapability instead
 	}
 
 	profileProsys = ServerProfile{
@@ -255,9 +255,9 @@ var (
 		MaxBatchSize:             800,
 		MaxWorkers:               60,
 		MinWorkers:               5,
-		MaxMonitoredItems:        0,                 // No limit (unlimited subscription capacity)
-		FilterCapability:         FilterSupported,   // Full Standard DataChangeFilter support
-		SupportsDataChangeFilter: true,              // DEPRECATED: Use FilterCapability instead
+		MaxMonitoredItems:        0,               // No limit (unlimited subscription capacity)
+		FilterCapability:         FilterSupported, // Full Standard DataChangeFilter support
+		SupportsDataChangeFilter: true,            // DEPRECATED: Use FilterCapability instead
 	}
 
 	profileUnknown = ServerProfile{
@@ -267,9 +267,9 @@ var (
 		MaxBatchSize:             50,
 		MaxWorkers:               5,
 		MinWorkers:               1,
-		MaxMonitoredItems:        0,              // No limit (unlimited subscription capacity)
-		FilterCapability:         FilterUnknown,  // Sane default: trial-based discovery for unknown servers
-		SupportsDataChangeFilter: false,          // DEPRECATED: Use FilterCapability instead
+		MaxMonitoredItems:        0,             // No limit (unlimited subscription capacity)
+		FilterCapability:         FilterUnknown, // Sane default: trial-based discovery for unknown servers
+		SupportsDataChangeFilter: false,         // DEPRECATED: Use FilterCapability instead
 	}
 )
 

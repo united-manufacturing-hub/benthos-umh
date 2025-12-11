@@ -27,20 +27,6 @@ const (
 	maxQuantityHoldingRegisters = uint16(125)
 )
 
-func removeDuplicates(elements []uint16) []uint16 {
-	encountered := map[uint16]bool{}
-	result := []uint16{}
-
-	for _, addr := range elements {
-		if !encountered[addr] {
-			encountered[addr] = true
-			result = append(result, addr)
-		}
-	}
-
-	return result
-}
-
 func normalizeInputDatatype(dataType string) (string, error) {
 	switch dataType {
 	case "BIT", "INT8L", "INT8H", "UINT8L", "UINT8H",

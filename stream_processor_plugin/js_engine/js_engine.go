@@ -16,14 +16,15 @@ package js_engine
 
 import (
 	"fmt"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_security"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
 	"sync"
 	"time"
 
 	"github.com/dop251/goja"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_security"
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
 )
 
 // JSEngine handles JavaScript expression evaluation with caching and pooling
@@ -324,7 +325,7 @@ func (e *JSEngine) ClearStaticCache() {
 
 // PrecompileExpressions pre-compiles all static and dynamic mapping expressions for optimal performance
 // This is a major optimization that eliminates JavaScript parsing/compilation overhead during runtime
-func (e *JSEngine) PrecompileExpressions(staticMappings, dynamicMappings map[string]config.MappingInfo) error {
+func (e *JSEngine) PrecompileExpressions(staticMappings map[string]config.MappingInfo, dynamicMappings map[string]config.MappingInfo) error {
 	e.precompiledMutex.Lock()
 	defer e.precompiledMutex.Unlock()
 

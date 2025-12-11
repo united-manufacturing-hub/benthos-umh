@@ -19,12 +19,12 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
-	processor2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
+	processor2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
 )
 
 var _ = Describe("Metadata Preservation", func() {
@@ -60,7 +60,7 @@ var _ = Describe("Metadata Preservation", func() {
 	AfterEach(func() {
 		if processor != nil {
 			err := processor.Close(context.TODO())
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 		}
 	})
 
@@ -90,7 +90,7 @@ var _ = Describe("Metadata Preservation", func() {
 
 			// Verify output messages preserve metadata
 			outputBatch := batches[0]
-			Expect(len(outputBatch)).To(BeNumerically(">=", 1))
+			Expect(outputBatch).ToNot(BeEmpty())
 
 			for _, outputMsg := range outputBatch {
 				// Verify umh_topic is set correctly (will be different from original)

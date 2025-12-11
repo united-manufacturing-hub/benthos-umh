@@ -16,11 +16,11 @@ package opcua_plugin
 
 import (
 	"os"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 
 	"github.com/gopcua/opcua/id"
 	"github.com/gopcua/opcua/ua"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 // TestCreateDataChangeFilter verifies that data change filters are created

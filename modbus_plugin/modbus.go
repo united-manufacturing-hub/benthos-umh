@@ -39,7 +39,7 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
-//The plugin supports connections to PLCs via MODBUS/TCP, RTU over TCP, ASCII over TCP
+// The plugin supports connections to PLCs via MODBUS/TCP, RTU over TCP, ASCII over TCP
 
 // ModbusDataItemWithAddress struct defines the structure for the data items to be read from the Modbus device.
 type ModbusDataItemWithAddress struct {
@@ -75,7 +75,6 @@ type ModbusDataItemWithAddress struct {
 // ModbusInput struct defines the structure for our custom Benthos input plugin.
 // It holds the configuration necessary to establish a connection with a Modbus PLC,
 type ModbusInput struct {
-
 	// Benthos
 	TimeBetweenReads time.Duration // The time between two reads of a Modbus device. Useful if you want to read the device every x seconds. Defaults to 1s. Not to be confused with TimeBetweenRequests.
 
@@ -198,13 +197,17 @@ var ModbusConfigSpec = service.NewConfigSpec().
 // newModbusInput is the constructor function for ModbusInput. It parses the plugin configuration,
 // establishes a connection with the Modbus device, and initializes the input plugin instance.
 func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
+	var (
+		err           error
+		slaveIDs, ids []int
+		id            int
+	)
+
 	m := &ModbusInput{
 		Log:                          mgr.Logger(),
 		LastHeartbeatMessageReceived: atomic.Uint32{},
 		LastMessageReceived:          atomic.Uint32{},
 	}
-
-	var err error
 
 	if m.TimeBetweenReads, err = conf.FieldDuration("timeBetweenReads"); err != nil {
 		return nil, err
@@ -217,11 +220,10 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	}
 
 	// slaveID only exist for backwards compatibility
-	var slaveIDs []int
-	if ids, err := conf.FieldIntList("slaveIDs"); err == nil {
+	if ids, err = conf.FieldIntList("slaveIDs"); err == nil {
 		// slaveIDs exists, use it
 		slaveIDs = ids
-	} else if id, err := conf.FieldInt("slaveID"); err == nil {
+	} else if id, err = conf.FieldInt("slaveID"); err == nil {
 		// Fallback to slaveID if slaveIDs doesn't exist
 		slaveIDs = []int{id}
 	} else {
@@ -343,33 +345,38 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		}
 
 		// Address
-		if addr, err := addrConf.FieldInt("address"); err != nil {
+		var (
+			addr   int
+			length int
+			bit    int
+		)
+		if addr, err = addrConf.FieldInt("address"); err != nil {
 			return nil, err
-		} else if addr < 0 || addr > 65535 { // Check if the value is within the range of uint16
-			return nil, fmt.Errorf("value out of range for uint16: %d", addr)
-		} else {
-			item.Address = uint16(addr) // Convert int to uint16
 		}
+		if addr < 0 || addr > 65535 { // Check if the value is within the range of uint16
+			return nil, fmt.Errorf("value out of range for uint16: %d", addr)
+		}
+		item.Address = uint16(addr) // Convert int to uint16
 
 		if item.Type, err = addrConf.FieldString("type"); err != nil {
 			return nil, err
 		}
 
-		if length, err := addrConf.FieldInt("length"); err != nil {
+		if length, err = addrConf.FieldInt("length"); err != nil {
 			return nil, err
-		} else if length < 0 || length > 65535 { // Check if the value is within the range of uint16
+		}
+		if length < 0 || length > 65535 { // Check if the value is within the range of uint16
 			return nil, fmt.Errorf("value out of range for uint16: %d", length)
-		} else {
-			item.Length = uint16(length) // Convert int to uint16
 		}
+		item.Length = uint16(length) // Convert int to uint16
 
-		if bit, err := addrConf.FieldInt("bit"); err != nil {
+		if bit, err = addrConf.FieldInt("bit"); err != nil {
 			return nil, err
-		} else if bit < 0 || bit > 65535 { // Check if the value is within the range of uint16
-			return nil, fmt.Errorf("value out of range for uint16: %d", bit)
-		} else {
-			item.Bit = uint16(bit) // Convert int to uint16
 		}
+		if bit < 0 || bit > 65535 { // Check if the value is within the range of uint16
+			return nil, fmt.Errorf("value out of range for uint16: %d", bit)
+		}
+		item.Bit = uint16(bit) // Convert int to uint16
 
 		if item.Scale, err = addrConf.FieldFloat("scale"); err != nil {
 			return nil, err
@@ -521,7 +528,6 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 }
 
 func (m *ModbusInput) CreateBatchesFromAddresses(addresses []ModbusDataItemWithAddress) (RequestSet, error) {
-
 	// Create a map of requests for each register type
 	collection := make(map[string][]modbusTag)
 
@@ -529,7 +535,6 @@ func (m *ModbusInput) CreateBatchesFromAddresses(addresses []ModbusDataItemWithA
 	// requests. This will produce one request per slave and register-type
 
 	for _, item := range addresses {
-
 		// Create a new tag
 		tag, err := m.newTag(item)
 		if err != nil {
@@ -722,7 +727,7 @@ func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 					slaveID,
 				)
 
-				err := m.Close(ctx)
+				err = m.Close(ctx)
 				if err != nil {
 					m.Log.Errorf("Failed to close Modbus connection: %v", err)
 				}
@@ -759,12 +764,12 @@ func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 		mergedBatch = append(mergedBatch, heartbeatMessage)
 	}
 
-	return mergedBatch, func(ctx context.Context, err error) error {
+	return mergedBatch, func(_ context.Context, _ error) error {
 		return nil
 	}, nil
 }
 
-func (m *ModbusInput) readSlaveData(slaveID byte, requests RequestSet) (msgBatch service.MessageBatch, err error) {
+func (m *ModbusInput) readSlaveData(slaveID byte, requests RequestSet) (service.MessageBatch, error) {
 	m.SlaveMutex.Lock()
 	defer m.SlaveMutex.Unlock()
 
@@ -772,7 +777,7 @@ func (m *ModbusInput) readSlaveData(slaveID byte, requests RequestSet) (msgBatch
 	m.CurrentSlaveID = slaveID
 
 	for retry := 0; retry < m.BusyRetries; retry++ {
-		msgBatch, err = m.gatherTags(requests)
+		msgBatch, err := m.gatherTags(requests)
 		if err == nil {
 			// Reading was successful
 			return msgBatch, nil
@@ -789,12 +794,10 @@ func (m *ModbusInput) readSlaveData(slaveID byte, requests RequestSet) (msgBatch
 		time.Sleep(m.BusyRetriesWait)
 	}
 
-	msgBatch, err = m.gatherTags(requests)
-	return msgBatch, err
+	return m.gatherTags(requests)
 }
 
 func (m *ModbusInput) createMessageFromValue(item modbusTag, rawValue []byte, registerName string) *service.Message {
-
 	value := item.converter(rawValue)
 
 	b := make([]byte, 0)
@@ -917,7 +920,7 @@ func (m *ModbusInput) gatherRequestsCoil(requests []request) (service.MessageBat
 			bit := offset % 8
 
 			v := (bytes[idx] >> bit) & 0x01
-			//request.fields[i].value = field.converter([]byte{v})
+			// request.fields[i].value = field.converter([]byte{v})
 			m.Log.Debugf("  field %s with bit %d @ byte %d: %v --> %v", field.name, bit, idx, v, request.fields[i].value)
 
 			message := m.createMessageFromValue(field, []byte{v}, "coil")
@@ -953,7 +956,7 @@ func (m *ModbusInput) gatherRequestsDiscrete(requests []request) (service.Messag
 			bit := offset % 8
 
 			v := (bytes[idx] >> bit) & 0x01
-			//request.fields[i].value = field.converter([]byte{v})
+			// request.fields[i].value = field.converter([]byte{v})
 			m.Log.Debugf("  field %s with bit %d @ byte %d: %v --> %v", field.name, bit, idx, v, request.fields[i].value)
 
 			message := m.createMessageFromValue(field, []byte{v}, "discrete")
@@ -989,7 +992,7 @@ func (m *ModbusInput) gatherRequestsHolding(requests []request) (service.Message
 			length := 2 * uint32(field.length)                  // field length is in registers a 16bit
 
 			// Convert the actual value
-			//request.fields[i].value = field.converter(bytes[offset : offset+length])
+			// request.fields[i].value = field.converter(bytes[offset : offset+length])
 			m.Log.Debugf("  field %s with offset %d with len %d: %v --> %v", field.name, offset, length, bytes[offset:offset+length], request.fields[i].value)
 
 			message := m.createMessageFromValue(field, bytes[offset:offset+length], "holding")
@@ -1025,7 +1028,7 @@ func (m *ModbusInput) gatherRequestsInput(requests []request) (service.MessageBa
 			length := 2 * uint32(field.length)                  // field length is in registers a 16bit
 
 			// Convert the actual value
-			//request.fields[i].value = field.converter(bytes[offset : offset+length])
+			// request.fields[i].value = field.converter(bytes[offset : offset+length])
 			m.Log.Debugf("  field %s with offset %d with len %d: %v --> %v", field.name, offset, length, bytes[offset:offset+length], request.fields[i].value)
 
 			message := m.createMessageFromValue(field, bytes[offset:offset+length], "input")

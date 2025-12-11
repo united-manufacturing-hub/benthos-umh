@@ -15,14 +15,15 @@
 package opcua_plugin_test
 
 import (
-	"os"
 	"crypto/x509"
 	"encoding/pem"
 	"net"
+	"os"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
 	. "github.com/united-manufacturing-hub/benthos-umh/opcua_plugin"
 )
 
@@ -33,11 +34,9 @@ var _ = Describe("GenerateCertWithMode Certificate Generation", func() {
 		}
 	})
 
-
 	Describe("Key Usage bits for OPC UA client certificates", func() {
-
 		DescribeTable("should include all 4 required Key Usage bits regardless of security mode",
-			func(securityMode string, securityPolicy string) {
+			func(securityMode, securityPolicy string) {
 				// Generate certificate
 				certPEM, keyPEM, _, err := GenerateCertWithMode(
 					365*24*time.Hour,
@@ -60,7 +59,7 @@ var _ = Describe("GenerateCertWithMode Certificate Generation", func() {
 					x509.KeyUsageKeyEncipherment |
 					x509.KeyUsageDataEncipherment
 
-				Expect(cert.KeyUsage & requiredKeyUsage).To(Equal(requiredKeyUsage),
+				Expect(cert.KeyUsage&requiredKeyUsage).To(Equal(requiredKeyUsage),
 					"Certificate should have all 4 required Key Usage bits set")
 			},
 			Entry("None security mode with Basic128Rsa15", "None", "Basic128Rsa15"),
@@ -86,16 +85,15 @@ var _ = Describe("GenerateCertWithMode Certificate Generation", func() {
 			cert, err := x509.ParseCertificate(block.Bytes)
 			Expect(err).ToNot(HaveOccurred())
 
-			Expect(cert.KeyUsage & x509.KeyUsageCertSign).To(Equal(x509.KeyUsageCertSign),
+			Expect(cert.KeyUsage&x509.KeyUsageCertSign).To(Equal(x509.KeyUsageCertSign),
 				"Self-signed OPC UA client certificates MUST have KeyCertSign bit (bit 5) for Eclipse Milo compatibility. "+
-				"While OPC UA Part 6 only requires bits 0-3 for end-entity certificates, Eclipse Milo enforces KeyCertSign "+
-				"for self-signed certificates as they must be able to sign themselves. This is validated in "+
-				"CertificateValidationUtil.java lines 554-557. Required for Ignition Gateway and other Milo-based servers.")
+					"While OPC UA Part 6 only requires bits 0-3 for end-entity certificates, Eclipse Milo enforces KeyCertSign "+
+					"for self-signed certificates as they must be able to sign themselves. This is validated in "+
+					"CertificateValidationUtil.java lines 554-557. Required for Ignition Gateway and other Milo-based servers.")
 		})
 	})
 
 	Describe("Extended Key Usage for OPC UA client certificates", func() {
-
 		It("should only include ClientAuth Extended Key Usage", func() {
 			certPEM, _, _, err := GenerateCertWithMode(
 				365*24*time.Hour,
@@ -132,7 +130,6 @@ var _ = Describe("GenerateCertWithMode Certificate Generation", func() {
 	})
 
 	Describe("Subject Alternative Name (SAN) field validation", func() {
-
 		Context("when certificate is generated with default hostname", func() {
 			var cert *x509.Certificate
 

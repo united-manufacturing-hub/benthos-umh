@@ -16,10 +16,10 @@ package opcua_plugin
 
 import (
 	"os"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 
 	"github.com/gopcua/opcua/ua"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 

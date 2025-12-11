@@ -42,7 +42,7 @@ func init() {
 	spec := service.NewConfigSpec().
 		Version("1.0.0").
 		Summary("Convert UMH Historian Data Contract format to Core format").
-		Description(`The classic_to_core processor converts Historian Data Contract messages containing multiple values 
+		Description(`The classic_to_core processor converts Historian Data Contract messages containing multiple values
 and tag groups into individual Core format messages, following the "one tag, one message, one topic" principle.
 
 Input format (Historian Data Contract):
@@ -63,7 +63,7 @@ Output format (Core):
 
 The processor will:
 1. Extract the timestamp field from the payload
-2. Extract meta and metadata fields for applying to all output messages  
+2. Extract meta and metadata fields for applying to all output messages
 3. Flatten any nested tag groups using dot separator for intuitive paths
 4. Convert arrays to string representation to ensure UMH-Core scalar-only compliance
 5. Create one output message per tag
@@ -138,7 +138,7 @@ func newClassicToCoreProcessor(config ClassicToCoreConfig, logger *service.Logge
 // message into multiple Core format messages. It applies tag limits, handles errors gracefully,
 // and tracks comprehensive metrics. Each input message can produce multiple output messages
 // (one per data field), following the "one tag, one message, one topic" principle.
-func (p *ClassicToCoreProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
+func (p *ClassicToCoreProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	var outputBatch service.MessageBatch
 
 	for _, msg := range batch {
@@ -308,11 +308,11 @@ func (p *ClassicToCoreProcessor) validateAndParseTopic(msg *service.Message) (*T
 	originalTopic, exists := msg.MetaGet("topic")
 	if !exists {
 		// Try to get it from umh_topic as fallback
-		if umhTopic, exists := msg.MetaGet("umh_topic"); exists {
-			originalTopic = umhTopic
-		} else {
+		umhTopic, exists := msg.MetaGet("umh_topic")
+		if !exists {
 			return nil, fmt.Errorf("no topic found in message metadata")
 		}
+		originalTopic = umhTopic
 	}
 
 	topicComponents, err := p.parseClassicTopic(originalTopic)
@@ -350,7 +350,7 @@ func (p *ClassicToCoreProcessor) parseClassicTopic(topic string) (*TopicComponen
 	}
 
 	// Find the schema (starts with underscore)
-	var schemaIndex = -1
+	schemaIndex := -1
 	for i := 2; i < len(parts); i++ { // Start from index 2 (after umh.v1)
 		if strings.HasPrefix(parts[i], "_") {
 			schemaIndex = i
@@ -398,7 +398,7 @@ func (p *ClassicToCoreProcessor) createCoreMessage(originalMsg *service.Message,
 	// Marshal payload
 	payloadBytes, err := json.Marshal(corePayload)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal Core payload: %v", err)
+		return nil, fmt.Errorf("failed to marshal Core payload: %w", err)
 	}
 
 	// Create new message
@@ -555,6 +555,6 @@ func (p *ClassicToCoreProcessor) extractTimestamp(value interface{}) (int64, err
 // Currently, the processor doesn't maintain any persistent resources that require cleanup,
 // but this method satisfies the BatchProcessor interface and provides a clean shutdown hook
 // for future resource management needs.
-func (p *ClassicToCoreProcessor) Close(ctx context.Context) error {
+func (p *ClassicToCoreProcessor) Close(_ context.Context) error {
 	return nil
 }

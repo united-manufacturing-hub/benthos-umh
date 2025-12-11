@@ -180,7 +180,6 @@ func ParseConnectionConfig(conf *service.ParsedConfig, mgr *service.Resources) (
 	return conn, nil
 }
 
-
 // cleanupBrowsing ensures the browsing goroutine is properly stopped and cleaned up
 func (g *OPCUAConnection) cleanupBrowsing() {
 	if g.browseCancel != nil {
@@ -206,7 +205,6 @@ func (g *OPCUAConnection) closeConnection(ctx context.Context) {
 		}
 		g.Client = nil
 	}
-
 }
 
 // Close terminates the OPC UA connection with error logging
