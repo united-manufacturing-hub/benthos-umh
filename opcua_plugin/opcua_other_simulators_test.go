@@ -297,8 +297,6 @@ opcua:
 	})
 
 	Describe("Insecure (None/None) Connect", func() {
-		var endpoint string
-
 		It("should read data correctly", func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
