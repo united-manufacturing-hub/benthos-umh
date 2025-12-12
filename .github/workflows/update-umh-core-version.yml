@@ -21,8 +21,6 @@ on:
       tag:
         required: true
         type: string
-  repository_dispatch:
-    types: [release-completed]
   workflow_dispatch:
     inputs:
       tag:
@@ -38,7 +36,7 @@ jobs:
   update-umh-core:
     runs-on: ubuntu-latest
     env:
-      VERSION: ${{ inputs.tag || github.event.inputs.tag || github.event.client_payload.tag }}
+      VERSION: ${{ inputs.tag || github.event.inputs.tag }}
     steps:
       - name: Generate GitHub App Token
         id: generate-token
@@ -93,7 +91,7 @@ jobs:
   update-management-console:
     runs-on: ubuntu-latest
     env:
-      VERSION: ${{ inputs.tag || github.event.inputs.tag || github.event.client_payload.tag }}
+      VERSION: ${{ inputs.tag || github.event.inputs.tag }}
     steps:
       - name: Generate GitHub App Token
         id: generate-token
