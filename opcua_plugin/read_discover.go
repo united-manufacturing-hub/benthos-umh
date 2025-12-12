@@ -209,6 +209,61 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, error) {
 	return nodeList, nil
 }
 
+// browseHeartbeatNode browses the heartbeat node and returns any discovered nodes.
+// Returns nil on any error, allowing the caller to continue without heartbeat.
+func (g *OPCUAInput) browseHeartbeatNode(ctx context.Context, heartbeatNodeID ua.NodeID) []NodeDef {
+	nodeHeartbeatChan := make(chan NodeDef, 1)
+	errChanHeartbeat := make(chan error, 1)
+
+	heartbeatPool := NewGlobalWorkerPool(g.ServerProfile, g.Log)
+	defer func() {
+		if err := heartbeatPool.Shutdown(DefaultPoolShutdownTimeout); err != nil {
+			g.Log.Warnf("Heartbeat pool shutdown timeout: %v", err)
+		}
+	}()
+
+	workersSpawned := heartbeatPool.SpawnWorkers(g.ServerProfile.MinWorkers)
+	g.Log.Debugf("Heartbeat pool spawned %d workers", workersSpawned)
+
+	task := GlobalPoolTask{
+		NodeID:       heartbeatNodeID.String(),
+		Ctx:          ctx,
+		Node:         NewOpcuaNodeWrapper(g.Client.Node(&heartbeatNodeID)),
+		Path:         "",
+		Level:        0,
+		ParentNodeID: heartbeatNodeID.String(),
+		Visited:      &g.visited,
+		ResultChan:   nodeHeartbeatChan,
+		ErrChan:      errChanHeartbeat,
+		ProgressChan: nil,
+	}
+
+	if err := heartbeatPool.SubmitTask(task); err != nil {
+		g.Log.Warnf("Failed to submit heartbeat task: %v", err)
+		return nil
+	}
+
+	if err := heartbeatPool.WaitForCompletion(DefaultPoolShutdownTimeout); err != nil {
+		g.Log.Warnf("Heartbeat browse did not complete: %v", err)
+		return nil
+	}
+
+	close(nodeHeartbeatChan)
+	close(errChanHeartbeat)
+
+	var nodes []NodeDef
+	for node := range nodeHeartbeatChan {
+		nodes = append(nodes, node)
+	}
+
+	if len(errChanHeartbeat) > 0 {
+		g.Log.Warnf("Heartbeat browse error: %v", <-errChanHeartbeat)
+		return nil
+	}
+
+	return nodes
+}
+
 // BrowseAndSubscribeIfNeeded browses the specified OPC UA nodes, adds a heartbeat node if required,
 // and sets up monitored requests for the nodes.
 //
@@ -249,62 +304,10 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 
 		// If the node is not in the list, add it
 		if !g.HeartbeatManualSubscribed {
-			heartbeatNodeID := g.HeartbeatNodeId
-
-			// Use separate pool for heartbeat node browse
-			nodeHeartbeatChan := make(chan NodeDef, 1)
-			errChanHeartbeat := make(chan error, 1)
-
-			heartbeatPool := NewGlobalWorkerPool(g.ServerProfile, g.Log)
-			defer func() {
-				shutdownErr := heartbeatPool.Shutdown(DefaultPoolShutdownTimeout)
-				if shutdownErr != nil {
-					g.Log.Warnf("Heartbeat pool shutdown timeout: %v", shutdownErr)
-				}
-			}()
-
-			// Spawn workers for heartbeat pool
-			workersSpawned := heartbeatPool.SpawnWorkers(g.ServerProfile.MinWorkers)
-			g.Log.Debugf("Heartbeat pool spawned %d workers", workersSpawned)
-
-			wrapperNodeID := NewOpcuaNodeWrapper(g.Client.Node(heartbeatNodeID))
-
-			// Submit heartbeat browse task to pool
-			task := GlobalPoolTask{
-				NodeID:       heartbeatNodeID.String(),
-				Ctx:          ctx,
-				Node:         wrapperNodeID,
-				Path:         "",
-				Level:        0,
-				ParentNodeID: heartbeatNodeID.String(),
-				Visited:      &g.visited,
-				ResultChan:   nodeHeartbeatChan,
-				ErrChan:      errChanHeartbeat,
-				ProgressChan: nil, // No progress reporting in production
-			}
-
-			err = heartbeatPool.SubmitTask(task)
-			if err != nil {
-				g.Log.Warnf("Failed to submit heartbeat task: %v", err)
-			} else {
-				// Wait for heartbeat task to complete
-				err = heartbeatPool.WaitForCompletion(DefaultPoolShutdownTimeout)
-				if err != nil {
-					g.Log.Warnf("Heartbeat pool completion wait error: %v", err)
-				}
-			}
-
-			close(nodeHeartbeatChan)
-			close(errChanHeartbeat)
-
-			for node := range nodeHeartbeatChan {
-				nodeList = append(nodeList, node)
-			}
+			nodes := g.browseHeartbeatNode(ctx, *g.HeartbeatNodeId)
+			nodeList = append(nodeList, nodes...)
 			// Convert duplicate browse paths to NodeID-based paths to ensure unique subscription paths
 			UpdateNodePaths(nodeList)
-			if len(errChanHeartbeat) > 0 {
-				return <-errChanHeartbeat
-			}
 		}
 	}
 

@@ -344,7 +344,7 @@ func createFuzzProcessor(config *service.ParsedConfig) (*processor.StreamProcess
 	}
 
 	resources := service.MockResources()
-	return processor.newStreamProcessor(streamConfig, resources.Logger(), resources.Metrics())
+	return processor.NewStreamProcessor(streamConfig, resources.Logger(), resources.Metrics())
 }
 
 // testEdgeCases tests additional edge cases with the same inputs
