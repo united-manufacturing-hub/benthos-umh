@@ -239,7 +239,8 @@ func ParseHosts(hosts string) ([]net.IP, []string, []*url.URL, error) {
 		}
 
 		// Check if it's a URI with a scheme (urn:, http://, https://)
-		if uri, parseErr := url.Parse(h); parseErr == nil && uri.Scheme != "" && (uri.Scheme == "urn" || uri.Scheme == "http" || uri.Scheme == "https") {
+		uri, parseErr := url.Parse(h)
+		if parseErr == nil && (uri.Scheme == "urn" || uri.Scheme == "http" || uri.Scheme == "https") {
 			uris = append(uris, uri)
 			continue
 		}
