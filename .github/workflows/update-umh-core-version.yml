@@ -149,8 +149,8 @@ jobs:
             Adds benthos-umh schemas for version ${{ env.VERSION }}.
 
             **Files added:**
-            - `frontend/src/lib/schemas/benthos/v${{ env.VERSION }}/ui.json` - UI schema for form generation
-            - `frontend/src/lib/schemas/benthos/v${{ env.VERSION }}/monaco.json` - JSON Schema for Monaco editor
+            - `frontend/src/lib/schemas/benthos/${{ env.VERSION }}/ui.json` - UI schema for form generation
+            - `frontend/src/lib/schemas/benthos/${{ env.VERSION }}/monaco.json` - JSON Schema for Monaco editor
 
             ## Related
             - benthos-umh release: https://github.com/united-manufacturing-hub/benthos-umh/releases/tag/${{ env.VERSION }}
