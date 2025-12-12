@@ -992,7 +992,7 @@ func (s *sparkplugOutput) createDeathMessage(_ *service.Message) (string, []byte
 		Value: &sparkplugb.Payload_Metric_LongValue{
 			LongValue: s.bdSeq,
 		},
-		Datatype: func() *uint32 { d := uint32(4); return &d }(),
+		Datatype: func() *uint32 { d := uint32(8); return &d }(),
 	}
 	s.stateMu.RUnlock()
 
@@ -1157,7 +1157,7 @@ func (s *sparkplugOutput) publishBirthMessage() error {
 		Value: &sparkplugb.Payload_Metric_LongValue{
 			LongValue: s.bdSeq,
 		},
-		Datatype: func() *uint32 { d := uint32(4); return &d }(),
+		Datatype: func() *uint32 { d := uint32(8); return &d }(),
 	}
 	metrics = append(metrics, bdSeqMetric)
 
