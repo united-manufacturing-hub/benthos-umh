@@ -34,20 +34,20 @@ on:
 
 jobs:
   update-umh-core:
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     env:
       VERSION: ${{ inputs.tag || github.event.inputs.tag }}
     steps:
       - name: Generate GitHub App Token
         id: generate-token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.PR_APP_ID }}
           private-key: ${{ secrets.PR_APP_PK }}
           repositories: united-manufacturing-hub
 
       - name: Checkout united-manufacturing-hub Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: united-manufacturing-hub/united-manufacturing-hub
           ref: staging
@@ -89,27 +89,25 @@ jobs:
           draft: false
 
   update-management-console:
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     env:
       VERSION: ${{ inputs.tag || github.event.inputs.tag }}
     steps:
       - name: Generate GitHub App Token
         id: generate-token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.PR_APP_ID }}
           private-key: ${{ secrets.PR_APP_PK }}
           repositories: ManagementConsole
 
       - name: Checkout benthos-umh repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event.inputs.ref || env.VERSION }}
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.23'
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
 
       - name: Generate schemas
         run: |
@@ -117,7 +115,7 @@ jobs:
           make generate-schema VERSION="${VERSION_CLEAN}"
 
       - name: Checkout ManagementConsole
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: united-manufacturing-hub/ManagementConsole
           token: ${{ steps.generate-token.outputs.token }}
