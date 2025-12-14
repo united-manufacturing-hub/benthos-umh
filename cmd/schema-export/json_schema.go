@@ -29,26 +29,43 @@ func validateFormat(format string) error {
 	return nil
 }
 
-// benthosTypeToJSONSchemaType converts a Benthos type to JSON Schema type
-func benthosTypeToJSONSchemaType(benthosType string, _ string) map[string]interface{} {
+// benthosTypeToJSONSchemaType converts a Benthos type to JSON Schema type.
+// It handles the distinction between "type" (element type) and "kind" (container type).
+// For arrays, Benthos reports kind="array" with type being the element type (e.g., "int", "string", "object").
+func benthosTypeToJSONSchemaType(benthosType, kind string) map[string]interface{} {
 	result := make(map[string]interface{})
 
-	switch benthosType {
-	case "string":
-		result["type"] = "string"
-	case "int", "float", "number":
-		result["type"] = "number"
-	case "bool":
-		result["type"] = "boolean"
-	case "object":
-		result["type"] = "object"
-	case "array":
-		result["type"] = "array"
-	default:
-		// Default to string for unknown types
-		result["type"] = "string"
+	// Map Benthos base type to JSON Schema type
+	mapBaseType := func(t string) string {
+		switch t {
+		case "string":
+			return "string"
+		case "int", "float", "number":
+			return "number"
+		case "bool":
+			return "boolean"
+		case "object":
+			return "object"
+		case "array":
+			return "array"
+		default:
+			// Default to string for unknown types
+			return "string"
+		}
 	}
 
+	// Check if this is an array container
+	if kind == "array" {
+		result["type"] = "array"
+		// Set items type based on the element type
+		result["items"] = map[string]interface{}{
+			"type": mapBaseType(benthosType),
+		}
+		return result
+	}
+
+	// Non-array: use the base type directly
+	result["type"] = mapBaseType(benthosType)
 	return result
 }
 
@@ -76,8 +93,33 @@ func convertFieldToJSONSchema(field FieldSpec) map[string]interface{} {
 		schema["x-advanced"] = true
 	}
 
-	// Handle nested object fields
-	if field.Type == "object" && len(field.Children) > 0 {
+	// Handle object arrays with children (e.g., modbus addresses: type="object", kind="array")
+	// Properties go INSIDE items, not at top level
+	if field.Kind == "array" && field.Type == "object" && len(field.Children) > 0 {
+		properties := make(map[string]interface{})
+		for _, child := range field.Children {
+			properties[child.Name] = convertFieldToJSONSchema(child)
+		}
+
+		// Get the items map and add properties to it
+		items := schema["items"].(map[string]interface{})
+		items["properties"] = properties
+
+		// Build required array for the items object
+		required := make([]string, 0)
+		for _, child := range field.Children {
+			if child.Required {
+				required = append(required, child.Name)
+			}
+		}
+		if len(required) > 0 {
+			items["required"] = required
+		}
+		return schema
+	}
+
+	// Handle nested object fields (non-array objects with children)
+	if field.Type == "object" && field.Kind != "array" && len(field.Children) > 0 {
 		properties := make(map[string]interface{})
 		for _, child := range field.Children {
 			properties[child.Name] = convertFieldToJSONSchema(child)
@@ -96,7 +138,7 @@ func convertFieldToJSONSchema(field FieldSpec) map[string]interface{} {
 		}
 	}
 
-	// Handle array fields
+	// Handle array fields where type="array" (not kind="array")
 	if field.Type == "array" && len(field.Children) > 0 {
 		// For arrays, the first child defines the items schema
 		schema["items"] = convertFieldToJSONSchema(field.Children[0])
@@ -185,7 +227,7 @@ func convertPluginToJSONSchema(plugin PluginSpec) map[string]interface{} {
 // generateSchemaWithFormat routes to the appropriate formatter:
 // - format="benthos": Returns raw SchemaOutput (UI format) for Management Console
 // - format="json-schema": Returns JSON Schema Draft-07 (Monaco format) for editors
-func generateSchemaWithFormat(plugins *SchemaOutput, format string, version string) (interface{}, error) {
+func generateSchemaWithFormat(plugins *SchemaOutput, format, version string) (interface{}, error) {
 	if err := validateFormat(format); err != nil {
 		return nil, err
 	}
