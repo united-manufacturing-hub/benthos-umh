@@ -134,6 +134,11 @@ func extractFields(configObj map[string]interface{}) map[string]FieldSpec {
 			Advanced:    getBool(fieldMap, "is_advanced"),
 		}
 
+		// Skip fields with empty names to avoid map key collision
+		if field.Name == "" {
+			continue
+		}
+
 		// Handle default value
 		if defaultVal, ok := fieldMap["default"]; ok {
 			field.Default = defaultVal
