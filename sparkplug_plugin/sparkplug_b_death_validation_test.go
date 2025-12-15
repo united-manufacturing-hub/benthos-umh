@@ -17,12 +17,30 @@
 package sparkplug_plugin_test
 
 import (
+	"strings"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	sparkplugplugin "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
+
+// makeTopicInfoDeath constructs a TopicInfo from a deviceKey string (group/node/device format)
+func makeTopicInfoDeath(deviceKey string) *sparkplugplugin.TopicInfo {
+	parts := strings.Split(deviceKey, "/")
+	if len(parts) < 2 {
+		return &sparkplugplugin.TopicInfo{}
+	}
+	ti := &sparkplugplugin.TopicInfo{
+		Group:    parts[0],
+		EdgeNode: parts[1],
+	}
+	if len(parts) > 2 {
+		ti.Device = parts[2]
+	}
+	return ti
+}
 
 var _ = Describe("NDEATH bdSeq Validation", func() {
 	Context("when processing NDEATH with bdSeq", func() {
@@ -46,7 +64,7 @@ var _ = Describe("NDEATH bdSeq Validation", func() {
 			}
 
 			// Process NDEATH
-			wrapper.ProcessDeathMessage(deviceKey, "NDEATH", payload)
+			wrapper.ProcessDeathMessage(deviceKey, "NDEATH", payload, makeTopicInfoDeath(deviceKey))
 
 			// Verify state is updated (node marked offline)
 			state := wrapper.GetNodeState(deviceKey)
@@ -74,7 +92,7 @@ var _ = Describe("NDEATH bdSeq Validation", func() {
 			}
 
 			// Process NDEATH
-			wrapper.ProcessDeathMessage(deviceKey, "NDEATH", payload)
+			wrapper.ProcessDeathMessage(deviceKey, "NDEATH", payload, makeTopicInfoDeath(deviceKey))
 
 			// Verify state is NOT updated (stale NDEATH ignored)
 			state := wrapper.GetNodeState(deviceKey)
@@ -95,7 +113,7 @@ var _ = Describe("NDEATH bdSeq Validation", func() {
 			}
 
 			// Process NDEATH
-			wrapper.ProcessDeathMessage(deviceKey, "NDEATH", payload)
+			wrapper.ProcessDeathMessage(deviceKey, "NDEATH", payload, makeTopicInfoDeath(deviceKey))
 
 			// Verify state is updated (backwards compatibility)
 			state := wrapper.GetNodeState(deviceKey)
@@ -116,7 +134,7 @@ var _ = Describe("NDEATH bdSeq Validation", func() {
 			}
 
 			// Process DDEATH
-			wrapper.ProcessDeathMessage(deviceKey, "DDEATH", payload)
+			wrapper.ProcessDeathMessage(deviceKey, "DDEATH", payload, makeTopicInfoDeath(deviceKey))
 
 			// Verify state is updated
 			state := wrapper.GetNodeState(deviceKey)

@@ -25,7 +25,7 @@
 // This test file uses TDD approach:
 // 1. First test demonstrates correct behavior (when using unified nodeKey)
 // 2. Second test reproduces the bug (when using separate device keys)
-// 3. Third test validates the ExtractNodeKey helper function
+// 3. Third test validates the TopicInfo.NodeKey() method
 
 package sparkplug_plugin_test
 
@@ -125,35 +125,43 @@ var _ = Describe("Sparkplug B Node-Scoped Sequence Tracking (ENG-4031)", func() 
 		})
 	})
 
-	Context("ExtractNodeKey helper function", func() {
-		It("should extract node key from device key", func() {
-			// Device-level key: "group/node/device" -> "group/node"
-			nodeKey := sparkplugplugin.ExtractNodeKey("factory_a/line_1/plc_device")
-			Expect(nodeKey).To(Equal("factory_a/line_1"))
+	Context("TopicInfo.NodeKey() method", func() {
+		It("should return node key from TopicInfo with device", func() {
+			// Device-level: group + node + device -> "group/node"
+			ti := &sparkplugplugin.TopicInfo{
+				Group:    "factory_a",
+				EdgeNode: "line_1",
+				Device:   "plc_device",
+			}
+			Expect(ti.NodeKey()).To(Equal("factory_a/line_1"))
 		})
 
-		It("should return same key for node-level key", func() {
-			// Node-level key: "group/node" -> "group/node"
-			nodeKey := sparkplugplugin.ExtractNodeKey("factory_a/line_1")
-			Expect(nodeKey).To(Equal("factory_a/line_1"))
+		It("should return node key from TopicInfo without device", func() {
+			// Node-level: group + node -> "group/node"
+			ti := &sparkplugplugin.TopicInfo{
+				Group:    "factory_a",
+				EdgeNode: "line_1",
+			}
+			Expect(ti.NodeKey()).To(Equal("factory_a/line_1"))
 		})
 
-		It("should handle nested device IDs", func() {
-			// Nested device: "group/node/device/subdevice" -> "group/node"
-			nodeKey := sparkplugplugin.ExtractNodeKey("factory/line1/plc/module1")
-			Expect(nodeKey).To(Equal("factory/line1"))
+		It("should return empty string for nil TopicInfo", func() {
+			var ti *sparkplugplugin.TopicInfo
+			Expect(ti.NodeKey()).To(Equal(""))
 		})
 
-		It("should handle single segment gracefully", func() {
-			// Edge case: only one segment
-			nodeKey := sparkplugplugin.ExtractNodeKey("single")
-			Expect(nodeKey).To(Equal("single"))
+		It("should return empty string for empty Group", func() {
+			ti := &sparkplugplugin.TopicInfo{
+				EdgeNode: "line_1",
+			}
+			Expect(ti.NodeKey()).To(Equal(""))
 		})
 
-		It("should handle empty string gracefully", func() {
-			// Edge case: empty string
-			nodeKey := sparkplugplugin.ExtractNodeKey("")
-			Expect(nodeKey).To(Equal(""))
+		It("should return empty string for empty EdgeNode", func() {
+			ti := &sparkplugplugin.TopicInfo{
+				Group: "factory_a",
+			}
+			Expect(ti.NodeKey()).To(Equal(""))
 		})
 	})
 })

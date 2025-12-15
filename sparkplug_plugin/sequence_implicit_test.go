@@ -35,12 +35,30 @@
 package sparkplug_plugin_test
 
 import (
+	"strings"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	sparkplugplugin "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
+
+// makeTopicInfoSeq constructs a TopicInfo from a deviceKey string (group/node/device format)
+func makeTopicInfoSeq(deviceKey string) *sparkplugplugin.TopicInfo {
+	parts := strings.Split(deviceKey, "/")
+	if len(parts) < 2 {
+		return &sparkplugplugin.TopicInfo{}
+	}
+	ti := &sparkplugplugin.TopicInfo{
+		Group:    parts[0],
+		EdgeNode: parts[1],
+	}
+	if len(parts) > 2 {
+		ti.Device = parts[2]
+	}
+	return ti
+}
 
 var _ = Describe("getSequenceNumber - seq=0 implicit behavior", func() {
 	Context("when payload.Seq is nil (older devices)", func() {
@@ -124,7 +142,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 			}
 
 			// When: Processing NBIRTH
-			input.ProcessBirthMessage(deviceKey, "NBIRTH", payload)
+			input.ProcessBirthMessage(deviceKey, "NBIRTH", payload, makeTopicInfoSeq(deviceKey))
 
 			// Then: Node state should be created with seq=0
 			state := input.GetNodeState(deviceKey)
@@ -150,7 +168,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 			}
 
 			// When: Processing DBIRTH
-			input.ProcessBirthMessage(deviceKey, "DBIRTH", payload)
+			input.ProcessBirthMessage(deviceKey, "DBIRTH", payload, makeTopicInfoSeq(deviceKey))
 
 			// Then: Device state should be created with seq=0
 			state := input.GetNodeState(deviceKey)
@@ -174,7 +192,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("temperature"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 23.5}},
 				},
 			}
-			input.ProcessBirthMessage(deviceKey, "NBIRTH", birthPayload)
+			input.ProcessBirthMessage(deviceKey, "NBIRTH", birthPayload, makeTopicInfoSeq(deviceKey))
 
 			// When: NDATA with explicit seq=1 (expected next sequence)
 			seq1 := uint64(1)
@@ -185,7 +203,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("temperature"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 24.1}},
 				},
 			}
-			input.ProcessDataMessage(deviceKey, "NDATA", dataPayload)
+			input.ProcessDataMessage(deviceKey, "NDATA", dataPayload, makeTopicInfoSeq(deviceKey))
 
 			// Then: Sequence validation should pass (0 → 1 is valid)
 			state := input.GetNodeState(deviceKey)
@@ -206,7 +224,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("temperature"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 23.5}},
 				},
 			}
-			input.ProcessBirthMessage(deviceKey, "NBIRTH", birthPayload)
+			input.ProcessBirthMessage(deviceKey, "NBIRTH", birthPayload, makeTopicInfoSeq(deviceKey))
 
 			// When: NDATA with seq=2 (skips expected seq=1)
 			seq2 := uint64(2)
@@ -217,7 +235,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("temperature"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 24.1}},
 				},
 			}
-			input.ProcessDataMessage(deviceKey, "NDATA", dataPayload)
+			input.ProcessDataMessage(deviceKey, "NDATA", dataPayload, makeTopicInfoSeq(deviceKey))
 
 			// Then: Sequence validation should fail (0 → 2 is invalid, expected 1)
 			state := input.GetNodeState(deviceKey)
@@ -241,7 +259,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 100}},
 				},
 			}
-			input.ProcessBirthMessage(deviceKey, "DBIRTH", birth1)
+			input.ProcessBirthMessage(deviceKey, "DBIRTH", birth1, makeTopicInfoSeq(deviceKey))
 
 			state := input.GetNodeState(deviceKey)
 			Expect(state.LastSeq).To(Equal(uint8(0)), "first DBIRTH should set seq to 0")
@@ -255,7 +273,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 101}},
 				},
 			}
-			input.ProcessDataMessage(deviceKey, "DDATA", data1)
+			input.ProcessDataMessage(deviceKey, "DDATA", data1, makeTopicInfoSeq(deviceKey))
 
 			state = input.GetNodeState(deviceKey)
 			Expect(state.LastSeq).To(Equal(uint8(1)), "DDATA should advance to seq=1")
@@ -270,7 +288,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 102}},
 				},
 			}
-			input.ProcessDataMessage(deviceKey, "DDATA", data2)
+			input.ProcessDataMessage(deviceKey, "DDATA", data2, makeTopicInfoSeq(deviceKey))
 
 			state = input.GetNodeState(deviceKey)
 			Expect(state.LastSeq).To(Equal(uint8(2)), "DDATA should advance to seq=2")
@@ -283,7 +301,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 100}},
 				},
 			}
-			input.ProcessBirthMessage(deviceKey, "DBIRTH", birth2)
+			input.ProcessBirthMessage(deviceKey, "DBIRTH", birth2, makeTopicInfoSeq(deviceKey))
 
 			state = input.GetNodeState(deviceKey)
 			Expect(state.LastSeq).To(Equal(uint8(0)), "rebirth should reset seq to 0")
@@ -298,7 +316,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 103}},
 				},
 			}
-			input.ProcessDataMessage(deviceKey, "DDATA", data3)
+			input.ProcessDataMessage(deviceKey, "DDATA", data3, makeTopicInfoSeq(deviceKey))
 
 			state = input.GetNodeState(deviceKey)
 			Expect(state.LastSeq).To(Equal(uint8(1)), "sequence should advance from 0 to 1 after rebirth")

@@ -596,7 +596,7 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 
 	if isBirthMessage {
 		s.logger.Debugf("🎂 processSparkplugMessage: processing BIRTH message")
-		s.processBirthMessage(deviceKey, msgType, &payload)
+		s.processBirthMessage(deviceKey, msgType, &payload, topicInfo)
 		s.birthsProcessed.Incr(1)
 
 		// Always process birth messages (they contain valuable current state)
@@ -604,13 +604,13 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 		batch = s.createSplitMessages(&payload, msgType, deviceKey, topicInfo, mqttMsg.topic)
 	} else if isDataMessage {
 		s.logger.Debugf("📈 processSparkplugMessage: processing DATA message")
-		s.processDataMessage(deviceKey, msgType, &payload)
+		s.processDataMessage(deviceKey, msgType, &payload, topicInfo)
 
 		// Always split metrics for UMH-Core format (one metric per message)
 		batch = s.createSplitMessages(&payload, msgType, deviceKey, topicInfo, mqttMsg.topic)
 	} else if isDeathMessage {
 		s.logger.Debugf("💀 processSparkplugMessage: processing DEATH message")
-		s.processDeathMessage(deviceKey, msgType, &payload)
+		s.processDeathMessage(deviceKey, msgType, &payload, topicInfo)
 		s.deathsProcessed.Incr(1)
 
 		// Create status event message for death
@@ -637,13 +637,13 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 //
 // Key behavior: Caches alias → metric name mappings from BIRTH certificates
 // for use in subsequent DATA message resolution.
-func (s *sparkplugInput) processBirthMessage(deviceKey string, msgType string, payload *sparkplugb.Payload) {
+func (s *sparkplugInput) processBirthMessage(deviceKey string, msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 
-	// ENG-4031: Extract node-level key for sequence tracking.
+	// ENG-4031: Use node-level key for sequence tracking.
 	// Per Sparkplug B spec, sequence is tracked at NODE scope, not device scope.
-	nodeKey := ExtractNodeKey(deviceKey)
+	nodeKey := topicInfo.NodeKey()
 
 	// Update node state using nodeKey for sequence tracking
 	if state, exists := s.nodeStates[nodeKey]; exists {
@@ -699,15 +699,15 @@ func (s *sparkplugInput) processBirthMessage(deviceKey string, msgType string, p
 // - All state access protected by stateMu lock
 // - No I/O operations performed while holding lock
 // - Deterministic behavior ensured by UpdateNodeState pure function
-func (s *sparkplugInput) processDataMessage(deviceKey string, msgType string, payload *sparkplugb.Payload) {
+func (s *sparkplugInput) processDataMessage(deviceKey string, msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
 	s.stateMu.Lock()
 
 	currentSeq := GetSequenceNumber(payload)
 
-	// ENG-4031: Extract node-level key for sequence tracking.
+	// ENG-4031: Use node-level key for sequence tracking.
 	// Per Sparkplug B spec, sequence is tracked at NODE scope, not device scope.
 	// All message types from a node (NBIRTH, NDATA, DBIRTH, DDATA) share one counter.
-	nodeKey := ExtractNodeKey(deviceKey)
+	nodeKey := topicInfo.NodeKey()
 
 	// Capture previous sequence before UpdateNodeState modifies it
 	var prevSeq uint8
@@ -740,12 +740,12 @@ func (s *sparkplugInput) processDataMessage(deviceKey string, msgType string, pa
 	}
 }
 
-func (s *sparkplugInput) processDeathMessage(deviceKey string, msgType string, payload *sparkplugb.Payload) {
+func (s *sparkplugInput) processDeathMessage(deviceKey string, msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 
 	// ENG-4031: Use node-level key for state tracking consistency
-	nodeKey := ExtractNodeKey(deviceKey)
+	nodeKey := topicInfo.NodeKey()
 
 	state, exists := s.nodeStates[nodeKey]
 	if !exists {
@@ -798,7 +798,7 @@ func (s *sparkplugInput) processCommandMessage(deviceKey string, msgType string,
 	s.logger.Debugf("⚡ processCommandMessage: processing %s for device %s with %d metrics", msgType, deviceKey, len(payload.Metrics))
 
 	// ENG-4031: Use node-level key for state tracking consistency
-	nodeKey := ExtractNodeKey(deviceKey)
+	nodeKey := topicInfo.NodeKey()
 
 	// Update node state timestamp for activity tracking
 	s.stateMu.Lock()

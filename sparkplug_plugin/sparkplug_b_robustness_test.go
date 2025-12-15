@@ -37,14 +37,32 @@ package sparkplug_plugin_test
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	sparkplugplugin "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
+
+// makeTopicInfo constructs a TopicInfo from a deviceKey string (group/node/device format)
+func makeTopicInfo(deviceKey string) *sparkplugplugin.TopicInfo {
+	parts := strings.Split(deviceKey, "/")
+	if len(parts) < 2 {
+		return &sparkplugplugin.TopicInfo{}
+	}
+	ti := &sparkplugplugin.TopicInfo{
+		Group:    parts[0],
+		EdgeNode: parts[1],
+	}
+	if len(parts) > 2 {
+		ti.Device = parts[2]
+	}
+	return ti
+}
 
 var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 	Context("Burst arrival after idle period (PCAP pattern)", func() {
@@ -67,7 +85,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 					{Name: stringPtr("bdSeq"), Datatype: uint32Ptr(8), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 100}},
 				},
 			}
-			input.ProcessBirthMessage(deviceKey, "NBIRTH", birthPayload)
+			input.ProcessBirthMessage(deviceKey, "NBIRTH", birthPayload, makeTopicInfo(deviceKey))
 
 			// Phase 1: Idle period - Send 5 messages slowly (simulate 1 msg/10sec pattern)
 			// This establishes normal sequence progression: 0 → 1 → 2 → 3 → 4
@@ -81,7 +99,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 						{Name: stringPtr(fmt.Sprintf("idle_metric_%d", i)), Datatype: uint32Ptr(10), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: float64(i)}},
 					},
 				}
-				input.ProcessDataMessage(deviceKey, "NDATA", payload)
+				input.ProcessDataMessage(deviceKey, "NDATA", payload, makeTopicInfo(deviceKey))
 				time.Sleep(10 * time.Millisecond) // Small delay to simulate timing
 			}
 
@@ -99,7 +117,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 						{Name: stringPtr(fmt.Sprintf("burst_metric_%d", i)), Datatype: uint32Ptr(10), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: float64(i)}},
 					},
 				}
-				input.ProcessDataMessage(deviceKey, "NDATA", payload)
+				input.ProcessDataMessage(deviceKey, "NDATA", payload, makeTopicInfo(deviceKey))
 			}
 			burstDuration := time.Since(burstStart)
 
@@ -143,7 +161,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 						{Name: stringPtr(fmt.Sprintf("sensor_%d", deviceID)), Datatype: uint32Ptr(10), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 23.5}},
 					},
 				}
-				input.ProcessBirthMessage(deviceKey, "NBIRTH", birthPayload)
+				input.ProcessBirthMessage(deviceKey, "NBIRTH", birthPayload, makeTopicInfo(deviceKey))
 			}
 
 			// Phase 2: Concurrent NDATA from all devices
@@ -174,7 +192,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 								},
 							},
 						}
-						input.ProcessDataMessage(deviceKey, "NDATA", payload)
+						input.ProcessDataMessage(deviceKey, "NDATA", payload, makeTopicInfo(deviceKey))
 					}
 				}(deviceID)
 			}
@@ -220,7 +238,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 					{Name: stringPtr("bdSeq"), Datatype: uint32Ptr(8), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 100}},
 				},
 			}
-			input.ProcessBirthMessage(deviceKey, "NBIRTH", birthPayload)
+			input.ProcessBirthMessage(deviceKey, "NBIRTH", birthPayload, makeTopicInfo(deviceKey))
 
 			// When: Send 1100 messages (100 more than buffer capacity of 1000)
 			// Note: This test validates the DESIGN INTENT even if buffer size is not yet enforced
@@ -236,7 +254,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 						{Name: stringPtr(fmt.Sprintf("overflow_metric_%d", i)), Datatype: uint32Ptr(10), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: float64(i)}},
 					},
 				}
-				input.ProcessDataMessage(deviceKey, "NDATA", payload)
+				input.ProcessDataMessage(deviceKey, "NDATA", payload, makeTopicInfo(deviceKey))
 			}
 
 			// Then: Validate system remained stable
@@ -273,7 +291,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 					{Name: stringPtr("bdSeq"), Datatype: uint32Ptr(8), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 100}},
 				},
 			}
-			input.ProcessBirthMessage(deviceKey, "NBIRTH", nbirthPayload)
+			input.ProcessBirthMessage(deviceKey, "NBIRTH", nbirthPayload, makeTopicInfo(deviceKey))
 
 			// Prepare DBIRTH payload with alias definitions
 			dbirthSeq := uint64(1)
@@ -308,7 +326,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 			go func() {
 				defer wg.Done()
 				defer GinkgoRecover()
-				input.ProcessBirthMessage(deviceKey, "DBIRTH", dbirthPayload)
+				input.ProcessBirthMessage(deviceKey, "DBIRTH", dbirthPayload, makeTopicInfo(deviceKey))
 			}()
 
 			go func() {
@@ -316,7 +334,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 				defer GinkgoRecover()
 				// Small delay to make race more likely (DDATA might arrive before DBIRTH processed)
 				time.Sleep(1 * time.Millisecond)
-				input.ProcessDataMessage(deviceKey, "DDATA", ddataPayload)
+				input.ProcessDataMessage(deviceKey, "DDATA", ddataPayload, makeTopicInfo(deviceKey))
 			}()
 
 			wg.Wait()
@@ -354,7 +372,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 					{Name: stringPtr("bdSeq"), Datatype: uint32Ptr(8), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 100}},
 				},
 			}
-			input.ProcessBirthMessage(deviceKey, "NBIRTH", birthPayload)
+			input.ProcessBirthMessage(deviceKey, "NBIRTH", birthPayload, makeTopicInfo(deviceKey))
 
 			// Start background goroutine that continuously sends messages
 			var wg sync.WaitGroup
@@ -381,7 +399,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 								{Name: stringPtr(fmt.Sprintf("shutdown_metric_%d", messagesSent)), Datatype: uint32Ptr(10), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: float64(messagesSent)}},
 							},
 						}
-						input.ProcessDataMessage(deviceKey, "NDATA", payload)
+						input.ProcessDataMessage(deviceKey, "NDATA", payload, makeTopicInfo(deviceKey))
 						time.Sleep(1 * time.Millisecond) // Small delay to simulate real timing
 					}
 				}

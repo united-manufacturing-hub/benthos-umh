@@ -20,6 +20,7 @@
 package sparkplug_plugin
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +28,19 @@ import (
 
 	sparkplugb "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
+
+// extractNodeKeyForTest extracts group/node from deviceKey for test helper methods.
+// This is a test-only utility; production code uses TopicInfo.NodeKey().
+func extractNodeKeyForTest(deviceKey string) string {
+	if deviceKey == "" {
+		return ""
+	}
+	parts := strings.Split(deviceKey, "/")
+	if len(parts) >= 2 {
+		return parts[0] + "/" + parts[1]
+	}
+	return deviceKey
+}
 
 // SparkplugInputTestWrapper wraps the internal sparkplugInput for external testing
 type SparkplugInputTestWrapper struct {
@@ -88,13 +102,13 @@ func (w *SparkplugInputTestWrapper) CreateSplitMessages(payload *sparkplugb.Payl
 }
 
 // ProcessBirthMessage is an exported wrapper for testing the private processBirthMessage method
-func (w *SparkplugInputTestWrapper) ProcessBirthMessage(deviceKey string, msgType string, payload *sparkplugb.Payload) {
-	w.input.processBirthMessage(deviceKey, msgType, payload)
+func (w *SparkplugInputTestWrapper) ProcessBirthMessage(deviceKey string, msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
+	w.input.processBirthMessage(deviceKey, msgType, payload, topicInfo)
 }
 
 // ProcessDataMessage is an exported wrapper for testing the private processDataMessage method
-func (w *SparkplugInputTestWrapper) ProcessDataMessage(deviceKey string, msgType string, payload *sparkplugb.Payload) {
-	w.input.processDataMessage(deviceKey, msgType, payload)
+func (w *SparkplugInputTestWrapper) ProcessDataMessage(deviceKey string, msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
+	w.input.processDataMessage(deviceKey, msgType, payload, topicInfo)
 }
 
 // NodeStateInfo represents the public view of a node state for testing
@@ -104,12 +118,12 @@ type NodeStateInfo struct {
 }
 
 // GetNodeState is an exported wrapper for accessing node state in tests
-// ENG-4031: Uses ExtractNodeKey because state is now stored at node level
+// ENG-4031: State is stored at node level, so we extract nodeKey from deviceKey
 func (w *SparkplugInputTestWrapper) GetNodeState(deviceKey string) *NodeStateInfo {
 	w.input.stateMu.RLock()
 	defer w.input.stateMu.RUnlock()
 
-	nodeKey := ExtractNodeKey(deviceKey)
+	nodeKey := extractNodeKeyForTest(deviceKey)
 	state, exists := w.input.nodeStates[nodeKey]
 	if !exists {
 		return nil
@@ -122,17 +136,17 @@ func (w *SparkplugInputTestWrapper) GetNodeState(deviceKey string) *NodeStateInf
 }
 
 // ProcessDeathMessage is an exported wrapper for testing the private processDeathMessage method
-func (w *SparkplugInputTestWrapper) ProcessDeathMessage(deviceKey string, msgType string, payload *sparkplugb.Payload) {
-	w.input.processDeathMessage(deviceKey, msgType, payload)
+func (w *SparkplugInputTestWrapper) ProcessDeathMessage(deviceKey string, msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
+	w.input.processDeathMessage(deviceKey, msgType, payload, topicInfo)
 }
 
 // SetNodeBdSeq allows tests to set the bdSeq for a device (simulating NBIRTH)
-// ENG-4031: Uses ExtractNodeKey because state is now stored at node level
+// ENG-4031: State is stored at node level, so we extract nodeKey from deviceKey
 func (w *SparkplugInputTestWrapper) SetNodeBdSeq(deviceKey string, bdSeq uint64) {
 	w.input.stateMu.Lock()
 	defer w.input.stateMu.Unlock()
 
-	nodeKey := ExtractNodeKey(deviceKey)
+	nodeKey := extractNodeKeyForTest(deviceKey)
 	if state, exists := w.input.nodeStates[nodeKey]; exists {
 		state.BdSeq = bdSeq
 	} else {
@@ -145,12 +159,12 @@ func (w *SparkplugInputTestWrapper) SetNodeBdSeq(deviceKey string, bdSeq uint64)
 }
 
 // GetNodeBdSeq returns the bdSeq for a device
-// ENG-4031: Uses ExtractNodeKey because state is now stored at node level
+// ENG-4031: State is stored at node level, so we extract nodeKey from deviceKey
 func (w *SparkplugInputTestWrapper) GetNodeBdSeq(deviceKey string) (uint64, bool) {
 	w.input.stateMu.RLock()
 	defer w.input.stateMu.RUnlock()
 
-	nodeKey := ExtractNodeKey(deviceKey)
+	nodeKey := extractNodeKeyForTest(deviceKey)
 	state, exists := w.input.nodeStates[nodeKey]
 	if !exists {
 		return 0, false
