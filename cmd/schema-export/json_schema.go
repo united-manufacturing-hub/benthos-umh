@@ -102,7 +102,11 @@ func convertFieldToJSONSchema(field FieldSpec) map[string]interface{} {
 		}
 
 		// Get the items map and add properties to it
-		items := schema["items"].(map[string]interface{})
+		items, ok := schema["items"].(map[string]interface{})
+		if !ok {
+			items = map[string]interface{}{}
+			schema["items"] = items
+		}
 		items["properties"] = properties
 
 		// Build required array for the items object
