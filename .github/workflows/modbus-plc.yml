@@ -29,8 +29,7 @@ concurrency:
 
 jobs:
   go-test-modbus-plc:
-    runs-on:
-      group: eos
+    runs-on: depot-ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Checkout
