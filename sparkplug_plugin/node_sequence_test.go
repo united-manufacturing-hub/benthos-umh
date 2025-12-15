@@ -16,16 +16,12 @@
 
 // Unit tests for Sparkplug B NODE-scoped sequence tracking (ENG-4031)
 //
-// Per Sparkplug B spec, sequence numbers are tracked at NODE scope, not device scope.
-// All message types from a node (NBIRTH, NDATA, DBIRTH, DDATA) share one sequence counter.
+// Per Sparkplug B spec, sequence numbers are tracked at NODE scope (group/edgeNode),
+// not device scope (group/edgeNode/device). All message types from a node
+// (NBIRTH, NDATA, DBIRTH, DDATA) share one sequence counter.
 //
-// BUG: Current implementation tracks per-deviceKey, causing false sequence gaps when
-// NDATA (deviceKey="group/node") and DDATA (deviceKey="group/node/device") interleave.
-//
-// This test file uses TDD approach:
-// 1. First test demonstrates correct behavior (when using unified nodeKey)
-// 2. Second test reproduces the bug (when using separate device keys)
-// 3. Third test validates the TopicInfo.NodeKey() method
+// The fix uses TopicInfo.NodeKey() to ensure all messages from the same node
+// share the same sequence state, regardless of message type.
 
 package sparkplug_plugin_test
 
@@ -71,43 +67,6 @@ var _ = Describe("Sparkplug B Node-Scoped Sequence Tracking (ENG-4031)", func() 
 
 			// Verify final state
 			Expect(nodeStates[nodeKey].LastSeq).To(Equal(uint8(18)))
-		})
-
-		It("should FAIL with current per-device tracking (reproduces the bug)", func() {
-			// This test demonstrates the CURRENT BUGGY behavior
-			// Using separate keys for NDATA vs DDATA causes false sequence gaps
-
-			nodeStates := make(map[string]*sparkplugplugin.NodeState)
-
-			// CURRENT BUGGY BEHAVIOR: Different keys for different message types
-			ndataKey := "factory_a/line_1"            // Node-level messages
-			ddataKey := "factory_a/line_1/plc_device" // Device-level messages
-
-			// Process DDATA seq=15
-			action1 := sparkplugplugin.UpdateNodeState(nodeStates, ddataKey, 15)
-			Expect(action1.IsNewNode).To(BeTrue())
-
-			// Process NDATA seq=16 (different key!)
-			action2 := sparkplugplugin.UpdateNodeState(nodeStates, ndataKey, 16)
-			Expect(action2.IsNewNode).To(BeTrue()) // Creates NEW entry!
-
-			// Process NDATA seq=17
-			action3 := sparkplugplugin.UpdateNodeState(nodeStates, ndataKey, 17)
-			Expect(action3.NeedsRebirth).To(BeFalse())
-
-			// Process DDATA seq=18 - BUG: This triggers false gap!
-			action4 := sparkplugplugin.UpdateNodeState(nodeStates, ddataKey, 18)
-
-			// BUG MANIFESTATION: This returns NeedsRebirth=true because:
-			// - ddataKey state has LastSeq=15
-			// - Expected next: 16
-			// - Got: 18
-			// - Result: FALSE sequence gap detected!
-			Expect(action4.NeedsRebirth).To(BeTrue(),
-				"BUG: Per-device tracking causes false gap detection")
-
-			// Verify we have TWO separate state entries (the bug)
-			Expect(nodeStates).To(HaveLen(2), "BUG: Two separate states instead of one")
 		})
 
 		It("should still detect real sequence gaps across message types", func() {
