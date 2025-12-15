@@ -7,18 +7,9 @@
 /CONTRIBUTOR_LICENSE_AGREEMENT_*.md @JeremyTheocharis
 **/NOTICES @JeremyTheocharis
 
-# CI/CD and release automation require CTO approval
-/.github/ @JeremyTheocharis
-/Dockerfile @JeremyTheocharis
-
 # Dependency management requires CTO approval
 /go.mod @JeremyTheocharis
 /go.sum @JeremyTheocharis
-
-# Build and versioning require CTO approval
-/Makefile @JeremyTheocharis
-/Makefile.Common @JeremyTheocharis
-/CHANGELOG.md @JeremyTheocharis
 
 # Governance requires CTO approval
 /CODEOWNERS @JeremyTheocharis
