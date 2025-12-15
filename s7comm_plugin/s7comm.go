@@ -89,14 +89,14 @@ var S7CommConfigSpec = service.NewConfigSpec().
 	Description("This input plugin enables Benthos to read data directly from Siemens S7 PLCs using the S7comm protocol. " +
 		"Configure the plugin by specifying the PLC's IP address, rack and slot numbers, and the data blocks to read.").
 	Field(service.NewStringField("tcpDevice").
-		Description("IP address or hostname of the S7 PLC. Format: '192.168.1.100' or 'plc.local'. For S7-1200/1500 PLCs, ensure TSAP settings match controller configuration.").
+		Description("IP address or hostname of the S7 PLC. Format: '192.168.1.100' or 'plc.local'. Ensure to pick the IP address from your hardware configuration.").
 		Examples("192.168.1.100", "10.0.0.50", "plc.local")).
 	Field(service.NewIntField("rack").
 		Description("Rack number from hardware configuration, usually 0.").
 		Default(0).
 		Examples(0, 1, 2)).
 	Field(service.NewIntField("slot").
-		Description("Slot number from hardware configuration, usually 1 for S7-1200/1500.").
+		Description("Slot number from hardware configuration, usually 1.").
 		Default(1).
 		Examples(1, 2, 3)).
 	Field(service.NewIntField("batchMaxSize").
