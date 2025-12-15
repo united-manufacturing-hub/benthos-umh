@@ -21,8 +21,7 @@ on:
 jobs:
   license-eye-header:
     name: License Eye Header
-    runs-on:
-      group: arc-runners-tests
+    runs-on: depot-ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -88,14 +88,41 @@ var S7CommConfigSpec = service.NewConfigSpec().
 	Summary("Creates an input that reads data from Siemens S7 PLCs. Created & maintained by the United Manufacturing Hub. About us: www.umh.app").
 	Description("This input plugin enables Benthos to read data directly from Siemens S7 PLCs using the S7comm protocol. " +
 		"Configure the plugin by specifying the PLC's IP address, rack and slot numbers, and the data blocks to read.").
-	Field(service.NewStringField("tcpDevice").Description("IP address of the S7 PLC.")).
-	Field(service.NewIntField("rack").Description("Rack number of the PLC. Identifies the physical location of the CPU within the PLC rack.").Default(0)).
-	Field(service.NewIntField("slot").Description("Slot number of the PLC. Identifies the CPU slot within the rack.").Default(1)).
-	Field(service.NewIntField("batchMaxSize").Description("Maximum count of addresses to be bundled in one batch-request (PDU size).").Default(480)).
-	Field(service.NewIntField("timeout").Description("The timeout duration in seconds for connection attempts and read requests.").Default(10)).
-	Field(service.NewBoolField("disableCPUInfo").Description("Set this to true to not fetch CPU information from the PLC. Should be used when you get the error 'Failed to get CPU information'").Default(false)).
-	Field(service.NewStringListField("addresses").Description("List of S7 addresses to read in the format '<area>.<type><address>[.extra]', e.g., 'DB5.X3.2', 'DB5.B3', or 'DB5.C3'. " +
-		"Address formats include direct area access (e.g., DB1 for data block one) and data types (e.g., X for bit, B for byte)."))
+	Field(service.NewStringField("tcpDevice").
+		Description("IP address or hostname of the S7 PLC. Format: '192.168.1.100' or 'plc.local'. Ensure to pick the IP address from your hardware configuration.").
+		Examples("192.168.1.100", "10.0.0.50", "plc.local")).
+	Field(service.NewIntField("rack").
+		Description("Rack number from hardware configuration, usually 0.").
+		Default(0).
+		Examples(0, 1, 2)).
+	Field(service.NewIntField("slot").
+		Description("Slot number from hardware configuration, usually 1.").
+		Default(1).
+		Examples(1, 2, 3)).
+	Field(service.NewIntField("batchMaxSize").
+		Description("Maximum PDU size in bytes. Default (480) works for most PLCs including S7-1500. Reduce for older PLCs like S7-300 (240).").
+		Default(480).
+		Optional().
+		Advanced().
+		Examples(480, 240, 960)).
+	Field(service.NewIntField("timeout").
+		Description("The timeout duration in seconds for connection attempts and read requests.").
+		Default(10).
+		Optional().
+		Advanced().
+		Examples(10, 5, 30)).
+	Field(service.NewBoolField("disableCPUInfo").
+		Description("Set this to true to not fetch CPU information from the PLC. Should be used when you get the error 'Failed to get CPU information'").
+		Default(false).
+		Optional().
+		Advanced().
+		Examples(false, true)).
+	Field(service.NewStringListField("addresses").
+		Description("S7 memory addresses to read. Format: AREA.TYPE<offset>[.extra]. "+
+			"Areas: DB (data block), MK (marker), PE (input), PA (output). "+
+			"Types: X (bit), B (byte), W (word), DW (dword), I (int), DI (dint), R (real), S (string). "+
+			"For bits (X), add bit number 0-7. For strings (S), add max length.").
+		Examples([]string{"DB1.DW20"}, []string{"DB1.X5.2"}, []string{"MK0.W0"}, []string{"PE.W0", "PA.W0"}))
 
 // newS7CommInput is the constructor function for S7CommInput. It parses the plugin configuration,
 // establishes a connection with the S7 PLC, and initializes the input plugin instance.
