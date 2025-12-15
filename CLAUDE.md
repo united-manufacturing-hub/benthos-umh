@@ -430,6 +430,60 @@ Auto-optimizes Browse workers and Subscribe batch size based on detected server 
   - Maintain existing documentation
   - Tests use `_test.go` and `_suite_test.go` pattern
 
+### Plugin Field Classification
+
+Plugin fields follow a required/optional rule for consistent UI generation in the Management Console.
+
+#### Core Rule
+
+| Field Type | Modifiers | Shows in UI |
+|------------|-----------|-------------|
+| **Basic** | No `.Default()`, no `.Advanced()` | Required (asterisk) |
+| **Advanced** | `.Default().Advanced()` | Optional (collapsed) |
+
+**Key insight:** `.Default()` alone makes a field not required. `.Optional()` is rarely needed.
+
+#### Examples
+
+```go
+// Basic field - required, user MUST configure
+Field(service.NewStringField("endpoint").
+    Description("OPC UA endpoint URL"))
+
+// Advanced field - optional with sensible default
+Field(service.NewIntField("sessionTimeout").
+    Description("Session timeout in milliseconds").
+    Default(10000).
+    Advanced())
+```
+
+#### Field Examples Best Practices
+
+- **Always list all valid options** in `.Examples()` for enum-like fields
+- **Boolean fields**: Include both `true` and `false`
+- **Numeric fields**: Only include the default value unless other values represent meaningful thresholds
+- **String lists**: Show common patterns (single item, multiple items)
+
+```go
+// Good: enum-like field with all options
+Field(service.NewStringField("securityMode").
+    Examples("", "None", "Sign", "SignAndEncrypt"))
+
+// Good: boolean with both values
+Field(service.NewBoolField("subscribeEnabled").
+    Examples(true, false))
+
+// Good: numeric with just default (no arbitrary values)
+Field(service.NewIntField("queueSize").
+    Default(10).
+    Examples(10))
+```
+
+#### When to Use Basic vs Advanced
+
+**Basic**: Required for plugin to function (endpoint, device address, credentials)
+**Advanced**: Optimization parameters with sensible defaults (timeout, buffer size, retry count)
+
 ## Build & Test Commands
 
 ### Core Commands
