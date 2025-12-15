@@ -164,4 +164,46 @@ var _ = Describe("Sparkplug B Node-Scoped Sequence Tracking (ENG-4031)", func() 
 			Expect(ti.NodeKey()).To(Equal(""))
 		})
 	})
+
+	Context("TopicInfo.DeviceKey() method", func() {
+		It("should return device key with device", func() {
+			// Device-level: group + node + device -> "group/node/device"
+			ti := &sparkplugplugin.TopicInfo{
+				Group:    "factory_a",
+				EdgeNode: "line_1",
+				Device:   "plc_1",
+			}
+			Expect(ti.DeviceKey()).To(Equal("factory_a/line_1/plc_1"))
+		})
+
+		It("should return node key without device", func() {
+			// Node-level: group + node -> "group/node"
+			ti := &sparkplugplugin.TopicInfo{
+				Group:    "factory_a",
+				EdgeNode: "line_1",
+			}
+			Expect(ti.DeviceKey()).To(Equal("factory_a/line_1"))
+		})
+
+		It("should return empty string for nil TopicInfo", func() {
+			var ti *sparkplugplugin.TopicInfo
+			Expect(ti.DeviceKey()).To(Equal(""))
+		})
+
+		It("should return empty string for empty Group", func() {
+			ti := &sparkplugplugin.TopicInfo{
+				EdgeNode: "line_1",
+				Device:   "plc_1",
+			}
+			Expect(ti.DeviceKey()).To(Equal(""))
+		})
+
+		It("should return empty string for empty EdgeNode", func() {
+			ti := &sparkplugplugin.TopicInfo{
+				Group:  "factory_a",
+				Device: "plc_1",
+			}
+			Expect(ti.DeviceKey()).To(Equal(""))
+		})
+	})
 })

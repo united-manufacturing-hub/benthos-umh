@@ -50,6 +50,19 @@ func (ti *TopicInfo) NodeKey() string {
 	return ti.Group + "/" + ti.EdgeNode
 }
 
+// DeviceKey returns the full device key (group/edgeNode or group/edgeNode/device).
+// For node-level messages (NBIRTH, NDEATH, NDATA), Device is empty and this returns group/edgeNode.
+// For device-level messages (DBIRTH, DDEATH, DDATA), this returns group/edgeNode/device.
+func (ti *TopicInfo) DeviceKey() string {
+	if ti == nil || ti.Group == "" || ti.EdgeNode == "" {
+		return ""
+	}
+	if ti.Device == "" {
+		return ti.Group + "/" + ti.EdgeNode
+	}
+	return ti.Group + "/" + ti.EdgeNode + "/" + ti.Device
+}
+
 // NodeState tracks the state of a Sparkplug node/device for sequence management.
 type NodeState struct {
 	LastSeen time.Time

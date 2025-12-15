@@ -17,8 +17,6 @@
 package sparkplug_plugin_test
 
 import (
-	"strings"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -26,30 +24,17 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
 
-// makeTopicInfoDeath constructs a TopicInfo from a deviceKey string (group/node/device format)
-func makeTopicInfoDeath(deviceKey string) *sparkplugplugin.TopicInfo {
-	parts := strings.Split(deviceKey, "/")
-	if len(parts) < 2 {
-		return &sparkplugplugin.TopicInfo{}
-	}
-	ti := &sparkplugplugin.TopicInfo{
-		Group:    parts[0],
-		EdgeNode: parts[1],
-	}
-	if len(parts) > 2 {
-		ti.Device = parts[2]
-	}
-	return ti
-}
-
 var _ = Describe("NDEATH bdSeq Validation", func() {
 	Context("when processing NDEATH with bdSeq", func() {
 		It("should accept NDEATH with matching bdSeq", func() {
 			wrapper := sparkplugplugin.NewSparkplugInputForTesting()
-			deviceKey := "TestGroup/TestNode"
+			topicInfo := &sparkplugplugin.TopicInfo{
+				Group:    "TestGroup",
+				EdgeNode: "TestNode",
+			}
 
 			// Setup: Establish node with bdSeq=42 (simulating NBIRTH)
-			wrapper.SetNodeBdSeq(deviceKey, 42)
+			wrapper.SetNodeBdSeq(topicInfo.DeviceKey(), 42)
 
 			// Create NDEATH payload with matching bdSeq
 			bdSeqValue := uint64(42)
@@ -64,20 +49,23 @@ var _ = Describe("NDEATH bdSeq Validation", func() {
 			}
 
 			// Process NDEATH
-			wrapper.ProcessDeathMessage(deviceKey, "NDEATH", payload, makeTopicInfoDeath(deviceKey))
+			wrapper.ProcessDeathMessage(topicInfo.DeviceKey(), "NDEATH", payload, topicInfo)
 
 			// Verify state is updated (node marked offline)
-			state := wrapper.GetNodeState(deviceKey)
+			state := wrapper.GetNodeState(topicInfo.DeviceKey())
 			Expect(state).NotTo(BeNil())
 			Expect(state.IsOnline).To(BeFalse(), "Node should be offline after valid NDEATH")
 		})
 
 		It("should reject stale NDEATH with mismatched bdSeq", func() {
 			wrapper := sparkplugplugin.NewSparkplugInputForTesting()
-			deviceKey := "TestGroup/TestNode"
+			topicInfo := &sparkplugplugin.TopicInfo{
+				Group:    "TestGroup",
+				EdgeNode: "TestNode",
+			}
 
 			// Setup: Establish node with bdSeq=42
-			wrapper.SetNodeBdSeq(deviceKey, 42)
+			wrapper.SetNodeBdSeq(topicInfo.DeviceKey(), 42)
 
 			// Create NDEATH payload with OLD bdSeq (from previous session)
 			staleBdSeq := uint64(41)
@@ -92,20 +80,23 @@ var _ = Describe("NDEATH bdSeq Validation", func() {
 			}
 
 			// Process NDEATH
-			wrapper.ProcessDeathMessage(deviceKey, "NDEATH", payload, makeTopicInfoDeath(deviceKey))
+			wrapper.ProcessDeathMessage(topicInfo.DeviceKey(), "NDEATH", payload, topicInfo)
 
 			// Verify state is NOT updated (stale NDEATH ignored)
-			state := wrapper.GetNodeState(deviceKey)
+			state := wrapper.GetNodeState(topicInfo.DeviceKey())
 			Expect(state).NotTo(BeNil())
 			Expect(state.IsOnline).To(BeTrue(), "Node should still be online - stale NDEATH ignored")
 		})
 
 		It("should handle NDEATH without bdSeq metric gracefully", func() {
 			wrapper := sparkplugplugin.NewSparkplugInputForTesting()
-			deviceKey := "TestGroup/TestNode"
+			topicInfo := &sparkplugplugin.TopicInfo{
+				Group:    "TestGroup",
+				EdgeNode: "TestNode",
+			}
 
 			// Setup: Establish node
-			wrapper.SetNodeBdSeq(deviceKey, 42)
+			wrapper.SetNodeBdSeq(topicInfo.DeviceKey(), 42)
 
 			// Create NDEATH payload WITHOUT bdSeq metric
 			payload := &sparkplugb.Payload{
@@ -113,20 +104,24 @@ var _ = Describe("NDEATH bdSeq Validation", func() {
 			}
 
 			// Process NDEATH
-			wrapper.ProcessDeathMessage(deviceKey, "NDEATH", payload, makeTopicInfoDeath(deviceKey))
+			wrapper.ProcessDeathMessage(topicInfo.DeviceKey(), "NDEATH", payload, topicInfo)
 
 			// Verify state is updated (backwards compatibility)
-			state := wrapper.GetNodeState(deviceKey)
+			state := wrapper.GetNodeState(topicInfo.DeviceKey())
 			Expect(state).NotTo(BeNil())
 			Expect(state.IsOnline).To(BeFalse(), "Node should be offline - NDEATH processed despite missing bdSeq")
 		})
 
 		It("should process DDEATH without bdSeq validation", func() {
 			wrapper := sparkplugplugin.NewSparkplugInputForTesting()
-			deviceKey := "TestGroup/TestNode/Device1"
+			topicInfo := &sparkplugplugin.TopicInfo{
+				Group:    "TestGroup",
+				EdgeNode: "TestNode",
+				Device:   "Device1",
+			}
 
 			// Setup: Establish device
-			wrapper.SetNodeBdSeq(deviceKey, 42)
+			wrapper.SetNodeBdSeq(topicInfo.DeviceKey(), 42)
 
 			// Create DDEATH payload (DDEATHs don't use bdSeq)
 			payload := &sparkplugb.Payload{
@@ -134,10 +129,10 @@ var _ = Describe("NDEATH bdSeq Validation", func() {
 			}
 
 			// Process DDEATH
-			wrapper.ProcessDeathMessage(deviceKey, "DDEATH", payload, makeTopicInfoDeath(deviceKey))
+			wrapper.ProcessDeathMessage(topicInfo.DeviceKey(), "DDEATH", payload, topicInfo)
 
 			// Verify state is updated
-			state := wrapper.GetNodeState(deviceKey)
+			state := wrapper.GetNodeState(topicInfo.DeviceKey())
 			Expect(state).NotTo(BeNil())
 			Expect(state.IsOnline).To(BeFalse(), "Device should be offline after DDEATH")
 		})
