@@ -107,7 +107,7 @@ var _ = Describe("Sequence Gap Validator - Message Drop Investigation (ENG-3720)
 			// 1. processDataMessage is not exposed by test wrapper
 			// 2. The code path shows createSplitMessages is ALWAYS called after processDataMessage
 			// 3. There is NO conditional logic that prevents batch creation on validation failure
-			batch := wrapper.CreateSplitMessages(payload, "NDATA", "test/edge1/device1", topicInfo, "spBv1.0/test/NDATA/edge1/device1")
+			batch := wrapper.CreateSplitMessages(payload, "NDATA", topicInfo, "spBv1.0/test/NDATA/edge1/device1")
 
 			// Then: Message should be processed (NOT DROPPED)
 			Expect(batch).NotTo(BeNil(), "Batch should be created despite sequence gap")
@@ -154,7 +154,7 @@ var _ = Describe("Sequence Gap Validator - Message Drop Investigation (ENG-3720)
 			}
 
 			// When: Processing the message
-			batch := wrapper.CreateSplitMessages(payload, "NDATA", "test/edge1/device1", topicInfo, "spBv1.0/test/NDATA/edge1/device1")
+			batch := wrapper.CreateSplitMessages(payload, "NDATA", topicInfo, "spBv1.0/test/NDATA/edge1/device1")
 
 			// Then: Message is processed normally
 			Expect(batch).To(HaveLen(1), "Out-of-order message should still be processed")
@@ -190,7 +190,7 @@ var _ = Describe("Sequence Gap Validator - Message Drop Investigation (ENG-3720)
 			}
 
 			// When: Processing sequence=0 (after presumed sequence=255)
-			batch := wrapper.CreateSplitMessages(payload, "NDATA", "test/edge1/device1", topicInfo, "spBv1.0/test/NDATA/edge1/device1")
+			batch := wrapper.CreateSplitMessages(payload, "NDATA", topicInfo, "spBv1.0/test/NDATA/edge1/device1")
 
 			// Then: Message is processed
 			Expect(batch).To(HaveLen(1), "Wrapped sequence should be processed")

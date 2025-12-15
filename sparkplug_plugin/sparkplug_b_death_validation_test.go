@@ -49,7 +49,7 @@ var _ = Describe("NDEATH bdSeq Validation", func() {
 			}
 
 			// Process NDEATH
-			wrapper.ProcessDeathMessage(topicInfo.DeviceKey(), "NDEATH", payload, topicInfo)
+			wrapper.ProcessDeathMessage("NDEATH", payload, topicInfo)
 
 			// Verify state is updated (node marked offline)
 			state := wrapper.GetNodeState(topicInfo.DeviceKey())
@@ -80,7 +80,7 @@ var _ = Describe("NDEATH bdSeq Validation", func() {
 			}
 
 			// Process NDEATH
-			wrapper.ProcessDeathMessage(topicInfo.DeviceKey(), "NDEATH", payload, topicInfo)
+			wrapper.ProcessDeathMessage("NDEATH", payload, topicInfo)
 
 			// Verify state is NOT updated (stale NDEATH ignored)
 			state := wrapper.GetNodeState(topicInfo.DeviceKey())
@@ -104,7 +104,7 @@ var _ = Describe("NDEATH bdSeq Validation", func() {
 			}
 
 			// Process NDEATH
-			wrapper.ProcessDeathMessage(topicInfo.DeviceKey(), "NDEATH", payload, topicInfo)
+			wrapper.ProcessDeathMessage("NDEATH", payload, topicInfo)
 
 			// Verify state is updated (backwards compatibility)
 			state := wrapper.GetNodeState(topicInfo.DeviceKey())
@@ -129,7 +129,7 @@ var _ = Describe("NDEATH bdSeq Validation", func() {
 			}
 
 			// Process DDEATH
-			wrapper.ProcessDeathMessage(topicInfo.DeviceKey(), "DDEATH", payload, topicInfo)
+			wrapper.ProcessDeathMessage("DDEATH", payload, topicInfo)
 
 			// Verify state is updated
 			state := wrapper.GetNodeState(topicInfo.DeviceKey())

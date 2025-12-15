@@ -187,25 +187,30 @@ func NewTopicParser() *TopicParser {
 }
 
 // ParseSparkplugTopic parses a Sparkplug topic and returns (messageType, deviceKey).
+// deviceKey is derived from topicInfo.DeviceKey() for backward compatibility.
 func (tp *TopicParser) ParseSparkplugTopic(topic string) (string, string) {
-	msgType, deviceKey, _ := tp.ParseSparkplugTopicDetailed(topic)
-	return msgType, deviceKey
+	msgType, topicInfo := tp.ParseSparkplugTopicDetailed(topic)
+	if topicInfo == nil {
+		return msgType, ""
+	}
+	return msgType, topicInfo.DeviceKey()
 }
 
-// ParseSparkplugTopicDetailed parses a Sparkplug topic and returns (messageType, deviceKey, topicInfo).
-func (tp *TopicParser) ParseSparkplugTopicDetailed(topic string) (string, string, *TopicInfo) {
+// ParseSparkplugTopicDetailed parses a Sparkplug topic and returns (messageType, topicInfo).
+// The deviceKey can be derived from topicInfo.DeviceKey() when needed.
+func (tp *TopicParser) ParseSparkplugTopicDetailed(topic string) (string, *TopicInfo) {
 	if topic == "" {
-		return "", "", nil
+		return "", nil
 	}
 
 	parts := strings.Split(topic, "/")
 	if len(parts) < 4 {
-		return "", "", nil
+		return "", nil
 	}
 
 	// Validate Sparkplug namespace
 	if parts[0] != "spBv1.0" {
-		return "", "", nil
+		return "", nil
 	}
 
 	msgType := parts[2]
@@ -216,19 +221,13 @@ func (tp *TopicParser) ParseSparkplugTopicDetailed(topic string) (string, string
 		device = parts[4]
 	}
 
-	// Construct device key for cache lookup
-	deviceKey := fmt.Sprintf("%s/%s", group, edgeNode)
-	if device != "" {
-		deviceKey = fmt.Sprintf("%s/%s", deviceKey, device)
-	}
-
 	topicInfo := &TopicInfo{
 		Group:    group,
 		EdgeNode: edgeNode,
 		Device:   device,
 	}
 
-	return msgType, deviceKey, topicInfo
+	return msgType, topicInfo
 }
 
 // BuildTopic constructs a Sparkplug topic from components.

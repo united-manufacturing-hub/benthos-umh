@@ -73,7 +73,7 @@ var _ = Describe("Lock Management in processDataMessage", func() {
 			initialPayload := createSparkplugPayload(0, []*sparkplugb.Payload_Metric{
 				{Name: stringPtr("temp"), Value: &sparkplugb.Payload_Metric_IntValue{IntValue: 42}},
 			})
-			wrapper.ProcessDataMessage(topicInfo.DeviceKey(), "NDATA", initialPayload, topicInfo)
+			wrapper.ProcessDataMessage("NDATA", initialPayload, topicInfo)
 
 			// Verify initial state established
 			state := wrapper.GetNodeState(topicInfo.DeviceKey())
@@ -117,7 +117,7 @@ var _ = Describe("Lock Management in processDataMessage", func() {
 			})
 
 			// Process message that triggers rebirth (line 630)
-			wrapper.ProcessDataMessage(topicInfo.DeviceKey(), "NDATA", gapPayload, topicInfo)
+			wrapper.ProcessDataMessage("NDATA", gapPayload, topicInfo)
 
 			// Wait for lock detection to complete
 			<-done
@@ -147,7 +147,7 @@ var _ = Describe("Lock Management in processDataMessage", func() {
 			initialPayload := createSparkplugPayload(0, []*sparkplugb.Payload_Metric{
 				{Name: stringPtr("temp"), Value: &sparkplugb.Payload_Metric_IntValue{IntValue: 42}},
 			})
-			wrapper.ProcessDataMessage(topicInfo.DeviceKey(), "NDATA", initialPayload, topicInfo)
+			wrapper.ProcessDataMessage("NDATA", initialPayload, topicInfo)
 
 			// Trigger sequence gap - this will call sendRebirthRequest at line 630
 			gapPayload := createSparkplugPayload(10, []*sparkplugb.Payload_Metric{
@@ -169,7 +169,7 @@ var _ = Describe("Lock Management in processDataMessage", func() {
 			// 5. Lock released via defer at line 638
 
 			// Process the gap message
-			wrapper.ProcessDataMessage(topicInfo.DeviceKey(), "NDATA", gapPayload, topicInfo)
+			wrapper.ProcessDataMessage("NDATA", gapPayload, topicInfo)
 
 			// Verify state was updated (proves processDataMessage completed)
 			state := wrapper.GetNodeState(topicInfo.DeviceKey())

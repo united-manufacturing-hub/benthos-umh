@@ -97,18 +97,21 @@ func (w *SparkplugInputTestWrapper) GetStateMu() *sync.RWMutex {
 }
 
 // CreateSplitMessages is an exported wrapper for testing the private createSplitMessages method
-func (w *SparkplugInputTestWrapper) CreateSplitMessages(payload *sparkplugb.Payload, msgType string, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
-	return w.input.createSplitMessages(payload, msgType, deviceKey, topicInfo, originalTopic)
+// ENG-4031: Removed redundant deviceKey parameter - now derived from topicInfo.DeviceKey()
+func (w *SparkplugInputTestWrapper) CreateSplitMessages(payload *sparkplugb.Payload, msgType string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
+	return w.input.createSplitMessages(payload, msgType, topicInfo, originalTopic)
 }
 
 // ProcessBirthMessage is an exported wrapper for testing the private processBirthMessage method
-func (w *SparkplugInputTestWrapper) ProcessBirthMessage(deviceKey string, msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
-	w.input.processBirthMessage(deviceKey, msgType, payload, topicInfo)
+// ENG-4031: Removed redundant deviceKey parameter - now derived from topicInfo.DeviceKey()
+func (w *SparkplugInputTestWrapper) ProcessBirthMessage(msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
+	w.input.processBirthMessage(msgType, payload, topicInfo)
 }
 
 // ProcessDataMessage is an exported wrapper for testing the private processDataMessage method
-func (w *SparkplugInputTestWrapper) ProcessDataMessage(deviceKey string, msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
-	w.input.processDataMessage(deviceKey, msgType, payload, topicInfo)
+// ENG-4031: Removed redundant deviceKey parameter - now derived from topicInfo.DeviceKey()
+func (w *SparkplugInputTestWrapper) ProcessDataMessage(msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
+	w.input.processDataMessage(msgType, payload, topicInfo)
 }
 
 // NodeStateInfo represents the public view of a node state for testing
@@ -136,8 +139,9 @@ func (w *SparkplugInputTestWrapper) GetNodeState(deviceKey string) *NodeStateInf
 }
 
 // ProcessDeathMessage is an exported wrapper for testing the private processDeathMessage method
-func (w *SparkplugInputTestWrapper) ProcessDeathMessage(deviceKey string, msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
-	w.input.processDeathMessage(deviceKey, msgType, payload, topicInfo)
+// ENG-4031: Removed redundant deviceKey parameter - now derived from topicInfo.DeviceKey()
+func (w *SparkplugInputTestWrapper) ProcessDeathMessage(msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
+	w.input.processDeathMessage(msgType, payload, topicInfo)
 }
 
 // SetNodeBdSeq allows tests to set the bdSeq for a device (simulating NBIRTH)

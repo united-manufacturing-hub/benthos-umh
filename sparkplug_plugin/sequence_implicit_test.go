@@ -127,7 +127,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 			}
 
 			// When: Processing NBIRTH
-			input.ProcessBirthMessage(topicInfo.DeviceKey(), "NBIRTH", payload, topicInfo)
+			input.ProcessBirthMessage("NBIRTH", payload, topicInfo)
 
 			// Then: Node state should be created with seq=0
 			state := input.GetNodeState(topicInfo.DeviceKey())
@@ -157,7 +157,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 			}
 
 			// When: Processing DBIRTH
-			input.ProcessBirthMessage(topicInfo.DeviceKey(), "DBIRTH", payload, topicInfo)
+			input.ProcessBirthMessage("DBIRTH", payload, topicInfo)
 
 			// Then: Device state should be created with seq=0
 			state := input.GetNodeState(topicInfo.DeviceKey())
@@ -184,7 +184,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("temperature"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 23.5}},
 				},
 			}
-			input.ProcessBirthMessage(topicInfo.DeviceKey(), "NBIRTH", birthPayload, topicInfo)
+			input.ProcessBirthMessage("NBIRTH", birthPayload, topicInfo)
 
 			// When: NDATA with explicit seq=1 (expected next sequence)
 			seq1 := uint64(1)
@@ -195,7 +195,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("temperature"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 24.1}},
 				},
 			}
-			input.ProcessDataMessage(topicInfo.DeviceKey(), "NDATA", dataPayload, topicInfo)
+			input.ProcessDataMessage("NDATA", dataPayload, topicInfo)
 
 			// Then: Sequence validation should pass (0 → 1 is valid)
 			state := input.GetNodeState(topicInfo.DeviceKey())
@@ -219,7 +219,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("temperature"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 23.5}},
 				},
 			}
-			input.ProcessBirthMessage(topicInfo.DeviceKey(), "NBIRTH", birthPayload, topicInfo)
+			input.ProcessBirthMessage("NBIRTH", birthPayload, topicInfo)
 
 			// When: NDATA with seq=2 (skips expected seq=1)
 			seq2 := uint64(2)
@@ -230,7 +230,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("temperature"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 24.1}},
 				},
 			}
-			input.ProcessDataMessage(topicInfo.DeviceKey(), "NDATA", dataPayload, topicInfo)
+			input.ProcessDataMessage("NDATA", dataPayload, topicInfo)
 
 			// Then: Sequence validation should fail (0 → 2 is invalid, expected 1)
 			state := input.GetNodeState(topicInfo.DeviceKey())
@@ -258,7 +258,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 100}},
 				},
 			}
-			input.ProcessBirthMessage(topicInfo.DeviceKey(), "DBIRTH", birth1, topicInfo)
+			input.ProcessBirthMessage("DBIRTH", birth1, topicInfo)
 
 			state := input.GetNodeState(topicInfo.DeviceKey())
 			Expect(state.LastSeq).To(Equal(uint8(0)), "first DBIRTH should set seq to 0")
@@ -272,7 +272,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 101}},
 				},
 			}
-			input.ProcessDataMessage(topicInfo.DeviceKey(), "DDATA", data1, topicInfo)
+			input.ProcessDataMessage("DDATA", data1, topicInfo)
 
 			state = input.GetNodeState(topicInfo.DeviceKey())
 			Expect(state.LastSeq).To(Equal(uint8(1)), "DDATA should advance to seq=1")
@@ -287,7 +287,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 102}},
 				},
 			}
-			input.ProcessDataMessage(topicInfo.DeviceKey(), "DDATA", data2, topicInfo)
+			input.ProcessDataMessage("DDATA", data2, topicInfo)
 
 			state = input.GetNodeState(topicInfo.DeviceKey())
 			Expect(state.LastSeq).To(Equal(uint8(2)), "DDATA should advance to seq=2")
@@ -300,7 +300,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 100}},
 				},
 			}
-			input.ProcessBirthMessage(topicInfo.DeviceKey(), "DBIRTH", birth2, topicInfo)
+			input.ProcessBirthMessage("DBIRTH", birth2, topicInfo)
 
 			state = input.GetNodeState(topicInfo.DeviceKey())
 			Expect(state.LastSeq).To(Equal(uint8(0)), "rebirth should reset seq to 0")
@@ -315,7 +315,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 103}},
 				},
 			}
-			input.ProcessDataMessage(topicInfo.DeviceKey(), "DDATA", data3, topicInfo)
+			input.ProcessDataMessage("DDATA", data3, topicInfo)
 
 			state = input.GetNodeState(topicInfo.DeviceKey())
 			Expect(state.LastSeq).To(Equal(uint8(1)), "sequence should advance from 0 to 1 after rebirth")
