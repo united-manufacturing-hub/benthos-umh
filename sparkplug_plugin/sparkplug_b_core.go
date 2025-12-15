@@ -155,6 +155,28 @@ func SpbDeviceKey(gid string, nid string, did string) string {
 	return gid + "/" + nid + "/" + did
 }
 
+// ExtractNodeKey returns the node-level key (group/edgeNode) from a deviceKey.
+// Per Sparkplug B specification, sequence numbers are tracked at NODE scope,
+// not device scope. All message types from a node (NBIRTH, NDATA, DBIRTH, DDATA)
+// share one sequence counter that increments across all message types.
+//
+// Examples:
+//   - "factory/line1/device" -> "factory/line1" (device-level -> node-level)
+//   - "factory/line1" -> "factory/line1" (already node-level)
+//   - "single" -> "single" (malformed, return as-is)
+//
+// ENG-4031: This function enables correct per-node sequence tracking.
+func ExtractNodeKey(deviceKey string) string {
+	if deviceKey == "" {
+		return ""
+	}
+	parts := strings.Split(deviceKey, "/")
+	if len(parts) >= 2 {
+		return parts[0] + "/" + parts[1] // group/edgeNode
+	}
+	return deviceKey // Fallback for malformed keys
+}
+
 // TopicParser provides functions for parsing and constructing Sparkplug B topics.
 type TopicParser struct{}
 

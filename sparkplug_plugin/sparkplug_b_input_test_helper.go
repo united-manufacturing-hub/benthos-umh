@@ -104,11 +104,13 @@ type NodeStateInfo struct {
 }
 
 // GetNodeState is an exported wrapper for accessing node state in tests
+// ENG-4031: Uses ExtractNodeKey because state is now stored at node level
 func (w *SparkplugInputTestWrapper) GetNodeState(deviceKey string) *NodeStateInfo {
 	w.input.stateMu.RLock()
 	defer w.input.stateMu.RUnlock()
 
-	state, exists := w.input.nodeStates[deviceKey]
+	nodeKey := ExtractNodeKey(deviceKey)
+	state, exists := w.input.nodeStates[nodeKey]
 	if !exists {
 		return nil
 	}
@@ -125,14 +127,16 @@ func (w *SparkplugInputTestWrapper) ProcessDeathMessage(deviceKey string, msgTyp
 }
 
 // SetNodeBdSeq allows tests to set the bdSeq for a device (simulating NBIRTH)
+// ENG-4031: Uses ExtractNodeKey because state is now stored at node level
 func (w *SparkplugInputTestWrapper) SetNodeBdSeq(deviceKey string, bdSeq uint64) {
 	w.input.stateMu.Lock()
 	defer w.input.stateMu.Unlock()
 
-	if state, exists := w.input.nodeStates[deviceKey]; exists {
+	nodeKey := ExtractNodeKey(deviceKey)
+	if state, exists := w.input.nodeStates[nodeKey]; exists {
 		state.BdSeq = bdSeq
 	} else {
-		w.input.nodeStates[deviceKey] = &nodeState{
+		w.input.nodeStates[nodeKey] = &nodeState{
 			BdSeq:    bdSeq,
 			IsOnline: true,
 			LastSeen: time.Now(),
@@ -141,11 +145,13 @@ func (w *SparkplugInputTestWrapper) SetNodeBdSeq(deviceKey string, bdSeq uint64)
 }
 
 // GetNodeBdSeq returns the bdSeq for a device
+// ENG-4031: Uses ExtractNodeKey because state is now stored at node level
 func (w *SparkplugInputTestWrapper) GetNodeBdSeq(deviceKey string) (uint64, bool) {
 	w.input.stateMu.RLock()
 	defer w.input.stateMu.RUnlock()
 
-	state, exists := w.input.nodeStates[deviceKey]
+	nodeKey := ExtractNodeKey(deviceKey)
+	state, exists := w.input.nodeStates[nodeKey]
 	if !exists {
 		return 0, false
 	}

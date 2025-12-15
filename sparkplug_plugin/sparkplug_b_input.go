@@ -641,8 +641,12 @@ func (s *sparkplugInput) processBirthMessage(deviceKey string, msgType string, p
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 
-	// Update node state
-	if state, exists := s.nodeStates[deviceKey]; exists {
+	// ENG-4031: Extract node-level key for sequence tracking.
+	// Per Sparkplug B spec, sequence is tracked at NODE scope, not device scope.
+	nodeKey := ExtractNodeKey(deviceKey)
+
+	// Update node state using nodeKey for sequence tracking
+	if state, exists := s.nodeStates[nodeKey]; exists {
 		state.IsOnline = true
 		state.LastSeen = time.Now()
 		state.LastSeq = GetSequenceNumber(payload)
@@ -662,13 +666,14 @@ func (s *sparkplugInput) processBirthMessage(deviceKey string, msgType string, p
 			LastSeen: time.Now(),
 			LastSeq:  GetSequenceNumber(payload),
 		}
-		s.nodeStates[deviceKey] = state
+		s.nodeStates[nodeKey] = state
 	}
 
 	// Cache aliases from birth message
+	// NOTE: Alias caching still uses deviceKey - aliases ARE per-device from DBIRTH
 	s.cacheAliases(deviceKey, payload.Metrics)
 
-	s.logger.Debugf("Processed %s for device %s", msgType, deviceKey)
+	s.logger.Debugf("Processed %s for device %s (node: %s)", msgType, deviceKey, nodeKey)
 }
 
 // processDataMessage handles DATA messages (NDATA/DDATA) with sequence validation.
@@ -699,33 +704,39 @@ func (s *sparkplugInput) processDataMessage(deviceKey string, msgType string, pa
 
 	currentSeq := GetSequenceNumber(payload)
 
+	// ENG-4031: Extract node-level key for sequence tracking.
+	// Per Sparkplug B spec, sequence is tracked at NODE scope, not device scope.
+	// All message types from a node (NBIRTH, NDATA, DBIRTH, DDATA) share one counter.
+	nodeKey := ExtractNodeKey(deviceKey)
+
 	// Capture previous sequence before UpdateNodeState modifies it
 	var prevSeq uint8
-	if state, exists := s.nodeStates[deviceKey]; exists {
+	if state, exists := s.nodeStates[nodeKey]; exists {
 		prevSeq = state.LastSeq
 	}
 
-	action := UpdateNodeState(s.nodeStates, deviceKey, currentSeq)
+	action := UpdateNodeState(s.nodeStates, nodeKey, currentSeq)
 
 	// Resolve aliases while holding lock (safe operation)
+	// NOTE: Alias resolution still uses deviceKey - aliases ARE per-device from DBIRTH
 	s.resolveAliases(deviceKey, payload.Metrics)
 
 	s.stateMu.Unlock()
 
 	// Logging after lock release to minimize lock hold time
 	if action.IsNewNode {
-		s.logger.Infof("Discovered new node from %s message: %s", msgType, deviceKey)
+		s.logger.Infof("Discovered new node from %s message: %s (node: %s)", msgType, deviceKey, nodeKey)
 	}
 
 	if action.NeedsRebirth {
-		LogSequenceError(s.logger, s.sequenceErrors, deviceKey, prevSeq, currentSeq)
+		LogSequenceError(s.logger, s.sequenceErrors, nodeKey, prevSeq, currentSeq)
 	}
 
-	// I/O operations
+	// I/O operations - rebirth requests go to the node
 	if action.IsNewNode {
-		s.requestBirthIfNeeded(deviceKey)
+		s.requestBirthIfNeeded(nodeKey)
 	} else if action.NeedsRebirth {
-		s.sendRebirthRequest(deviceKey)
+		s.sendRebirthRequest(nodeKey)
 	}
 }
 
@@ -733,14 +744,17 @@ func (s *sparkplugInput) processDeathMessage(deviceKey string, msgType string, p
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 
-	state, exists := s.nodeStates[deviceKey]
+	// ENG-4031: Use node-level key for state tracking consistency
+	nodeKey := ExtractNodeKey(deviceKey)
+
+	state, exists := s.nodeStates[nodeKey]
 	if !exists {
-		// No state for this device - create minimal state
-		s.nodeStates[deviceKey] = &nodeState{
+		// No state for this node - create minimal state
+		s.nodeStates[nodeKey] = &nodeState{
 			IsOnline: false,
 			LastSeen: time.Now(),
 		}
-		s.logger.Debugf("Processed %s for unknown device %s (created state)", msgType, deviceKey)
+		s.logger.Debugf("Processed %s for unknown device %s (node: %s, created state)", msgType, deviceKey, nodeKey)
 		return
 	}
 
@@ -761,15 +775,15 @@ func (s *sparkplugInput) processDeathMessage(deviceKey string, msgType string, p
 			// Validate bdSeq matches the stored value from NBIRTH
 			if payloadBdSeq != state.BdSeq {
 				// Stale NDEATH from old session - ignore it
-				s.logger.Warnf("Ignoring stale NDEATH for device %s: bdSeq mismatch (payload=%d, stored=%d)",
-					deviceKey, payloadBdSeq, state.BdSeq)
+				s.logger.Warnf("Ignoring stale NDEATH for node %s: bdSeq mismatch (payload=%d, stored=%d)",
+					nodeKey, payloadBdSeq, state.BdSeq)
 				return
 			}
-			s.logger.Debugf("NDEATH bdSeq validated for device %s (bdSeq=%d)", deviceKey, payloadBdSeq)
+			s.logger.Debugf("NDEATH bdSeq validated for node %s (bdSeq=%d)", nodeKey, payloadBdSeq)
 		} else {
 			// No bdSeq in payload - log warning but still process
 			// Some older edge nodes might not include bdSeq
-			s.logger.Warnf("NDEATH for device %s missing bdSeq metric - processing anyway", deviceKey)
+			s.logger.Warnf("NDEATH for node %s missing bdSeq metric - processing anyway", nodeKey)
 		}
 	}
 
@@ -777,18 +791,21 @@ func (s *sparkplugInput) processDeathMessage(deviceKey string, msgType string, p
 	state.IsOnline = false
 	state.LastSeen = time.Now()
 
-	s.logger.Debugf("Processed %s for device %s", msgType, deviceKey)
+	s.logger.Debugf("Processed %s for device %s (node: %s)", msgType, deviceKey, nodeKey)
 }
 
 func (s *sparkplugInput) processCommandMessage(deviceKey string, msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
 	s.logger.Debugf("⚡ processCommandMessage: processing %s for device %s with %d metrics", msgType, deviceKey, len(payload.Metrics))
 
+	// ENG-4031: Use node-level key for state tracking consistency
+	nodeKey := ExtractNodeKey(deviceKey)
+
 	// Update node state timestamp for activity tracking
 	s.stateMu.Lock()
-	if state, exists := s.nodeStates[deviceKey]; exists {
+	if state, exists := s.nodeStates[nodeKey]; exists {
 		state.LastSeen = time.Now()
 	} else {
-		s.nodeStates[deviceKey] = &nodeState{
+		s.nodeStates[nodeKey] = &nodeState{
 			LastSeen: time.Now(),
 			IsOnline: true, // Assume online if receiving commands
 		}
@@ -799,7 +816,7 @@ func (s *sparkplugInput) processCommandMessage(deviceKey string, msgType string,
 	for _, metric := range payload.Metrics {
 		if metric.Name != nil && *metric.Name == "Node Control/Rebirth" {
 			if metric.GetBooleanValue() {
-				s.logger.Infof("🔄 Rebirth request received for device %s", deviceKey)
+				s.logger.Infof("🔄 Rebirth request received for device %s (node: %s)", deviceKey, nodeKey)
 				// Handle rebirth logic here if needed for edge nodes
 				// For primary hosts, this is typically just logged
 			}
@@ -807,6 +824,7 @@ func (s *sparkplugInput) processCommandMessage(deviceKey string, msgType string,
 	}
 
 	// Resolve aliases in command message (same as data messages)
+	// NOTE: Alias resolution still uses deviceKey - aliases ARE per-device
 	s.resolveAliases(deviceKey, payload.Metrics)
 
 	// Create batch from command metrics - always split for UMH-Core format
