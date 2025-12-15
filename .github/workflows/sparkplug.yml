@@ -29,8 +29,7 @@ concurrency:
 
 jobs:
   go-test-sparkplug:
-    runs-on:
-      group: arc-runners-tests
+    runs-on: depot-ubuntu-24.04
     permissions:
       packages: write
       contents: read

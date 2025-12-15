@@ -29,8 +29,7 @@ concurrency:
 
 jobs:
   go-test-sensorconnect:
-    runs-on:
-      group: eos
+    runs-on: depot-ubuntu-24.04
     permissions:
       packages: write
       contents: read
