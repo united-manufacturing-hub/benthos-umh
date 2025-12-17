@@ -147,7 +147,7 @@ func GenerateCertWithMode(
 
 	template.IPAddresses, template.DNSNames, template.URIs, err = ParseHosts(host)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, "", fmt.Errorf("failed to parse certificate hosts: %w", err)
 	}
 
 	// Set Key Usage bits according to OPC UA Part 6 specification.

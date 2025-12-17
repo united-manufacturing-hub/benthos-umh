@@ -335,6 +335,8 @@ var _ = Describe("GenerateCertWithMode Certificate Generation", func() {
 			Entry("invalid DNS hostname", "invalid_hostname.com", []string{}, []string{}, []string{}, true),
 			Entry("IPv4 address", "192.168.1.100", []string{"192.168.1.100"}, []string{}, []string{}, false),
 			Entry("mixed IP, URN, and DNS are separated correctly", "192.168.1.1, urn:test:app, server.local", []string{"192.168.1.1"}, []string{"server.local"}, []string{"urn:test:app"}, false),
+			Entry("empty strings are skipped", " , , ", []string{}, []string{}, []string{}, false),
+			Entry("whitespace is trimmed", " 192.168.1.1 , example.com ", []string{"192.168.1.1"}, []string{"example.com"}, []string{}, false),
 		)
 	})
 })
