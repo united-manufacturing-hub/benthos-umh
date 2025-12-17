@@ -202,6 +202,4 @@ var _ = Describe("Sequence Gap Validator - Message Drop Investigation (ENG-3720)
 			// PROOF: Sequence wraparound does not cause message drops
 		})
 	})
-
-	// NOTE: ValidateSequenceNumber function tests removed - duplicated in node_sequence_test.go (ENG-4041)
 })

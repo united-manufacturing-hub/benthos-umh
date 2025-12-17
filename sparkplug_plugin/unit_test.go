@@ -1127,8 +1127,6 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 	})
 
 	Context("Sequence Number Management", func() {
-		// NOTE: Sequence counter and gap detection tests removed - duplicated in node_sequence_test.go (ENG-4041)
-
 		It("should handle out-of-order sequence detection", func() {
 			// Test that out-of-order sequences are properly detected
 			gapVector := sparkplugplugin.GetTestVector("NDATA_GAP")
@@ -1307,8 +1305,6 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 
 // P9 Edge Case Validation Tests
 var _ = Describe("P9 Edge Case Validation", func() {
-	// NOTE: Sequence wraparound tests removed - duplicated in node_sequence_test.go (ENG-4041)
-
 	Context("Connection Handling", func() {
 		It("should handle Primary Host disconnect/reconnect behavior", func() {
 			// Test primary host connection resilience
