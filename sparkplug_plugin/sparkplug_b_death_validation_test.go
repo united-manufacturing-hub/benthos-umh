@@ -25,6 +25,9 @@ import (
 )
 
 var _ = Describe("NDEATH bdSeq Validation", func() {
+	// NOTE: These tests use SetNodeBdSeq() for state setup because ProcessBirthMessage()
+	// has different bdSeq handling. This is a known limitation - full BIRTH → DEATH
+	// integration testing should be done separately. See PR #257 analysis for details.
 	Context("when processing NDEATH with bdSeq", func() {
 		It("should accept NDEATH with matching bdSeq", func() {
 			wrapper := sparkplugplugin.NewSparkplugInputForTesting()

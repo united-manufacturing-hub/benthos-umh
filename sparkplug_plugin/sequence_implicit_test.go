@@ -42,69 +42,27 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
 
+// Table-driven test for GetSequenceNumber
+// Replaces 4 granular tests with one comprehensive table
 var _ = Describe("getSequenceNumber - seq=0 implicit behavior", func() {
-	Context("when payload.Seq is nil (older devices)", func() {
-		It("should return 0 (implied seq=0 for backwards compatibility)", func() {
-			// Given: Payload with nil seq field (older device behavior)
-			payload := &sparkplugb.Payload{
-				Seq: nil, // Older devices omit this field
-			}
+	// Helper to create *uint64 for test cases
+	ptrUint64 := func(v uint64) *uint64 { return &v }
 
-			// When: Getting sequence number
-			seq := sparkplugplugin.GetSequenceNumber(payload)
-
-			// Then: Should return 0 (implied)
-			Expect(seq).To(Equal(uint8(0)), "nil seq should be treated as 0")
-		})
-	})
-
-	Context("when payload.Seq is explicitly 0", func() {
-		It("should return 0 (explicit seq=0)", func() {
-			// Given: Payload with explicit seq=0 (updated spec behavior)
-			seq0 := uint64(0)
-			payload := &sparkplugb.Payload{
-				Seq: &seq0,
-			}
-
-			// When: Getting sequence number
-			seq := sparkplugplugin.GetSequenceNumber(payload)
-
-			// Then: Should return 0
-			Expect(seq).To(Equal(uint8(0)), "explicit seq=0 should return 0")
-		})
-	})
-
-	Context("when payload.Seq has a non-zero value", func() {
-		It("should return the sequence number", func() {
-			// Given: Payload with non-zero seq
-			seq42 := uint64(42)
-			payload := &sparkplugb.Payload{
-				Seq: &seq42,
-			}
-
-			// When: Getting sequence number
-			seq := sparkplugplugin.GetSequenceNumber(payload)
-
-			// Then: Should return 42
-			Expect(seq).To(Equal(uint8(42)), "should return the actual sequence value")
-		})
-	})
-
-	Context("when payload.Seq is 255 (wrap-around boundary)", func() {
-		It("should return 255", func() {
-			// Given: Payload at sequence wrap-around boundary
-			seq255 := uint64(255)
-			payload := &sparkplugb.Payload{
-				Seq: &seq255,
-			}
-
-			// When: Getting sequence number
-			seq := sparkplugplugin.GetSequenceNumber(payload)
-
-			// Then: Should return 255
-			Expect(seq).To(Equal(uint8(255)), "should handle wrap-around boundary")
-		})
-	})
+	DescribeTable("should extract sequence number from payload",
+		func(seq *uint64, expected uint8, description string) {
+			payload := &sparkplugb.Payload{Seq: seq}
+			result := sparkplugplugin.GetSequenceNumber(payload)
+			Expect(result).To(Equal(expected), description)
+		},
+		Entry("nil seq (older devices) returns 0", nil, uint8(0),
+			"nil seq should be treated as 0 for backwards compatibility"),
+		Entry("explicit seq=0 returns 0", ptrUint64(0), uint8(0),
+			"explicit seq=0 should return 0"),
+		Entry("seq=42 returns 42", ptrUint64(42), uint8(42),
+			"should return the actual sequence value"),
+		Entry("seq=255 (wrap-around boundary) returns 255", ptrUint64(255), uint8(255),
+			"should handle wrap-around boundary"),
+	)
 })
 
 var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages", func() {

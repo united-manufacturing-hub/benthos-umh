@@ -835,19 +835,20 @@ func (s *sparkplugInput) processCommandMessage(msgType string, payload *sparkplu
 }
 
 func (s *sparkplugInput) processStateMessage(msgType string, topicInfo *TopicInfo, originalTopic string, statePayload string) (service.MessageBatch, error) {
-	deviceKey := topicInfo.DeviceKey()
-	s.logger.Debugf("🏛️ processStateMessage: processing STATE message for device %s, state: %s", deviceKey, statePayload)
+	// ENG-4031: Use node-level key for state tracking consistency
+	nodeKey := topicInfo.NodeKey()
+	s.logger.Debugf("🏛️ processStateMessage: processing STATE message for node %s, state: %s", nodeKey, statePayload)
 
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 
 	// Update node state based on STATE message content
 	isOnline := statePayload == "ONLINE"
-	if state, exists := s.nodeStates[deviceKey]; exists {
+	if state, exists := s.nodeStates[nodeKey]; exists {
 		state.IsOnline = isOnline
 		state.LastSeen = time.Now()
 	} else {
-		s.nodeStates[deviceKey] = &nodeState{
+		s.nodeStates[nodeKey] = &nodeState{
 			IsOnline: isOnline,
 			LastSeen: time.Now(),
 		}
@@ -856,7 +857,7 @@ func (s *sparkplugInput) processStateMessage(msgType string, topicInfo *TopicInf
 	// Create a status event message for STATE changes
 	event := map[string]interface{}{
 		"event":        "StateChange",
-		"device_key":   deviceKey,
+		"node_key":     nodeKey,
 		"group_id":     topicInfo.Group,
 		"edge_node_id": topicInfo.EdgeNode,
 		"state":        statePayload,
@@ -877,7 +878,7 @@ func (s *sparkplugInput) processStateMessage(msgType string, topicInfo *TopicInf
 
 	// Set Sparkplug B standard metadata for state messages
 	msg.MetaSet("spb_message_type", msgType)
-	msg.MetaSet("spb_device_key", deviceKey)
+	msg.MetaSet("spb_node_key", nodeKey)
 	msg.MetaSet("spb_topic", originalTopic)
 	msg.MetaSet("spb_group_id", topicInfo.Group)
 	msg.MetaSet("spb_edge_node_id", topicInfo.EdgeNode)
@@ -891,11 +892,11 @@ func (s *sparkplugInput) processStateMessage(msgType string, topicInfo *TopicInf
 	if topicInfo.Device != "" {
 		msg.MetaSet("spb_device_id_sanitized", s.sanitizeForTopic(topicInfo.Device))
 	}
-	msg.MetaSet("spb_device_key_sanitized", s.sanitizeForTopic(deviceKey))
+	msg.MetaSet("spb_node_key_sanitized", s.sanitizeForTopic(nodeKey))
 	msg.MetaSet("event_type", "state_change")
 	msg.MetaSet("spb_state", statePayload)
 
-	s.logger.Debugf("✅ processStateMessage: created STATE event message for device %s: %s", deviceKey, statePayload)
+	s.logger.Debugf("✅ processStateMessage: created STATE event message for node %s: %s", nodeKey, statePayload)
 
 	return service.MessageBatch{msg}, nil
 }
