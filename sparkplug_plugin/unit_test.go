@@ -1127,49 +1127,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 	})
 
 	Context("Sequence Number Management", func() {
-		It("should implement proper seq counter (0-255 with wraparound)", func() {
-			// Test sequence number wraparound behavior
-			sequenceManager := sparkplugplugin.NewSequenceManager()
-
-			// Test normal increment - starts at 0
-			seq1 := sequenceManager.NextSequence()
-			seq2 := sequenceManager.NextSequence()
-			Expect(seq1).To(Equal(uint8(0)), "First sequence should be 0")
-			Expect(seq2).To(Equal(uint8(1)), "Second sequence should be 1")
-
-			// Test wraparound at 255
-			sequenceManager.SetSequence(254)
-			seq254 := sequenceManager.NextSequence()
-			seq255 := sequenceManager.NextSequence()
-			seq0 := sequenceManager.NextSequence()
-
-			Expect(seq254).To(Equal(uint8(254)), "Should return current value then increment")
-			Expect(seq255).To(Equal(uint8(255)), "Should increment to 255")
-			Expect(seq0).To(Equal(uint8(0)), "Sequence should wrap from 255 to 0")
-		})
-
-		It("should validate sequence gap detection", func() {
-			// Test sequence gap detection and validation
-			// IsSequenceValid checks if received is the next expected sequence after current
-			sequences := []struct {
-				current  uint8 // Last seen sequence
-				received uint8 // Newly received sequence
-				isValid  bool  // Should be valid (received = current + 1)
-			}{
-				{0, 1, true},   // Normal increment 0->1
-				{1, 2, true},   // Normal increment 1->2
-				{1, 3, false},  // Gap detected (missing 2)
-				{255, 0, true}, // Valid wraparound 255->0
-				{1, 5, false},  // Large gap
-			}
-
-			sequenceManager := sparkplugplugin.NewSequenceManager()
-			for _, test := range sequences {
-				isValid := sequenceManager.IsSequenceValid(test.current, test.received)
-				Expect(isValid).To(Equal(test.isValid),
-					fmt.Sprintf("Sequence validation failed for current=%d, received=%d", test.current, test.received))
-			}
-		})
+		// NOTE: Sequence counter and gap detection tests removed - duplicated in node_sequence_test.go (ENG-4041)
 
 		It("should handle out-of-order sequence detection", func() {
 			// Test that out-of-order sequences are properly detected
@@ -1349,31 +1307,7 @@ var _ = Describe("P8 Sparkplug B Spec Compliance Audit Tests", func() {
 
 // P9 Edge Case Validation Tests
 var _ = Describe("P9 Edge Case Validation", func() {
-	Context("Dynamic Behavior Testing", func() {
-		It("should handle sequence number wraparound (255 → 0)", func() {
-			// Test sequence number wraparound edge case
-			sequenceManager := sparkplugplugin.NewSequenceManager()
-
-			// Test wraparound scenarios
-			wrapCases := []struct {
-				current  uint8
-				received uint8
-				valid    bool
-				desc     string
-			}{
-				{254, 255, true, "Normal increment to 255"},
-				{255, 0, true, "Valid wraparound 255→0"},
-				{0, 1, true, "Normal increment after wraparound"},
-				{255, 1, false, "Invalid skip during wraparound"},
-				{254, 0, false, "Invalid large jump"},
-			}
-
-			for _, test := range wrapCases {
-				isValid := sequenceManager.IsSequenceValid(test.current, test.received)
-				Expect(isValid).To(Equal(test.valid), test.desc)
-			}
-		})
-	})
+	// NOTE: Sequence wraparound tests removed - duplicated in node_sequence_test.go (ENG-4041)
 
 	Context("Connection Handling", func() {
 		It("should handle Primary Host disconnect/reconnect behavior", func() {
