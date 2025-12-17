@@ -44,62 +44,64 @@ var _ = Describe("JSON Schema Generator", func() {
 	})
 
 	Context("convertFieldToJSONSchema", func() {
-		It("should convert array field with kind='array' to proper schema", func() {
-			field := FieldSpec{
-				Name:        "slaveIDs",
-				Type:        "int",
-				Kind:        "array",
-				Description: "List of slave IDs",
-			}
-			result := convertFieldToJSONSchema(field)
-			Expect(result["type"]).To(Equal("array"))
-			Expect(result["description"]).To(Equal("List of slave IDs"))
-			items, ok := result["items"].(map[string]interface{})
-			Expect(ok).To(BeTrue(), "items should be a map")
-			Expect(items["type"]).To(Equal("number"))
-		})
+		// Group 1: Array type conversion tests
+		DescribeTable("array type conversion",
+			func(benthosType string, expectedItemsType string) {
+				field := FieldSpec{
+					Name:        "testField",
+					Type:        benthosType,
+					Kind:        "array",
+					Description: "Test array field",
+				}
+				result := convertFieldToJSONSchema(field)
+				Expect(result["type"]).To(Equal("array"))
+				items, ok := result["items"].(map[string]interface{})
+				Expect(ok).To(BeTrue(), "items should be a map")
+				Expect(items["type"]).To(Equal(expectedItemsType))
+			},
+			Entry("int array becomes number array", "int", "number"),
+			Entry("string array becomes string array", "string", "string"),
+			Entry("float array becomes number array", "float", "number"),
+			Entry("bool array becomes boolean array", "bool", "boolean"),
+			Entry("object array becomes object array", "object", "object"),
+		)
 
-		It("should convert string array field correctly", func() {
-			field := FieldSpec{
-				Name:        "addresses",
-				Type:        "string",
-				Kind:        "array",
-				Description: "List of addresses",
-			}
-			result := convertFieldToJSONSchema(field)
-			Expect(result["type"]).To(Equal("array"))
-			items, ok := result["items"].(map[string]interface{})
-			Expect(ok).To(BeTrue())
-			Expect(items["type"]).To(Equal("string"))
-		})
-
-		It("should preserve description, default, and advanced flags", func() {
-			field := FieldSpec{
-				Name:        "timeout",
-				Type:        "int",
-				Kind:        "",
-				Description: "Timeout in milliseconds",
-				Default:     1000,
-				Advanced:    true,
-			}
-			result := convertFieldToJSONSchema(field)
-			Expect(result["type"]).To(Equal("number"))
-			Expect(result["description"]).To(Equal("Timeout in milliseconds"))
-			Expect(result["default"]).To(Equal(1000))
-			Expect(result["x-advanced"]).To(BeTrue())
-		})
-
-		It("should add enum for fields with options", func() {
-			field := FieldSpec{
-				Name:        "mode",
-				Type:        "string",
-				Description: "Operation mode",
-				Options:     []string{"read", "write", "both"},
-			}
-			result := convertFieldToJSONSchema(field)
-			Expect(result["type"]).To(Equal("string"))
-			Expect(result["enum"]).To(Equal([]string{"read", "write", "both"}))
-		})
+		// Group 2: Field property preservation tests
+		DescribeTable("field property preservation",
+			func(field FieldSpec, expectedType string, checkFn func(map[string]interface{})) {
+				result := convertFieldToJSONSchema(field)
+				Expect(result["type"]).To(Equal(expectedType))
+				checkFn(result)
+			},
+			Entry("preserves description, default, and advanced flags",
+				FieldSpec{
+					Name:        "timeout",
+					Type:        "int",
+					Kind:        "",
+					Description: "Timeout in milliseconds",
+					Default:     1000,
+					Advanced:    true,
+				},
+				"number",
+				func(result map[string]interface{}) {
+					Expect(result["description"]).To(Equal("Timeout in milliseconds"))
+					Expect(result["default"]).To(Equal(1000))
+					Expect(result["x-advanced"]).To(BeTrue())
+				},
+			),
+			Entry("adds enum for fields with options",
+				FieldSpec{
+					Name:        "mode",
+					Type:        "string",
+					Description: "Operation mode",
+					Options:     []string{"read", "write", "both"},
+				},
+				"string",
+				func(result map[string]interface{}) {
+					Expect(result["enum"]).To(Equal([]string{"read", "write", "both"}))
+				},
+			),
+		)
 
 		It("should handle nested object without array wrapper", func() {
 			// Like modbus workarounds: {type: "object", kind: "", children: [...]}
