@@ -86,7 +86,7 @@ var _ = Describe("JSON Schema Generator", func() {
 			Expect(result["type"]).To(Equal("number"))
 			Expect(result["description"]).To(Equal("Timeout in milliseconds"))
 			Expect(result["default"]).To(Equal(1000))
-			Expect(result["x-advanced"]).To(Equal(true))
+			Expect(result["x-advanced"]).To(BeTrue())
 		})
 
 		It("should add enum for fields with options", func() {
@@ -256,7 +256,7 @@ var _ = Describe("JSON Schema Generator", func() {
 			workarounds, ok := properties["workarounds"].(map[string]interface{})
 			Expect(ok).To(BeTrue())
 			Expect(workarounds["type"]).To(Equal("object"))
-			Expect(workarounds["x-advanced"]).To(Equal(true))
+			Expect(workarounds["x-advanced"]).To(BeTrue())
 			workaroundProps, ok := workarounds["properties"].(map[string]interface{})
 			Expect(ok).To(BeTrue())
 			Expect(workaroundProps).To(HaveKey("pauseAfterConnect"))
