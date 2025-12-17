@@ -157,6 +157,7 @@ jobs:
           artifacts: './artifacts/artifact-*-${{ github.run_id }}-${{ github.run_attempt }}/*'
           token: ${{ secrets.GITHUB_TOKEN }}
           allowUpdates: true
+          omitBodyDuringUpdate: true
           prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'alpha') }}
 
   update-umh-core:
