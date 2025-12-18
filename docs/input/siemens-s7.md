@@ -31,7 +31,7 @@ input:
 * **batchMaxSize**: Maximum count of addresses bundled in a single batch request. This affects the PDU size.
 * **timeout**: Timeout duration in seconds for connection attempts and read requests.
 * **disableCPUInfo**: Set this to true to not fetch CPU information from the PLC. Should be used when you get the error 'Failed to get CPU information'
-* **addresses**: Specifies the list of addresses to read. The format for addresses is `<area>.<type><address>[.extra]`, where:
+* **addresses**: Specifies the list of addresses to read. **Maximum 20 addresses** per connection to prevent PLC overload. Use multiple S7 inputs for more. The format for addresses is `<area>.<type><address>[.extra]`, where:
   * `area`: Specifies the direct area access, e.g., "DB1" for data block one. Supported areas include inputs (`PE`), outputs (`PA`), Merkers (`MK`), DB (`DB`), counters (`C`), and timers (`T`).
   * `type`: Indicates the data type, such as bit (`X`), byte (`B`), word (`W`), double word (`DW`), integer (`I`), double integer (`DI`), real (`R`), date-time (`DT`), and string (`S`). Some types require an 'extra' parameter, e.g., the bit number for `X` or the maximum length for `S`.
 

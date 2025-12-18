@@ -118,7 +118,9 @@ var S7CommConfigSpec = service.NewConfigSpec().
 		Advanced().
 		Examples(false, true)).
 	Field(service.NewStringListField("addresses").
-		Description("S7 memory addresses to read. Format: AREA.TYPE<offset>[.extra]. "+
+		Description("S7 memory addresses to read. Maximum 20 addresses per connection "+
+			"to prevent PLC overload; use multiple S7 inputs for more. "+
+			"Format: AREA.TYPE<offset>[.extra]. "+
 			"Areas: DB (data block), MK (marker), PE (input), PA (output). "+
 			"Types: X (bit), B (byte), W (word), DW (dword), I (int), DI (dint), R (real), S (string). "+
 			"For bits (X), add bit number 0-7. For strings (S), add max length.").
