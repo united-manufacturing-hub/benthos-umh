@@ -1151,6 +1151,7 @@ func (s *sparkplugOutput) publishBirthMessage() error {
 	var metrics []*sparkplugb.Payload_Metric
 
 	// Add bdSeq metric (required by Sparkplug spec)
+	s.stateMu.RLock()
 	bdSeqMetric := &sparkplugb.Payload_Metric{
 		Name:  func() *string { s := "bdSeq"; return &s }(),
 		Alias: func() *uint64 { a := uint64(0); return &a }(),
@@ -1159,6 +1160,7 @@ func (s *sparkplugOutput) publishBirthMessage() error {
 		},
 		Datatype: func() *uint32 { d := uint32(8); return &d }(),
 	}
+	s.stateMu.RUnlock()
 	metrics = append(metrics, bdSeqMetric)
 
 	// Add Node Control/Rebirth metric (required by Sparkplug spec for Edge Nodes)
