@@ -42,69 +42,27 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
 
+// Table-driven test for GetSequenceNumber
+// Replaces 4 granular tests with one comprehensive table
 var _ = Describe("getSequenceNumber - seq=0 implicit behavior", func() {
-	Context("when payload.Seq is nil (older devices)", func() {
-		It("should return 0 (implied seq=0 for backwards compatibility)", func() {
-			// Given: Payload with nil seq field (older device behavior)
-			payload := &sparkplugb.Payload{
-				Seq: nil, // Older devices omit this field
-			}
+	// Helper to create *uint64 for test cases
+	ptrUint64 := func(v uint64) *uint64 { return &v }
 
-			// When: Getting sequence number
-			seq := sparkplugplugin.GetSequenceNumber(payload)
-
-			// Then: Should return 0 (implied)
-			Expect(seq).To(Equal(uint8(0)), "nil seq should be treated as 0")
-		})
-	})
-
-	Context("when payload.Seq is explicitly 0", func() {
-		It("should return 0 (explicit seq=0)", func() {
-			// Given: Payload with explicit seq=0 (updated spec behavior)
-			seq0 := uint64(0)
-			payload := &sparkplugb.Payload{
-				Seq: &seq0,
-			}
-
-			// When: Getting sequence number
-			seq := sparkplugplugin.GetSequenceNumber(payload)
-
-			// Then: Should return 0
-			Expect(seq).To(Equal(uint8(0)), "explicit seq=0 should return 0")
-		})
-	})
-
-	Context("when payload.Seq has a non-zero value", func() {
-		It("should return the sequence number", func() {
-			// Given: Payload with non-zero seq
-			seq42 := uint64(42)
-			payload := &sparkplugb.Payload{
-				Seq: &seq42,
-			}
-
-			// When: Getting sequence number
-			seq := sparkplugplugin.GetSequenceNumber(payload)
-
-			// Then: Should return 42
-			Expect(seq).To(Equal(uint8(42)), "should return the actual sequence value")
-		})
-	})
-
-	Context("when payload.Seq is 255 (wrap-around boundary)", func() {
-		It("should return 255", func() {
-			// Given: Payload at sequence wrap-around boundary
-			seq255 := uint64(255)
-			payload := &sparkplugb.Payload{
-				Seq: &seq255,
-			}
-
-			// When: Getting sequence number
-			seq := sparkplugplugin.GetSequenceNumber(payload)
-
-			// Then: Should return 255
-			Expect(seq).To(Equal(uint8(255)), "should handle wrap-around boundary")
-		})
-	})
+	DescribeTable("should extract sequence number from payload",
+		func(seq *uint64, expected uint8, description string) {
+			payload := &sparkplugb.Payload{Seq: seq}
+			result := sparkplugplugin.GetSequenceNumber(payload)
+			Expect(result).To(Equal(expected), description)
+		},
+		Entry("nil seq (older devices) returns 0", nil, uint8(0),
+			"nil seq should be treated as 0 for backwards compatibility"),
+		Entry("explicit seq=0 returns 0", ptrUint64(0), uint8(0),
+			"explicit seq=0 should return 0"),
+		Entry("seq=42 returns 42", ptrUint64(42), uint8(42),
+			"should return the actual sequence value"),
+		Entry("seq=255 (wrap-around boundary) returns 255", ptrUint64(255), uint8(255),
+			"should handle wrap-around boundary"),
+	)
 })
 
 var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages", func() {
@@ -112,7 +70,10 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 		It("should treat nil seq as 0 and update node state correctly", func() {
 			// Given: Mock sparkplug input
 			input := createMockSparkplugInput()
-			deviceKey := "test/edge1"
+			topicInfo := &sparkplugplugin.TopicInfo{
+				Group:    "test",
+				EdgeNode: "edge1",
+			}
 
 			// NBIRTH payload with nil seq (older device behavior)
 			payload := &sparkplugb.Payload{
@@ -124,10 +85,10 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 			}
 
 			// When: Processing NBIRTH
-			input.ProcessBirthMessage(deviceKey, "NBIRTH", payload)
+			input.ProcessBirthMessage("NBIRTH", payload, topicInfo)
 
 			// Then: Node state should be created with seq=0
-			state := input.GetNodeState(deviceKey)
+			state := input.GetNodeState(topicInfo.DeviceKey())
 			Expect(state).ToNot(BeNil(), "node state should be created")
 			Expect(state.LastSeq).To(Equal(uint8(0)), "nil seq should be stored as 0")
 			Expect(state.IsOnline).To(BeTrue(), "node should be online after NBIRTH")
@@ -138,7 +99,11 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 		It("should treat nil seq as 0 and update device state correctly", func() {
 			// Given: Mock sparkplug input
 			input := createMockSparkplugInput()
-			deviceKey := "test/edge1/device1"
+			topicInfo := &sparkplugplugin.TopicInfo{
+				Group:    "test",
+				EdgeNode: "edge1",
+				Device:   "device1",
+			}
 
 			// DBIRTH payload with nil seq (older device behavior)
 			payload := &sparkplugb.Payload{
@@ -150,10 +115,10 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 			}
 
 			// When: Processing DBIRTH
-			input.ProcessBirthMessage(deviceKey, "DBIRTH", payload)
+			input.ProcessBirthMessage("DBIRTH", payload, topicInfo)
 
 			// Then: Device state should be created with seq=0
-			state := input.GetNodeState(deviceKey)
+			state := input.GetNodeState(topicInfo.DeviceKey())
 			Expect(state).ToNot(BeNil(), "device state should be created")
 			Expect(state.LastSeq).To(Equal(uint8(0)), "nil seq should be stored as 0")
 			Expect(state.IsOnline).To(BeTrue(), "device should be online after DBIRTH")
@@ -164,7 +129,10 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 		It("should validate sequence correctly when BIRTH had nil seq and NDATA has explicit seq=1", func() {
 			// Given: Mock sparkplug input with NBIRTH having nil seq
 			input := createMockSparkplugInput()
-			deviceKey := "test/edge1"
+			topicInfo := &sparkplugplugin.TopicInfo{
+				Group:    "test",
+				EdgeNode: "edge1",
+			}
 
 			// First: NBIRTH with nil seq (stored as 0)
 			birthPayload := &sparkplugb.Payload{
@@ -174,7 +142,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("temperature"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 23.5}},
 				},
 			}
-			input.ProcessBirthMessage(deviceKey, "NBIRTH", birthPayload)
+			input.ProcessBirthMessage("NBIRTH", birthPayload, topicInfo)
 
 			// When: NDATA with explicit seq=1 (expected next sequence)
 			seq1 := uint64(1)
@@ -185,10 +153,10 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("temperature"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 24.1}},
 				},
 			}
-			input.ProcessDataMessage(deviceKey, "NDATA", dataPayload)
+			input.ProcessDataMessage("NDATA", dataPayload, topicInfo)
 
 			// Then: Sequence validation should pass (0 → 1 is valid)
-			state := input.GetNodeState(deviceKey)
+			state := input.GetNodeState(topicInfo.DeviceKey())
 			Expect(state.LastSeq).To(Equal(uint8(1)), "sequence should advance from 0 to 1")
 			Expect(state.IsOnline).To(BeTrue(), "node should remain online after valid sequence")
 		})
@@ -196,7 +164,10 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 		It("should detect sequence gap when BIRTH had nil seq and NDATA skips seq=1", func() {
 			// Given: Mock sparkplug input with NBIRTH having nil seq
 			input := createMockSparkplugInput()
-			deviceKey := "test/edge1"
+			topicInfo := &sparkplugplugin.TopicInfo{
+				Group:    "test",
+				EdgeNode: "edge1",
+			}
 
 			// First: NBIRTH with nil seq (stored as 0)
 			birthPayload := &sparkplugb.Payload{
@@ -206,7 +177,7 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("temperature"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 23.5}},
 				},
 			}
-			input.ProcessBirthMessage(deviceKey, "NBIRTH", birthPayload)
+			input.ProcessBirthMessage("NBIRTH", birthPayload, topicInfo)
 
 			// When: NDATA with seq=2 (skips expected seq=1)
 			seq2 := uint64(2)
@@ -217,10 +188,10 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("temperature"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeDouble), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 24.1}},
 				},
 			}
-			input.ProcessDataMessage(deviceKey, "NDATA", dataPayload)
+			input.ProcessDataMessage("NDATA", dataPayload, topicInfo)
 
 			// Then: Sequence validation should fail (0 → 2 is invalid, expected 1)
-			state := input.GetNodeState(deviceKey)
+			state := input.GetNodeState(topicInfo.DeviceKey())
 			Expect(state.IsOnline).To(BeFalse(), "node should be marked offline after sequence gap")
 		})
 	})
@@ -229,7 +200,11 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 		It("should handle sequence progression correctly", func() {
 			// Given: Mock sparkplug input
 			input := createMockSparkplugInput()
-			deviceKey := "test/edge1/device1"
+			topicInfo := &sparkplugplugin.TopicInfo{
+				Group:    "test",
+				EdgeNode: "edge1",
+				Device:   "device1",
+			}
 
 			// Message sequence: DBIRTH (nil) → DDATA (1) → DDATA (2) → DBIRTH (nil) → DDATA (1)
 
@@ -241,9 +216,9 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 100}},
 				},
 			}
-			input.ProcessBirthMessage(deviceKey, "DBIRTH", birth1)
+			input.ProcessBirthMessage("DBIRTH", birth1, topicInfo)
 
-			state := input.GetNodeState(deviceKey)
+			state := input.GetNodeState(topicInfo.DeviceKey())
 			Expect(state.LastSeq).To(Equal(uint8(0)), "first DBIRTH should set seq to 0")
 
 			// 2. DDATA with seq=1
@@ -255,9 +230,9 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 101}},
 				},
 			}
-			input.ProcessDataMessage(deviceKey, "DDATA", data1)
+			input.ProcessDataMessage("DDATA", data1, topicInfo)
 
-			state = input.GetNodeState(deviceKey)
+			state = input.GetNodeState(topicInfo.DeviceKey())
 			Expect(state.LastSeq).To(Equal(uint8(1)), "DDATA should advance to seq=1")
 			Expect(state.IsOnline).To(BeTrue(), "valid sequence should keep device online")
 
@@ -270,9 +245,9 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 102}},
 				},
 			}
-			input.ProcessDataMessage(deviceKey, "DDATA", data2)
+			input.ProcessDataMessage("DDATA", data2, topicInfo)
 
-			state = input.GetNodeState(deviceKey)
+			state = input.GetNodeState(topicInfo.DeviceKey())
 			Expect(state.LastSeq).To(Equal(uint8(2)), "DDATA should advance to seq=2")
 
 			// 4. DBIRTH with nil seq (rebirth scenario)
@@ -283,9 +258,9 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 100}},
 				},
 			}
-			input.ProcessBirthMessage(deviceKey, "DBIRTH", birth2)
+			input.ProcessBirthMessage("DBIRTH", birth2, topicInfo)
 
-			state = input.GetNodeState(deviceKey)
+			state = input.GetNodeState(topicInfo.DeviceKey())
 			Expect(state.LastSeq).To(Equal(uint8(0)), "rebirth should reset seq to 0")
 			Expect(state.IsOnline).To(BeTrue(), "rebirth should bring device online")
 
@@ -298,9 +273,9 @@ var _ = Describe("Integration Tests - seq=0 implicit behavior in real messages",
 					{Name: stringPtr("sensor1"), Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt64), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 103}},
 				},
 			}
-			input.ProcessDataMessage(deviceKey, "DDATA", data3)
+			input.ProcessDataMessage("DDATA", data3, topicInfo)
 
-			state = input.GetNodeState(deviceKey)
+			state = input.GetNodeState(topicInfo.DeviceKey())
 			Expect(state.LastSeq).To(Equal(uint8(1)), "sequence should advance from 0 to 1 after rebirth")
 			Expect(state.IsOnline).To(BeTrue(), "valid sequence after rebirth should keep device online")
 		})

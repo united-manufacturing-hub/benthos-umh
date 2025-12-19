@@ -40,6 +40,29 @@ type TopicInfo struct {
 	Device   string // Device ID under the edge node (empty for node-level messages)
 }
 
+// NodeKey returns the node-level key (group/edgeNode) for sequence tracking.
+// Per Sparkplug B spec, sequence numbers are tracked at NODE scope, not device scope.
+// All message types from a node (NBIRTH, NDATA, DBIRTH, DDATA) share one sequence counter.
+func (ti *TopicInfo) NodeKey() string {
+	if ti == nil || ti.Group == "" || ti.EdgeNode == "" {
+		return ""
+	}
+	return ti.Group + "/" + ti.EdgeNode
+}
+
+// DeviceKey returns the full device key (group/edgeNode or group/edgeNode/device).
+// For node-level messages (NBIRTH, NDEATH, NDATA), Device is empty and this returns group/edgeNode.
+// For device-level messages (DBIRTH, DDEATH, DDATA), this returns group/edgeNode/device.
+func (ti *TopicInfo) DeviceKey() string {
+	if ti == nil || ti.Group == "" || ti.EdgeNode == "" {
+		return ""
+	}
+	if ti.Device == "" {
+		return ti.Group + "/" + ti.EdgeNode
+	}
+	return ti.Group + "/" + ti.EdgeNode + "/" + ti.Device
+}
+
 // NodeState tracks the state of a Sparkplug node/device for sequence management.
 type NodeState struct {
 	LastSeen time.Time
@@ -164,25 +187,30 @@ func NewTopicParser() *TopicParser {
 }
 
 // ParseSparkplugTopic parses a Sparkplug topic and returns (messageType, deviceKey).
+// deviceKey is derived from topicInfo.DeviceKey() for backward compatibility.
 func (tp *TopicParser) ParseSparkplugTopic(topic string) (string, string) {
-	msgType, deviceKey, _ := tp.ParseSparkplugTopicDetailed(topic)
-	return msgType, deviceKey
+	msgType, topicInfo := tp.ParseSparkplugTopicDetailed(topic)
+	if topicInfo == nil {
+		return msgType, ""
+	}
+	return msgType, topicInfo.DeviceKey()
 }
 
-// ParseSparkplugTopicDetailed parses a Sparkplug topic and returns (messageType, deviceKey, topicInfo).
-func (tp *TopicParser) ParseSparkplugTopicDetailed(topic string) (string, string, *TopicInfo) {
+// ParseSparkplugTopicDetailed parses a Sparkplug topic and returns (messageType, topicInfo).
+// The deviceKey can be derived from topicInfo.DeviceKey() when needed.
+func (tp *TopicParser) ParseSparkplugTopicDetailed(topic string) (string, *TopicInfo) {
 	if topic == "" {
-		return "", "", nil
+		return "", nil
 	}
 
 	parts := strings.Split(topic, "/")
 	if len(parts) < 4 {
-		return "", "", nil
+		return "", nil
 	}
 
 	// Validate Sparkplug namespace
 	if parts[0] != "spBv1.0" {
-		return "", "", nil
+		return "", nil
 	}
 
 	msgType := parts[2]
@@ -193,19 +221,13 @@ func (tp *TopicParser) ParseSparkplugTopicDetailed(topic string) (string, string
 		device = parts[4]
 	}
 
-	// Construct device key for cache lookup
-	deviceKey := fmt.Sprintf("%s/%s", group, edgeNode)
-	if device != "" {
-		deviceKey = fmt.Sprintf("%s/%s", deviceKey, device)
-	}
-
 	topicInfo := &TopicInfo{
 		Group:    group,
 		EdgeNode: edgeNode,
 		Device:   device,
 	}
 
-	return msgType, deviceKey, topicInfo
+	return msgType, topicInfo
 }
 
 // BuildTopic constructs a Sparkplug topic from components.
