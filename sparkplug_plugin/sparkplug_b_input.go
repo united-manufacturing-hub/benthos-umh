@@ -556,7 +556,7 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 
 	// Parse topic to extract Sparkplug components
 	msgType, topicInfo := s.parseSparkplugTopicDetailed(mqttMsg.topic)
-	if msgType == "" {
+	if !msgType.IsValid() {
 		s.logger.Debugf("Ignoring non-Sparkplug topic: %s", mqttMsg.topic)
 		return nil, nil
 	}
@@ -565,7 +565,7 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 
 	// **FIX: Filter STATE messages from protobuf parsing**
 	// STATE messages contain plain text "ONLINE"/"OFFLINE", not protobuf payloads
-	if msgType == "STATE" {
+	if msgType.IsState() {
 		s.logger.Debugf("🏛️ processSparkplugMessage: processing STATE message (payload: %s)", string(mqttMsg.payload))
 		return s.processStateMessage(msgType, topicInfo, mqttMsg.topic, string(mqttMsg.payload))
 	}
@@ -584,10 +584,10 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 	// DEBUG: Log after successful protobuf unmarshal
 	s.logger.Debugf("✅ processSparkplugMessage: successfully unmarshaled payload with %d metrics", len(payload.Metrics))
 
-	isBirthMessage := strings.Contains(msgType, "BIRTH")
-	isDataMessage := strings.Contains(msgType, "DATA")
-	isDeathMessage := strings.Contains(msgType, "DEATH")
-	isCommandMessage := strings.Contains(msgType, "CMD")
+	isBirthMessage := msgType.IsBirth()
+	isDataMessage := msgType.IsData()
+	isDeathMessage := msgType.IsDeath()
+	isCommandMessage := msgType.IsCommand()
 
 	s.logger.Debugf("🏷️ processSparkplugMessage: message type classification - birth=%v, data=%v, death=%v, command=%v",
 		isBirthMessage, isDataMessage, isDeathMessage, isCommandMessage)
@@ -637,7 +637,7 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 //
 // Key behavior: Caches alias → metric name mappings from BIRTH certificates
 // for use in subsequent DATA message resolution.
-func (s *sparkplugInput) processBirthMessage(msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
+func (s *sparkplugInput) processBirthMessage(msgType MessageType, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 
@@ -699,7 +699,7 @@ func (s *sparkplugInput) processBirthMessage(msgType string, payload *sparkplugb
 // - All state access protected by stateMu lock
 // - No I/O operations performed while holding lock
 // - Deterministic behavior ensured by UpdateNodeState pure function
-func (s *sparkplugInput) processDataMessage(msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
+func (s *sparkplugInput) processDataMessage(msgType MessageType, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
 	s.stateMu.Lock()
 
 	currentSeq := GetSequenceNumber(payload)
@@ -740,7 +740,7 @@ func (s *sparkplugInput) processDataMessage(msgType string, payload *sparkplugb.
 	}
 }
 
-func (s *sparkplugInput) processDeathMessage(msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
+func (s *sparkplugInput) processDeathMessage(msgType MessageType, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 
@@ -759,7 +759,7 @@ func (s *sparkplugInput) processDeathMessage(msgType string, payload *sparkplugb
 	}
 
 	// For NDEATH messages, validate bdSeq from payload
-	if msgType == "NDEATH" {
+	if msgType == MessageTypeNDEATH {
 		// Extract bdSeq from payload metrics
 		var payloadBdSeq uint64
 		var foundBdSeq bool
@@ -794,7 +794,7 @@ func (s *sparkplugInput) processDeathMessage(msgType string, payload *sparkplugb
 	s.logger.Debugf("Processed %s for device %s (node: %s)", msgType, topicInfo.DeviceKey(), nodeKey)
 }
 
-func (s *sparkplugInput) processCommandMessage(msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
+func (s *sparkplugInput) processCommandMessage(msgType MessageType, payload *sparkplugb.Payload, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
 	s.logger.Debugf("⚡ processCommandMessage: processing %s for device %s with %d metrics", msgType, topicInfo.DeviceKey(), len(payload.Metrics))
 
 	// ENG-4031: Use node-level key for state tracking consistency
@@ -834,7 +834,7 @@ func (s *sparkplugInput) processCommandMessage(msgType string, payload *sparkplu
 	return batch
 }
 
-func (s *sparkplugInput) processStateMessage(msgType string, topicInfo *TopicInfo, originalTopic string, statePayload string) (service.MessageBatch, error) {
+func (s *sparkplugInput) processStateMessage(msgType MessageType, topicInfo *TopicInfo, originalTopic string, statePayload string) (service.MessageBatch, error) {
 	// ENG-4031: Use node-level key for state tracking consistency
 	nodeKey := topicInfo.NodeKey()
 	s.logger.Debugf("🏛️ processStateMessage: processing STATE message for node %s, state: %s", nodeKey, statePayload)
@@ -877,8 +877,8 @@ func (s *sparkplugInput) processStateMessage(msgType string, topicInfo *TopicInf
 	msg := service.NewMessage(jsonBytes)
 
 	// Set Sparkplug B standard metadata for state messages
-	msg.MetaSet("spb_message_type", msgType)
 	msg.MetaSet("spb_node_key", nodeKey)
+	msg.MetaSet("spb_message_type", msgType.String())
 	msg.MetaSet("spb_topic", originalTopic)
 	msg.MetaSet("spb_group_id", topicInfo.Group)
 	msg.MetaSet("spb_edge_node_id", topicInfo.EdgeNode)
@@ -979,13 +979,13 @@ func (s *sparkplugInput) resolveAliases(deviceKey string, metrics []*sparkplugb.
 	}
 }
 
-func (s *sparkplugInput) parseSparkplugTopicDetailed(topic string) (string, *TopicInfo) {
+func (s *sparkplugInput) parseSparkplugTopicDetailed(topic string) (MessageType, *TopicInfo) {
 	// Use core component instead of processor
 	return s.topicParser.ParseSparkplugTopicDetailed(topic)
 }
 
 // Message creation methods
-func (s *sparkplugInput) createSplitMessages(payload *sparkplugb.Payload, msgType string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
+func (s *sparkplugInput) createSplitMessages(payload *sparkplugb.Payload, msgType MessageType, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
 	var batch service.MessageBatch
 
 	for i, metric := range payload.Metrics {
@@ -1002,7 +1002,7 @@ func (s *sparkplugInput) createSplitMessages(payload *sparkplugb.Payload, msgTyp
 	return batch
 }
 
-func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload, msgType string, topicInfo *TopicInfo, originalTopic string, metricIndex int, totalMetrics int) *service.Message {
+func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload, msgType MessageType, topicInfo *TopicInfo, originalTopic string, metricIndex int, totalMetrics int) *service.Message {
 	// Extract metric value as JSON (always preserve Sparkplug B format)
 	value := s.extractMetricValue(metric)
 	if value == nil {
@@ -1017,7 +1017,7 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	if topicInfo.Device != "" {
 		msg.MetaSet("spb_device_id", topicInfo.Device)
 	}
-	msg.MetaSet("spb_message_type", msgType)
+	msg.MetaSet("spb_message_type", msgType.String())
 	msg.MetaSet("spb_device_key", topicInfo.DeviceKey())
 	msg.MetaSet("spb_topic", originalTopic)
 
@@ -1082,7 +1082,7 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	return msg
 }
 
-func (s *sparkplugInput) createDeathEventMessage(msgType string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
+func (s *sparkplugInput) createDeathEventMessage(msgType MessageType, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
 	event := map[string]interface{}{
 		"event":        "DeviceOffline",
 		"device_key":   topicInfo.DeviceKey(),
@@ -1104,7 +1104,7 @@ func (s *sparkplugInput) createDeathEventMessage(msgType string, topicInfo *Topi
 	msg := service.NewMessage(jsonBytes)
 
 	// Set Sparkplug B standard metadata for death events
-	msg.MetaSet("spb_message_type", msgType)
+	msg.MetaSet("spb_message_type", msgType.String())
 	msg.MetaSet("spb_device_key", topicInfo.DeviceKey())
 	msg.MetaSet("spb_topic", originalTopic)
 	msg.MetaSet("spb_group_id", topicInfo.Group)

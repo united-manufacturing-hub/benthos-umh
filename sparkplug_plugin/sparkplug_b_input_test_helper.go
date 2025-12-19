@@ -98,19 +98,19 @@ func (w *SparkplugInputTestWrapper) GetStateMu() *sync.RWMutex {
 
 // CreateSplitMessages is an exported wrapper for testing the private createSplitMessages method
 // ENG-4031: Removed redundant deviceKey parameter - now derived from topicInfo.DeviceKey()
-func (w *SparkplugInputTestWrapper) CreateSplitMessages(payload *sparkplugb.Payload, msgType string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
+func (w *SparkplugInputTestWrapper) CreateSplitMessages(payload *sparkplugb.Payload, msgType MessageType, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
 	return w.input.createSplitMessages(payload, msgType, topicInfo, originalTopic)
 }
 
 // ProcessBirthMessage is an exported wrapper for testing the private processBirthMessage method
 // ENG-4031: Removed redundant deviceKey parameter - now derived from topicInfo.DeviceKey()
-func (w *SparkplugInputTestWrapper) ProcessBirthMessage(msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
+func (w *SparkplugInputTestWrapper) ProcessBirthMessage(msgType MessageType, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
 	w.input.processBirthMessage(msgType, payload, topicInfo)
 }
 
 // ProcessDataMessage is an exported wrapper for testing the private processDataMessage method
 // ENG-4031: Removed redundant deviceKey parameter - now derived from topicInfo.DeviceKey()
-func (w *SparkplugInputTestWrapper) ProcessDataMessage(msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
+func (w *SparkplugInputTestWrapper) ProcessDataMessage(msgType MessageType, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
 	w.input.processDataMessage(msgType, payload, topicInfo)
 }
 
@@ -140,7 +140,7 @@ func (w *SparkplugInputTestWrapper) GetNodeState(deviceKey string) *NodeStateInf
 
 // ProcessDeathMessage is an exported wrapper for testing the private processDeathMessage method
 // ENG-4031: Removed redundant deviceKey parameter - now derived from topicInfo.DeviceKey()
-func (w *SparkplugInputTestWrapper) ProcessDeathMessage(msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
+func (w *SparkplugInputTestWrapper) ProcessDeathMessage(msgType MessageType, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
 	w.input.processDeathMessage(msgType, payload, topicInfo)
 }
 
