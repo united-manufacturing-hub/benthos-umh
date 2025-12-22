@@ -905,3 +905,31 @@ var _ = Describe("js logmessage", func() {
 		Entry(`handles multiple arguments`, []any{1, "foo", map[string]any{"foo": "bar"}}, `1 'foo' { foo: 'bar' }`),
 	)
 })
+
+var _ = Describe("ConvertMessageToJSObject", func() {
+	DescribeTable("parses payload",
+		func(input string, expectedPayload any) {
+			expectedOutput := map[string]any{"payload": expectedPayload}
+			msg := service.NewMessage([]byte(input))
+			output, err := nodered_js_plugin.ConvertMessageToJSObject(msg)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(output).To(Equal(expectedOutput))
+		},
+		Entry(`empty input`, "", ""),
+		Entry(`generic string input as string`, "foo", "foo"),
+		Entry(`boolean input as boolean`, "true", true),
+		Entry(`null string as null`, "null", nil),
+		Entry(`quoted number as string`, `"42"`, "42"),
+		Entry(`number input as json.Number`, "42", json.Number("42")),
+		Entry(`decimal input as json.Number`, "42.42", json.Number("42.42")),
+		Entry(`empty json string as empty object`, "{}", map[string]any{}),
+		Entry(`json string with key and value as string`, `{"foo":"bar"}`, map[string]any{"foo": "bar"}),
+		Entry(`json string with value as null`, `{"foo":null}`, map[string]any{"foo": nil}),
+		Entry(`json string with value as boolean`, `{"foo":true}`, map[string]any{"foo": true}),
+		Entry(`json string with value as number`, `{"foo":42}`, map[string]any{"foo": json.Number("42")}),
+		Entry(`json string with value as negative number`, `{"foo":-42}`, map[string]any{"foo": json.Number("-42")}),
+		Entry(`json string with value as decimal number`, `{"foo":42.42}`, map[string]any{"foo": json.Number("42.42")}),
+		Entry(`json string nested object`, `{"foo":{}}`, map[string]any{"foo": map[string]any{}}),
+		Entry(`json string with value as array`, `{"foo":[1,2,3]}`, map[string]any{"foo": []any{json.Number("1"), json.Number("2"), json.Number("3")}}),
+	)
+})
