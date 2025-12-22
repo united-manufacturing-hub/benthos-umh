@@ -16,6 +16,7 @@ package nodered_js_plugin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -109,23 +110,22 @@ func (u *NodeREDJSProcessor) putVM(vm *goja.Runtime) {
 }
 
 // ConvertMessageToJSObject converts a Benthos message to a JavaScript-compatible object with the payload being in the payload field.
-func ConvertMessageToJSObject(msg *service.Message) (map[string]interface{}, error) {
-	// Try to get structured data first
-	structured, err := msg.AsStructured()
+func ConvertMessageToJSObject(msg *service.Message) (map[string]any, error) {
+	msgBytes, err := msg.AsBytes()
 	if err != nil {
-		// If message can't be converted to structured format, wrap raw bytes in a payload field
-		bytes, err := msg.AsBytes()
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert message to bytes: %w", err)
-		}
-		return map[string]interface{}{
-			"payload": string(bytes),
+		return nil, fmt.Errorf("failed to convert message to bytes: %w", err)
+	}
+
+	var jsondata any
+	err = json.Unmarshal(msgBytes, &jsondata)
+	if err == nil {
+		return map[string]any{
+			"payload": jsondata,
 		}, nil
 	}
 
-	// Always wrap the structured data in a payload field
-	return map[string]interface{}{
-		"payload": structured,
+	return map[string]any{
+		"payload": string(msgBytes),
 	}, nil
 }
 
