@@ -986,13 +986,15 @@ func (s *sparkplugOutput) createDeathMessage(_ *service.Message) (string, []byte
 		topic = fmt.Sprintf("spBv1.0/%s/NDEATH/%s", s.config.Identity.GroupID, eonNodeID)
 	}
 
+	s.stateMu.RLock()
 	bdSeqMetric := &sparkplugb.Payload_Metric{
 		Name: func() *string { s := "bdSeq"; return &s }(),
 		Value: &sparkplugb.Payload_Metric_LongValue{
 			LongValue: s.bdSeq,
 		},
-		Datatype: func() *uint32 { d := uint32(4); return &d }(),
+		Datatype: func() *uint32 { d := uint32(8); return &d }(),
 	}
+	s.stateMu.RUnlock()
 
 	deathPayload := &sparkplugb.Payload{
 		Timestamp: func() *uint64 { t := uint64(time.Now().UnixMilli()); return &t }(),
@@ -1149,14 +1151,16 @@ func (s *sparkplugOutput) publishBirthMessage() error {
 	var metrics []*sparkplugb.Payload_Metric
 
 	// Add bdSeq metric (required by Sparkplug spec)
+	s.stateMu.RLock()
 	bdSeqMetric := &sparkplugb.Payload_Metric{
 		Name:  func() *string { s := "bdSeq"; return &s }(),
 		Alias: func() *uint64 { a := uint64(0); return &a }(),
 		Value: &sparkplugb.Payload_Metric_LongValue{
 			LongValue: s.bdSeq,
 		},
-		Datatype: func() *uint32 { d := uint32(4); return &d }(),
+		Datatype: func() *uint32 { d := uint32(8); return &d }(),
 	}
+	s.stateMu.RUnlock()
 	metrics = append(metrics, bdSeqMetric)
 
 	// Add Node Control/Rebirth metric (required by Sparkplug spec for Edge Nodes)
