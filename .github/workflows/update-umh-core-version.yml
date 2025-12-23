@@ -120,7 +120,7 @@ jobs:
           repository: united-manufacturing-hub/ManagementConsole
           token: ${{ steps.generate-token.outputs.token }}
           path: ManagementConsole
-          ref: main
+          ref: staging
 
       - name: Copy schemas to versioned directory
         run: |
