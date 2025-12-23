@@ -170,6 +170,96 @@ var _ = Describe("JSON Schema Generator", func() {
 		})
 	})
 
+	Context("additionalProperties validation", func() {
+		It("should include additionalProperties false in plugin root schemas", func() {
+			plugin := PluginSpec{
+				Name:        "test-plugin",
+				Type:        "input",
+				Description: "Test plugin",
+				Config: map[string]FieldSpec{
+					"endpoint": {
+						Name:        "endpoint",
+						Type:        "string",
+						Description: "Test endpoint",
+						Required:    true,
+					},
+				},
+			}
+
+			result := convertPluginToJSONSchema(plugin)
+
+			// Plugin root must have additionalProperties: false
+			Expect(result).To(HaveKey("additionalProperties"))
+			Expect(result["additionalProperties"]).To(BeFalse())
+		})
+
+		It("should include additionalProperties false in nested object schemas", func() {
+			field := FieldSpec{
+				Name:        "handshake",
+				Type:        "object",
+				Description: "Handshake configuration",
+				Children: []FieldSpec{
+					{Name: "enabled", Type: "bool", Description: "Enable handshake"},
+					{Name: "timeout", Type: "int", Description: "Timeout in ms"},
+				},
+			}
+
+			result := convertFieldToJSONSchema(field)
+
+			// Nested objects with properties must have additionalProperties: false
+			Expect(result["type"]).To(Equal("object"))
+			Expect(result).To(HaveKey("properties"))
+			Expect(result).To(HaveKey("additionalProperties"))
+			Expect(result["additionalProperties"]).To(BeFalse())
+		})
+
+		It("should include additionalProperties false in deeply nested objects", func() {
+			// Plugin with nested object containing another nested object
+			plugin := PluginSpec{
+				Name:        "deep-plugin",
+				Type:        "input",
+				Description: "Plugin with deep nesting",
+				Config: map[string]FieldSpec{
+					"connection": {
+						Name:        "connection",
+						Type:        "object",
+						Description: "Connection settings",
+						Children: []FieldSpec{
+							{Name: "host", Type: "string"},
+							{
+								Name:        "security",
+								Type:        "object",
+								Description: "Security settings",
+								Children: []FieldSpec{
+									{Name: "mode", Type: "string"},
+									{Name: "certificate", Type: "string"},
+								},
+							},
+						},
+					},
+				},
+			}
+
+			result := convertPluginToJSONSchema(plugin)
+
+			// Root plugin must have additionalProperties: false
+			Expect(result).To(HaveKey("additionalProperties"))
+			Expect(result["additionalProperties"]).To(BeFalse())
+
+			// First level nested object (connection) must have additionalProperties: false
+			properties := result["properties"].(map[string]interface{})
+			connection := properties["connection"].(map[string]interface{})
+			Expect(connection).To(HaveKey("additionalProperties"))
+			Expect(connection["additionalProperties"]).To(BeFalse())
+
+			// Second level nested object (security) must have additionalProperties: false
+			connectionProps := connection["properties"].(map[string]interface{})
+			security := connectionProps["security"].(map[string]interface{})
+			Expect(security).To(HaveKey("additionalProperties"))
+			Expect(security["additionalProperties"]).To(BeFalse())
+		})
+	})
+
 	Context("convertPluginToJSONSchema (modbus-like complex plugin)", func() {
 		It("should convert a modbus-like plugin with mixed field types", func() {
 			plugin := PluginSpec{
