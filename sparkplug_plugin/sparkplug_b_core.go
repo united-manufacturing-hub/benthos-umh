@@ -40,12 +40,143 @@ type TopicInfo struct {
 	Device   string // Device ID under the edge node (empty for node-level messages)
 }
 
+// NodeKey returns the node-level key (group/edgeNode) for sequence tracking.
+// Per Sparkplug B spec, sequence numbers are tracked at NODE scope, not device scope.
+// All message types from a node (NBIRTH, NDATA, DBIRTH, DDATA) share one sequence counter.
+func (ti *TopicInfo) NodeKey() string {
+	if ti == nil || ti.Group == "" || ti.EdgeNode == "" {
+		return ""
+	}
+	return ti.Group + "/" + ti.EdgeNode
+}
+
+// DeviceKey returns the full device key (group/edgeNode or group/edgeNode/device).
+// For node-level messages (NBIRTH, NDEATH, NDATA), Device is empty and this returns group/edgeNode.
+// For device-level messages (DBIRTH, DDEATH, DDATA), this returns group/edgeNode/device.
+func (ti *TopicInfo) DeviceKey() string {
+	if ti == nil || ti.Group == "" || ti.EdgeNode == "" {
+		return ""
+	}
+	if ti.Device == "" {
+		return ti.Group + "/" + ti.EdgeNode
+	}
+	return ti.Group + "/" + ti.EdgeNode + "/" + ti.Device
+}
+
 // NodeState tracks the state of a Sparkplug node/device for sequence management.
 type NodeState struct {
 	LastSeen time.Time
 	LastSeq  uint8
 	BdSeq    uint64
 	IsOnline bool
+}
+
+// MessageType represents a Sparkplug B message type.
+// Using a typed string provides compile-time safety against typos while
+// maintaining human-readable metadata values.
+type MessageType string
+
+// Sparkplug B message type constants.
+const (
+	MessageTypeNBIRTH  MessageType = "NBIRTH"
+	MessageTypeNDATA   MessageType = "NDATA"
+	MessageTypeNDEATH  MessageType = "NDEATH"
+	MessageTypeNCMD    MessageType = "NCMD"
+	MessageTypeDBIRTH  MessageType = "DBIRTH"
+	MessageTypeDDATA   MessageType = "DDATA"
+	MessageTypeDDEATH  MessageType = "DDEATH"
+	MessageTypeDCMD    MessageType = "DCMD"
+	MessageTypeSTATE   MessageType = "STATE"
+	MessageTypeUnknown MessageType = ""
+)
+
+// ParseMessageType converts a string to a MessageType.
+// Returns MessageTypeUnknown for unrecognized message types.
+func ParseMessageType(s string) MessageType {
+	switch s {
+	case "NBIRTH":
+		return MessageTypeNBIRTH
+	case "NDATA":
+		return MessageTypeNDATA
+	case "NDEATH":
+		return MessageTypeNDEATH
+	case "NCMD":
+		return MessageTypeNCMD
+	case "DBIRTH":
+		return MessageTypeDBIRTH
+	case "DDATA":
+		return MessageTypeDDATA
+	case "DDEATH":
+		return MessageTypeDDEATH
+	case "DCMD":
+		return MessageTypeDCMD
+	case "STATE":
+		return MessageTypeSTATE
+	default:
+		return MessageTypeUnknown
+	}
+}
+
+// String returns the string representation of the MessageType.
+func (mt MessageType) String() string {
+	return string(mt)
+}
+
+// IsValid returns true if this is a recognized Sparkplug B message type.
+func (mt MessageType) IsValid() bool {
+	switch mt {
+	case MessageTypeNBIRTH, MessageTypeNDATA, MessageTypeNDEATH, MessageTypeNCMD,
+		MessageTypeDBIRTH, MessageTypeDDATA, MessageTypeDDEATH, MessageTypeDCMD,
+		MessageTypeSTATE:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsBirth returns true if this is a birth message (NBIRTH or DBIRTH).
+func (mt MessageType) IsBirth() bool {
+	return mt == MessageTypeNBIRTH || mt == MessageTypeDBIRTH
+}
+
+// IsData returns true if this is a data message (NDATA or DDATA).
+func (mt MessageType) IsData() bool {
+	return mt == MessageTypeNDATA || mt == MessageTypeDDATA
+}
+
+// IsDeath returns true if this is a death message (NDEATH or DDEATH).
+func (mt MessageType) IsDeath() bool {
+	return mt == MessageTypeNDEATH || mt == MessageTypeDDEATH
+}
+
+// IsCommand returns true if this is a command message (NCMD or DCMD).
+func (mt MessageType) IsCommand() bool {
+	return mt == MessageTypeNCMD || mt == MessageTypeDCMD
+}
+
+// IsNodeLevel returns true if this is a node-level message (N* types).
+func (mt MessageType) IsNodeLevel() bool {
+	switch mt {
+	case MessageTypeNBIRTH, MessageTypeNDATA, MessageTypeNDEATH, MessageTypeNCMD:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsDeviceLevel returns true if this is a device-level message (D* types).
+func (mt MessageType) IsDeviceLevel() bool {
+	switch mt {
+	case MessageTypeDBIRTH, MessageTypeDDATA, MessageTypeDDEATH, MessageTypeDCMD:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsState returns true if this is a STATE message.
+func (mt MessageType) IsState() bool {
+	return mt == MessageTypeSTATE
 }
 
 // AliasCache manages metric name to alias mappings for Sparkplug B optimization.
@@ -164,39 +295,38 @@ func NewTopicParser() *TopicParser {
 }
 
 // ParseSparkplugTopic parses a Sparkplug topic and returns (messageType, deviceKey).
-func (tp *TopicParser) ParseSparkplugTopic(topic string) (string, string) {
-	msgType, deviceKey, _ := tp.ParseSparkplugTopicDetailed(topic)
-	return msgType, deviceKey
+// deviceKey is derived from topicInfo.DeviceKey() for backward compatibility.
+func (tp *TopicParser) ParseSparkplugTopic(topic string) (MessageType, string) {
+	msgType, topicInfo := tp.ParseSparkplugTopicDetailed(topic)
+	if topicInfo == nil {
+		return msgType, ""
+	}
+	return msgType, topicInfo.DeviceKey()
 }
 
-// ParseSparkplugTopicDetailed parses a Sparkplug topic and returns (messageType, deviceKey, topicInfo).
-func (tp *TopicParser) ParseSparkplugTopicDetailed(topic string) (string, string, *TopicInfo) {
+// ParseSparkplugTopicDetailed parses a Sparkplug topic and returns (messageType, topicInfo).
+// The deviceKey can be derived from topicInfo.DeviceKey() when needed.
+func (tp *TopicParser) ParseSparkplugTopicDetailed(topic string) (MessageType, *TopicInfo) {
 	if topic == "" {
-		return "", "", nil
+		return MessageTypeUnknown, nil
 	}
 
 	parts := strings.Split(topic, "/")
 	if len(parts) < 4 {
-		return "", "", nil
+		return MessageTypeUnknown, nil
 	}
 
 	// Validate Sparkplug namespace
 	if parts[0] != "spBv1.0" {
-		return "", "", nil
+		return MessageTypeUnknown, nil
 	}
 
-	msgType := parts[2]
+	msgType := ParseMessageType(parts[2])
 	group := parts[1]
 	edgeNode := parts[3]
 	device := ""
 	if len(parts) > 4 {
 		device = parts[4]
-	}
-
-	// Construct device key for cache lookup
-	deviceKey := fmt.Sprintf("%s/%s", group, edgeNode)
-	if device != "" {
-		deviceKey = fmt.Sprintf("%s/%s", deviceKey, device)
 	}
 
 	topicInfo := &TopicInfo{
@@ -205,7 +335,7 @@ func (tp *TopicParser) ParseSparkplugTopicDetailed(topic string) (string, string
 		Device:   device,
 	}
 
-	return msgType, deviceKey, topicInfo
+	return msgType, topicInfo
 }
 
 // BuildTopic constructs a Sparkplug topic from components.

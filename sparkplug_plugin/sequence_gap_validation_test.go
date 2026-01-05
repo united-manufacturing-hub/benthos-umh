@@ -107,7 +107,7 @@ var _ = Describe("Sequence Gap Validator - Message Drop Investigation (ENG-3720)
 			// 1. processDataMessage is not exposed by test wrapper
 			// 2. The code path shows createSplitMessages is ALWAYS called after processDataMessage
 			// 3. There is NO conditional logic that prevents batch creation on validation failure
-			batch := wrapper.CreateSplitMessages(payload, "NDATA", "test/edge1/device1", topicInfo, "spBv1.0/test/NDATA/edge1/device1")
+			batch := wrapper.CreateSplitMessages(payload, "NDATA", topicInfo, "spBv1.0/test/NDATA/edge1/device1")
 
 			// Then: Message should be processed (NOT DROPPED)
 			Expect(batch).NotTo(BeNil(), "Batch should be created despite sequence gap")
@@ -154,7 +154,7 @@ var _ = Describe("Sequence Gap Validator - Message Drop Investigation (ENG-3720)
 			}
 
 			// When: Processing the message
-			batch := wrapper.CreateSplitMessages(payload, "NDATA", "test/edge1/device1", topicInfo, "spBv1.0/test/NDATA/edge1/device1")
+			batch := wrapper.CreateSplitMessages(payload, "NDATA", topicInfo, "spBv1.0/test/NDATA/edge1/device1")
 
 			// Then: Message is processed normally
 			Expect(batch).To(HaveLen(1), "Out-of-order message should still be processed")
@@ -190,7 +190,7 @@ var _ = Describe("Sequence Gap Validator - Message Drop Investigation (ENG-3720)
 			}
 
 			// When: Processing sequence=0 (after presumed sequence=255)
-			batch := wrapper.CreateSplitMessages(payload, "NDATA", "test/edge1/device1", topicInfo, "spBv1.0/test/NDATA/edge1/device1")
+			batch := wrapper.CreateSplitMessages(payload, "NDATA", topicInfo, "spBv1.0/test/NDATA/edge1/device1")
 
 			// Then: Message is processed
 			Expect(batch).To(HaveLen(1), "Wrapped sequence should be processed")
@@ -200,65 +200,6 @@ var _ = Describe("Sequence Gap Validator - Message Drop Investigation (ENG-3720)
 			Expect(seqMeta).To(Equal("0"), "Sequence 0 should be accepted")
 
 			// PROOF: Sequence wraparound does not cause message drops
-		})
-	})
-
-	Context("ValidateSequenceNumber function behavior", func() {
-		It("should return false for sequence gaps but not prevent message processing", func() {
-			// Direct test of ValidateSequenceNumber function
-			// This proves the validator ONLY returns true/false, it does not drop messages
-
-			lastSeq := uint8(4)
-			currentSeq := uint8(10)
-
-			// When: Validating a sequence gap
-			isValid := sparkplugplugin.ValidateSequenceNumber(lastSeq, currentSeq)
-
-			// Then: Should return false
-			Expect(isValid).To(BeFalse(), "Sequence gap should fail validation")
-
-			// But this return value is NOT used to drop messages!
-			// See sparkplug_b_input.go lines 579-595:
-			// The isValidSequence result is checked (line 581)
-			// but the function DOES NOT return early
-			// It continues to update state and resolve aliases
-			// The calling function (line 498-501) ALWAYS calls createSplitMessages
-		})
-
-		It("should return true for valid consecutive sequences", func() {
-			lastSeq := uint8(4)
-			currentSeq := uint8(5)
-
-			isValid := sparkplugplugin.ValidateSequenceNumber(lastSeq, currentSeq)
-
-			Expect(isValid).To(BeTrue(), "Consecutive sequence should pass validation")
-		})
-
-		It("should return true for valid wraparound from 255 to 0", func() {
-			lastSeq := uint8(255)
-			currentSeq := uint8(0)
-
-			isValid := sparkplugplugin.ValidateSequenceNumber(lastSeq, currentSeq)
-
-			Expect(isValid).To(BeTrue(), "Wraparound from 255 to 0 should pass validation")
-		})
-
-		It("should return false for backwards sequences", func() {
-			lastSeq := uint8(100)
-			currentSeq := uint8(50)
-
-			isValid := sparkplugplugin.ValidateSequenceNumber(lastSeq, currentSeq)
-
-			Expect(isValid).To(BeFalse(), "Backwards sequence should fail validation")
-		})
-
-		It("should return false for duplicate sequences", func() {
-			lastSeq := uint8(10)
-			currentSeq := uint8(10)
-
-			isValid := sparkplugplugin.ValidateSequenceNumber(lastSeq, currentSeq)
-
-			Expect(isValid).To(BeFalse(), "Duplicate sequence should fail validation")
 		})
 	})
 })

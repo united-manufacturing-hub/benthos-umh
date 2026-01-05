@@ -555,19 +555,19 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 	s.logger.Debugf("🔄 processSparkplugMessage: starting to process topic %s", mqttMsg.topic)
 
 	// Parse topic to extract Sparkplug components
-	msgType, deviceKey, topicInfo := s.parseSparkplugTopicDetailed(mqttMsg.topic)
-	if msgType == "" {
+	msgType, topicInfo := s.parseSparkplugTopicDetailed(mqttMsg.topic)
+	if !msgType.IsValid() {
 		s.logger.Debugf("Ignoring non-Sparkplug topic: %s", mqttMsg.topic)
 		return nil, nil
 	}
 
-	s.logger.Debugf("📊 processSparkplugMessage: parsed topic - msgType=%s, deviceKey=%s", msgType, deviceKey)
+	s.logger.Debugf("📊 processSparkplugMessage: parsed topic - msgType=%s, deviceKey=%s", msgType, topicInfo.DeviceKey())
 
 	// **FIX: Filter STATE messages from protobuf parsing**
 	// STATE messages contain plain text "ONLINE"/"OFFLINE", not protobuf payloads
-	if msgType == "STATE" {
+	if msgType.IsState() {
 		s.logger.Debugf("🏛️ processSparkplugMessage: processing STATE message (payload: %s)", string(mqttMsg.payload))
-		return s.processStateMessage(deviceKey, msgType, topicInfo, mqttMsg.topic, string(mqttMsg.payload))
+		return s.processStateMessage(msgType, topicInfo, mqttMsg.topic, string(mqttMsg.payload))
 	}
 
 	// DEBUG: Log before protobuf unmarshal as recommended in the plan
@@ -584,10 +584,10 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 	// DEBUG: Log after successful protobuf unmarshal
 	s.logger.Debugf("✅ processSparkplugMessage: successfully unmarshaled payload with %d metrics", len(payload.Metrics))
 
-	isBirthMessage := strings.Contains(msgType, "BIRTH")
-	isDataMessage := strings.Contains(msgType, "DATA")
-	isDeathMessage := strings.Contains(msgType, "DEATH")
-	isCommandMessage := strings.Contains(msgType, "CMD")
+	isBirthMessage := msgType.IsBirth()
+	isDataMessage := msgType.IsData()
+	isDeathMessage := msgType.IsDeath()
+	isCommandMessage := msgType.IsCommand()
 
 	s.logger.Debugf("🏷️ processSparkplugMessage: message type classification - birth=%v, data=%v, death=%v, command=%v",
 		isBirthMessage, isDataMessage, isDeathMessage, isCommandMessage)
@@ -596,28 +596,28 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 
 	if isBirthMessage {
 		s.logger.Debugf("🎂 processSparkplugMessage: processing BIRTH message")
-		s.processBirthMessage(deviceKey, msgType, &payload)
+		s.processBirthMessage(msgType, &payload, topicInfo)
 		s.birthsProcessed.Incr(1)
 
 		// Always process birth messages (they contain valuable current state)
 		// Always split metrics for UMH-Core format (one metric per message)
-		batch = s.createSplitMessages(&payload, msgType, deviceKey, topicInfo, mqttMsg.topic)
+		batch = s.createSplitMessages(&payload, msgType, topicInfo, mqttMsg.topic)
 	} else if isDataMessage {
 		s.logger.Debugf("📈 processSparkplugMessage: processing DATA message")
-		s.processDataMessage(deviceKey, msgType, &payload)
+		s.processDataMessage(msgType, &payload, topicInfo)
 
 		// Always split metrics for UMH-Core format (one metric per message)
-		batch = s.createSplitMessages(&payload, msgType, deviceKey, topicInfo, mqttMsg.topic)
+		batch = s.createSplitMessages(&payload, msgType, topicInfo, mqttMsg.topic)
 	} else if isDeathMessage {
 		s.logger.Debugf("💀 processSparkplugMessage: processing DEATH message")
-		s.processDeathMessage(deviceKey, msgType, &payload)
+		s.processDeathMessage(msgType, &payload, topicInfo)
 		s.deathsProcessed.Incr(1)
 
 		// Create status event message for death
-		batch = s.createDeathEventMessage(msgType, deviceKey, topicInfo, mqttMsg.topic)
+		batch = s.createDeathEventMessage(msgType, topicInfo, mqttMsg.topic)
 	} else if isCommandMessage {
 		s.logger.Debugf("⚡ processSparkplugMessage: processing COMMAND message")
-		batch = s.processCommandMessage(deviceKey, msgType, &payload, topicInfo, mqttMsg.topic)
+		batch = s.processCommandMessage(msgType, &payload, topicInfo, mqttMsg.topic)
 	}
 
 	// DEBUG: Log when pushing to Benthos pipeline as recommended in the plan
@@ -637,12 +637,16 @@ func (s *sparkplugInput) processSparkplugMessage(mqttMsg mqttMessage) (service.M
 //
 // Key behavior: Caches alias → metric name mappings from BIRTH certificates
 // for use in subsequent DATA message resolution.
-func (s *sparkplugInput) processBirthMessage(deviceKey string, msgType string, payload *sparkplugb.Payload) {
+func (s *sparkplugInput) processBirthMessage(msgType MessageType, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 
-	// Update node state
-	if state, exists := s.nodeStates[deviceKey]; exists {
+	// ENG-4031: Use node-level key for sequence tracking.
+	// Per Sparkplug B spec, sequence is tracked at NODE scope, not device scope.
+	nodeKey := topicInfo.NodeKey()
+
+	// Update node state using nodeKey for sequence tracking
+	if state, exists := s.nodeStates[nodeKey]; exists {
 		state.IsOnline = true
 		state.LastSeen = time.Now()
 		state.LastSeq = GetSequenceNumber(payload)
@@ -662,13 +666,14 @@ func (s *sparkplugInput) processBirthMessage(deviceKey string, msgType string, p
 			LastSeen: time.Now(),
 			LastSeq:  GetSequenceNumber(payload),
 		}
-		s.nodeStates[deviceKey] = state
+		s.nodeStates[nodeKey] = state
 	}
 
 	// Cache aliases from birth message
-	s.cacheAliases(deviceKey, payload.Metrics)
+	// NOTE: Alias caching uses deviceKey - aliases ARE per-device from DBIRTH
+	s.cacheAliases(topicInfo.DeviceKey(), payload.Metrics)
 
-	s.logger.Debugf("Processed %s for device %s", msgType, deviceKey)
+	s.logger.Debugf("Processed %s for device %s (node: %s)", msgType, topicInfo.DeviceKey(), nodeKey)
 }
 
 // processDataMessage handles DATA messages (NDATA/DDATA) with sequence validation.
@@ -694,58 +699,67 @@ func (s *sparkplugInput) processBirthMessage(deviceKey string, msgType string, p
 // - All state access protected by stateMu lock
 // - No I/O operations performed while holding lock
 // - Deterministic behavior ensured by UpdateNodeState pure function
-func (s *sparkplugInput) processDataMessage(deviceKey string, msgType string, payload *sparkplugb.Payload) {
+func (s *sparkplugInput) processDataMessage(msgType MessageType, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
 	s.stateMu.Lock()
 
 	currentSeq := GetSequenceNumber(payload)
 
+	// ENG-4031: Use node-level key for sequence tracking.
+	// Per Sparkplug B spec, sequence is tracked at NODE scope, not device scope.
+	// All message types from a node (NBIRTH, NDATA, DBIRTH, DDATA) share one counter.
+	nodeKey := topicInfo.NodeKey()
+
 	// Capture previous sequence before UpdateNodeState modifies it
 	var prevSeq uint8
-	if state, exists := s.nodeStates[deviceKey]; exists {
+	if state, exists := s.nodeStates[nodeKey]; exists {
 		prevSeq = state.LastSeq
 	}
 
-	action := UpdateNodeState(s.nodeStates, deviceKey, currentSeq)
+	action := UpdateNodeState(s.nodeStates, nodeKey, currentSeq)
 
 	// Resolve aliases while holding lock (safe operation)
-	s.resolveAliases(deviceKey, payload.Metrics)
+	// NOTE: Alias resolution uses deviceKey - aliases ARE per-device from DBIRTH
+	s.resolveAliases(topicInfo.DeviceKey(), payload.Metrics)
 
 	s.stateMu.Unlock()
 
 	// Logging after lock release to minimize lock hold time
 	if action.IsNewNode {
-		s.logger.Infof("Discovered new node from %s message: %s", msgType, deviceKey)
+		s.logger.Infof("Discovered new node from %s message: %s (node: %s)", msgType, topicInfo.DeviceKey(), nodeKey)
 	}
 
 	if action.NeedsRebirth {
-		LogSequenceError(s.logger, s.sequenceErrors, deviceKey, prevSeq, currentSeq)
+		LogSequenceError(s.logger, s.sequenceErrors, nodeKey, prevSeq, currentSeq)
 	}
 
-	// I/O operations
+	// I/O operations - rebirth requests go to the node
 	if action.IsNewNode {
-		s.requestBirthIfNeeded(deviceKey)
+		s.requestBirthIfNeeded(nodeKey)
 	} else if action.NeedsRebirth {
-		s.sendRebirthRequest(deviceKey)
+		s.sendRebirthRequest(nodeKey)
 	}
 }
 
-func (s *sparkplugInput) processDeathMessage(deviceKey string, msgType string, payload *sparkplugb.Payload) {
+func (s *sparkplugInput) processDeathMessage(msgType MessageType, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 
-	state, exists := s.nodeStates[deviceKey]
+	// ENG-4031: Use node-level key for state tracking consistency
+	nodeKey := topicInfo.NodeKey()
+
+	state, exists := s.nodeStates[nodeKey]
 	if !exists {
-		// No state for this device - create minimal state
-		s.nodeStates[deviceKey] = &nodeState{
+		// No state for this node - create minimal state
+		s.nodeStates[nodeKey] = &nodeState{
 			IsOnline: false,
 			LastSeen: time.Now(),
 		}
-		s.logger.Debugf("Processed %s for unknown device %s (created state)", msgType, deviceKey)
+		s.logger.Debugf("Processed %s for unknown device %s (node: %s, created state)", msgType, topicInfo.DeviceKey(), nodeKey)
 		return
 	}
 
 	// For NDEATH messages, validate bdSeq from payload
-	if msgType == "NDEATH" {
+	if msgType == MessageTypeNDEATH {
 		// Extract bdSeq from payload metrics
 		var payloadBdSeq uint64
 		var foundBdSeq bool
@@ -761,15 +775,15 @@ func (s *sparkplugInput) processDeathMessage(deviceKey string, msgType string, p
 			// Validate bdSeq matches the stored value from NBIRTH
 			if payloadBdSeq != state.BdSeq {
 				// Stale NDEATH from old session - ignore it
-				s.logger.Warnf("Ignoring stale NDEATH for device %s: bdSeq mismatch (payload=%d, stored=%d)",
-					deviceKey, payloadBdSeq, state.BdSeq)
+				s.logger.Warnf("Ignoring stale NDEATH for node %s: bdSeq mismatch (payload=%d, stored=%d)",
+					nodeKey, payloadBdSeq, state.BdSeq)
 				return
 			}
-			s.logger.Debugf("NDEATH bdSeq validated for device %s (bdSeq=%d)", deviceKey, payloadBdSeq)
+			s.logger.Debugf("NDEATH bdSeq validated for node %s (bdSeq=%d)", nodeKey, payloadBdSeq)
 		} else {
 			// No bdSeq in payload - log warning but still process
 			// Some older edge nodes might not include bdSeq
-			s.logger.Warnf("NDEATH for device %s missing bdSeq metric - processing anyway", deviceKey)
+			s.logger.Warnf("NDEATH for node %s missing bdSeq metric - processing anyway", nodeKey)
 		}
 	}
 
@@ -777,18 +791,21 @@ func (s *sparkplugInput) processDeathMessage(deviceKey string, msgType string, p
 	state.IsOnline = false
 	state.LastSeen = time.Now()
 
-	s.logger.Debugf("Processed %s for device %s", msgType, deviceKey)
+	s.logger.Debugf("Processed %s for device %s (node: %s)", msgType, topicInfo.DeviceKey(), nodeKey)
 }
 
-func (s *sparkplugInput) processCommandMessage(deviceKey string, msgType string, payload *sparkplugb.Payload, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
-	s.logger.Debugf("⚡ processCommandMessage: processing %s for device %s with %d metrics", msgType, deviceKey, len(payload.Metrics))
+func (s *sparkplugInput) processCommandMessage(msgType MessageType, payload *sparkplugb.Payload, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
+	s.logger.Debugf("⚡ processCommandMessage: processing %s for device %s with %d metrics", msgType, topicInfo.DeviceKey(), len(payload.Metrics))
+
+	// ENG-4031: Use node-level key for state tracking consistency
+	nodeKey := topicInfo.NodeKey()
 
 	// Update node state timestamp for activity tracking
 	s.stateMu.Lock()
-	if state, exists := s.nodeStates[deviceKey]; exists {
+	if state, exists := s.nodeStates[nodeKey]; exists {
 		state.LastSeen = time.Now()
 	} else {
-		s.nodeStates[deviceKey] = &nodeState{
+		s.nodeStates[nodeKey] = &nodeState{
 			LastSeen: time.Now(),
 			IsOnline: true, // Assume online if receiving commands
 		}
@@ -799,7 +816,7 @@ func (s *sparkplugInput) processCommandMessage(deviceKey string, msgType string,
 	for _, metric := range payload.Metrics {
 		if metric.Name != nil && *metric.Name == "Node Control/Rebirth" {
 			if metric.GetBooleanValue() {
-				s.logger.Infof("🔄 Rebirth request received for device %s", deviceKey)
+				s.logger.Infof("🔄 Rebirth request received for device %s (node: %s)", topicInfo.DeviceKey(), nodeKey)
 				// Handle rebirth logic here if needed for edge nodes
 				// For primary hosts, this is typically just logged
 			}
@@ -807,28 +824,31 @@ func (s *sparkplugInput) processCommandMessage(deviceKey string, msgType string,
 	}
 
 	// Resolve aliases in command message (same as data messages)
-	s.resolveAliases(deviceKey, payload.Metrics)
+	// NOTE: Alias resolution uses deviceKey - aliases ARE per-device
+	s.resolveAliases(topicInfo.DeviceKey(), payload.Metrics)
 
 	// Create batch from command metrics - always split for UMH-Core format
-	batch := s.createSplitMessages(payload, msgType, deviceKey, topicInfo, originalTopic)
+	batch := s.createSplitMessages(payload, msgType, topicInfo, originalTopic)
 
 	s.logger.Debugf("✅ processCommandMessage: created batch with %d messages for %s", len(batch), msgType)
 	return batch
 }
 
-func (s *sparkplugInput) processStateMessage(deviceKey string, msgType string, topicInfo *TopicInfo, originalTopic string, statePayload string) (service.MessageBatch, error) {
-	s.logger.Debugf("🏛️ processStateMessage: processing STATE message for device %s, state: %s", deviceKey, statePayload)
+func (s *sparkplugInput) processStateMessage(msgType MessageType, topicInfo *TopicInfo, originalTopic string, statePayload string) (service.MessageBatch, error) {
+	// ENG-4031: Use node-level key for state tracking consistency
+	nodeKey := topicInfo.NodeKey()
+	s.logger.Debugf("🏛️ processStateMessage: processing STATE message for node %s, state: %s", nodeKey, statePayload)
 
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 
 	// Update node state based on STATE message content
 	isOnline := statePayload == "ONLINE"
-	if state, exists := s.nodeStates[deviceKey]; exists {
+	if state, exists := s.nodeStates[nodeKey]; exists {
 		state.IsOnline = isOnline
 		state.LastSeen = time.Now()
 	} else {
-		s.nodeStates[deviceKey] = &nodeState{
+		s.nodeStates[nodeKey] = &nodeState{
 			IsOnline: isOnline,
 			LastSeen: time.Now(),
 		}
@@ -837,7 +857,7 @@ func (s *sparkplugInput) processStateMessage(deviceKey string, msgType string, t
 	// Create a status event message for STATE changes
 	event := map[string]interface{}{
 		"event":        "StateChange",
-		"device_key":   deviceKey,
+		"node_key":     nodeKey,
 		"group_id":     topicInfo.Group,
 		"edge_node_id": topicInfo.EdgeNode,
 		"state":        statePayload,
@@ -857,8 +877,8 @@ func (s *sparkplugInput) processStateMessage(deviceKey string, msgType string, t
 	msg := service.NewMessage(jsonBytes)
 
 	// Set Sparkplug B standard metadata for state messages
-	msg.MetaSet("spb_message_type", msgType)
-	msg.MetaSet("spb_device_key", deviceKey)
+	msg.MetaSet("spb_node_key", nodeKey)
+	msg.MetaSet("spb_message_type", msgType.String())
 	msg.MetaSet("spb_topic", originalTopic)
 	msg.MetaSet("spb_group_id", topicInfo.Group)
 	msg.MetaSet("spb_edge_node_id", topicInfo.EdgeNode)
@@ -872,11 +892,11 @@ func (s *sparkplugInput) processStateMessage(deviceKey string, msgType string, t
 	if topicInfo.Device != "" {
 		msg.MetaSet("spb_device_id_sanitized", s.sanitizeForTopic(topicInfo.Device))
 	}
-	msg.MetaSet("spb_device_key_sanitized", s.sanitizeForTopic(deviceKey))
+	msg.MetaSet("spb_node_key_sanitized", s.sanitizeForTopic(nodeKey))
 	msg.MetaSet("event_type", "state_change")
 	msg.MetaSet("spb_state", statePayload)
 
-	s.logger.Debugf("✅ processStateMessage: created STATE event message for device %s: %s", deviceKey, statePayload)
+	s.logger.Debugf("✅ processStateMessage: created STATE event message for node %s: %s", nodeKey, statePayload)
 
 	return service.MessageBatch{msg}, nil
 }
@@ -959,13 +979,13 @@ func (s *sparkplugInput) resolveAliases(deviceKey string, metrics []*sparkplugb.
 	}
 }
 
-func (s *sparkplugInput) parseSparkplugTopicDetailed(topic string) (string, string, *TopicInfo) {
+func (s *sparkplugInput) parseSparkplugTopicDetailed(topic string) (MessageType, *TopicInfo) {
 	// Use core component instead of processor
 	return s.topicParser.ParseSparkplugTopicDetailed(topic)
 }
 
 // Message creation methods
-func (s *sparkplugInput) createSplitMessages(payload *sparkplugb.Payload, msgType string, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
+func (s *sparkplugInput) createSplitMessages(payload *sparkplugb.Payload, msgType MessageType, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
 	var batch service.MessageBatch
 
 	for i, metric := range payload.Metrics {
@@ -973,7 +993,7 @@ func (s *sparkplugInput) createSplitMessages(payload *sparkplugb.Payload, msgTyp
 			continue
 		}
 
-		msg := s.createMessageFromMetric(metric, payload, msgType, deviceKey, topicInfo, originalTopic, i, len(payload.Metrics))
+		msg := s.createMessageFromMetric(metric, payload, msgType, topicInfo, originalTopic, i, len(payload.Metrics))
 		if msg != nil {
 			batch = append(batch, msg)
 		}
@@ -982,7 +1002,7 @@ func (s *sparkplugInput) createSplitMessages(payload *sparkplugb.Payload, msgTyp
 	return batch
 }
 
-func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload, msgType string, deviceKey string, topicInfo *TopicInfo, originalTopic string, metricIndex int, totalMetrics int) *service.Message {
+func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload, msgType MessageType, topicInfo *TopicInfo, originalTopic string, metricIndex int, totalMetrics int) *service.Message {
 	// Extract metric value as JSON (always preserve Sparkplug B format)
 	value := s.extractMetricValue(metric)
 	if value == nil {
@@ -997,8 +1017,8 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	if topicInfo.Device != "" {
 		msg.MetaSet("spb_device_id", topicInfo.Device)
 	}
-	msg.MetaSet("spb_message_type", msgType)
-	msg.MetaSet("spb_device_key", deviceKey)
+	msg.MetaSet("spb_message_type", msgType.String())
+	msg.MetaSet("spb_device_key", topicInfo.DeviceKey())
 	msg.MetaSet("spb_topic", originalTopic)
 
 	// Add pre-sanitized versions for easier processing
@@ -1007,7 +1027,7 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	if topicInfo.Device != "" {
 		msg.MetaSet("spb_device_id_sanitized", s.sanitizeForTopic(topicInfo.Device))
 	}
-	msg.MetaSet("spb_device_key_sanitized", s.sanitizeForTopic(deviceKey))
+	msg.MetaSet("spb_device_key_sanitized", s.sanitizeForTopic(topicInfo.DeviceKey()))
 
 	// Set Sparkplug B metric name
 	metricName := "unknown_metric"
@@ -1049,8 +1069,9 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	}
 
 	// Add birth-death sequence if available from node state
+	// ENG-4031: Use nodeKey for state lookup - nodeStates is keyed by node, not device
 	s.stateMu.RLock()
-	if state, exists := s.nodeStates[deviceKey]; exists {
+	if state, exists := s.nodeStates[topicInfo.NodeKey()]; exists {
 		msg.MetaSet("spb_bdseq", fmt.Sprintf("%d", state.BdSeq))
 	}
 	s.stateMu.RUnlock()
@@ -1061,10 +1082,10 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	return msg
 }
 
-func (s *sparkplugInput) createDeathEventMessage(msgType string, deviceKey string, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
+func (s *sparkplugInput) createDeathEventMessage(msgType MessageType, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
 	event := map[string]interface{}{
 		"event":        "DeviceOffline",
-		"device_key":   deviceKey,
+		"device_key":   topicInfo.DeviceKey(),
 		"group_id":     topicInfo.Group,
 		"edge_node_id": topicInfo.EdgeNode,
 		"timestamp_ms": time.Now().UnixMilli(),
@@ -1083,8 +1104,8 @@ func (s *sparkplugInput) createDeathEventMessage(msgType string, deviceKey strin
 	msg := service.NewMessage(jsonBytes)
 
 	// Set Sparkplug B standard metadata for death events
-	msg.MetaSet("spb_message_type", msgType)
-	msg.MetaSet("spb_device_key", deviceKey)
+	msg.MetaSet("spb_message_type", msgType.String())
+	msg.MetaSet("spb_device_key", topicInfo.DeviceKey())
 	msg.MetaSet("spb_topic", originalTopic)
 	msg.MetaSet("spb_group_id", topicInfo.Group)
 	msg.MetaSet("spb_edge_node_id", topicInfo.EdgeNode)
@@ -1098,7 +1119,7 @@ func (s *sparkplugInput) createDeathEventMessage(msgType string, deviceKey strin
 	if topicInfo.Device != "" {
 		msg.MetaSet("spb_device_id_sanitized", s.sanitizeForTopic(topicInfo.Device))
 	}
-	msg.MetaSet("spb_device_key_sanitized", s.sanitizeForTopic(deviceKey))
+	msg.MetaSet("spb_device_key_sanitized", s.sanitizeForTopic(topicInfo.DeviceKey()))
 	msg.MetaSet("event_type", "device_offline")
 
 	return service.MessageBatch{msg}

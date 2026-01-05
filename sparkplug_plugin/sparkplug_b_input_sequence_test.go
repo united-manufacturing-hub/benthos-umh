@@ -81,7 +81,7 @@ var _ = Describe("NDATA Message Splitting - Sequence Number Handling", func() {
 			}
 
 			// When: Processing through createSplitMessages
-			batch := input.CreateSplitMessages(payload, "NDATA", "test/edge1/702", topicInfo, "spBv1.0/test/NDATA/edge1/702")
+			batch := input.CreateSplitMessages(payload, "NDATA", topicInfo, "spBv1.0/test/NDATA/edge1/702")
 
 			// Then: Should create 5 messages
 			Expect(batch).To(HaveLen(5), "Should create one message per metric")
@@ -127,7 +127,7 @@ var _ = Describe("NDATA Message Splitting - Sequence Number Handling", func() {
 			}
 
 			// When: Creating split messages
-			batch := input.CreateSplitMessages(payload, "NDATA", "test/edge1/device1", topicInfo, "spBv1.0/test/NDATA/edge1/device1")
+			batch := input.CreateSplitMessages(payload, "NDATA", topicInfo, "spBv1.0/test/NDATA/edge1/device1")
 
 			// Then: Extract sequence numbers (CURRENT BEHAVIOR - all duplicates)
 			sequences := []string{}
@@ -186,7 +186,7 @@ var _ = Describe("NDATA Message Splitting - Sequence Number Handling", func() {
 			}
 
 			// When: Creating split messages
-			batch := input.CreateSplitMessages(payload, "NDATA", "org_A/site_B/702", topicInfo, "spBv1.0/org_A/NDATA/site_B/702")
+			batch := input.CreateSplitMessages(payload, "NDATA", topicInfo, "spBv1.0/org_A/NDATA/site_B/702")
 
 			// Then: Verify Dual-Sequence metadata on all messages
 			Expect(batch).To(HaveLen(5), "Should create 5 split messages")
@@ -247,7 +247,7 @@ var _ = Describe("NDATA Message Splitting - Sequence Number Handling", func() {
 			}
 
 			// When: Creating split messages
-			batch := input.CreateSplitMessages(payload, "NDATA", "test/edge1/device1", topicInfo, "spBv1.0/test/NDATA/edge1/device1")
+			batch := input.CreateSplitMessages(payload, "NDATA", topicInfo, "spBv1.0/test/NDATA/edge1/device1")
 
 			// Then: Should create 1 message with correct metadata
 			Expect(batch).To(HaveLen(1))
@@ -328,9 +328,9 @@ var _ = Describe("NDATA Message Splitting - Sequence Number Handling", func() {
 			}
 
 			// When: Processing all three messages
-			batch1 := input.CreateSplitMessages(payload1, "NDATA", "org_A/site_B/702", topicInfo, "spBv1.0/org_A/NDATA/site_B/702")
-			batch2 := input.CreateSplitMessages(payload2, "NDATA", "org_A/site_B/702", topicInfo, "spBv1.0/org_A/NDATA/site_B/702")
-			batch3 := input.CreateSplitMessages(payload3, "NDATA", "org_A/site_B/702", topicInfo, "spBv1.0/org_A/NDATA/site_B/702")
+			batch1 := input.CreateSplitMessages(payload1, "NDATA", topicInfo, "spBv1.0/org_A/NDATA/site_B/702")
+			batch2 := input.CreateSplitMessages(payload2, "NDATA", topicInfo, "spBv1.0/org_A/NDATA/site_B/702")
+			batch3 := input.CreateSplitMessages(payload3, "NDATA", topicInfo, "spBv1.0/org_A/NDATA/site_B/702")
 
 			// Then: Each NDATA should produce 5 split messages
 			Expect(batch1).To(HaveLen(5), "First NDATA (seq=253) should create 5 messages")
@@ -499,9 +499,9 @@ var _ = Describe("NDATA Message Splitting - Sequence Number Handling", func() {
 			}
 
 			// When: Processing all messages through SparkplugB input
-			batch1 := input.CreateSplitMessages(payload1, "NDATA", "org_A/site_B/702", device702, "spBv1.0/org_A/NDATA/site_B/702")
-			batch2 := input.CreateSplitMessages(payload2, "NDATA", "org_A/site_B/702", device702, "spBv1.0/org_A/NDATA/site_B/702")
-			batch3 := input.CreateSplitMessages(payload3, "NDATA", "org_A/site_B/702", device702, "spBv1.0/org_A/NDATA/site_B/702")
+			batch1 := input.CreateSplitMessages(payload1, "NDATA", device702, "spBv1.0/org_A/NDATA/site_B/702")
+			batch2 := input.CreateSplitMessages(payload2, "NDATA", device702, "spBv1.0/org_A/NDATA/site_B/702")
+			batch3 := input.CreateSplitMessages(payload3, "NDATA", device702, "spBv1.0/org_A/NDATA/site_B/702")
 
 			// Collect all output messages
 			allMessages := append(batch1, batch2...)
