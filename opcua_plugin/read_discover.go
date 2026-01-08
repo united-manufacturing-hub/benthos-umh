@@ -210,8 +210,8 @@ func (g *OPCUAInput) discoverNodes(ctx context.Context) ([]NodeDef, error) {
 }
 
 // browseHeartbeatNode browses the heartbeat node and returns any discovered nodes.
-// Returns nil on any error, allowing the caller to continue without heartbeat.
-func (g *OPCUAInput) browseHeartbeatNode(ctx context.Context, heartbeatNodeID ua.NodeID) []NodeDef {
+// Returns an error if browsing fails.
+func (g *OPCUAInput) browseHeartbeatNode(ctx context.Context, heartbeatNodeID ua.NodeID) ([]NodeDef, error) {
 	nodeHeartbeatChan := make(chan NodeDef, 1)
 	errChanHeartbeat := make(chan error, 1)
 
@@ -240,12 +240,10 @@ func (g *OPCUAInput) browseHeartbeatNode(ctx context.Context, heartbeatNodeID ua
 
 	if err := heartbeatPool.SubmitTask(task); err != nil {
 		g.Log.Warnf("Failed to submit heartbeat task: %v", err)
-		return nil
-	}
-
-	if err := heartbeatPool.WaitForCompletion(DefaultPoolShutdownTimeout); err != nil {
-		g.Log.Warnf("Heartbeat browse did not complete: %v", err)
-		return nil
+	} else {
+		if err := heartbeatPool.WaitForCompletion(DefaultPoolShutdownTimeout); err != nil {
+			g.Log.Warnf("Heartbeat browse did not complete: %v", err)
+		}
 	}
 
 	close(nodeHeartbeatChan)
@@ -257,11 +255,10 @@ func (g *OPCUAInput) browseHeartbeatNode(ctx context.Context, heartbeatNodeID ua
 	}
 
 	if len(errChanHeartbeat) > 0 {
-		g.Log.Warnf("Heartbeat browse error: %v", <-errChanHeartbeat)
-		return nil
+		return nil, <-errChanHeartbeat
 	}
 
-	return nodes
+	return nodes, nil
 }
 
 // BrowseAndSubscribeIfNeeded browses the specified OPC UA nodes, adds a heartbeat node if required,
@@ -304,7 +301,10 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 
 		// If the node is not in the list, add it
 		if !g.HeartbeatManualSubscribed {
-			nodes := g.browseHeartbeatNode(ctx, *g.HeartbeatNodeId)
+			nodes, err := g.browseHeartbeatNode(ctx, *g.HeartbeatNodeId)
+			if err != nil {
+				return err
+			}
 			nodeList = append(nodeList, nodes...)
 			// Convert duplicate browse paths to NodeID-based paths to ensure unique subscription paths
 			UpdateNodePaths(nodeList)
