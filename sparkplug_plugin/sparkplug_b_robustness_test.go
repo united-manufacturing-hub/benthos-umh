@@ -43,6 +43,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	sparkplugplugin "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
 
@@ -55,7 +56,11 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 		It("should handle burst without drops after idle messages", func() {
 			// Given: Mock input with standard configuration
 			input := createMockSparkplugInput()
-			deviceKey := "test/edge1/device_burst"
+			topicInfo := &sparkplugplugin.TopicInfo{
+				Group:    "test",
+				EdgeNode: "edge1",
+				Device:   "device_burst",
+			}
 
 			// Create baseline NBIRTH to establish node state
 			birthSeq := uint64(0)
@@ -67,7 +72,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 					{Name: stringPtr("bdSeq"), Datatype: uint32Ptr(8), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 100}},
 				},
 			}
-			input.ProcessBirthMessage(deviceKey, "NBIRTH", birthPayload)
+			input.ProcessBirthMessage("NBIRTH", birthPayload, topicInfo)
 
 			// Phase 1: Idle period - Send 5 messages slowly (simulate 1 msg/10sec pattern)
 			// This establishes normal sequence progression: 0 → 1 → 2 → 3 → 4
@@ -81,7 +86,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 						{Name: stringPtr(fmt.Sprintf("idle_metric_%d", i)), Datatype: uint32Ptr(10), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: float64(i)}},
 					},
 				}
-				input.ProcessDataMessage(deviceKey, "NDATA", payload)
+				input.ProcessDataMessage("NDATA", payload, topicInfo)
 				time.Sleep(10 * time.Millisecond) // Small delay to simulate timing
 			}
 
@@ -99,7 +104,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 						{Name: stringPtr(fmt.Sprintf("burst_metric_%d", i)), Datatype: uint32Ptr(10), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: float64(i)}},
 					},
 				}
-				input.ProcessDataMessage(deviceKey, "NDATA", payload)
+				input.ProcessDataMessage("NDATA", payload, topicInfo)
 			}
 			burstDuration := time.Since(burstStart)
 
@@ -107,7 +112,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 			GinkgoWriter.Printf("Burst processing completed in %v (100 messages)\n", burstDuration)
 
 			// Validate node state reflects last sequence
-			nodeState := input.GetNodeState(deviceKey)
+			nodeState := input.GetNodeState(topicInfo.DeviceKey())
 			Expect(nodeState).NotTo(BeNil(), "Node state should exist after burst")
 			Expect(nodeState.LastSeq).To(Equal(uint8(104)), "Last sequence should be 104 after burst")
 			// Note: IsOnline may be false because ProcessDataMessage doesn't trigger full state machine
@@ -132,7 +137,11 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 			// Phase 1: Initialize all devices with NBIRTH (sequential)
 			// This establishes nodeStates entries and baseline sequences
 			for deviceID := 0; deviceID < deviceCount; deviceID++ {
-				deviceKey := fmt.Sprintf("test/edge1/device%d", deviceID)
+				topicInfo := &sparkplugplugin.TopicInfo{
+					Group:    "test",
+					EdgeNode: "edge1",
+					Device:   fmt.Sprintf("device%d", deviceID),
+				}
 				birthSeq := uint64(0)
 				birthTs := uint64(1730986400000)
 				birthPayload := &sparkplugb.Payload{
@@ -143,7 +152,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 						{Name: stringPtr(fmt.Sprintf("sensor_%d", deviceID)), Datatype: uint32Ptr(10), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 23.5}},
 					},
 				}
-				input.ProcessBirthMessage(deviceKey, "NBIRTH", birthPayload)
+				input.ProcessBirthMessage("NBIRTH", birthPayload, topicInfo)
 			}
 
 			// Phase 2: Concurrent NDATA from all devices
@@ -157,7 +166,11 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 					defer wg.Done()
 					defer GinkgoRecover() // Catch panics in goroutines
 
-					deviceKey := fmt.Sprintf("test/edge1/device%d", id)
+					topicInfo := &sparkplugplugin.TopicInfo{
+						Group:    "test",
+						EdgeNode: "edge1",
+						Device:   fmt.Sprintf("device%d", id),
+					}
 
 					// Each device sends 5 NDATA messages with sequential sequence numbers
 					for msgNum := 1; msgNum <= 5; msgNum++ {
@@ -174,7 +187,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 								},
 							},
 						}
-						input.ProcessDataMessage(deviceKey, "NDATA", payload)
+						input.ProcessDataMessage("NDATA", payload, topicInfo)
 					}
 				}(deviceID)
 			}
@@ -186,8 +199,12 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 
 			// Then: Validate all devices processed successfully
 			for deviceID := 0; deviceID < deviceCount; deviceID++ {
-				deviceKey := fmt.Sprintf("test/edge1/device%d", deviceID)
-				nodeState := input.GetNodeState(deviceKey)
+				topicInfo := &sparkplugplugin.TopicInfo{
+					Group:    "test",
+					EdgeNode: "edge1",
+					Device:   fmt.Sprintf("device%d", deviceID),
+				}
+				nodeState := input.GetNodeState(topicInfo.DeviceKey())
 
 				Expect(nodeState).NotTo(BeNil(), "Device %d should have node state", deviceID)
 				Expect(nodeState.LastSeq).To(Equal(uint8(5)), "Device %d should have last sequence = 5", deviceID)
@@ -208,7 +225,11 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 		It("should gracefully drop messages when buffer exceeds 1000", func() {
 			// Given: Mock input
 			input := createMockSparkplugInput()
-			deviceKey := "test/edge1/device_overflow"
+			topicInfo := &sparkplugplugin.TopicInfo{
+				Group:    "test",
+				EdgeNode: "edge1",
+				Device:   "device_overflow",
+			}
 
 			// Initialize device with NBIRTH
 			birthSeq := uint64(0)
@@ -220,7 +241,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 					{Name: stringPtr("bdSeq"), Datatype: uint32Ptr(8), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 100}},
 				},
 			}
-			input.ProcessBirthMessage(deviceKey, "NBIRTH", birthPayload)
+			input.ProcessBirthMessage("NBIRTH", birthPayload, topicInfo)
 
 			// When: Send 1100 messages (100 more than buffer capacity of 1000)
 			// Note: This test validates the DESIGN INTENT even if buffer size is not yet enforced
@@ -236,11 +257,11 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 						{Name: stringPtr(fmt.Sprintf("overflow_metric_%d", i)), Datatype: uint32Ptr(10), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: float64(i)}},
 					},
 				}
-				input.ProcessDataMessage(deviceKey, "NDATA", payload)
+				input.ProcessDataMessage("NDATA", payload, topicInfo)
 			}
 
 			// Then: Validate system remained stable
-			nodeState := input.GetNodeState(deviceKey)
+			nodeState := input.GetNodeState(topicInfo.DeviceKey())
 			Expect(nodeState).NotTo(BeNil(), "Node state should exist after overflow")
 			// Note: IsOnline status not checked - requires full MQTT infrastructure
 
@@ -261,7 +282,11 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 		It("should handle concurrent DBIRTH and DDATA from same device", func() {
 			// Given: Mock input
 			input := createMockSparkplugInput()
-			deviceKey := "test/edge1/device_alias"
+			topicInfo := &sparkplugplugin.TopicInfo{
+				Group:    "test",
+				EdgeNode: "edge1",
+				Device:   "device_alias",
+			}
 
 			// Initialize node with NBIRTH (must happen first to establish node state)
 			nbirthSeq := uint64(0)
@@ -273,7 +298,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 					{Name: stringPtr("bdSeq"), Datatype: uint32Ptr(8), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 100}},
 				},
 			}
-			input.ProcessBirthMessage(deviceKey, "NBIRTH", nbirthPayload)
+			input.ProcessBirthMessage("NBIRTH", nbirthPayload, topicInfo)
 
 			// Prepare DBIRTH payload with alias definitions
 			dbirthSeq := uint64(1)
@@ -308,7 +333,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 			go func() {
 				defer wg.Done()
 				defer GinkgoRecover()
-				input.ProcessBirthMessage(deviceKey, "DBIRTH", dbirthPayload)
+				input.ProcessBirthMessage("DBIRTH", dbirthPayload, topicInfo)
 			}()
 
 			go func() {
@@ -316,13 +341,13 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 				defer GinkgoRecover()
 				// Small delay to make race more likely (DDATA might arrive before DBIRTH processed)
 				time.Sleep(1 * time.Millisecond)
-				input.ProcessDataMessage(deviceKey, "DDATA", ddataPayload)
+				input.ProcessDataMessage("DDATA", ddataPayload, topicInfo)
 			}()
 
 			wg.Wait()
 
 			// Then: Validate system handled race condition properly
-			nodeState := input.GetNodeState(deviceKey)
+			nodeState := input.GetNodeState(topicInfo.DeviceKey())
 			Expect(nodeState).NotTo(BeNil(), "Node state should exist after concurrent processing")
 			Expect(nodeState.LastSeq).To(Equal(uint8(2)), "Last sequence should be 2 (DDATA processed)")
 			// Note: IsOnline status not checked - requires full MQTT infrastructure
@@ -342,7 +367,11 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 		It("should cleanly shutdown while messages are processing", func() {
 			// Given: Mock input with active message processing
 			input := createMockSparkplugInput()
-			deviceKey := "test/edge1/device_shutdown"
+			topicInfo := &sparkplugplugin.TopicInfo{
+				Group:    "test",
+				EdgeNode: "edge1",
+				Device:   "device_shutdown",
+			}
 
 			// Initialize device with NBIRTH
 			birthSeq := uint64(0)
@@ -354,7 +383,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 					{Name: stringPtr("bdSeq"), Datatype: uint32Ptr(8), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 100}},
 				},
 			}
-			input.ProcessBirthMessage(deviceKey, "NBIRTH", birthPayload)
+			input.ProcessBirthMessage("NBIRTH", birthPayload, topicInfo)
 
 			// Start background goroutine that continuously sends messages
 			var wg sync.WaitGroup
@@ -381,7 +410,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 								{Name: stringPtr(fmt.Sprintf("shutdown_metric_%d", messagesSent)), Datatype: uint32Ptr(10), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: float64(messagesSent)}},
 							},
 						}
-						input.ProcessDataMessage(deviceKey, "NDATA", payload)
+						input.ProcessDataMessage("NDATA", payload, topicInfo)
 						time.Sleep(1 * time.Millisecond) // Small delay to simulate real timing
 					}
 				}
@@ -395,7 +424,7 @@ var _ = Describe("Robustness Tests - Message Timing and Concurrency", func() {
 			wg.Wait()
 
 			// Then: Validate clean shutdown
-			nodeState := input.GetNodeState(deviceKey)
+			nodeState := input.GetNodeState(topicInfo.DeviceKey())
 			Expect(nodeState).NotTo(BeNil(), "Node state should exist after shutdown")
 			// Note: IsOnline status not checked - requires full MQTT infrastructure
 

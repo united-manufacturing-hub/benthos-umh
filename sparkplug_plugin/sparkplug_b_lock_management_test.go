@@ -64,18 +64,19 @@ var _ = Describe("Lock Management in processDataMessage", func() {
 			wrapper := sparkplugplugin.NewSparkplugInputForTestingWithRole(sparkplugplugin.RolePrimaryHost)
 
 			// Setup: Establish initial sequence state for device
-			groupID := "TestGroup"
-			nodeID := "TestNode"
-			deviceKey := groupID + "/" + nodeID
+			topicInfo := &sparkplugplugin.TopicInfo{
+				Group:    "TestGroup",
+				EdgeNode: "TestNode",
+			}
 
 			// Send initial DATA message with seq=0
 			initialPayload := createSparkplugPayload(0, []*sparkplugb.Payload_Metric{
 				{Name: stringPtr("temp"), Value: &sparkplugb.Payload_Metric_IntValue{IntValue: 42}},
 			})
-			wrapper.ProcessDataMessage(deviceKey, "NDATA", initialPayload)
+			wrapper.ProcessDataMessage("NDATA", initialPayload, topicInfo)
 
 			// Verify initial state established
-			state := wrapper.GetNodeState(deviceKey)
+			state := wrapper.GetNodeState(topicInfo.DeviceKey())
 			Expect(state).NotTo(BeNil())
 			Expect(state.LastSeq).To(Equal(uint8(0)))
 
@@ -116,7 +117,7 @@ var _ = Describe("Lock Management in processDataMessage", func() {
 			})
 
 			// Process message that triggers rebirth (line 630)
-			wrapper.ProcessDataMessage(deviceKey, "NDATA", gapPayload)
+			wrapper.ProcessDataMessage("NDATA", gapPayload, topicInfo)
 
 			// Wait for lock detection to complete
 			<-done
@@ -137,15 +138,16 @@ var _ = Describe("Lock Management in processDataMessage", func() {
 
 			wrapper := sparkplugplugin.NewSparkplugInputForTesting()
 
-			groupID := "TestGroup"
-			nodeID := "TestNode"
-			deviceKey := groupID + "/" + nodeID
+			topicInfo := &sparkplugplugin.TopicInfo{
+				Group:    "TestGroup",
+				EdgeNode: "TestNode",
+			}
 
 			// Setup initial state
 			initialPayload := createSparkplugPayload(0, []*sparkplugb.Payload_Metric{
 				{Name: stringPtr("temp"), Value: &sparkplugb.Payload_Metric_IntValue{IntValue: 42}},
 			})
-			wrapper.ProcessDataMessage(deviceKey, "NDATA", initialPayload)
+			wrapper.ProcessDataMessage("NDATA", initialPayload, topicInfo)
 
 			// Trigger sequence gap - this will call sendRebirthRequest at line 630
 			gapPayload := createSparkplugPayload(10, []*sparkplugb.Payload_Metric{
@@ -167,10 +169,10 @@ var _ = Describe("Lock Management in processDataMessage", func() {
 			// 5. Lock released via defer at line 638
 
 			// Process the gap message
-			wrapper.ProcessDataMessage(deviceKey, "NDATA", gapPayload)
+			wrapper.ProcessDataMessage("NDATA", gapPayload, topicInfo)
 
 			// Verify state was updated (proves processDataMessage completed)
-			state := wrapper.GetNodeState(deviceKey)
+			state := wrapper.GetNodeState(topicInfo.DeviceKey())
 			Expect(state).NotTo(BeNil())
 			Expect(state.IsOnline).To(BeFalse(), "Node should be marked offline due to sequence gap")
 

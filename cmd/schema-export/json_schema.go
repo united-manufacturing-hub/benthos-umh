@@ -119,6 +119,8 @@ func convertFieldToJSONSchema(field FieldSpec) map[string]interface{} {
 		if len(required) > 0 {
 			items["required"] = required
 		}
+		// Prevent unknown properties in array item objects
+		items["additionalProperties"] = false
 		return schema
 	}
 
@@ -140,6 +142,8 @@ func convertFieldToJSONSchema(field FieldSpec) map[string]interface{} {
 		if len(required) > 0 {
 			schema["required"] = required
 		}
+		// Prevent unknown properties in nested objects
+		schema["additionalProperties"] = false
 	}
 
 	// Handle array fields where type="array" (not kind="array")
@@ -224,6 +228,9 @@ func convertPluginToJSONSchema(plugin PluginSpec) map[string]interface{} {
 	if len(required) > 0 {
 		schema["required"] = required
 	}
+
+	// Prevent unknown properties at plugin root level
+	schema["additionalProperties"] = false
 
 	return schema
 }
