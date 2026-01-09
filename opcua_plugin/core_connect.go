@@ -297,7 +297,10 @@ func (g *OPCUAConnection) LogEndpoint(endpoint *ua.EndpointDescription) {
 		})
 
 		// Store the fingerprint of the servers certificate
-		g.storeServerCertificateFingerprint(endpoint)
+		err := g.storeServerCertificateFingerprint(endpoint)
+		if err != nil {
+			g.Log.Warnf("failed to store server certificate fingerprint: %v", err)
+		}
 		g.logCertificateInfo(pemCert)
 	}
 

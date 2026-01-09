@@ -77,6 +77,9 @@ func CreateSecurityBlocker(runtime *goja.Runtime, logger *service.Logger) func(s
 // This helper function consolidates the slow execution logging that was duplicated
 // across multiple methods in JSEngine.
 func LogSlowExecution(logger *service.Logger, expression string, duration time.Duration) {
+	if logger == nil {
+		return
+	}
 	if duration > constants.SlowExecutionThreshold {
 		logger.Warnf("Slow JavaScript execution: %s took %v", expression, duration)
 	}

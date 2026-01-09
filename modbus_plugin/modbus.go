@@ -153,7 +153,6 @@ type modbusTag struct {
 	length    uint16
 	omit      bool
 	converter converterFunc
-	value     interface{}
 }
 
 type converterFunc func([]byte) interface{}
@@ -914,14 +913,13 @@ func (m *ModbusInput) gatherRequestsCoil(requests []request) (service.MessageBat
 		m.Log.Debugf("got coil@%v[%v]: %v", request.address, request.length, bytes)
 
 		// Bit value handling
-		for i, field := range request.fields {
+		for _, field := range request.fields {
 			offset := field.address - request.address
 			idx := offset / 8
 			bit := offset % 8
 
 			v := (bytes[idx] >> bit) & 0x01
-			// request.fields[i].value = field.converter([]byte{v})
-			m.Log.Debugf("  field %s with bit %d @ byte %d: %v --> %v", field.name, bit, idx, v, request.fields[i].value)
+			m.Log.Debugf("  field %s with bit %d @ byte %d: %v", field.name, bit, idx, v)
 
 			message := m.createMessageFromValue(field, []byte{v}, "coil")
 			if message != nil {
@@ -950,14 +948,13 @@ func (m *ModbusInput) gatherRequestsDiscrete(requests []request) (service.Messag
 		m.Log.Debugf("got discrete@%v[%v]: %v", request.address, request.length, bytes)
 
 		// Bit value handling
-		for i, field := range request.fields {
+		for _, field := range request.fields {
 			offset := field.address - request.address
 			idx := offset / 8
 			bit := offset % 8
 
 			v := (bytes[idx] >> bit) & 0x01
-			// request.fields[i].value = field.converter([]byte{v})
-			m.Log.Debugf("  field %s with bit %d @ byte %d: %v --> %v", field.name, bit, idx, v, request.fields[i].value)
+			m.Log.Debugf("  field %s with bit %d @ byte %d: %v", field.name, bit, idx, v)
 
 			message := m.createMessageFromValue(field, []byte{v}, "discrete")
 			if message != nil {
@@ -986,14 +983,13 @@ func (m *ModbusInput) gatherRequestsHolding(requests []request) (service.Message
 		m.Log.Debugf("got holding@%v[%v]: %v", request.address, request.length, bytes)
 
 		// Non-bit value handling
-		for i, field := range request.fields {
+		for _, field := range request.fields {
 			// Determine the offset of the field values in the read array
 			offset := 2 * uint32(field.address-request.address) // registers are 16bit = 2 byte
 			length := 2 * uint32(field.length)                  // field length is in registers a 16bit
 
 			// Convert the actual value
-			// request.fields[i].value = field.converter(bytes[offset : offset+length])
-			m.Log.Debugf("  field %s with offset %d with len %d: %v --> %v", field.name, offset, length, bytes[offset:offset+length], request.fields[i].value)
+			m.Log.Debugf("  field %s with offset %d with len %d: %v", field.name, offset, length, bytes[offset:offset+length])
 
 			message := m.createMessageFromValue(field, bytes[offset:offset+length], "holding")
 			if message != nil {
@@ -1022,14 +1018,13 @@ func (m *ModbusInput) gatherRequestsInput(requests []request) (service.MessageBa
 		m.Log.Debugf("got input@%v[%v]: %v", request.address, request.length, bytes)
 
 		// Non-bit value handling
-		for i, field := range request.fields {
+		for _, field := range request.fields {
 			// Determine the offset of the field values in the read array
 			offset := 2 * uint32(field.address-request.address) // registers are 16bit = 2 byte
 			length := 2 * uint32(field.length)                  // field length is in registers a 16bit
 
 			// Convert the actual value
-			// request.fields[i].value = field.converter(bytes[offset : offset+length])
-			m.Log.Debugf("  field %s with offset %d with len %d: %v --> %v", field.name, offset, length, bytes[offset:offset+length], request.fields[i].value)
+			m.Log.Debugf("  field %s with offset %d with len %d: %v", field.name, offset, length, bytes[offset:offset+length])
 
 			message := m.createMessageFromValue(field, bytes[offset:offset+length], "input")
 			if message != nil {
