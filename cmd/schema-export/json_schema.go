@@ -180,19 +180,19 @@ func generateJSONSchema(plugins *SchemaOutput, version string) (map[string]inter
 
 	definitions := make(map[string]interface{})
 
-	// Convert input plugins
+	// Convert input plugins with "input_" prefix
 	for name, plugin := range plugins.Inputs {
-		definitions[name] = convertPluginToJSONSchema(plugin)
+		definitions["input_"+name] = convertPluginToJSONSchema(plugin)
 	}
 
-	// Convert processor plugins
+	// Convert processor plugins with "processor_" prefix
 	for name, plugin := range plugins.Processors {
-		definitions[name] = convertPluginToJSONSchema(plugin)
+		definitions["processor_"+name] = convertPluginToJSONSchema(plugin)
 	}
 
-	// Convert output plugins
+	// Convert output plugins with "output_" prefix
 	for name, plugin := range plugins.Outputs {
-		definitions[name] = convertPluginToJSONSchema(plugin)
+		definitions["output_"+name] = convertPluginToJSONSchema(plugin)
 	}
 
 	schema["definitions"] = definitions

@@ -80,8 +80,8 @@ func main() {
 	// Generate output filename based on format
 	var outputFile string
 	if *format == "json-schema" {
-		cleanVersion := strings.TrimPrefix(*version, "v")
-		outputFile = fmt.Sprintf("benthos-schemas-v%s-json-schema.json", cleanVersion)
+		// Output as schema.json (version is in $id within the schema itself)
+		outputFile = "schema.json"
 	} else {
 		outputFile = generateVersionedFilename(*version)
 	}
