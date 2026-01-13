@@ -238,10 +238,12 @@ func (g *OPCUAInput) browseHeartbeatNode(ctx context.Context, heartbeatNodeID ua
 		ProgressChan: nil,
 	}
 
-	if err := heartbeatPool.SubmitTask(task); err != nil {
+	err := heartbeatPool.SubmitTask(task)
+	if err != nil {
 		g.Log.Warnf("Failed to submit heartbeat task: %v", err)
 	} else {
-		if err := heartbeatPool.WaitForCompletion(DefaultPoolShutdownTimeout); err != nil {
+		err := heartbeatPool.WaitForCompletion(DefaultPoolShutdownTimeout)
+		if err != nil {
 			g.Log.Warnf("Heartbeat browse did not complete: %v", err)
 		}
 	}
