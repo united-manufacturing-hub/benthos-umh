@@ -113,8 +113,7 @@ and then publishes DATA messages as Benthos messages flow through the pipeline.`
 				Example("FactoryA"),
 			service.NewStringField("edge_node_id").
 				Description("Edge Node ID within the group (e.g., 'Line3'). If empty, auto-generated from location_path metadata using Parris Method").
-				Example("Line3").
-				Optional(),
+				Example("Line3"),
 			service.NewStringField("device_id").
 				Description("Device ID under the edge node (optional, if not specified acts as node-level)").
 				Default("").

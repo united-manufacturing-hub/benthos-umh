@@ -301,7 +301,8 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 
 		// If the node is not in the list, add it
 		if !g.HeartbeatManualSubscribed {
-			nodes, err := g.browseHeartbeatNode(ctx, *g.HeartbeatNodeId)
+			var nodes []NodeDef
+			nodes, err = g.browseHeartbeatNode(ctx, *g.HeartbeatNodeId)
 			if err != nil {
 				return err
 			}
