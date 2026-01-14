@@ -297,7 +297,10 @@ func (g *OPCUAConnection) LogEndpoint(endpoint *ua.EndpointDescription) {
 		})
 
 		// Store the fingerprint of the servers certificate
-		g.storeServerCertificateFingerprint(endpoint)
+		err := g.storeServerCertificateFingerprint(endpoint)
+		if err != nil {
+			g.Log.Warnf("failed to store server certificate fingerprint: %v", err)
+		}
 		g.logCertificateInfo(pemCert)
 	}
 
@@ -473,7 +476,7 @@ func (g *OPCUAConnection) storeServerCertificateFingerprint(endpoint *ua.Endpoin
 	// parse the DER-format certificate
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return fmt.Errorf("error while parsing server certificate")
+		return fmt.Errorf("error while parsing server certificate: %w", err)
 	}
 
 	// calculating the checksum of the certificate (sha3 is needed here)
