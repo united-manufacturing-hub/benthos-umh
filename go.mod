@@ -48,7 +48,6 @@ require (
 	github.com/twmb/franz-go v1.19.6-0.20251010052650-46982310c50d
 	github.com/twmb/franz-go/pkg/kadm v1.16.1
 	golang.org/x/crypto v0.45.0
-	golang.org/x/exp v0.0.0-20251009144603-d2f985daa21b
 	golang.org/x/sys v0.38.0
 	google.golang.org/protobuf v1.36.10
 	k8s.io/apimachinery v0.34.1
@@ -219,7 +218,7 @@ require (
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
-	github.com/gabriel-vasile/mimetype v1.4.10 // indirect
+	github.com/gabriel-vasile/mimetype v1.4.12 // indirect
 	github.com/generikvault/gvalstrings v0.0.0-20180926130504-471f38f0112a // indirect
 	github.com/getsentry/sentry-go v0.36.0 // indirect
 	github.com/go-faker/faker/v4 v4.7.0 // indirect
@@ -455,6 +454,7 @@ require (
 	go.uber.org/zap v1.27.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
+	golang.org/x/exp v0.0.0-20251009144603-d2f985daa21b // indirect
 	golang.org/x/mod v0.29.0 // indirect
 	golang.org/x/net v0.47.0 // indirect
 	golang.org/x/oauth2 v0.32.0 // indirect
