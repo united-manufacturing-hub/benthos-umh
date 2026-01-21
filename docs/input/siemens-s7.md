@@ -12,7 +12,7 @@ For more modern PLCs like the S7-1200 and S7-1500 the following two changes need
 ```yaml
 input:
   s7comm:
-    tcpDevice: '192.168.0.1' # IP address of the S7 PLC
+    tcpDevice: '192.168.0.1' # IP address of the S7 PLC (optionally with port, e.g., '192.168.0.1:102')
     rack: 0                  # Rack number of the PLC. Defaults to 0
     slot: 1                  # Slot number of the PLC. Defaults to 1
     batchMaxSize: 480         # Maximum number of addresses per batch request. Defaults to 480
@@ -25,7 +25,7 @@ input:
 
 **Configuration Parameters**
 
-* **tcpDevice**: IP address of the Siemens S7 PLC.
+* **tcpDevice**: IP address or hostname of the Siemens S7 PLC, optionally with port (e.g., `192.168.0.1:102`). If no port is specified, the default S7 port 102 is used.
 * **rack**: Identifies the physical location of the CPU within the PLC rack.
 * **slot**: Identifies the specific CPU slot within the rack.
 * **batchMaxSize**: Maximum count of addresses bundled in a single batch request. This affects the PDU size.
