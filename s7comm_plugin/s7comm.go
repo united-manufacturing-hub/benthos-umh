@@ -68,7 +68,7 @@ type S7DataItemWithAddressAndConverter struct {
 // It holds the configuration necessary to establish a connection with a Siemens S7 PLC,
 // along with the read requests to fetch data from the PLC.
 type S7CommInput struct {
-	TcpDevice      string                                // IP address of the S7 PLC.
+	TcpDevice      string                                // IP address of the S7 PLC (optionally with port, e.g., "192.168.1.100:102").
 	Rack           int                                   // Rack number where the CPU resides. Identifies the physical location within the PLC rack.
 	Slot           int                                   // Slot number where the CPU resides. Identifies the CPU slot within the rack.
 	BatchMaxSize   int                                   // Maximum count of addresses to be bundled in one batch-request. Affects PDU size.
@@ -89,8 +89,8 @@ var S7CommConfigSpec = service.NewConfigSpec().
 	Description("This input plugin enables Benthos to read data directly from Siemens S7 PLCs using the S7comm protocol. " +
 		"Configure the plugin by specifying the PLC's IP address, rack and slot numbers, and the data blocks to read.").
 	Field(service.NewStringField("tcpDevice").
-		Description("IP address or hostname of the S7 PLC. Format: '192.168.1.100' or 'plc.local'. Ensure to pick the IP address from your hardware configuration.").
-		Examples("192.168.1.100", "10.0.0.50", "plc.local")).
+		Description("IP address or hostname of the S7 PLC, optionally with port. Format: '192.168.1.100' or '192.168.1.100:102'. If no port is specified, the default S7 port 102 is used. Ensure to pick the IP address from your hardware configuration.").
+		Examples("192.168.1.100", "192.168.1.100:102", "10.0.0.50:20000", "plc.local")).
 	Field(service.NewIntField("rack").
 		Description("Rack number from hardware configuration, usually 0.").
 		Default(0).
