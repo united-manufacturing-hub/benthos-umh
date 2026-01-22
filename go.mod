@@ -406,7 +406,7 @@ require (
 	github.com/timeplus-io/proton-go-driver/v2 v2.1.2 // indirect
 	github.com/tklauser/go-sysconf v0.3.15 // indirect
 	github.com/tklauser/numcpus v0.10.0 // indirect
-	github.com/tmc/langchaingo v0.1.13 // indirect
+	github.com/tmc/langchaingo v0.1.14 // indirect
 	github.com/trinodb/trino-go-client v0.330.0 // indirect
 	github.com/twmb/franz-go/pkg/kmsg v1.12.0 // indirect
 	github.com/twmb/franz-go/pkg/sr v1.5.0 // indirect
