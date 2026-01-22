@@ -21,22 +21,12 @@ on:
       tag:
         required: true
         type: string
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Version tag (e.g., v0.11.7)'
-        required: true
-        type: string
-      ref:
-        description: 'Git ref to checkout for schema export (default: tag). Use branch name for testing unreleased code.'
-        required: false
-        type: string
 
 jobs:
   update-umh-core:
     runs-on: depot-ubuntu-24.04
     env:
-      VERSION: ${{ inputs.tag || github.event.inputs.tag }}
+      VERSION: ${{ inputs.tag }}
     steps:
       - name: Generate GitHub App Token
         id: generate-token
@@ -91,7 +81,7 @@ jobs:
   update-management-console:
     runs-on: depot-ubuntu-24.04
     env:
-      VERSION: ${{ inputs.tag || github.event.inputs.tag }}
+      VERSION: ${{ inputs.tag }}
     steps:
       - name: Generate GitHub App Token
         id: generate-token
@@ -104,7 +94,7 @@ jobs:
       - name: Checkout benthos-umh repository
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.inputs.ref || env.VERSION }}
+          ref: ${{ env.VERSION }}
 
       - name: Setup Go
         uses: ./.github/actions/setup-go
