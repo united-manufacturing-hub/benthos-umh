@@ -209,7 +209,7 @@ func (g *OPCUAConnection) closeConnection(ctx context.Context) {
 		g.cleanup_func(ctx)
 	}
 
-	g.visited = sync.Map{}
+	g.visited.Clear()
 
 	if g.Client != nil {
 		if err := g.Client.Close(ctx); err != nil {
