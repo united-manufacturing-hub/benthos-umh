@@ -209,6 +209,8 @@ func (g *OPCUAConnection) closeConnection(ctx context.Context) {
 		g.cleanup_func(ctx)
 	}
 
+	g.visited = sync.Map{}
+
 	if g.Client != nil {
 		if err := g.Client.Close(ctx); err != nil {
 			g.Log.Infof("Error closing OPC UA client: %v", err)
