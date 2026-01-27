@@ -734,7 +734,7 @@ func (g *OPCUAInput) buildNodeListFromCache() []NodeDef {
 
 func (g *OPCUAInput) canSkipDiscovery() bool {
 	for _, nodeID := range g.NodeIDs {
-		val, found := g.visited.Load(nodeID)
+		val, found := g.visited.Load(nodeID.String())
 		if !found {
 			return false
 		}
