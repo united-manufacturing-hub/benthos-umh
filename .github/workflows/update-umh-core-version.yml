@@ -118,7 +118,7 @@ jobs:
           mkdir -p "ManagementConsole/frontend/src/lib/schemas/benthos/v${VERSION_CLEAN}/"
           cp "benthos-schemas-v${VERSION_CLEAN}.json" \
              "ManagementConsole/frontend/src/lib/schemas/benthos/v${VERSION_CLEAN}/ui.json"
-          cp "benthos-schemas-v${VERSION_CLEAN}-json-schema.json" \
+          cp "schema.json" \
              "ManagementConsole/frontend/src/lib/schemas/benthos/v${VERSION_CLEAN}/monaco.json"
 
       - name: Create Pull Request

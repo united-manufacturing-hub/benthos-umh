@@ -217,7 +217,7 @@ umh-core-data*.pprof
 *.pb
 *.txt
 
-# Local data directories  
+# Local data directories
 umh-core-data/
 
 # Diffs
@@ -225,6 +225,7 @@ umh-core-data/
 
 # Generated schema files (output of schema-export tool)
 benthos-schemas*.json
+schema.json
 
 # Schema export binary
 cmd/schema-export/schema-export
