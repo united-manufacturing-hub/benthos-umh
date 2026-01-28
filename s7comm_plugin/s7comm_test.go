@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strconv"
 	"time"
@@ -55,14 +56,12 @@ var _ = Describe("S7Comm Plugin Unittests", func() {
 			for _, tc := range tests {
 				By("Testing address "+tc.address+" with bytes "+tc.inputBytesHex, func() {
 					addresses := []string{tc.address}
-					batchMaxSize := 1
 
-					batches, err := s7comm_plugin.ParseAddresses(addresses, batchMaxSize)
+					parsedAddresses, err := s7comm_plugin.ParseAddresses(addresses)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(batches).To(HaveLen(1))
-					Expect(batches[0]).To(HaveLen(1))
+					Expect(parsedAddresses).To(HaveLen(1))
 
-					converterFunc := batches[0][0].ConverterFunc
+					converterFunc := parsedAddresses[0].ConverterFunc
 
 					inputBytes, err := hex.DecodeString(tc.inputBytesHex)
 					Expect(err).NotTo(HaveOccurred())
@@ -80,9 +79,7 @@ var _ = Describe("S7Comm Plugin Unittests", func() {
 	}
 
 	DescribeTable("Parsing duplicate Addresses", func(entries S7Addresses) {
-		batchMaxSize := 1
-
-		_, err := s7comm_plugin.ParseAddresses(entries.addresses, batchMaxSize)
+		_, err := s7comm_plugin.ParseAddresses(entries.addresses)
 
 		if entries.expectedErrMsg != nil {
 			Expect(err).To(HaveOccurred())
@@ -124,6 +121,41 @@ var _ = Describe("S7Comm Plugin Unittests", func() {
 				expectedErrMsg: []string{"duplicate address", "DB2.X0.0"},
 			}),
 	)
+
+	Describe("BuildBatches", func() {
+		DescribeTable("splits 30 addresses correctly for different PDU sizes",
+			func(pduSize, expectedBatches, expectedFirst, expectedLast int) {
+				// Create 30 WORD addresses
+				addresses := make([]string, 30)
+				for i := range 30 {
+					addresses[i] = fmt.Sprintf("DB1.W%d", i*2)
+				}
+
+				parsed, err := s7comm_plugin.ParseAddresses(addresses)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(parsed).To(HaveLen(30))
+
+				batches, err := s7comm_plugin.BuildBatches(parsed, pduSize)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(batches).To(HaveLen(expectedBatches))
+				Expect(batches[0]).To(HaveLen(expectedFirst))
+				Expect(batches[len(batches)-1]).To(HaveLen(expectedLast))
+			},
+			Entry("PDU 240 - limited by request size", 240, 2, 18, 12),
+			Entry("PDU 480 - limited by 20-item protocol limit", 480, 2, 20, 10),
+			Entry("PDU 960 - limited by 20-item protocol limit", 960, 2, 20, 10),
+		)
+
+		It("returns error when single item exceeds PDU size", func() {
+			parsed, err := s7comm_plugin.ParseAddresses([]string{"DB1.S0.250"})
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = s7comm_plugin.BuildBatches(parsed, 240)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("exceeds PDU size"))
+		})
+	})
 })
 
 var _ = Describe("S7Comm Test Against Local PLC", func() {
@@ -156,17 +188,15 @@ var _ = Describe("S7Comm Test Against Local PLC", func() {
 			ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 
 			addresses := []string{"DB2.W0"}
-			batchMaxSize := 480 // default
 
-			batches, err := s7comm_plugin.ParseAddresses(addresses, batchMaxSize)
+			parsedAddresses, err := s7comm_plugin.ParseAddresses(addresses)
 			Expect(err).NotTo(HaveOccurred())
 
 			input = &s7comm_plugin.S7CommInput{
-				TcpDevice:    endpoint,
-				Rack:         rack,
-				Slot:         slot,
-				BatchMaxSize: batchMaxSize,
-				Batches:      batches,
+				TcpDevice:       endpoint,
+				Rack:            rack,
+				Slot:            slot,
+				ParsedAddresses: parsedAddresses,
 			}
 		})
 
