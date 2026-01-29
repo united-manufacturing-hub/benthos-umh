@@ -180,7 +180,7 @@ func newS7CommInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 
 // S7 protocol limits for AGReadMulti
 // Values are coming from telegram.go / multi.go from gos7 library
-// also they're reproducable via wireshark
+// also they're reproducible via wireshark
 const (
 	// protocol limit for AGReadMulti of 20 addresses
 	maxItemsPerBatch = 20
