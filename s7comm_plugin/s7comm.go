@@ -103,6 +103,10 @@ var S7CommConfigSpec = service.NewConfigSpec().
 		Optional().
 		Advanced().
 		Examples(10, 5, 30)).
+	Field(service.NewIntField("batchMaxSize").
+		Description("DEPRECATED: PDU size is now automatically negotiated with the PLC. This field is ignored.").
+		Optional().
+		Deprecated()).
 	Field(service.NewBoolField("disableCPUInfo").
 		Description("Set this to true to not fetch CPU information from the PLC. Should be used when you get the error 'Failed to get CPU information'").
 		Default(false).
@@ -151,6 +155,11 @@ func newS7CommInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		return nil, err
 	}
 
+	batchMaxSize, _ := conf.FieldInt("batchMaxSize")
+	if batchMaxSize != 0 {
+		mgr.Logger().Warn("The 'batchMaxSize' field is deprecated and ignored. PDU size is now automatically negotiated with the PLC.")
+	}
+
 	parsedAddresses, err := ParseAddresses(addresses)
 	if err != nil {
 		return nil, err
@@ -170,6 +179,8 @@ func newS7CommInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 }
 
 // S7 protocol limits for AGReadMulti
+// Values are coming from telegram.go / multi.go from gos7 library
+// also they're reproducable via wireshark
 const (
 	// protocol limit for AGReadMulti of 20 addresses
 	maxItemsPerBatch = 20

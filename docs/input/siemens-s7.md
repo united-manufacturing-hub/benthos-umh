@@ -37,3 +37,15 @@ input:
 **Output**
 
 Similar to the OPC UA input, this outputs for each address a single message with the payload being the value that was read. To distinguish messages, you can use meta("s7\_address") in a following benthos bloblang processor.
+
+**Batching Behavior**
+
+Addresses are automatically split into batches based on S7 protocol constraints:
+
+- **Max 20 items per request**: The S7 protocol limits AGReadMulti to 20 addresses per request
+- **PDU size**: The request and response must fit within the negotiated PDU size (typically 240-480 bytes depending on the PLC model)
+
+When more than 20 addresses are configured or the combined data exceeds PDU limits, multiple sequential requests are made. This has implications:
+
+- **Timing**: Addresses in different batches are read at slightly different times, resulting in different timestamps
+- **Performance**: More batches means more round-trips to the PLC, increasing total read time
