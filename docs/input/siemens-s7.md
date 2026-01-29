@@ -15,7 +15,7 @@ input:
     tcpDevice: '192.168.0.1' # IP address of the S7 PLC (optionally with port, e.g., '192.168.0.1:102')
     rack: 0                  # Rack number of the PLC. Defaults to 0
     slot: 1                  # Slot number of the PLC. Defaults to 1
-    batchMaxSize: 480        # DEPRECATED: PDU size is now automatically negotiated with the PLC
+    batchMaxSize: 480        # DEPRECATED: This field never worked correctly because batches were calculated before connecting to the PLC, so the actual negotiated PDU size was unknown. PDU size is now automatically negotiated during connection.
     timeout: 10              # Timeout in seconds for connections and requests. Default to 10
     disableCPUInfo: false    # Set this to true to not fetch CPU information from the PLC
     addresses:               # List of addresses to read from
