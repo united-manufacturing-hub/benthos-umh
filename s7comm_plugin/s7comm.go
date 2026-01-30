@@ -65,19 +65,17 @@ type S7DataItemWithAddressAndConverter struct {
 //------------------------------------------------------------------------------
 
 // S7CommInput struct defines the structure for our custom Benthos input plugin.
-// It holds the configuration necessary to establish a connection with a Siemens S7 PLC,
-// along with the read requests to fetch data from the PLC.
 type S7CommInput struct {
-	TcpDevice      string                                // IP address of the S7 PLC (optionally with port, e.g., "192.168.1.100:102").
-	Rack           int                                   // Rack number where the CPU resides. Identifies the physical location within the PLC rack.
-	Slot           int                                   // Slot number where the CPU resides. Identifies the CPU slot within the rack.
-	BatchMaxSize   int                                   // Maximum count of addresses to be bundled in one batch-request. Affects PDU size.
-	Timeout        time.Duration                         // Time duration before a connection attempt or read request times out.
-	Client         gos7.Client                           // S7 client for communication.
-	Handler        *gos7.TCPClientHandler                // TCP handler to manage the connection.
-	Log            *service.Logger                       // Logger for logging plugin activity.
-	Batches        [][]S7DataItemWithAddressAndConverter // List of items to read from the PLC, grouped into batches with a maximum size.
-	DisableCPUInfo bool                                  // Set this to true to not fetch CPU information from the PLC. Should be used when you get the error "Failed to get CPU information"
+	TcpDevice       string
+	Rack            int
+	Slot            int
+	Timeout         time.Duration
+	Client          gos7.Client
+	Handler         *gos7.TCPClientHandler
+	Log             *service.Logger
+	ParsedAddresses []S7DataItemWithAddressAndConverter   // All parsed addresses (before batching)
+	Batches         [][]S7DataItemWithAddressAndConverter // Batches calculated after connect with actual PDU
+	DisableCPUInfo  bool
 }
 
 type converterFunc func([]byte) interface{}
@@ -99,18 +97,16 @@ var S7CommConfigSpec = service.NewConfigSpec().
 		Description("Slot number from hardware configuration, usually 1.").
 		Default(1).
 		Examples(1, 2, 3)).
-	Field(service.NewIntField("batchMaxSize").
-		Description("Maximum PDU size in bytes. Default (480) works for most PLCs including S7-1500. Reduce for older PLCs like S7-300 (240).").
-		Default(480).
-		Optional().
-		Advanced().
-		Examples(480, 240, 960)).
 	Field(service.NewIntField("timeout").
 		Description("The timeout duration in seconds for connection attempts and read requests.").
 		Default(10).
 		Optional().
 		Advanced().
 		Examples(10, 5, 30)).
+	Field(service.NewIntField("batchMaxSize").
+		Description("DEPRECATED: PDU size is now automatically negotiated with the PLC. This field is ignored.").
+		Optional().
+		Deprecated()).
 	Field(service.NewBoolField("disableCPUInfo").
 		Description("Set this to true to not fetch CPU information from the PLC. Should be used when you get the error 'Failed to get CPU information'").
 		Default(false).
@@ -118,8 +114,8 @@ var S7CommConfigSpec = service.NewConfigSpec().
 		Advanced().
 		Examples(false, true)).
 	Field(service.NewStringListField("addresses").
-		Description("S7 memory addresses to read. Maximum 20 addresses per connection "+
-			"to prevent PLC overload; use multiple S7 inputs for more. "+
+		Description("S7 memory addresses to read. Addresses are automatically batched to respect "+
+			"protocol limits (max 20 per request) and PDU size. "+
 			"Format: AREA.TYPE<offset>[.extra]. "+
 			"Areas: DB (data block), MK (marker), PE (input), PA (output). "+
 			"Types: X (bit), B (byte), W (word), DW (dword), I (int), DI (dint), R (real), S (string). "+
@@ -149,11 +145,6 @@ func newS7CommInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		return nil, err
 	}
 
-	batchMaxSize, err := conf.FieldInt("batchMaxSize")
-	if err != nil {
-		return nil, err
-	}
-
 	timeoutInt, err := conf.FieldInt("timeout")
 	if err != nil {
 		return nil, err
@@ -164,27 +155,44 @@ func newS7CommInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		return nil, err
 	}
 
-	// Now split the addresses into batches based on the batchMaxSize
-	batches, err := ParseAddresses(addresses, batchMaxSize)
+	batchMaxSize, _ := conf.FieldInt("batchMaxSize")
+	if batchMaxSize != 0 {
+		mgr.Logger().Warn("The 'batchMaxSize' field is deprecated and ignored. PDU size is now automatically negotiated with the PLC.")
+	}
+
+	parsedAddresses, err := ParseAddresses(addresses)
 	if err != nil {
 		return nil, err
 	}
 
 	m := &S7CommInput{
-		TcpDevice:      tcpDevice,
-		Rack:           rack,
-		Slot:           slot,
-		Log:            mgr.Logger(),
-		Batches:        batches,
-		BatchMaxSize:   batchMaxSize,
-		Timeout:        time.Duration(timeoutInt) * time.Second,
-		DisableCPUInfo: disableCPUInfo,
+		TcpDevice:       tcpDevice,
+		Rack:            rack,
+		Slot:            slot,
+		Log:             mgr.Logger(),
+		ParsedAddresses: parsedAddresses,
+		Timeout:         time.Duration(timeoutInt) * time.Second,
+		DisableCPUInfo:  disableCPUInfo,
 	}
 
 	return service.AutoRetryNacksBatched(m), nil
 }
 
-func ParseAddresses(addresses []string, batchMaxSize int) ([][]S7DataItemWithAddressAndConverter, error) {
+// S7 protocol limits for AGReadMulti
+// Values are coming from telegram.go / multi.go from gos7 library
+// also they're reproducible via wireshark
+const (
+	// protocol limit for AGReadMulti of 20 addresses
+	maxItemsPerBatch = 20
+	// request has a fixed header size and each item address is 12 bytes
+	reqHeaderSize = 19
+	reqItemSize   = 12
+	// response has a fixed header size and each item a 4-byte header
+	respHeaderSize     = 21
+	respItemHeaderSize = 4
+)
+
+func ParseAddresses(addresses []string) ([]S7DataItemWithAddressAndConverter, error) {
 	parsedAddresses := make([]S7DataItemWithAddressAndConverter, 0, len(addresses))
 
 	for _, address := range addresses {
@@ -193,17 +201,14 @@ func ParseAddresses(addresses []string, batchMaxSize int) ([][]S7DataItemWithAdd
 			return nil, fmt.Errorf("address %q: %w", address, err)
 		}
 
-		newS7DataItemWithAddressAndConverter := S7DataItemWithAddressAndConverter{
+		parsedAddresses = append(parsedAddresses, S7DataItemWithAddressAndConverter{
 			Address:       address,
 			ConverterFunc: converter,
 			Item:          *item,
-		}
-
-		parsedAddresses = append(parsedAddresses, newS7DataItemWithAddressAndConverter)
+		})
 	}
 
 	// check for duplicates
-
 	for i, a := range parsedAddresses {
 		for j, b := range parsedAddresses {
 			if i == j {
@@ -215,14 +220,54 @@ func ParseAddresses(addresses []string, batchMaxSize int) ([][]S7DataItemWithAdd
 		}
 	}
 
-	// Now split the addresses into batches based on the batchMaxSize
-	batches := make([][]S7DataItemWithAddressAndConverter, 0)
-	for i := 0; i < len(parsedAddresses); i += batchMaxSize {
-		end := i + batchMaxSize
-		if end > len(parsedAddresses) {
-			end = len(parsedAddresses)
+	return parsedAddresses, nil
+}
+
+// BuildBatches splits S7 addresses into batches that respect protocol limits.
+func BuildBatches(items []S7DataItemWithAddressAndConverter, pduSize int) ([][]S7DataItemWithAddressAndConverter, error) {
+	var batches [][]S7DataItemWithAddressAndConverter
+	var batch []S7DataItemWithAddressAndConverter
+
+	reqBytes := reqHeaderSize
+	respBytes := respHeaderSize
+
+	for _, item := range items {
+		dataSize := len(item.Item.Data)
+		if dataSize%2 != 0 {
+			dataSize++
 		}
-		batches = append(batches, parsedAddresses[i:end])
+		itemReqBytes := reqItemSize
+		itemRespBytes := respItemHeaderSize + dataSize
+
+		// Check if single item exceeds PDU size
+		singleItemReqSize := reqHeaderSize + itemReqBytes
+		singleItemRespSize := respHeaderSize + itemRespBytes
+		if singleItemReqSize > pduSize || singleItemRespSize > pduSize {
+			return nil, fmt.Errorf("address %q exceeds PDU size %d (request: %d bytes, response: %d bytes)",
+				item.Address, pduSize, singleItemReqSize, singleItemRespSize)
+		}
+
+		// Check all three constraints
+		batchFilled := len(batch) >= maxItemsPerBatch
+		reqFilled := reqBytes+itemReqBytes > pduSize
+		respFilled := respBytes+itemRespBytes > pduSize
+
+		// Start new batch if any limit is reached
+		if len(batch) > 0 && (batchFilled || reqFilled || respFilled) {
+			batches = append(batches, batch)
+			batch = nil
+			reqBytes = reqHeaderSize
+			respBytes = respHeaderSize
+		}
+
+		batch = append(batch, item)
+		reqBytes += itemReqBytes
+		respBytes += itemRespBytes
+	}
+
+	// Append remaining items
+	if len(batch) > 0 {
+		batches = append(batches, batch)
 	}
 
 	return batches, nil
@@ -254,6 +299,14 @@ func (g *S7CommInput) Connect(_ context.Context) error {
 
 	g.Client = gos7.NewClient(g.Handler)
 	g.Log.Infof("Successfully connected to S7 PLC at %s", g.TcpDevice)
+
+	// Build batches using the PDU size negotiated with the PLC
+	batches, err := BuildBatches(g.ParsedAddresses, g.Handler.PDULength)
+	if err != nil {
+		return fmt.Errorf("failed to build batches: %w", err)
+	}
+	g.Batches = batches
+	g.Log.Infof("Created %d batches for %d addresses (PDU size: %d)", len(g.Batches), len(g.ParsedAddresses), g.Handler.PDULength)
 
 	// Fetch and show CPU information, but only if the user has not disabled it
 	if !g.DisableCPUInfo {
