@@ -3,9 +3,6 @@
   "extends": [
     "config:recommended"
   ],
-  "includePaths": [
-    "umh-core/**"
-  ],
   "enabledManagers": [
     "dockerfile",
     "gomod"
