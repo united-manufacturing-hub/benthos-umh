@@ -29,6 +29,7 @@ import (
 	"net/url"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -129,10 +130,6 @@ type ModbusInput struct {
 	// Addresses is a list of Modbus addresses to read
 	Addresses []ModbusDataItemWithAddress
 
-	// Deprecated: Use RequestSets instead. Kept for backwards compatibility.
-	// Returns the RequestSet for the first configured slave ID.
-	RequestSet RequestSet // for backwards compatibility
-
 	// RequestSets holds the auto-generated requests per slave ID.
 	// Each slave gets its own optimized set of requests based on which
 	// addresses are assigned to it.
@@ -199,7 +196,7 @@ var ModbusConfigSpec = service.NewConfigSpec().
 		service.NewIntField("length").Description("Number of registers, only valid for STRING type").Default(0),
 		service.NewIntField("bit").Description("Bit of the register, only valid for BIT type").Default(0),
 		service.NewFloatField("scale").Description("Factor to scale the variable with").Default(0.0),
-		service.NewStringField("output").Description("Type of resulting field: 'INT64', 'UINT64', 'FLOAT64', or 'native'").Default(""),
+		service.NewStringField("output").Description("Type of resulting field: 'INT64', 'UINT64', 'FLOAT64'").Default(""),
 		service.NewIntField("slaveID").Description("Optional: only read this address from the specified slave ID. If 0 or omitted, read from all configured slaveIDs.").Default(0)).
 		Description("List of Modbus addresses to read"))
 
@@ -324,7 +321,7 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	}
 
 	// used to de-duplicate
-	seenFields := make(map[uint64]bool)
+	seenFields := make(map[uint64]struct{})
 	seed := maphash.MakeSeed()
 
 	for _, addrConf := range addressesConf {
@@ -405,17 +402,8 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		item.SlaveID = byte(slaveIDInt)
 
 		// Validate: if slaveID is non-zero, it must exist in the top-level slaveIDs list
-		if item.SlaveID != 0 {
-			found := false
-			for _, sid := range m.SlaveIDs {
-				if sid == item.SlaveID {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return nil, fmt.Errorf("address %q has slaveID %d which is not in the top-level slaveIDs list. Add %d to slaveIDs or set slaveID to 0 to read from all slaves", item.Name, item.SlaveID, item.SlaveID)
-			}
+		if item.SlaveID != 0 && !slices.Contains(m.SlaveIDs, item.SlaveID) {
+			return nil, fmt.Errorf("address %q has slaveID %d which is not in the top-level slaveIDs list. Add %d to slaveIDs or set slaveID to 0 to read from all slaves", item.Name, item.SlaveID, item.SlaveID)
 		}
 
 		// Check the input and output type for all fields as we later need
@@ -477,12 +465,13 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		}
 
 		// First-pass dedup: catches identical YAML entries (same register+address+slaveID)
-		if _, exists := seenFields[tagIDWithSlave(seed, item)]; exists {
-			m.Log.Warnf("Duplicate field %q register=%s address=%d slaveID=%d, ignoring", item.Name, item.Register, item.Address, item.SlaveID)
+		tagID := tagIDWithSlave(seed, item)
+		if _, exists := seenFields[tagID]; exists {
+			m.Log.Warnf("Duplicate field %q register=%s address=%d slaveID=%d, ignoring",
+				item.Name, item.Register, item.Address, item.SlaveID)
 			continue
-		} else {
-			seenFields[tagIDWithSlave(seed, item)] = true
 		}
+		seenFields[tagID] = struct{}{}
 
 		m.Addresses = append(m.Addresses, item)
 	}
@@ -490,14 +479,14 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	// Build per-slave address lists
 	perSlaveAddresses := make(map[byte][]ModbusDataItemWithAddress)
 	for _, item := range m.Addresses {
-		if item.SlaveID == 0 {
-			// Global address: add to every slave
-			for _, sid := range m.SlaveIDs {
-				perSlaveAddresses[sid] = append(perSlaveAddresses[sid], item)
-			}
-		} else {
-			// Specific slave
+		// Specific slave: handle and continue
+		if item.SlaveID != 0 {
 			perSlaveAddresses[item.SlaveID] = append(perSlaveAddresses[item.SlaveID], item)
+			continue
+		}
+		// Global address: add to every slave
+		for _, sid := range m.SlaveIDs {
+			perSlaveAddresses[sid] = append(perSlaveAddresses[sid], item)
 		}
 	}
 
@@ -528,13 +517,6 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 			return nil, batchErr
 		}
 		m.RequestSets[sid] = rs
-	}
-
-	// Populate RequestSet for backwards compatibility
-	if len(m.SlaveIDs) > 0 {
-		if rs, ok := m.RequestSets[m.SlaveIDs[0]]; ok {
-			m.RequestSet = rs
-		}
 	}
 
 	// Output debug messages per slave
