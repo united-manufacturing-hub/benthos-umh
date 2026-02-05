@@ -17,6 +17,7 @@ package modbus_plugin_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strconv"
 	"time"
@@ -329,9 +330,26 @@ var _ = Describe("Test Against Wago-PLC", func() {
 })
 
 var _ = Describe("Per-Slave Address Routing", func() {
+	// Helper to build per-slave RequestSets with validation and deduplication,
+	// mimicking the constructor logic. Optionally tracks deduplicated addresses.
+	buildPerSlaveRequestSets := func(input *ModbusInput, tracking map[byte][]ModbusDataItemWithAddress) error {
+		// Validation: if slaveID is non-zero, it must exist in top-level slaveIDs
+		for _, item := range input.Addresses {
+			if item.SlaveID != 0 {
+				found := false
+				for _, sid := range input.SlaveIDs {
+					if sid == item.SlaveID {
+						found = true
+						break
+					}
+				}
+				if !found {
+					return fmt.Errorf("address %q has slaveID %d which is not in the top-level slaveIDs list", item.Name, item.SlaveID)
+				}
+			}
+		}
 
-	// Helper to build per-slave RequestSets from addresses, mimicking the constructor logic.
-	buildPerSlaveRequestSets := func(input *ModbusInput) error {
+		// Build per-slave address lists
 		perSlaveAddresses := make(map[byte][]ModbusDataItemWithAddress)
 		for _, item := range input.Addresses {
 			if item.SlaveID == 0 {
@@ -343,6 +361,25 @@ var _ = Describe("Per-Slave Address Routing", func() {
 			}
 		}
 
+		// Second-pass dedup: within each slave, dedup by register+address
+		for sid, addrs := range perSlaveAddresses {
+			seen := make(map[string]bool)
+			deduped := make([]ModbusDataItemWithAddress, 0, len(addrs))
+			for _, item := range addrs {
+				key := fmt.Sprintf("%s:%d", item.Register, item.Address)
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				deduped = append(deduped, item)
+			}
+			perSlaveAddresses[sid] = deduped
+			if tracking != nil {
+				tracking[sid] = deduped
+			}
+		}
+
+		// Build RequestSets
 		input.RequestSets = make(map[byte]RequestSet)
 		for sid, addrs := range perSlaveAddresses {
 			rs, err := input.CreateBatchesFromAddresses(addrs)
@@ -365,7 +402,7 @@ var _ = Describe("Per-Slave Address Routing", func() {
 			},
 		}
 
-		err := buildPerSlaveRequestSets(input)
+		err := buildPerSlaveRequestSets(input, nil)
 		Expect(err).NotTo(HaveOccurred())
 
 		// Both slaves should have RequestSets
@@ -386,7 +423,7 @@ var _ = Describe("Per-Slave Address Routing", func() {
 			},
 		}
 
-		err := buildPerSlaveRequestSets(input)
+		err := buildPerSlaveRequestSets(input, nil)
 		Expect(err).NotTo(HaveOccurred())
 
 		// All 3 slaves should have RequestSets
@@ -409,7 +446,7 @@ var _ = Describe("Per-Slave Address Routing", func() {
 			},
 		}
 
-		err := buildPerSlaveRequestSets(input)
+		err := buildPerSlaveRequestSets(input, nil)
 		Expect(err).NotTo(HaveOccurred())
 
 		// Both slaves should have their own RequestSet
@@ -431,12 +468,54 @@ var _ = Describe("Per-Slave Address Routing", func() {
 			},
 		}
 
-		err := buildPerSlaveRequestSets(input)
+		err := buildPerSlaveRequestSets(input, nil)
 		Expect(err).NotTo(HaveOccurred())
 
 		// Only slaves 1 and 2 should have RequestSets
 		Expect(input.RequestSets).To(HaveLen(2))
 		_, exists3 := input.RequestSets[3]
 		Expect(exists3).To(BeFalse())
+	})
+
+	It("should error when address slaveID is not in top-level slaveIDs", func() {
+		input := &ModbusInput{
+			SlaveIDs:    []byte{1, 2},
+			BusyRetries: 1,
+			Addresses: []ModbusDataItemWithAddress{
+				{Name: "temp", Register: "holding", Address: 100, Type: "INT16", SlaveID: 3},
+			},
+		}
+
+		err := buildPerSlaveRequestSets(input, nil)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("slaveID 3"))
+		Expect(err.Error()).To(ContainSubstring("not in the top-level slaveIDs"))
+	})
+
+	It("should deduplicate when global address (slaveID=0) overlaps with specific slave address", func() {
+		input := &ModbusInput{
+			SlaveIDs:    []byte{1, 2},
+			BusyRetries: 1,
+			Addresses: []ModbusDataItemWithAddress{
+				{Name: "globalTemp", Register: "holding", Address: 100, Type: "INT16", SlaveID: 0},
+				{Name: "slave1Temp", Register: "holding", Address: 100, Type: "INT16", SlaveID: 1},
+			},
+		}
+
+		// Track deduplicated addresses per slave
+		dedupedAddresses := make(map[byte][]ModbusDataItemWithAddress)
+		err := buildPerSlaveRequestSets(input, dedupedAddresses)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Both slaves should have RequestSets
+		Expect(input.RequestSets).To(HaveLen(2))
+
+		// Slave 1: should have only globalTemp (first wins), not slave1Temp
+		Expect(dedupedAddresses[1]).To(HaveLen(1))
+		Expect(dedupedAddresses[1][0].Name).To(Equal("globalTemp"))
+
+		// Slave 2: should have globalTemp (no overlap)
+		Expect(dedupedAddresses[2]).To(HaveLen(1))
+		Expect(dedupedAddresses[2][0].Name).To(Equal("globalTemp"))
 	})
 })

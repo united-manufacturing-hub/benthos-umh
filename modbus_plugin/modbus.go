@@ -129,6 +129,10 @@ type ModbusInput struct {
 	// Addresses is a list of Modbus addresses to read
 	Addresses []ModbusDataItemWithAddress
 
+	// Deprecated: Use RequestSets instead. Kept for backwards compatibility.
+	// Returns the RequestSet for the first configured slave ID.
+	RequestSet RequestSet // for backwards compatibility
+
 	// RequestSets holds the auto-generated requests per slave ID.
 	// Each slave gets its own optimized set of requests based on which
 	// addresses are assigned to it.
@@ -173,7 +177,7 @@ var ModbusConfigSpec = service.NewConfigSpec().
 	Field(service.NewStringField("controller").Description("The Modbus controller address, e.g., 'tcp://localhost:502'").Default("tcp://localhost:502")).
 	Field(service.NewStringField("transmissionMode").Description("Transmission mode: 'TCP', 'RTUOverTCP', or 'ASCIIOverTCP'").Default("TCP")).
 	Field(service.NewIntField("slaveID").Description("Slave ID of the Modbus device").Default(1)).
-	Field(service.NewIntListField("slaveIDs").Description("Slave ID of the Modbus device").Default([]int{1})).
+	Field(service.NewIntListField("slaveIDs").Description("Slave IDs of the Modbus devices to read from").Default([]int{1})).
 	Field(service.NewDurationField("timeout").Description("").Default("1s")).
 	Field(service.NewIntField("busyRetries").Description("Maximum number of retries when the device is busy").Default(3)).
 	Field(service.NewDurationField("busyRetriesWait").Description("Time to wait between retries when the device is busy").Default("200ms")).
@@ -185,7 +189,7 @@ var ModbusConfigSpec = service.NewConfigSpec().
 		service.NewBoolField("oneRequestPerField").Description("Send each field in a separate request").Default(false),
 		service.NewBoolField("readCoilsStartingAtZero").Description("Read coils starting at address 0 instead of 1").Default(false),
 		service.NewStringField("stringRegisterLocation").Description("String byte-location in registers: 'lower', 'upper', or empty for both").Default(""),
-		service.NewDurationField("timeBetweenRequests").Description("imeBetweenRequests is the time between two requests to the same device. Useful to avoid flooding the device. Not to be confused with TimeBetweenReads.").Default("0s")).
+		service.NewDurationField("timeBetweenRequests").Description("TimeBetweenRequests is the time between two requests to the same device. Useful to avoid flooding the device. Not to be confused with TimeBetweenReads.").Default("0s")).
 		Description("Modbus workarounds. Required by some devices to work correctly. Should be left alone by default and must not be changed unless necessary.")).
 	Field(service.NewObjectListField("addresses",
 		service.NewStringField("name").Description("Field name"),
@@ -410,7 +414,7 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 				}
 			}
 			if !found {
-				return nil, fmt.Errorf("address %q has slaveID %d which is not in the top-level slaveIDs list", item.Name, item.SlaveID)
+				return nil, fmt.Errorf("address %q has slaveID %d which is not in the top-level slaveIDs list. Add %d to slaveIDs or set slaveID to 0 to read from all slaves", item.Name, item.SlaveID, item.SlaveID)
 			}
 		}
 
@@ -524,6 +528,13 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 			return nil, batchErr
 		}
 		m.RequestSets[sid] = rs
+	}
+
+	// Populate RequestSet for backwards compatibility
+	if len(m.SlaveIDs) > 0 {
+		if rs, ok := m.RequestSets[m.SlaveIDs[0]]; ok {
+			m.RequestSet = rs
+		}
 	}
 
 	// Output debug messages per slave
@@ -829,14 +840,13 @@ func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 		// Create a heartbeat message and add it to the batch
 		heartbeatMessage := service.NewMessage([]byte(time.Now().Format(time.RFC3339)))
 		heartbeatMessage.MetaSet("modbus_tag_name", "heartbeat")
-		heartbeatMessage.MetaSet("modbus_tag_name_original", "heartbeat")                   // This is the tag name without any changes
-		heartbeatMessage.MetaSet("modbus_tag_datatype", "string")                           // This is the original data type in Modbus
-		heartbeatMessage.MetaSet("modbus_tag_datatype_json", "string")                      // This is the data type for JSONs. Either number, bool or string
-		heartbeatMessage.MetaSet("modbus_tag_address", "auto-generated-heartbeat")          // This is the address of the tag
-		heartbeatMessage.MetaSet("modbus_tag_length", strconv.Itoa(len("heartbeat")))       // This is the length of the tag
-		heartbeatMessage.MetaSet("modbus_tag_register", "auto-generated")                   // This is the register where the tag is located
-		heartbeatMessage.MetaSet("modbus_tag_slaveid", strconv.Itoa(int(m.CurrentSlaveID))) // This is the slaveID that we are currently reading
-
+		heartbeatMessage.MetaSet("modbus_tag_name_original", "heartbeat")             // This is the tag name without any changes
+		heartbeatMessage.MetaSet("modbus_tag_datatype", "string")                     // This is the original data type in Modbus
+		heartbeatMessage.MetaSet("modbus_tag_datatype_json", "string")                // This is the data type for JSONs. Either number, bool or string
+		heartbeatMessage.MetaSet("modbus_tag_address", "auto-generated-heartbeat")    // This is the address of the tag
+		heartbeatMessage.MetaSet("modbus_tag_length", strconv.Itoa(len("heartbeat"))) // This is the length of the tag
+		heartbeatMessage.MetaSet("modbus_tag_register", "auto-generated")             // This is the register where the tag is located
+		heartbeatMessage.MetaSet("modbus_tag_slaveid", "0")                           // Combined heartbeat
 		mergedBatch = append(mergedBatch, heartbeatMessage)
 	}
 
