@@ -52,6 +52,33 @@ input:
         type: "UINT16"
 ```
 
+**Per-Slave Address Example**
+
+When different slaves expose different registers, you can assign addresses to specific slaves:
+
+```yaml
+input:
+  modbus:
+    controller: 'tcp://192.168.1.100:502'
+    slaveIDs: [1, 2, 3]
+    addresses:
+      - name: "temperature"
+        register: "holding"
+        address: 100
+        type: "INT16"
+        slaveID: 1          # Only slave 1
+      - name: "pressure"
+        register: "holding"
+        address: 200
+        type: "INT16"
+        slaveID: 2          # Only slave 2
+      - name: "status"
+        register: "coil"
+        address: 10
+        type: "BIT"
+        # No slaveID → read from ALL slaves (1, 2, 3)
+```
+
 **Controller**
 
 Specifies the network address of the Modbus controller:
@@ -328,4 +355,15 @@ input:
 
     ```yaml
     output: "FLOAT64"
+    ```
+
+9. **Slave ID (per-address)**
+
+* **Description**: Optionally restrict this address to a specific slave ID. When set, only the specified slave will read this address. When omitted or set to 0, all configured slaves (from the top-level `slaveIDs`) will read this address.
+* **Default**: 0 (all slaves)
+* **Validation**: If non-zero, the value must appear in the top-level `slaveIDs` list.
+*   **Configuration Example**:
+
+    ```yaml
+    slaveID: 2
     ```

@@ -73,6 +73,21 @@ func tagID(seed maphash.Seed, item ModbusDataItemWithAddress) uint64 {
 	return mh.Sum64()
 }
 
+// tagIDWithSlave generates a hash for deduplication that includes the slave ID.
+// Used for first-pass dedup to catch identical YAML entries.
+func tagIDWithSlave(seed maphash.Seed, item ModbusDataItemWithAddress) uint64 {
+	var mh maphash.Hash
+	mh.SetSeed(seed)
+
+	mh.WriteString(item.Register)
+	mh.WriteByte(0)
+	mh.WriteString(strconv.Itoa(int(item.Address)))
+	mh.WriteByte(0)
+	mh.WriteByte(item.SlaveID)
+
+	return mh.Sum64()
+}
+
 func determineTagLength(input string, length uint16) (uint16, error) {
 	// Handle our special types
 	switch input {

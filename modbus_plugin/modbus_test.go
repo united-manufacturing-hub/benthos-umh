@@ -75,8 +75,12 @@ var _ = Describe("Test Against Docker Modbus Simulator", func() {
 
 		// Parse the addresses into batches
 		var err error
-		input.RequestSet, err = input.CreateBatchesFromAddresses(input.Addresses)
+		rs, err := input.CreateBatchesFromAddresses(input.Addresses)
 		Expect(err).NotTo(HaveOccurred())
+		input.RequestSets = map[byte]RequestSet{}
+		for _, sid := range input.SlaveIDs {
+			input.RequestSets[sid] = rs
+		}
 
 		// Attempt to connect
 		err = input.Connect(ctx)
@@ -146,8 +150,12 @@ var _ = Describe("Test Against Docker Modbus Simulator", func() {
 
 		// Parse the addresses into batches
 		var err error
-		input.RequestSet, err = input.CreateBatchesFromAddresses(input.Addresses)
+		rs, err := input.CreateBatchesFromAddresses(input.Addresses)
 		Expect(err).NotTo(HaveOccurred())
+		input.RequestSets = map[byte]RequestSet{}
+		for _, sid := range input.SlaveIDs {
+			input.RequestSets[sid] = rs
+		}
 
 		// Attempt to connect
 		err = input.Connect(ctx)
@@ -220,8 +228,12 @@ var _ = Describe("Test Against Wago-PLC", func() {
 		input.Client = modbus.NewClient(input.Handler)
 
 		var err error
-		input.RequestSet, err = input.CreateBatchesFromAddresses(input.Addresses)
+		rs, err := input.CreateBatchesFromAddresses(input.Addresses)
 		Expect(err).NotTo(HaveOccurred())
+		input.RequestSets = map[byte]RequestSet{}
+		for _, sid := range input.SlaveIDs {
+			input.RequestSets[sid] = rs
+		}
 
 		err = input.Connect(ctx)
 		Expect(err).NotTo(HaveOccurred())
@@ -314,4 +326,117 @@ var _ = Describe("Test Against Wago-PLC", func() {
 				ExpectedValue: "1234",
 			}),
 	)
+})
+
+var _ = Describe("Per-Slave Address Routing", func() {
+
+	// Helper to build per-slave RequestSets from addresses, mimicking the constructor logic.
+	buildPerSlaveRequestSets := func(input *ModbusInput) error {
+		perSlaveAddresses := make(map[byte][]ModbusDataItemWithAddress)
+		for _, item := range input.Addresses {
+			if item.SlaveID == 0 {
+				for _, sid := range input.SlaveIDs {
+					perSlaveAddresses[sid] = append(perSlaveAddresses[sid], item)
+				}
+			} else {
+				perSlaveAddresses[item.SlaveID] = append(perSlaveAddresses[item.SlaveID], item)
+			}
+		}
+
+		input.RequestSets = make(map[byte]RequestSet)
+		for sid, addrs := range perSlaveAddresses {
+			rs, err := input.CreateBatchesFromAddresses(addrs)
+			if err != nil {
+				return err
+			}
+			input.RequestSets[sid] = rs
+		}
+		return nil
+	}
+
+	It("should route addresses to specific slaves", func() {
+		input := &ModbusInput{
+			SlaveIDs:    []byte{1, 2},
+			BusyRetries: 1,
+			Addresses: []ModbusDataItemWithAddress{
+				{Name: "tempSlave1", Register: "holding", Address: 100, Type: "INT16", SlaveID: 1},
+				{Name: "tempSlave2", Register: "holding", Address: 200, Type: "INT16", SlaveID: 2},
+				{Name: "shared", Register: "holding", Address: 300, Type: "INT16", SlaveID: 0},
+			},
+		}
+
+		err := buildPerSlaveRequestSets(input)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Both slaves should have RequestSets
+		Expect(input.RequestSets).To(HaveLen(2))
+		_, exists1 := input.RequestSets[1]
+		Expect(exists1).To(BeTrue())
+		_, exists2 := input.RequestSets[2]
+		Expect(exists2).To(BeTrue())
+	})
+
+	It("should be backwards compatible with no slaveID field", func() {
+		input := &ModbusInput{
+			SlaveIDs:    []byte{1, 2, 3},
+			BusyRetries: 1,
+			Addresses: []ModbusDataItemWithAddress{
+				{Name: "temp", Register: "holding", Address: 100, Type: "INT16"},
+				{Name: "pressure", Register: "holding", Address: 200, Type: "INT16"},
+			},
+		}
+
+		err := buildPerSlaveRequestSets(input)
+		Expect(err).NotTo(HaveOccurred())
+
+		// All 3 slaves should have RequestSets
+		Expect(input.RequestSets).To(HaveLen(3))
+		_, exists1 := input.RequestSets[1]
+		Expect(exists1).To(BeTrue())
+		_, exists2 := input.RequestSets[2]
+		Expect(exists2).To(BeTrue())
+		_, exists3 := input.RequestSets[3]
+		Expect(exists3).To(BeTrue())
+	})
+
+	It("should allow same register+address for different slaves", func() {
+		input := &ModbusInput{
+			SlaveIDs:    []byte{1, 2},
+			BusyRetries: 1,
+			Addresses: []ModbusDataItemWithAddress{
+				{Name: "tempSlave1", Register: "holding", Address: 100, Type: "INT16", SlaveID: 1},
+				{Name: "tempSlave2", Register: "holding", Address: 100, Type: "INT16", SlaveID: 2},
+			},
+		}
+
+		err := buildPerSlaveRequestSets(input)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Both slaves should have their own RequestSet
+		Expect(input.RequestSets).To(HaveLen(2))
+		_, exists1 := input.RequestSets[1]
+		Expect(exists1).To(BeTrue())
+		_, exists2 := input.RequestSets[2]
+		Expect(exists2).To(BeTrue())
+	})
+
+	It("should skip slaves with no addresses in ReadBatch", func() {
+		// Slave 3 is in the slaveIDs list but has no addresses assigned
+		input := &ModbusInput{
+			SlaveIDs:    []byte{1, 2, 3},
+			BusyRetries: 1,
+			Addresses: []ModbusDataItemWithAddress{
+				{Name: "tempSlave1", Register: "holding", Address: 100, Type: "INT16", SlaveID: 1},
+				{Name: "tempSlave2", Register: "holding", Address: 200, Type: "INT16", SlaveID: 2},
+			},
+		}
+
+		err := buildPerSlaveRequestSets(input)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Only slaves 1 and 2 should have RequestSets
+		Expect(input.RequestSets).To(HaveLen(2))
+		_, exists3 := input.RequestSets[3]
+		Expect(exists3).To(BeFalse())
+	})
 })

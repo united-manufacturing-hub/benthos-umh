@@ -69,6 +69,10 @@ type ModbusDataItemWithAddress struct {
 	// "scale" is provided and to the input "type" class otherwise (i.e. INT* -> INT64, etc).
 	Output string
 
+	// SlaveID optionally restricts this address to a single slave.
+	// 0 means read from all configured slaves.
+	SlaveID byte
+
 	ConverterFunc converterFunc
 }
 
@@ -125,9 +129,10 @@ type ModbusInput struct {
 	// Addresses is a list of Modbus addresses to read
 	Addresses []ModbusDataItemWithAddress
 
-	// Requests is the auto-generated list of requests to be made
-	// They are creates based on the addresses and the optimization strategy
-	RequestSet RequestSet
+	// RequestSets holds the auto-generated requests per slave ID.
+	// Each slave gets its own optimized set of requests based on which
+	// addresses are assigned to it.
+	RequestSets map[byte]RequestSet
 
 	// Internal
 	Handler        modbus.ClientHandler
@@ -190,7 +195,8 @@ var ModbusConfigSpec = service.NewConfigSpec().
 		service.NewIntField("length").Description("Number of registers, only valid for STRING type").Default(0),
 		service.NewIntField("bit").Description("Bit of the register, only valid for BIT type").Default(0),
 		service.NewFloatField("scale").Description("Factor to scale the variable with").Default(0.0),
-		service.NewStringField("output").Description("Type of resulting field: 'INT64', 'UINT64', 'FLOAT64', or 'native'").Default("")).
+		service.NewStringField("output").Description("Type of resulting field: 'INT64', 'UINT64', 'FLOAT64', or 'native'").Default(""),
+		service.NewIntField("slaveID").Description("Optional: only read this address from the specified slave ID. If 0 or omitted, read from all configured slaveIDs.").Default(0)).
 		Description("List of Modbus addresses to read"))
 
 // newModbusInput is the constructor function for ModbusInput. It parses the plugin configuration,
@@ -384,6 +390,30 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 			return nil, err
 		}
 
+		// Parse slaveID
+		var slaveIDInt int
+		if slaveIDInt, err = addrConf.FieldInt("slaveID"); err != nil {
+			return nil, err
+		}
+		if slaveIDInt < 0 || slaveIDInt > 255 {
+			return nil, fmt.Errorf("slaveID out of range (0-255) for field %q: %d", item.Name, slaveIDInt)
+		}
+		item.SlaveID = byte(slaveIDInt)
+
+		// Validate: if slaveID is non-zero, it must exist in the top-level slaveIDs list
+		if item.SlaveID != 0 {
+			found := false
+			for _, sid := range m.SlaveIDs {
+				if sid == item.SlaveID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("address %q has slaveID %d which is not in the top-level slaveIDs list", item.Name, item.SlaveID)
+			}
+		}
+
 		// Check the input and output type for all fields as we later need
 		// it to determine the number of registers to query.
 		switch item.Register {
@@ -442,52 +472,94 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 			}
 		}
 
-		// Check for duplicate fields
-		if _, exists := seenFields[tagID(seed, item)]; exists {
-			m.Log.Warnf("Duplicate field %q %q, ignoring", item.Name, item.Address)
+		// First-pass dedup: catches identical YAML entries (same register+address+slaveID)
+		if _, exists := seenFields[tagIDWithSlave(seed, item)]; exists {
+			m.Log.Warnf("Duplicate field %q register=%s address=%d slaveID=%d, ignoring", item.Name, item.Register, item.Address, item.SlaveID)
 			continue
 		} else {
-			seenFields[tagID(seed, item)] = true
+			seenFields[tagIDWithSlave(seed, item)] = true
 		}
 
 		m.Addresses = append(m.Addresses, item)
 	}
 
-	// Parse the addresses into batches
-	m.RequestSet, err = m.CreateBatchesFromAddresses(m.Addresses)
-	if err != nil {
-		m.Log.Errorf("Failed to create batches: %v", err)
-		return nil, err
+	// Build per-slave address lists
+	perSlaveAddresses := make(map[byte][]ModbusDataItemWithAddress)
+	for _, item := range m.Addresses {
+		if item.SlaveID == 0 {
+			// Global address: add to every slave
+			for _, sid := range m.SlaveIDs {
+				perSlaveAddresses[sid] = append(perSlaveAddresses[sid], item)
+			}
+		} else {
+			// Specific slave
+			perSlaveAddresses[item.SlaveID] = append(perSlaveAddresses[item.SlaveID], item)
+		}
 	}
 
-	// Output debug messages
-	var nHoldingRegs, nInputsRegs, nDiscreteRegs, nCoilRegs uint16
-	var nHoldingFields, nInputsFields, nDiscreteFields, nCoilFields int
+	// Second-pass dedup: within each slave, dedup by register+address
+	// (catches overlap between global slaveID=0 entries and specific slaveID entries)
+	dedupSeed := maphash.MakeSeed()
+	for sid, addrs := range perSlaveAddresses {
+		seen := make(map[uint64]bool)
+		deduped := make([]ModbusDataItemWithAddress, 0, len(addrs))
+		for _, item := range addrs {
+			id := tagID(dedupSeed, item)
+			if seen[id] {
+				m.Log.Warnf("Duplicate register+address for slave %d: field %q register=%s address=%d, keeping first occurrence", sid, item.Name, item.Register, item.Address)
+				continue
+			}
+			seen[id] = true
+			deduped = append(deduped, item)
+		}
+		perSlaveAddresses[sid] = deduped
+	}
 
-	for _, r := range m.RequestSet.holding {
-		nHoldingRegs += r.length
-		nHoldingFields += len(r.fields)
+	// Build per-slave RequestSets
+	m.RequestSets = make(map[byte]RequestSet)
+	for sid, addrs := range perSlaveAddresses {
+		rs, batchErr := m.CreateBatchesFromAddresses(addrs)
+		if batchErr != nil {
+			m.Log.Errorf("Failed to create batches for slave %d: %v", sid, batchErr)
+			return nil, batchErr
+		}
+		m.RequestSets[sid] = rs
 	}
-	for _, r := range m.RequestSet.input {
-		nInputsRegs += r.length
-		nInputsFields += len(r.fields)
+
+	// Output debug messages per slave
+	for _, sid := range m.SlaveIDs {
+		rs, exists := m.RequestSets[sid]
+		if !exists {
+			m.Log.Infof("Slave %d: no addresses configured", sid)
+			continue
+		}
+
+		var nHoldingRegs, nInputsRegs, nDiscreteRegs, nCoilRegs uint16
+		var nHoldingFields, nInputsFields, nDiscreteFields, nCoilFields int
+
+		for _, r := range rs.holding {
+			nHoldingRegs += r.length
+			nHoldingFields += len(r.fields)
+		}
+		for _, r := range rs.input {
+			nInputsRegs += r.length
+			nInputsFields += len(r.fields)
+		}
+		for _, r := range rs.discrete {
+			nDiscreteRegs += r.length
+			nDiscreteFields += len(r.fields)
+		}
+		for _, r := range rs.coil {
+			nCoilRegs += r.length
+			nCoilFields += len(r.fields)
+		}
+		m.Log.Infof("Slave %d: %d holding request(s) (%d regs, %d fields), %d input (%d regs, %d fields), %d discrete (%d regs, %d fields), %d coil (%d regs, %d fields)",
+			sid,
+			len(rs.holding), nHoldingRegs, nHoldingFields,
+			len(rs.input), nInputsRegs, nInputsFields,
+			len(rs.discrete), nDiscreteRegs, nDiscreteFields,
+			len(rs.coil), nCoilRegs, nCoilFields)
 	}
-	for _, r := range m.RequestSet.discrete {
-		nDiscreteRegs += r.length
-		nDiscreteFields += len(r.fields)
-	}
-	for _, r := range m.RequestSet.coil {
-		nCoilRegs += r.length
-		nCoilFields += len(r.fields)
-	}
-	m.Log.Infof("Got %d request(s) touching %d holding registers for %d fields",
-		len(m.RequestSet.holding), nHoldingRegs, nHoldingFields)
-	m.Log.Infof("Got %d request(s) touching %d inputs registers for %d fields",
-		len(m.RequestSet.input), nInputsRegs, nInputsFields)
-	m.Log.Infof("Got %d request(s) touching %d discrete registers for %d fields",
-		len(m.RequestSet.discrete), nDiscreteRegs, nDiscreteFields)
-	m.Log.Infof("Got %d request(s) touching %d coil registers for %d fields",
-		len(m.RequestSet.coil), nCoilRegs, nCoilFields)
 
 	// Now set up the modbus client
 	u, err := url.Parse(m.Controller)
@@ -714,8 +786,13 @@ func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 
 	// Loop through all slaves
 	for _, slaveID := range m.SlaveIDs {
+		requestSet, exists := m.RequestSets[slaveID]
+		if !exists {
+			m.Log.Debugf("Slave %d has no configured addresses, skipping", slaveID)
+			continue
+		}
 		m.Log.Debugf("Reading slave %d for %s...", slaveID, m.Controller)
-		msgBatch, err := m.readSlaveData(slaveID, m.RequestSet)
+		msgBatch, err := m.readSlaveData(slaveID, requestSet)
 		if err != nil {
 			m.Log.Errorf("slave %d encountered an error: %v", slaveID, err)
 
