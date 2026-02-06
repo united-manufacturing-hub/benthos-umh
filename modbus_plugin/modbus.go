@@ -227,20 +227,21 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 
 	// slaveID only exist for backwards compatibility
 	if conf.Contains("slaveIDs") {
-		if ids, err = conf.FieldIntList("slaveIDs"); err == nil {
-			slaveIDs = ids
-		} else {
+		ids, err = conf.FieldIntList("slaveIDs")
+		if err != nil {
 			return nil, err
 		}
+		slaveIDs = ids
 	} else if conf.Contains("slaveID") {
-		if id, err = conf.FieldInt("slaveID"); err == nil {
-			slaveIDs = []int{id}
-		} else {
+		id, err = conf.FieldInt("slaveID")
+		if err != nil {
 			return nil, err
 		}
+		slaveIDs = []int{id}
 	} else {
 		return nil, fmt.Errorf("no valid slaveID or slaveIDs found")
 	}
+
 	// Convert to byte and assign to m.SlaveIDs
 	for _, slaveID := range slaveIDs {
 		if slaveID < 0 || slaveID > 255 {
