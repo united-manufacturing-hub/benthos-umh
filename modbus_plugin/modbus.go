@@ -196,7 +196,7 @@ var ModbusConfigSpec = service.NewConfigSpec().
 		service.NewIntField("length").Description("Number of registers, only valid for STRING type").Default(0),
 		service.NewIntField("bit").Description("Bit of the register, only valid for BIT type").Default(0),
 		service.NewFloatField("scale").Description("Factor to scale the variable with").Default(0.0),
-		service.NewStringField("output").Description("Type of resulting field: 'INT64', 'UINT64', 'FLOAT64'").Default(""),
+		service.NewStringField("output").Description("Type of resulting field: 'INT64', 'UINT64', 'FLOAT64' or 'STRING'").Default(""),
 		service.NewIntField("slaveID").Description("Optional: only read this address from the specified slave ID. If 0 or omitted, read from all configured slaveIDs.").Default(0)).
 		Description("List of Modbus addresses to read"))
 
@@ -226,18 +226,26 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	}
 
 	// slaveID only exist for backwards compatibility
-	if ids, err = conf.FieldIntList("slaveIDs"); err == nil {
-		// slaveIDs exists, use it
-		slaveIDs = ids
-	} else if id, err = conf.FieldInt("slaveID"); err == nil {
-		// Fallback to slaveID if slaveIDs doesn't exist
-		slaveIDs = []int{id}
+	if conf.Contains("slaveIDs") {
+		if ids, err = conf.FieldIntList("slaveIDs"); err == nil {
+			slaveIDs = ids
+		} else {
+			return nil, err
+		}
+	} else if conf.Contains("slaveID") {
+		if id, err = conf.FieldInt("slaveID"); err == nil {
+			slaveIDs = []int{id}
+		} else {
+			return nil, err
+		}
 	} else {
 		return nil, fmt.Errorf("no valid slaveID or slaveIDs found")
 	}
-
 	// Convert to byte and assign to m.SlaveIDs
 	for _, slaveID := range slaveIDs {
+		if slaveID < 0 || slaveID > 255 {
+			return nil, fmt.Errorf("slaveID out of range (0-255): %d", slaveID)
+		}
 		m.SlaveIDs = append(m.SlaveIDs, byte(slaveID))
 	}
 
