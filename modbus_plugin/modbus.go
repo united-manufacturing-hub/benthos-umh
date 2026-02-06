@@ -173,7 +173,7 @@ var ModbusConfigSpec = service.NewConfigSpec().
 	Field(service.NewDurationField("timeBetweenReads").Description("The time between two reads of a Modbus device. Useful if you want to read the device every x seconds. Not to be confused with TimeBetweenRequests.").Default("1s")).
 	Field(service.NewStringField("controller").Description("The Modbus controller address, e.g., 'tcp://localhost:502'").Default("tcp://localhost:502")).
 	Field(service.NewStringField("transmissionMode").Description("Transmission mode: 'TCP', 'RTUOverTCP', or 'ASCIIOverTCP'").Default("TCP")).
-	Field(service.NewIntListField("slaveIDs").Description("Slave IDs of the Modbus devices to read from").Default([]int{1})).
+	Field(service.NewIntListField("slaveIDs").Description("Slave IDs of the Modbus devices to read from 1-255").Default([]int{1})).
 	Field(service.NewDurationField("timeout").Description("").Default("1s")).
 	Field(service.NewIntField("busyRetries").Description("Maximum number of retries when the device is busy").Default(3)).
 	Field(service.NewDurationField("busyRetriesWait").Description("Time to wait between retries when the device is busy").Default("200ms")).
@@ -233,8 +233,8 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	slaveIDs = ids
 	// Convert to byte and assign to m.SlaveIDs
 	for _, slaveID := range slaveIDs {
-		if slaveID < 0 || slaveID > 255 {
-			return nil, fmt.Errorf("slaveID out of range (0-255): %d", slaveID)
+		if slaveID < 1 || slaveID > 255 {
+			return nil, fmt.Errorf("slaveID out of range (1-255): %d", slaveID)
 		}
 		m.SlaveIDs = append(m.SlaveIDs, byte(slaveID))
 	}
