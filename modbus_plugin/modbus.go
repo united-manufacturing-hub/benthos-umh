@@ -173,7 +173,6 @@ var ModbusConfigSpec = service.NewConfigSpec().
 	Field(service.NewDurationField("timeBetweenReads").Description("The time between two reads of a Modbus device. Useful if you want to read the device every x seconds. Not to be confused with TimeBetweenRequests.").Default("1s")).
 	Field(service.NewStringField("controller").Description("The Modbus controller address, e.g., 'tcp://localhost:502'").Default("tcp://localhost:502")).
 	Field(service.NewStringField("transmissionMode").Description("Transmission mode: 'TCP', 'RTUOverTCP', or 'ASCIIOverTCP'").Default("TCP")).
-	Field(service.NewIntField("slaveID").Description("Slave ID of the Modbus device").Default(1)).
 	Field(service.NewIntListField("slaveIDs").Description("Slave IDs of the Modbus devices to read from").Default([]int{1})).
 	Field(service.NewDurationField("timeout").Description("").Default("1s")).
 	Field(service.NewIntField("busyRetries").Description("Maximum number of retries when the device is busy").Default(3)).
@@ -206,7 +205,6 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	var (
 		err           error
 		slaveIDs, ids []int
-		id            int
 	)
 
 	m := &ModbusInput{
@@ -224,24 +222,15 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	if m.TransmissionMode, err = conf.FieldString("transmissionMode"); err != nil {
 		return nil, err
 	}
-
-	// slaveID only exist for backwards compatibility
-	if conf.Contains("slaveIDs") {
-		ids, err = conf.FieldIntList("slaveIDs")
-		if err != nil {
-			return nil, err
-		}
-		slaveIDs = ids
-	} else if conf.Contains("slaveID") {
-		id, err = conf.FieldInt("slaveID")
-		if err != nil {
-			return nil, err
-		}
-		slaveIDs = []int{id}
-	} else {
-		return nil, fmt.Errorf("no valid slaveID or slaveIDs found")
+	if !conf.Contains("slaveIDs") {
+		return nil, fmt.Errorf("no valid slaveIDs found")
 	}
 
+	ids, err = conf.FieldIntList("slaveIDs")
+	if err != nil {
+		return nil, err
+	}
+	slaveIDs = ids
 	// Convert to byte and assign to m.SlaveIDs
 	for _, slaveID := range slaveIDs {
 		if slaveID < 0 || slaveID > 255 {
