@@ -1,6 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
+  "commitMessagePrefix": "[renovate]chore(deps):",
   "enabledManagers": ["dockerfile", "gomod"],
   "postUpdateOptions": ["gomodTidy"],
   "minimumReleaseAge": "7 days",
