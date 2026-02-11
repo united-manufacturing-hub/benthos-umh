@@ -52,7 +52,7 @@ var (
 		"DI": 0x07, // Double integer (32 bit)
 		"R":  0x08, // IEEE 754 real (32 bit)
 		// see https://support.industry.siemens.com/cs/document/36479/date_and_time-format-for-s7-?dti=0&lc=en-DE
-		"DT": 0x0F, // Date and time (7 byte)
+		"DT": 0x0F, // Date and time (8 byte)
 	}
 )
 
@@ -497,8 +497,8 @@ func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error)
 		buflen = 2
 	case "DW", "DI", "R": // 32-bit types
 		buflen = 4
-	case "DT": // 7-byte
-		buflen = 7
+	case "DT": // 8-byte
+		buflen = 8
 	case "S":
 		amount = extra
 		// Extra bytes as the first byte is the max-length of the string and
