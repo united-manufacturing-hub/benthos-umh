@@ -27,7 +27,7 @@ import (
 	"github.com/robinson/gos7" // gos7 is a Go client library for interacting with Siemens S7 PLCs.
 )
 
-const addressRegexp = `^(?P<area>[A-Z]+)(?P<no>[0-9]+)\.(?P<type>[A-Z]+)(?P<start>[0-9]+)(?:\.(?P<extra>.*))?$`
+const addressRegexp = `^(?P<area>[A-Z]+)(?P<no>[0-9]*)\.(?P<type>[A-Z]+)(?P<start>[0-9]+)(?:\.(?P<extra>.*))?$`
 
 var (
 	regexAddr = regexp.MustCompile(addressRegexp)
@@ -116,11 +116,11 @@ var S7CommConfigSpec = service.NewConfigSpec().
 	Field(service.NewStringListField("addresses").
 		Description("S7 memory addresses to read. Addresses are automatically batched to respect "+
 			"protocol limits (max 20 per request) and PDU size. "+
-			"Format: AREA.TYPE<offset>[.extra]. "+
-			"Areas: DB (data block), MK (marker), PE (input), PA (output). "+
-			"Types: X (bit), B (byte), W (word), DW (dword), I (int), DI (dint), R (real), S (string). "+
+			"Format: DB<n>.<type><offset>[.extra] for data blocks, AREA.<type><offset>[.extra] for others. "+
+			"Areas: DB (data block, requires block number), MK (marker), PE (input), PA (output), C (counter), T (timer). "+
+			"Types: X (bit), B (byte), W (word), DW (dword), I (int), DI (dint), R (real), DT (datetime), S (string). "+
 			"For bits (X), add bit number 0-7. For strings (S), add max length.").
-		Examples([]string{"DB1.DW20"}, []string{"DB1.X5.2"}, []string{"MK0.W0"}, []string{"PE.W0", "PA.W0"}))
+		Examples([]string{"DB1.DW20"}, []string{"DB1.X5.2"}, []string{"MK.W0"}, []string{"PE.W0", "PA.W0"}))
 
 // newS7CommInput is the constructor function for S7CommInput. It parses the plugin configuration,
 // establishes a connection with the S7 PLC, and initializes the input plugin instance.
@@ -423,9 +423,26 @@ func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error)
 	if !found {
 		return nil, nil, errors.New("unknown data type")
 	}
-	areaidx, err := strconv.Atoi(groups["no"])
-	if err != nil {
-		return nil, nil, fmt.Errorf("invalid area index: %w", err)
+	// Only DB uses block numbers; PE, PA, MK, C, T have a single memory region.
+	areaName := groups["area"]
+	var (
+		areaidx int
+		err     error
+	)
+	switch areaName {
+	case "DB":
+		if groups["no"] == "" {
+			return nil, nil, errors.New("DB requires a block number (e.g., DB1.DW20)")
+		}
+		areaidx, err = strconv.Atoi(groups["no"])
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid DB number: %w", err)
+		}
+	default:
+		if groups["no"] != "" {
+			return nil, nil, fmt.Errorf("%s does not have sub-blocks, use %s.%s%s instead of %s",
+				areaName, areaName, groups["type"], groups["start"], address)
+		}
 	}
 	start, err := strconv.Atoi(groups["start"])
 	if err != nil {

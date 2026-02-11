@@ -107,8 +107,13 @@ var _ = Describe("S7Comm Plugin Unittests", func() {
 			}),
 		Entry("same Area but different Item.Bit",
 			S7Addresses{
-				addresses:      []string{"PE2.X0.0", "PE2.X0.1"},
+				addresses:      []string{"PE.X0.0", "PE.X0.1"},
 				expectedErrMsg: nil,
+			}),
+		Entry("non-DB area with block number is rejected",
+			S7Addresses{
+				addresses:      []string{"PE2.X0.0"},
+				expectedErrMsg: []string{"does not have sub-blocks", "use PE.X0"},
 			}),
 		Entry("same DBNumber and same Item.Area",
 			S7Addresses{
@@ -119,6 +124,11 @@ var _ = Describe("S7Comm Plugin Unittests", func() {
 			S7Addresses{
 				addresses:      []string{"DB2.X0.0", "DB2.W2", "DB2.X0.0"},
 				expectedErrMsg: []string{"duplicate address", "DB2.X0.0"},
+			}),
+		Entry("DB without block number is rejected",
+			S7Addresses{
+				addresses:      []string{"DB.W0"},
+				expectedErrMsg: []string{"DB requires a block number"},
 			}),
 	)
 
