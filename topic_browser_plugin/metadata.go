@@ -155,7 +155,7 @@ func (t *TopicBrowserProcessor) mergeTopicHeaders(unsTreeId string, topics []*pr
 	var hasCachedHeaders bool
 
 	if stored, ok := t.topicMetadataCache.Get(unsTreeId); ok {
-		cachedHeaders = stored.(map[string]string)
+		cachedHeaders = stored
 		hasCachedHeaders = true
 	}
 
@@ -230,7 +230,7 @@ func (t *TopicBrowserProcessor) updateTopicCacheAndGetStorageMap(unsTreeId strin
 
 	// Check if we already have this exact data cached
 	if stored, ok := t.topicMetadataCache.Get(unsTreeId); ok {
-		cachedHeaders := stored.(map[string]string)
+		cachedHeaders := stored
 
 		// Quick comparison: if maps are identical, skip cache update
 		if maps.Equal(cachedHeaders, headers) {
