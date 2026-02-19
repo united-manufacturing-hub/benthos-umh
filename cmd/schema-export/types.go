@@ -55,5 +55,6 @@ type FieldSpec struct {
 	Examples    []interface{} `json:"examples,omitempty"`
 	Options     []string      `json:"options,omitempty"`
 	Advanced    bool          `json:"advanced,omitempty"`
+	Deprecated  bool          `json:"deprecated,omitempty"`
 	Children    []FieldSpec   `json:"children,omitempty"` // For nested objects/arrays
 }

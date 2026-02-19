@@ -208,10 +208,10 @@ var _ = Describe("extractFields", func() {
 			Expect(fields["field_without_default"].Required).To(BeTrue())
 		})
 
-		It("should set Advanced flag correctly", func() {
-			configObj := map[string]interface{}{
-				"children": []interface{}{
-					map[string]interface{}{
+		It("should set Advanced and Deprecated flags correctly", func() {
+			configObj := map[string]any{
+				"children": []any{
+					map[string]any{
 						"name":        "basic_field",
 						"type":        "string",
 						"kind":        "scalar",
@@ -219,13 +219,14 @@ var _ = Describe("extractFields", func() {
 						"is_optional": false,
 						"is_advanced": false,
 					},
-					map[string]interface{}{
-						"name":        "advanced_field",
-						"type":        "string",
-						"kind":        "scalar",
-						"description": "Advanced field",
-						"is_optional": false,
-						"is_advanced": true,
+					map[string]any{
+						"name":          "advanced_field",
+						"type":          "string",
+						"kind":          "scalar",
+						"description":   "Advanced field",
+						"is_optional":   false,
+						"is_advanced":   true,
+						"is_deprecated": true,
 					},
 				},
 			}
@@ -233,7 +234,9 @@ var _ = Describe("extractFields", func() {
 			fields := extractFields(configObj)
 
 			Expect(fields["basic_field"].Advanced).To(BeFalse())
+			Expect(fields["basic_field"].Deprecated).To(BeFalse())
 			Expect(fields["advanced_field"].Advanced).To(BeTrue())
+			Expect(fields["advanced_field"].Deprecated).To(BeTrue())
 		})
 	})
 
