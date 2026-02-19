@@ -36,7 +36,7 @@ input:
 
 Each address tells benthos-umh **where** to read in the PLC memory and **what data type** to expect. Addresses follow this pattern:
 
-```
+```text
 <area><number>.<type><offset>[.<extra>]
 ```
 
@@ -83,7 +83,7 @@ Breaking this down:
 Two data types require the extra parameter (the part after the second `.`):
 
 **Bit (`X`) — specify which bit (0–7) within the byte:**
-```
+```text
 DB1.X5.2
        │ └─ bit 2 (third bit, counting from 0)
        └─── byte offset 5
@@ -91,7 +91,7 @@ DB1.X5.2
 Bit numbering: `0` is the least significant bit, `7` is the most significant.
 
 **String (`S`) — specify the maximum string length:**
-```
+```text
 DB1.S30.10
         │  └─ max 10 characters
         └──── byte offset 30
