@@ -110,10 +110,10 @@ var _ = Describe("S7Comm Plugin Unittests", func() {
 				addresses:      []string{"PE.X0.0", "PE.X0.1"},
 				expectedErrMsg: nil,
 			}),
-		Entry("non-DB area with block number is rejected",
+		Entry("non-DB area with block number is deprecated but still accepted",
 			S7Addresses{
 				addresses:      []string{"PE2.X0.0"},
-				expectedErrMsg: []string{"does not have sub-blocks", "use PE.X0"},
+				expectedErrMsg: nil,
 			}),
 		Entry("same DBNumber and same Item.Area",
 			S7Addresses{

@@ -118,7 +118,7 @@ var S7CommConfigSpec = service.NewConfigSpec().
 			"protocol limits (max 20 per request) and PDU size. "+
 			"Format: DB<n>.<type><offset>[.extra] for data blocks, AREA.<type><offset>[.extra] for others. "+
 			"Areas: DB (data block, requires block number), MK (marker), PE (input), PA (output), C (counter), T (timer). "+
-			"Types: X (bit), B (byte), W (word), DW (dword), I (int), DI (dint), R (real), DT (datetime), S (string). "+
+			"Types: X (bit), B (byte), W (word), DW (dword), I (int), DI (dint), R (real), DT (datetime), C (char), S (string). "+
 			"For bits (X), add bit number 0-7. For strings (S), add max length.").
 		Examples([]string{"DB1.DW20"}, []string{"DB1.X5.2"}, []string{"MK.W0"}, []string{"PE.W0", "PA.W0"}))
 
@@ -160,6 +160,12 @@ func newS7CommInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		mgr.Logger().Warn("The 'batchMaxSize' field is deprecated and ignored. PDU size is now automatically negotiated with the PLC.")
 	}
 
+	for _, address := range addresses {
+		if warning := deprecatedAddressWarning(address); warning != "" {
+			mgr.Logger().Warn(warning)
+		}
+	}
+
 	parsedAddresses, err := ParseAddresses(addresses)
 	if err != nil {
 		return nil, err
@@ -191,6 +197,26 @@ const (
 	respHeaderSize     = 21
 	respItemHeaderSize = 4
 )
+
+// deprecatedAddressWarning returns a warning if the address uses the old format.
+func deprecatedAddressWarning(address string) string {
+	if !regexAddr.MatchString(address) {
+		return ""
+	}
+	groups := make(map[string]string)
+	for i, name := range regexAddr.SubexpNames()[1:] {
+		groups[name] = regexAddr.FindStringSubmatch(address)[1:][i]
+	}
+	if groups["area"] == "DB" || groups["no"] == "" {
+		return ""
+	}
+	suggestion := fmt.Sprintf("%s.%s%s", groups["area"], groups["type"], groups["start"])
+	if groups["extra"] != "" {
+		suggestion += "." + groups["extra"]
+	}
+	return fmt.Sprintf("address %q uses a deprecated format, use %q instead — block numbers are ignored for %s and will be rejected in a future version",
+		address, suggestion, groups["area"])
+}
 
 func ParseAddresses(addresses []string) ([]S7DataItemWithAddressAndConverter, error) {
 	parsedAddresses := make([]S7DataItemWithAddressAndConverter, 0, len(addresses))
@@ -439,10 +465,6 @@ func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error)
 			return nil, nil, fmt.Errorf("invalid DB number: %w", err)
 		}
 	default:
-		if groups["no"] != "" {
-			return nil, nil, fmt.Errorf("%s does not have sub-blocks, use %s.%s%s instead of %s",
-				areaName, areaName, groups["type"], groups["start"], address)
-		}
 	}
 	start, err := strconv.Atoi(groups["start"])
 	if err != nil {
