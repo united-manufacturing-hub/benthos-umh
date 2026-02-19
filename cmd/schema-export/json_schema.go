@@ -93,6 +93,11 @@ func convertFieldToJSONSchema(field FieldSpec) map[string]interface{} {
 		schema["x-advanced"] = true
 	}
 
+	// Add deprecated flag
+	if field.Deprecated {
+		schema["deprecated"] = true
+	}
+
 	// Handle object arrays with children (e.g., modbus addresses: type="object", kind="array")
 	// Properties go INSIDE items, not at top level
 	if field.Kind == "array" && field.Type == "object" && len(field.Children) > 0 {
