@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	lru "github.com/hashicorp/golang-lru"
+	lru "github.com/hashicorp/golang-lru/v2"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -53,7 +53,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 			// Process the message
 			var err error
-			processor.topicMetadataCache, err = lru.New(1)
+			processor.topicMetadataCache, err = lru.New[string, map[string]string](1)
 			Expect(err).ToNot(HaveOccurred())
 
 			// With short emit intervals, emission happens immediately
@@ -109,7 +109,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 
 			// Process both messages
 			var err error
-			processor.topicMetadataCache, err = lru.New(1)
+			processor.topicMetadataCache, err = lru.New[string, map[string]string](1)
 			Expect(err).ToNot(HaveOccurred())
 
 			// With short emit intervals, emission happens immediately
@@ -304,7 +304,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// Create processor with realistic 1-second interval and proper LRU cache
 			realisticProcessor = NewTopicBrowserProcessor(nil, nil, 100, time.Second, 5, 10)
 			var err error
-			realisticProcessor.topicMetadataCache, err = lru.New(100)
+			realisticProcessor.topicMetadataCache, err = lru.New[string, map[string]string](100)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Reset emission tracking
@@ -452,7 +452,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// Use longer emit interval to ensure messages are buffered rather than immediately emitted
 			overflowProcessor = NewTopicBrowserProcessor(nil, nil, 100, time.Hour, 5, 100)
 			var err error
-			overflowProcessor.topicMetadataCache, err = lru.New(100)
+			overflowProcessor.topicMetadataCache, err = lru.New[string, map[string]string](100)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -607,7 +607,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// Use longer emit interval to ensure messages are buffered rather than immediately emitted
 			safetyProcessor = NewTopicBrowserProcessor(nil, nil, 100, time.Hour, 100, 10)
 			var err error
-			safetyProcessor.topicMetadataCache, err = lru.New(100)
+			safetyProcessor.topicMetadataCache, err = lru.New[string, map[string]string](100)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -753,7 +753,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// Custom processor with monitoring
 			monitorProcessor := NewTopicBrowserProcessor(nil, nil, 100, time.Hour, 100, 5) // smaller buffer for easier testing
 			var err error
-			monitorProcessor.topicMetadataCache, err = lru.New(100)
+			monitorProcessor.topicMetadataCache, err = lru.New[string, map[string]string](100)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Fill to capacity and beyond, monitoring size at each step
@@ -930,7 +930,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 		BeforeEach(func() {
 			edgeProcessor = NewTopicBrowserProcessor(nil, nil, 100, time.Millisecond, 100, 100)
 			var err error
-			edgeProcessor.topicMetadataCache, err = lru.New(100)
+			edgeProcessor.topicMetadataCache, err = lru.New[string, map[string]string](100)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -1059,7 +1059,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			// Use longer interval to avoid timing issues in error recovery tests
 			errorProcessor = NewTopicBrowserProcessor(nil, nil, 100, time.Hour, 100, 100)
 			var err error
-			errorProcessor.topicMetadataCache, err = lru.New(100)
+			errorProcessor.topicMetadataCache, err = lru.New[string, map[string]string](100)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -1336,7 +1336,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 		BeforeEach(func() {
 			processor = NewTopicBrowserProcessor(nil, nil, 100, time.Millisecond, 10, 100)
 			var err error
-			processor.topicMetadataCache, err = lru.New(100)
+			processor.topicMetadataCache, err = lru.New[string, map[string]string](100)
 			Expect(err).ToNot(HaveOccurred())
 		})
 
@@ -1474,7 +1474,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 			By("Creating processor with long emission interval")
 			longProcessor := NewTopicBrowserProcessor(nil, nil, 100, time.Hour, 10, 100)
 			var err error
-			longProcessor.topicMetadataCache, err = lru.New(100)
+			longProcessor.topicMetadataCache, err = lru.New[string, map[string]string](100)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Processing message that should be buffered")
@@ -1508,7 +1508,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				// Use actual 1 second interval (not test milliseconds)
 				realisticProcessor := NewTopicBrowserProcessor(nil, nil, 100, time.Second, 10, 100)
 				var err error
-				realisticProcessor.topicMetadataCache, err = lru.New(100)
+				realisticProcessor.topicMetadataCache, err = lru.New[string, map[string]string](100)
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Sending a message that should be buffered")
@@ -1544,7 +1544,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				// Use 1ms for test speed, but concept is same as 1 second
 				fastProcessor := NewTopicBrowserProcessor(nil, nil, 100, time.Millisecond, 10, 100)
 				var err error
-				fastProcessor.topicMetadataCache, err = lru.New(100)
+				fastProcessor.topicMetadataCache, err = lru.New[string, map[string]string](100)
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Sending a message")
@@ -1575,7 +1575,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				By("Creating processor with medium interval to show timing")
 				mediumProcessor := NewTopicBrowserProcessor(nil, nil, 100, 100*time.Millisecond, 10, 100)
 				var err error
-				mediumProcessor.topicMetadataCache, err = lru.New(100)
+				mediumProcessor.topicMetadataCache, err = lru.New[string, map[string]string](100)
 				Expect(err).NotTo(HaveOccurred())
 
 				By("First message - should be buffered (no ACK)")
@@ -1641,7 +1641,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				// Fast intervals (≤10ms) initialize lastEmitTime to past for immediate emission
 				fastProcessor = NewTopicBrowserProcessor(nil, nil, 100, time.Millisecond, 10, 100)
 				var err error
-				fastProcessor.topicMetadataCache, err = lru.New(100)
+				fastProcessor.topicMetadataCache, err = lru.New[string, map[string]string](100)
 				Expect(err).NotTo(HaveOccurred())
 			})
 
@@ -1709,7 +1709,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				// Realistic intervals (>10ms) initialize lastEmitTime to now for buffered behavior
 				realisticProcessor = NewTopicBrowserProcessor(nil, nil, 100, time.Second, 10, 100)
 				var err error
-				realisticProcessor.topicMetadataCache, err = lru.New(100)
+				realisticProcessor.topicMetadataCache, err = lru.New[string, map[string]string](100)
 				Expect(err).NotTo(HaveOccurred())
 			})
 
@@ -1776,7 +1776,7 @@ var _ = Describe("TopicBrowserProcessor", func() {
 				// Medium intervals (100ms) - buffered behavior but faster than production
 				mediumProcessor = NewTopicBrowserProcessor(nil, nil, 100, 100*time.Millisecond, 10, 100)
 				var err error
-				mediumProcessor.topicMetadataCache, err = lru.New(100)
+				mediumProcessor.topicMetadataCache, err = lru.New[string, map[string]string](100)
 				Expect(err).NotTo(HaveOccurred())
 			})
 

@@ -166,7 +166,7 @@ import (
 	"sync"
 	"time"
 
-	lru "github.com/hashicorp/golang-lru"
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/redpanda-data/benthos/v4/public/service"
 
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
@@ -206,7 +206,7 @@ type TopicBrowserProcessor struct {
 	// topicMetadataCache stores topic metadata for cumulative persistence across messages.
 	// Used to merge new metadata with previously seen metadata for the same topic.
 	// The cache is thread-safe and protected by topicMetadataCacheMutex.
-	topicMetadataCache      *lru.Cache
+	topicMetadataCache      *lru.Cache[string, map[string]string]
 	topicMetadataCacheMutex *sync.Mutex
 
 	// logger provides structured logging capabilities for the processor
@@ -682,7 +682,7 @@ func NewTopicBrowserProcessor(logger *service.Logger, metrics *service.Metrics, 
 	// The LRU cache is used to:
 	// - Deduplicate topics
 	// - Store the latest version of meta-information about that topic
-	l, _ := lru.New(lruSize) // Can only error if size is negative
+	l, _ := lru.New[string, map[string]string](lruSize) // Can only error if size is negative
 
 	// For very short emit intervals (like in tests), initialize lastEmitTime to the past
 	// to allow immediate emission when needed
