@@ -592,6 +592,9 @@ func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBat
 // when applicable, facilitating heartbeat monitoring within the system.
 func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef NodeDef) *service.Message {
 	b, tagType := g.getBytesFromValue(dataValue, nodeDef)
+	if b == nil {
+		return nil
+	}
 	message := service.NewMessage(b)
 
 	// New ones

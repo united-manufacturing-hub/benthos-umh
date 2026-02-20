@@ -736,8 +736,8 @@ func (m *ModbusInput) newTag(item ModbusDataItemWithAddress) (modbusTag, error) 
 	return f, nil
 }
 
-func (m *ModbusInput) Connect(context.Context) error {
-	err := m.Handler.Connect()
+func (m *ModbusInput) Connect(ctx context.Context) error {
+	err := m.Handler.Connect(ctx)
 	if err != nil {
 		m.Log.Errorf("Failed to connect to Modbus device at %s: %v", m.Controller, err)
 		return err
@@ -783,7 +783,7 @@ func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 			continue
 		}
 		m.Log.Debugf("Reading slave %d for %s...", slaveID, m.Controller)
-		msgBatch, err := m.readSlaveData(slaveID, requestSet)
+		msgBatch, err := m.readSlaveData(ctx, slaveID, requestSet)
 		if err != nil {
 			m.Log.Errorf("slave %d encountered an error: %v", slaveID, err)
 
@@ -835,7 +835,7 @@ func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 	}, nil
 }
 
-func (m *ModbusInput) readSlaveData(slaveID byte, requests RequestSet) (service.MessageBatch, error) {
+func (m *ModbusInput) readSlaveData(ctx context.Context, slaveID byte, requests RequestSet) (service.MessageBatch, error) {
 	m.SlaveMutex.Lock()
 	defer m.SlaveMutex.Unlock()
 
@@ -843,7 +843,7 @@ func (m *ModbusInput) readSlaveData(slaveID byte, requests RequestSet) (service.
 	m.CurrentSlaveID = slaveID
 
 	for retry := 0; retry < m.BusyRetries; retry++ {
-		msgBatch, err := m.gatherTags(requests)
+		msgBatch, err := m.gatherTags(ctx, requests)
 		if err == nil {
 			// Reading was successful
 			return msgBatch, nil
@@ -860,7 +860,7 @@ func (m *ModbusInput) readSlaveData(slaveID byte, requests RequestSet) (service.
 		time.Sleep(m.BusyRetriesWait)
 	}
 
-	return m.gatherTags(requests)
+	return m.gatherTags(ctx, requests)
 }
 
 func (m *ModbusInput) createMessageFromValue(item modbusTag, rawValue []byte, registerName string) *service.Message {
@@ -942,20 +942,20 @@ func sanitize(s string) string {
 	return re.ReplaceAllString(s, "_")
 }
 
-func (m *ModbusInput) gatherTags(requests RequestSet) (service.MessageBatch, error) {
-	msgBatchCoil, err := m.gatherRequestsCoil(requests.coil)
+func (m *ModbusInput) gatherTags(ctx context.Context, requests RequestSet) (service.MessageBatch, error) {
+	msgBatchCoil, err := m.gatherRequestsCoil(ctx, requests.coil)
 	if err != nil {
 		return nil, err
 	}
-	msgBatchDiscrete, err := m.gatherRequestsDiscrete(requests.discrete)
+	msgBatchDiscrete, err := m.gatherRequestsDiscrete(ctx, requests.discrete)
 	if err != nil {
 		return nil, err
 	}
-	msgBatchHolding, err := m.gatherRequestsHolding(requests.holding)
+	msgBatchHolding, err := m.gatherRequestsHolding(ctx, requests.holding)
 	if err != nil {
 		return nil, err
 	}
-	msgBatchInput, err := m.gatherRequestsInput(requests.input)
+	msgBatchInput, err := m.gatherRequestsInput(ctx, requests.input)
 	if err != nil {
 		return nil, err
 	}
@@ -967,12 +967,12 @@ func (m *ModbusInput) gatherTags(requests RequestSet) (service.MessageBatch, err
 	return msgBatch, nil
 }
 
-func (m *ModbusInput) gatherRequestsCoil(requests []request) (service.MessageBatch, error) {
+func (m *ModbusInput) gatherRequestsCoil(ctx context.Context, requests []request) (service.MessageBatch, error) {
 	msgs := service.MessageBatch{}
 
 	for _, request := range requests {
 		m.Log.Debugf("trying to read coil@%v[%v]...", request.address, request.length)
-		bytes, err := m.Client.ReadCoils(request.address, request.length)
+		bytes, err := m.Client.ReadCoils(ctx, request.address, request.length)
 		if err != nil {
 			return nil, err
 		}
@@ -1002,12 +1002,12 @@ func (m *ModbusInput) gatherRequestsCoil(requests []request) (service.MessageBat
 	return msgs, nil
 }
 
-func (m *ModbusInput) gatherRequestsDiscrete(requests []request) (service.MessageBatch, error) {
+func (m *ModbusInput) gatherRequestsDiscrete(ctx context.Context, requests []request) (service.MessageBatch, error) {
 	msgs := service.MessageBatch{}
 
 	for _, request := range requests {
 		m.Log.Debugf("trying to read discrete@%v[%v]...", request.address, request.length)
-		bytes, err := m.Client.ReadDiscreteInputs(request.address, request.length)
+		bytes, err := m.Client.ReadDiscreteInputs(ctx, request.address, request.length)
 		if err != nil {
 			return nil, err
 		}
@@ -1037,12 +1037,12 @@ func (m *ModbusInput) gatherRequestsDiscrete(requests []request) (service.Messag
 	return msgs, nil
 }
 
-func (m *ModbusInput) gatherRequestsHolding(requests []request) (service.MessageBatch, error) {
+func (m *ModbusInput) gatherRequestsHolding(ctx context.Context, requests []request) (service.MessageBatch, error) {
 	msgs := service.MessageBatch{}
 
 	for _, request := range requests {
 		m.Log.Debugf("trying to read holding@%v[%v]...", request.address, request.length)
-		bytes, err := m.Client.ReadHoldingRegisters(request.address, request.length)
+		bytes, err := m.Client.ReadHoldingRegisters(ctx, request.address, request.length)
 		if err != nil {
 			return nil, err
 		}
@@ -1072,12 +1072,12 @@ func (m *ModbusInput) gatherRequestsHolding(requests []request) (service.Message
 	return msgs, nil
 }
 
-func (m *ModbusInput) gatherRequestsInput(requests []request) (service.MessageBatch, error) {
+func (m *ModbusInput) gatherRequestsInput(ctx context.Context, requests []request) (service.MessageBatch, error) {
 	msgs := service.MessageBatch{}
 
 	for _, request := range requests {
 		m.Log.Debugf("trying to read input@%v[%v]...", request.address, request.length)
-		bytes, err := m.Client.ReadInputRegisters(request.address, request.length)
+		bytes, err := m.Client.ReadInputRegisters(ctx, request.address, request.length)
 		if err != nil {
 			return nil, err
 		}
