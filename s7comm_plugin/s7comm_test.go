@@ -51,6 +51,9 @@ var _ = Describe("S7Comm Plugin Unittests", func() {
 			tests := []testCase{
 				{"DB2.W0", "0000", uint16(0)},
 				{"DB2.W1", "0001", uint16(1)},
+				// Regression: DT requires an 8-byte buffer.
+				{"DB1.DT0", "2401151030451230",
+					time.Date(2024, 1, 15, 10, 30, 45, 123*1000000, time.UTC).UnixNano()},
 			}
 
 			for _, tc := range tests {
