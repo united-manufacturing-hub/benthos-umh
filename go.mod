@@ -1,6 +1,6 @@
 module github.com/united-manufacturing-hub/benthos-umh
 
-go 1.25.6
+go 1.26
 
 // to compile it on go 1.23
 replace github.com/parquet-go/parquet-go => github.com/parquet-go/parquet-go v0.27.0
