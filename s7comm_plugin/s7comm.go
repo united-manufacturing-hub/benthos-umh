@@ -199,6 +199,8 @@ const (
 )
 
 // deprecatedAddressWarning returns a warning if the address uses the old format.
+// NOTE: when migrating configs the metadata address will change as well, keep that
+// in mind when enforcing deprecation.
 func deprecatedAddressWarning(address string) string {
 	if !regexAddr.MatchString(address) {
 		return ""
