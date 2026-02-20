@@ -431,9 +431,6 @@ func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error)
 		return nil, nil, errors.New("area is missing from address")
 	}
 
-	if _, found := groups["no"]; !found {
-		return nil, nil, errors.New("area index is missing from address")
-	}
 	if _, found := groups["type"]; !found {
 		return nil, nil, errors.New("type is missing from address")
 	}
