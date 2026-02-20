@@ -58,18 +58,18 @@ Breaking this down:
 | `offset` | Byte position within the area | `20` in `DB1.DW20` (starts at byte 20) |
 | `extra` | Required for some types only | Bit number for `X`, string length for `S` |
 
-Only **DB** (Data Blocks) uses the block number. For all other areas there is only a single memory region in the PLC, so no block number is needed.
+Only **DB** (Data Blocks) uses a block number.
 
 ### Memory Areas
 
-| Area | Name | Description | Has blocks? | Example |
-|------|------|-------------|-------------|---------|
-| `DB` | Data Block | Main data storage — most commonly used | Yes — `DB1`, `DB2`, etc. are different blocks | `DB1.DW20` |
-| `PE` | Process Input | Physical inputs (sensors, switches) | No — only one area | `PE.B0` |
-| `PA` | Process Output | Physical outputs (actuators, relays) | No — only one area | `PA.W0` |
-| `MK` | Merker (Flags) | Internal boolean/word flags | No — only one area | `MK.W0` |
-| `C` | Counter | Hardware counters | No — only one area | `C.W0` |
-| `T` | Timer | Hardware timers | No — only one area | `T.W0` |
+| Area | Name | Description | Example |
+|------|------|-------------|---------|
+| `DB` | Data Block | Main data storage — most commonly used | `DB1.DW20` |
+| `PE` | Process Input | Physical inputs (sensors, switches) | `PE.B0` |
+| `PA` | Process Output | Physical outputs (actuators, relays) | `PA.W0` |
+| `MK` | Merker (Flags) | Internal boolean/word flags | `MK.W0` |
+| `C` | Counter | Hardware counters | `C.W0` |
+| `T` | Timer | Hardware timers | `T.W0` |
 
 ### Data Types
 
