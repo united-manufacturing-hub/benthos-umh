@@ -34,34 +34,42 @@ input:
 
 ## Address Format
 
-Each address tells benthos-umh **where** to read in the PLC memory and **what data type** to expect. Addresses follow this pattern:
+Each address tells benthos-umh **where** to read in the PLC memory and **what data type** to expect.
 
+**For Data Blocks** (block number required):
 ```text
-<area><number>.<type><offset>[.<extra>]
+DB<number>.<type><offset>[.<extra>]
 ```
+Example: `DB1.DW20` — double word at offset 20 in data block 1.
+
+**For all other areas** (no block number):
+```text
+<area>.<type><offset>[.<extra>]
+```
+Example: `PE.W0` — input word at offset 0.
 
 Breaking this down:
 
 | Part | What it means | Example |
 |------|---------------|---------|
 | `area` | Memory area in the PLC | `DB`, `MK`, `PE`, `PA`, `C`, `T` |
-| `number` | Which block within the area | `1` in `DB1` (Data Block 1) |
+| `number` | Which data block (DB only) | `1` in `DB1` (Data Block 1) |
 | `type` | Data type to read | `DW`, `X`, `S`, `R`, etc. |
-| `offset` | Byte position within the block | `20` in `DB1.DW20` (starts at byte 20) |
+| `offset` | Byte position within the area | `20` in `DB1.DW20` (starts at byte 20) |
 | `extra` | Required for some types only | Bit number for `X`, string length for `S` |
 
-> **Note:** The block number is only meaningful for `DB` (Data Blocks), where `DB1` and `DB2` are different blocks. For all other areas (`PE`, `PA`, `MK`, `C`, `T`) there is only a single memory region in the PLC — use `0` as the block number (e.g., `PE0`, `MK0`).
+Only **DB** (Data Blocks) uses a block number.
 
 ### Memory Areas
 
 | Area | Name | Description | Example |
 |------|------|-------------|---------|
 | `DB` | Data Block | Main data storage — most commonly used | `DB1.DW20` |
-| `PE` | Process Input | Physical inputs (sensors, switches) | `PE0.B0` |
-| `PA` | Process Output | Physical outputs (actuators, relays) | `PA0.W0` |
-| `MK` | Merker (Flags) | Internal boolean/word flags | `MK0.W0` |
-| `C` | Counter | Hardware counters | `C0.W0` |
-| `T` | Timer | Hardware timers | `T0.W0` |
+| `PE` | Process Input | Physical inputs (sensors, switches) | `PE.B0` |
+| `PA` | Process Output | Physical outputs (actuators, relays) | `PA.W0` |
+| `MK` | Merker (Flags) | Internal boolean/word flags | `MK.W0` |
+| `C` | Counter | Hardware counters | `C.W0` |
+| `T` | Timer | Hardware timers | `T.W0` |
 
 ### Data Types
 
@@ -111,18 +119,18 @@ addresses:
   - "DB1.S28.50"    # String of up to 50 chars starting at offset 28
 
   # Process Inputs (PE) — reading from sensors, switches, etc.
-  - "PE0.X0.0"      # Input bit 0 — e.g., a digital sensor
-  - "PE0.X0.7"      # Input bit 7
-  - "PE0.B2"        # Input byte at offset 2
-  - "PE0.W4"        # Input word at offset 4 — e.g., an analog sensor value
+  - "PE.X0.0"       # Input bit 0 — e.g., a digital sensor
+  - "PE.X0.7"       # Input bit 7
+  - "PE.B2"         # Input byte at offset 2
+  - "PE.W4"         # Input word at offset 4 — e.g., an analog sensor value
 
   # Process Outputs (PA) — reading back output states
-  - "PA0.X0.0"      # Output bit 0 — e.g., a relay state
-  - "PA0.W0"        # Output word at offset 0
+  - "PA.X0.0"       # Output bit 0 — e.g., a relay state
+  - "PA.W0"         # Output word at offset 0
 
   # Merker / Flags (MK)
-  - "MK0.X0.0"      # Merker bit — internal boolean flag
-  - "MK0.W10"       # Merker word at offset 10
+  - "MK.X0.0"       # Merker bit — internal boolean flag
+  - "MK.W10"        # Merker word at offset 10
 ```
 
 ### Mapping from TIA Portal
@@ -137,12 +145,12 @@ When reading addresses from a TIA Portal project, map them like this:
 | `DB1.DBD 100` | `DB1.DW100` | Data double word (unsigned) |
 | `DB1.DBD 100` | `DB1.DI100` | Data double word (signed) — same offset, different type |
 | `DB1.DBD 200` | `DB1.R200` | Data real (float) |
-| `M 0.0` | `MK0.X0.0` | Merker bit |
-| `MW 10` | `MK0.W10` | Merker word |
-| `I 0.0` | `PE0.X0.0` | Input bit |
-| `IW 0` | `PE0.W0` | Input word |
-| `Q 0.0` | `PA0.X0.0` | Output bit |
-| `QW 0` | `PA0.W0` | Output word |
+| `M 0.0` | `MK.X0.0` | Merker bit |
+| `MW 10` | `MK.W10` | Merker word |
+| `I 0.0` | `PE.X0.0` | Input bit |
+| `IW 0` | `PE.W0` | Input word |
+| `Q 0.0` | `PA.X0.0` | Output bit |
+| `QW 0` | `PA.W0` | Output word |
 
 **Output**
 

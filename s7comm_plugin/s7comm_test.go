@@ -51,6 +51,11 @@ var _ = Describe("S7Comm Plugin Unittests", func() {
 			tests := []testCase{
 				{"DB2.W0", "0000", uint16(0)},
 				{"DB2.W1", "0001", uint16(1)},
+				// Regression: DT requires an 8-byte buffer.
+				{
+					"DB1.DT0", "2401151030451230",
+					time.Date(2024, 1, 15, 10, 30, 45, 123*1000000, time.UTC).UnixNano(),
+				},
 			}
 
 			for _, tc := range tests {
@@ -107,7 +112,12 @@ var _ = Describe("S7Comm Plugin Unittests", func() {
 			}),
 		Entry("same Area but different Item.Bit",
 			S7Addresses{
-				addresses:      []string{"PE2.X0.0", "PE2.X0.1"},
+				addresses:      []string{"PE.X0.0", "PE.X0.1"},
+				expectedErrMsg: nil,
+			}),
+		Entry("non-DB area with block number is deprecated but still accepted",
+			S7Addresses{
+				addresses:      []string{"PE2.X0.0"},
 				expectedErrMsg: nil,
 			}),
 		Entry("same DBNumber and same Item.Area",
@@ -119,6 +129,11 @@ var _ = Describe("S7Comm Plugin Unittests", func() {
 			S7Addresses{
 				addresses:      []string{"DB2.X0.0", "DB2.W2", "DB2.X0.0"},
 				expectedErrMsg: []string{"duplicate address", "DB2.X0.0"},
+			}),
+		Entry("DB without block number is rejected",
+			S7Addresses{
+				addresses:      []string{"DB.W0"},
+				expectedErrMsg: []string{"DB requires a block number"},
 			}),
 	)
 

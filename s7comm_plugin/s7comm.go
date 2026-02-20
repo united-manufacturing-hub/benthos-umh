@@ -27,7 +27,7 @@ import (
 	"github.com/robinson/gos7" // gos7 is a Go client library for interacting with Siemens S7 PLCs.
 )
 
-const addressRegexp = `^(?P<area>[A-Z]+)(?P<no>[0-9]+)\.(?P<type>[A-Z]+)(?P<start>[0-9]+)(?:\.(?P<extra>.*))?$`
+const addressRegexp = `^(?P<area>[A-Z]+)(?P<no>[0-9]*)\.(?P<type>[A-Z]+)(?P<start>[0-9]+)(?:\.(?P<extra>.*))?$`
 
 var (
 	regexAddr = regexp.MustCompile(addressRegexp)
@@ -52,7 +52,7 @@ var (
 		"DI": 0x07, // Double integer (32 bit)
 		"R":  0x08, // IEEE 754 real (32 bit)
 		// see https://support.industry.siemens.com/cs/document/36479/date_and_time-format-for-s7-?dti=0&lc=en-DE
-		"DT": 0x0F, // Date and time (7 byte)
+		"DT": 0x0F, // Date and time (8 byte)
 	}
 )
 
@@ -116,11 +116,11 @@ var S7CommConfigSpec = service.NewConfigSpec().
 	Field(service.NewStringListField("addresses").
 		Description("S7 memory addresses to read. Addresses are automatically batched to respect "+
 			"protocol limits (max 20 per request) and PDU size. "+
-			"Format: AREA.TYPE<offset>[.extra]. "+
-			"Areas: DB (data block), MK (marker), PE (input), PA (output). "+
-			"Types: X (bit), B (byte), W (word), DW (dword), I (int), DI (dint), R (real), S (string). "+
+			"Format: DB<n>.<type><offset>[.extra] for data blocks, AREA.<type><offset>[.extra] for others. "+
+			"Areas: DB (data block, requires block number), MK (marker), PE (input), PA (output), C (counter), T (timer). "+
+			"Types: X (bit), B (byte), W (word), DW (dword), I (int), DI (dint), R (real), DT (datetime), C (char), S (string). "+
 			"For bits (X), add bit number 0-7. For strings (S), add max length.").
-		Examples([]string{"DB1.DW20"}, []string{"DB1.X5.2"}, []string{"MK0.W0"}, []string{"PE.W0", "PA.W0"}))
+		Examples([]string{"DB1.DW20"}, []string{"DB1.X5.2"}, []string{"MK.W0"}, []string{"PE.W0", "PA.W0"}))
 
 // newS7CommInput is the constructor function for S7CommInput. It parses the plugin configuration,
 // establishes a connection with the S7 PLC, and initializes the input plugin instance.
@@ -160,6 +160,12 @@ func newS7CommInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		mgr.Logger().Warn("The 'batchMaxSize' field is deprecated and ignored. PDU size is now automatically negotiated with the PLC.")
 	}
 
+	for _, address := range addresses {
+		if warning := deprecatedAddressWarning(address); warning != "" {
+			mgr.Logger().Warn(warning)
+		}
+	}
+
 	parsedAddresses, err := ParseAddresses(addresses)
 	if err != nil {
 		return nil, err
@@ -191,6 +197,28 @@ const (
 	respHeaderSize     = 21
 	respItemHeaderSize = 4
 )
+
+// deprecatedAddressWarning returns a warning if the address uses the old format.
+// NOTE: when migrating configs the metadata address will change as well, keep that
+// in mind when enforcing deprecation.
+func deprecatedAddressWarning(address string) string {
+	if !regexAddr.MatchString(address) {
+		return ""
+	}
+	groups := make(map[string]string)
+	for i, name := range regexAddr.SubexpNames()[1:] {
+		groups[name] = regexAddr.FindStringSubmatch(address)[1:][i]
+	}
+	if groups["area"] == "DB" || groups["no"] == "" {
+		return ""
+	}
+	suggestion := fmt.Sprintf("%s.%s%s", groups["area"], groups["type"], groups["start"])
+	if groups["extra"] != "" {
+		suggestion += "." + groups["extra"]
+	}
+	return fmt.Sprintf("address %q uses a deprecated format, use %q instead — block numbers are ignored for %s and will be rejected in a future version",
+		address, suggestion, groups["area"])
+}
 
 func ParseAddresses(addresses []string) ([]S7DataItemWithAddressAndConverter, error) {
 	parsedAddresses := make([]S7DataItemWithAddressAndConverter, 0, len(addresses))
@@ -403,9 +431,6 @@ func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error)
 		return nil, nil, errors.New("area is missing from address")
 	}
 
-	if _, found := groups["no"]; !found {
-		return nil, nil, errors.New("area index is missing from address")
-	}
 	if _, found := groups["type"]; !found {
 		return nil, nil, errors.New("type is missing from address")
 	}
@@ -423,9 +448,22 @@ func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error)
 	if !found {
 		return nil, nil, errors.New("unknown data type")
 	}
-	areaidx, err := strconv.Atoi(groups["no"])
-	if err != nil {
-		return nil, nil, fmt.Errorf("invalid area index: %w", err)
+	// Only DB uses block numbers; PE, PA, MK, C, T have a single memory region.
+	areaName := groups["area"]
+	var (
+		areaidx int
+		err     error
+	)
+	switch areaName {
+	case "DB":
+		if groups["no"] == "" {
+			return nil, nil, errors.New("DB requires a block number (e.g., DB1.DW20)")
+		}
+		areaidx, err = strconv.Atoi(groups["no"])
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid DB number: %w", err)
+		}
+	default:
 	}
 	start, err := strconv.Atoi(groups["start"])
 	if err != nil {
@@ -480,8 +518,8 @@ func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error)
 		buflen = 2
 	case "DW", "DI", "R": // 32-bit types
 		buflen = 4
-	case "DT": // 7-byte
-		buflen = 7
+	case "DT": // 8-byte
+		buflen = 8
 	case "S":
 		amount = extra
 		// Extra bytes as the first byte is the max-length of the string and
