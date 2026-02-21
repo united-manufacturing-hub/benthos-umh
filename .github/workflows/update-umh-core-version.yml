@@ -121,6 +121,15 @@ jobs:
           cp "schema.json" \
              "ManagementConsole/frontend/src/lib/schemas/benthos/v${VERSION_CLEAN}/monaco.json"
 
+      - name: Update schema discovery test
+        run: |
+          VERSION_CLEAN="${VERSION#v}"
+          TEST_FILE="ManagementConsole/frontend/src/lib/schemas/loaders/versioned-ui-loader.test.ts"
+
+          if ! grep -q "toContain('v${VERSION_CLEAN}')" "$TEST_FILE"; then
+              sed -i "/expect(versions\.length)\.toBeGreaterThanOrEqual/i\\      expect(versions).toContain('v${VERSION_CLEAN}');" "$TEST_FILE"
+          fi
+
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@84ae59a2cdc2258d6fa0732dd66352dddae2a412 # v7
         with:
