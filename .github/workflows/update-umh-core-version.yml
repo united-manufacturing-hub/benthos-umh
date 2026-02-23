@@ -126,8 +126,27 @@ jobs:
           VERSION_CLEAN="${VERSION#v}"
           TEST_FILE="ManagementConsole/frontend/src/lib/schemas/loaders/versioned-ui-loader.test.ts"
 
+<<<<<<< Updated upstream
           if ! grep -q "toContain('v${VERSION_CLEAN}')" "$TEST_FILE"; then
               sed -i "/expect(versions\.length)\.toBeGreaterThanOrEqual/i\\      expect(versions).toContain('v${VERSION_CLEAN}');" "$TEST_FILE"
+=======
+          if [ ! -f "$TEST_FILE" ]; then
+              echo "Missing test file: $TEST_FILE" >&2
+              exit 1
+          fi
+
+          if ! grep -q "expect(versions\.length)\.toBeGreaterThanOrEqual" "$TEST_FILE"; then
+              echo "Anchor line not found in $TEST_FILE" >&2
+              exit 1
+          fi
+
+          if ! grep -q "toContain('v${VERSION_CLEAN}')" "$TEST_FILE"; then
+              sed -i "/expect(versions\.length)\.toBeGreaterThanOrEqual/i\\      expect(versions).toContain('v${VERSION_CLEAN}');" "$TEST_FILE"
+              grep -q "toContain('v${VERSION_CLEAN}')" "$TEST_FILE" || {
+                  echo "Failed to insert version assertion into $TEST_FILE" >&2
+                  exit 1
+              }
+>>>>>>> Stashed changes
           fi
 
       - name: Create Pull Request
