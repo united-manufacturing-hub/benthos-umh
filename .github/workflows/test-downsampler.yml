@@ -31,4 +31,6 @@ jobs:
       - name: Install Ginkgo
         run: go install github.com/onsi/ginkgo/v2/ginkgo
       - name: Test
+        env:
+          TEST_DOWNSAMPLER: 1
         run: make test-downsampler
