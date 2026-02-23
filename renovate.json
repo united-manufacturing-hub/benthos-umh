@@ -51,6 +51,18 @@
       "matchUpdateTypes": ["major"],
       "groupName": "Dockerfile dependencies (major)",
       "groupSlug": "dockerfile-deps-major"
+    },
+    {
+      "description": "Bump go directive in go.mod",
+      "matchDepNames": ["go"],
+      "matchManagers": ["gomod"],
+      "rangeStrategy": "bump"
+    },
+    {
+      "description": "Sync Go version in Dockerfile and go.mod",
+      "matchDepNames": ["golang", "go"],
+      "groupName": "Go version",
+      "groupSlug": "go-version"
     }
   ]
 }
