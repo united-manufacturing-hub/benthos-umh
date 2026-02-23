@@ -13,27 +13,18 @@
 # limitations under the License.
 
 ---
-name: modbus-plc
+name: s7-plc
 
 on:
-  push:
-    branches:
-      - '**'
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-
-concurrency:
-  group: modbus-plc-test
-  cancel-in-progress: true
+  workflow_call:
 
 jobs:
-  go-test-modbus-plc:
+  go-test-s7-plc:
     runs-on: depot-ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Install Ginkgo
@@ -41,37 +32,41 @@ jobs:
       - name: Install Tcping
         run: go install github.com/cloverstd/tcping@v0.1.1
 
-      - name: Check Wago-Modbus port availability
-        id: check_wago
+      - name: Check S7 port availability
+        id: check_s7
         run: |
           set +x
-          ENDPOINT="${{ secrets.TEST_WAGO_MODBUS_ENDPOINT }}"
+          ENDPOINT="${{ secrets.TEST_S7_TCPDEVICE }}"
           if tcping -c 4 -T 1s "$ENDPOINT" | grep -qi "Connected"; then
             echo "available=true" >> "$GITHUB_OUTPUT"
-            echo "TEST_WAGO_MODBUS_ENDPOINT=${{ secrets.TEST_WAGO_MODBUS_ENDPOINT }}" >> "$GITHUB_ENV"
-            echo "using Wago-main device for testing"
+            echo "TEST_S7_TCPDEVICE=${{ secrets.TEST_S7_TCPDEVICE }}" >> "$GITHUB_ENV"
+            echo "using S7-main device for testing"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Check Wago-Modbus-fallback port availability
-        id: check_wago_fallback
-        if: ${{ steps.check_wago.outputs.available  == 'false' }}
+      - name: Check S7-fallback port availability
+        id: check_s7_fallback
+        if: ${{ steps.check_s7.outputs.available  == 'false' }}
         run: |
           set +x
-          ENDPOINT="${{ secrets.TEST_WAGO_MODBUS_ENDPOINT_FALLBACK }}"
+          ENDPOINT="${{ secrets.TEST_S7_TCPDEVICE_FALLBACK }}"
           if tcping -c 4 -T 1s "$ENDPOINT" | grep -qi "Connected"; then
             echo "available=true" >> "$GITHUB_OUTPUT"
-            echo "TEST_WAGO_MODBUS_ENDPOINT=${{ secrets.TEST_WAGO_MODBUS_ENDPOINT_FALLBACK }}" >> "$GITHUB_ENV"
-            echo "using Wago-fallback device for testing"
+            echo "TEST_S7_TCPDEVICE=${{ secrets.TEST_S7_TCPDEVICE_FALLBACK }}" >> "$GITHUB_ENV"
+            echo "using s7-fallback device for testing"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Test
+        env:
+          TEST_S7_RACK: 0
+          TEST_S7_SLOT: 1
+          TEST_S7COMM_UNITTEST: true
         run: |
-          if [ -z "$TEST_WAGO_MODBUS_ENDPOINT" ]; then
-            echo "no Wago device available for testing"
+          if [ -z "$TEST_S7_TCPDEVICE" ]; then
+            echo "no s7 device available for testing"
             exit 1
           fi
-          make test-modbus
+          make test-s7comm

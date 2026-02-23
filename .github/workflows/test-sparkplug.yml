@@ -13,35 +13,23 @@
 # limitations under the License.
 
 ---
-name: ethernetip
+name: Test Sparkplug
 
 on:
-  push:
-    branches:
-      - '**'
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-
-concurrency:
-  group: ethernetip-test
-  cancel-in-progress: true
+  workflow_call:
 
 jobs:
-  go-test-ethernetip:
+  test:
     runs-on: depot-ubuntu-24.04
-    permissions:
-      packages: write
-      contents: read
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Install Ginkgo
         run: go install github.com/onsi/ginkgo/v2/ginkgo
-
       - name: Test
-        run: |
-          make test-eip
+        env:
+          TEST_SPARKPLUG_UNIT: true
+        run: make test-sparkplug
