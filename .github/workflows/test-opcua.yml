@@ -20,7 +20,7 @@ on:
 
 jobs:
   test:
-    name: OPCUA Unittests
+    name: OPCUA Unittest
     runs-on: depot-ubuntu-24.04
     steps:
       - name: Checkout
@@ -34,6 +34,7 @@ jobs:
 
   test-plc:
     name: OPCUA PLCs
+    needs: [test]
     runs-on: depot-ubuntu-24.04
     timeout-minutes: 30
     steps:

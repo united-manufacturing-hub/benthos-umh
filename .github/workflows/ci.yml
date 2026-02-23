@@ -55,43 +55,43 @@ jobs:
           filters: |
             opcua:
               - 'opcua_plugin/**'
-              - '!**/*.md'
+              - '!opcua_plugin/**/*.md'
             modbus:
               - 'modbus_plugin/**'
-              - '!**/*.md'
+              - '!modbus_plugin/**/*.md'
             s7:
               - 's7comm_plugin/**'
-              - '!**/*.md'
+              - '!s7comm_plugin/**/*.md'
             sparkplug:
               - 'sparkplug_plugin/**'
-              - '!**/*.md'
+              - '!sparkplug_plugin/**/*.md'
             eip:
               - 'eip_plugin/**'
-              - '!**/*.md'
+              - '!eip_plugin/**/*.md'
             sensorconnect:
               - 'sensorconnect_plugin/**'
-              - '!**/*.md'
+              - '!sensorconnect_plugin/**/*.md'
             tag_processor:
               - 'tag_processor_plugin/**'
-              - '!**/*.md'
+              - '!tag_processor_plugin/**/*.md'
             topic_browser:
               - 'topic_browser_plugin/**'
-              - '!**/*.md'
+              - '!topic_browser_plugin/**/*.md'
             uns:
               - 'uns_plugin/**'
-              - '!**/*.md'
+              - '!uns_plugin/**/*.md'
             nodered_js:
               - 'nodered_js_plugin/**'
-              - '!**/*.md'
+              - '!nodered_js_plugin/**/*.md'
             stream_processor:
               - 'stream_processor_plugin/**'
-              - '!**/*.md'
+              - '!stream_processor_plugin/**/*.md'
             downsampler:
               - 'downsampler_plugin/**'
-              - '!**/*.md'
+              - '!downsampler_plugin/**/*.md'
             classic_to_core:
               - 'classic_to_core_plugin/**'
-              - '!**/*.md'
+              - '!classic_to_core_plugin/**/*.md'
             pkg:
               - 'pkg/**'
             cmd:
