@@ -19,7 +19,8 @@ on:
   workflow_call:
 
 jobs:
-  go-test-opcua-unit:
+  test:
+    name: OPCUA Unittests
     runs-on: depot-ubuntu-24.04
     steps:
       - name: Checkout
@@ -31,7 +32,8 @@ jobs:
       - name: Run OPC UA Unit Tests
         run: make test-unit-opc
 
-  go-test-opcua-plc:
+  test-plc:
+    name: OPCUA PLCs
     runs-on: depot-ubuntu-24.04
     permissions:
       packages: write
@@ -174,8 +176,9 @@ jobs:
         run: |
           docker stop $OPCSIM_CONTAINER || true
           docker ps
-  go-test-kepware-plc:
-    needs: [go-test-opcua-plc]
+  test-kepware:
+    name: OPCUA Kepware
+    needs: [test-plc]
     runs-on: depot-ubuntu-24.04
     permissions:
       packages: write
