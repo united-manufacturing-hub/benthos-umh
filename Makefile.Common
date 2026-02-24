@@ -74,6 +74,9 @@ $(GOFUMPT): $(TOOLS_BIN_DIR)
 $(GCI): $(TOOLS_BIN_DIR)
 	@GOBIN=$(TOOLS_BIN_DIR) go install $(GCI_URL)
 
+.PHONY: install-license-eye
+install-license-eye: $(LICENSE_EYE)
+
 .PHONY: install-tools
 install-tools: $(LICENSE_EYE) $(LINT) $(NILAWAY) $(DOT) $(GOFUMPT) $(GCI)
 
