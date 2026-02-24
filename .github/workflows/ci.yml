@@ -273,6 +273,7 @@ jobs:
 
   result:
     needs:
+      - detect-changes
       - license-eye
       - lint
       - test-opcua
@@ -294,6 +295,7 @@ jobs:
       - name: Check result
         run: |
           for result in \
+            "${{ needs.detect-changes.result }}" \
             "${{ needs.license-eye.result }}" \
             "${{ needs.lint.result }}" \
             "${{ needs.test-opcua.result }}" \
