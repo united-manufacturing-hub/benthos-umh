@@ -125,7 +125,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/golangci-lint
-          key: golangci-lint-${{ runner.os }}-${{ hashFiles('.golangci.yml', 'go.sum') }}
+          key: golangci-lint-${{ runner.os }}-${{ hashFiles('.golangci.yaml', 'go.sum') }}
           restore-keys: golangci-lint-${{ runner.os }}-
       - name: Lint
         run: make lint
