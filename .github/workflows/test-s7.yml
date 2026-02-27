@@ -38,6 +38,9 @@ jobs:
   test-plc:
     name: S7 PLC
     needs: [test]
+    concurrency:
+      group: s7-plc
+      cancel-in-progress: false
     runs-on: depot-ubuntu-24.04
     timeout-minutes: 30
     steps:
