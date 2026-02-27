@@ -21,9 +21,12 @@ on:
   pull_request:
     branches: [master]
 
+permissions:
+  contents: read
+
 jobs:
   detect-changes:
-    runs-on: depot-ubuntu-24.04
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: read
@@ -46,7 +49,7 @@ jobs:
       gomod: ${{ steps.filter.outputs.gomod }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Detect changes
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
         id: filter
@@ -104,7 +107,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Install license-eye
         run: make install-license-eye
       - name: License Eye Header
@@ -114,15 +117,13 @@ jobs:
     needs: license-eye
     runs-on: depot-ubuntu-24.04-4
     timeout-minutes: 10
-    permissions:
-      contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Cache golangci-lint
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/golangci-lint
@@ -299,31 +300,7 @@ jobs:
       - test-downsampler
       - test-classic-to-core
     if: always()
-    runs-on: depot-ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
       - name: Check result
-        run: |
-          for result in \
-            "${{ needs.detect-changes.result }}" \
-            "${{ needs.license-eye.result }}" \
-            "${{ needs.lint.result }}" \
-            "${{ needs.test-opcua.result }}" \
-            "${{ needs.test-modbus.result }}" \
-            "${{ needs.test-s7.result }}" \
-            "${{ needs.test-sparkplug.result }}" \
-            "${{ needs.test-eip.result }}" \
-            "${{ needs.test-sensorconnect.result }}" \
-            "${{ needs.test-tag-processor.result }}" \
-            "${{ needs.test-topic-browser.result }}" \
-            "${{ needs.test-uns.result }}" \
-            "${{ needs.test-nodered-js.result }}" \
-            "${{ needs.test-stream-processor.result }}" \
-            "${{ needs.test-downsampler.result }}" \
-            "${{ needs.test-classic-to-core.result }}" \
-          ; do
-            if [[ "$result" == "failure" || "$result" == "cancelled" ]]; then
-              echo "CI failed: job result was $result"
-              exit 1
-            fi
-          done
-          echo "CI passed (all jobs succeeded or were skipped)"
+        run: echo '${{ toJSON(needs) }}' | jq -e 'to_entries | all(.value.result == "success" or .value.result == "skipped")'
