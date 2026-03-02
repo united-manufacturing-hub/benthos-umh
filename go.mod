@@ -3,7 +3,7 @@ module github.com/united-manufacturing-hub/benthos-umh
 go 1.26
 
 // to compile it on go 1.23
-replace github.com/parquet-go/parquet-go => github.com/parquet-go/parquet-go v0.27.0
+replace github.com/parquet-go/parquet-go => github.com/parquet-go/parquet-go v0.28.0
 
 // Set the GODEBUG environment variable to allow parsing of certificates with negative serial numbers.
 // This is necessary for backwards compatibility with some OPC UA servers (e.g., Kepware) that may issue
@@ -38,19 +38,19 @@ require (
 	github.com/gopcua/opcua v0.8.0
 	github.com/grid-x/modbus v0.0.0-20260122103929-e192bc287e6e
 	github.com/hashicorp/golang-lru/v2 v2.0.7
-	github.com/kaptinlin/jsonschema v0.7.1
+	github.com/kaptinlin/jsonschema v0.7.3
 	github.com/prometheus/client_golang v1.23.2
 	github.com/redpanda-data/benthos/v4 v4.65.1
 	github.com/redpanda-data/connect/public/bundle/free/v4 v4.78.1
 	github.com/robinson/gos7 v0.0.0-20241205073040-7ea1d6fb9d20
 	github.com/testcontainers/testcontainers-go v0.40.0
 	github.com/testcontainers/testcontainers-go/modules/redpanda v0.40.0
-	github.com/twmb/franz-go v1.20.6
+	github.com/twmb/franz-go v1.20.7
 	github.com/twmb/franz-go/pkg/kadm v1.17.2
 	golang.org/x/crypto v0.48.0
 	golang.org/x/sys v0.41.0
 	google.golang.org/protobuf v1.36.11
-	k8s.io/apimachinery v0.35.1
+	k8s.io/apimachinery v0.35.2
 )
 
 require (
@@ -310,9 +310,9 @@ require (
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/jzelinskie/stringz v0.0.3 // indirect
-	github.com/kaptinlin/go-i18n v0.2.8 // indirect
-	github.com/kaptinlin/jsonpointer v0.4.15 // indirect
-	github.com/kaptinlin/messageformat-go v0.4.16 // indirect
+	github.com/kaptinlin/go-i18n v0.2.11 // indirect
+	github.com/kaptinlin/jsonpointer v0.4.16 // indirect
+	github.com/kaptinlin/messageformat-go v0.4.18 // indirect
 	github.com/kevinburke/ssh_config v1.4.0 // indirect
 	github.com/klauspost/asmfmt v1.3.2 // indirect
 	github.com/klauspost/compress v1.18.4 // indirect
