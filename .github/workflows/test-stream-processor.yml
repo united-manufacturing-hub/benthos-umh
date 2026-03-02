@@ -13,35 +13,22 @@
 # limitations under the License.
 
 ---
-name: ethernetip
+name: Test Stream Processor
 
 on:
-  push:
-    branches:
-      - '**'
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-
-concurrency:
-  group: ethernetip-test
-  cancel-in-progress: true
+  workflow_call:
 
 jobs:
-  go-test-ethernetip:
+  test:
+    name: Stream Processor Unittest
     runs-on: depot-ubuntu-24.04
-    permissions:
-      packages: write
-      contents: read
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Install Ginkgo
         run: go install github.com/onsi/ginkgo/v2/ginkgo
-
       - name: Test
-        run: |
-          make test-eip
+        run: make test-stream-processor
