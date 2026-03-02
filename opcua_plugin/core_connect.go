@@ -616,7 +616,7 @@ func (g *OPCUAConnection) logCertificateInfo(certBytes []byte) {
 	// Parse the DER-format certificate
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		g.Log.Errorf("Failed to parse certificate: " + err.Error())
+		g.Log.Errorf("Failed to parse certificate: %v", err)
 		return
 	}
 
