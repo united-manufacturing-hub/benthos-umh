@@ -55,7 +55,7 @@ func (s *SensorConnectInput) GetConnectedDevices(ctx context.Context) ([]Connect
 	for key, value := range response {
 		uri, err := extractUri(key)
 		if err != nil {
-			s.logger.Warnf(err.Error())
+			s.logger.Warnf("%v", err)
 			continue
 		}
 
@@ -105,7 +105,7 @@ func (s *SensorConnectInput) GetConnectedDevices(ctx context.Context) ([]Connect
 
 		btAdapter, err := extractBluetoothAdapter(uri)
 		if err != nil {
-			s.logger.Debugf(err.Error())
+			s.logger.Debugf("%v", err)
 			deviceInfo.BtAdapter = "none"
 		} else {
 			deviceInfo.BtAdapter = btAdapter
@@ -113,7 +113,7 @@ func (s *SensorConnectInput) GetConnectedDevices(ctx context.Context) ([]Connect
 
 		port, err := extractPort(uri)
 		if err != nil {
-			s.logger.Errorf(err.Error())
+			s.logger.Errorf("%v", err)
 		} else {
 			deviceInfo.Port = port
 		}

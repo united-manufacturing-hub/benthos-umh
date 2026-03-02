@@ -3,7 +3,7 @@
   "extends": ["config:recommended"],
   "commitMessagePrefix": "[renovate]chore(deps):",
   "enabledManagers": ["dockerfile", "gomod"],
-  "postUpdateOptions": ["gomodTidy"],
+  "postUpdateOptions": ["gomodTidy", "gomodUpdateImportPaths"],
   "minimumReleaseAge": "7 days",
   "timezone": "Europe/Berlin",
   "schedule": ["* * * * 0"],
