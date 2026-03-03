@@ -129,7 +129,7 @@ input:
 |-----------|----------|---------|-------------|
 | **targetIP** | Yes | — | IP address of the Beckhoff PLC |
 | **targetAMS** | Yes | — | AMS net ID of the target |
-| **symbols** | Yes | — | List of symbols to read from (see [Symbol Format](#symbol-format) below) |
+| **symbols** | Yes | — | List of symbols to read from (see [Symbols Format](#symbols-format) below) |
 | **targetPort** | No | `48898` | Port of the target internal gateway |
 | **runtimePort** | No | `801` | Runtime port of PLC system, 800–899. TwinCAT 2 uses 800–850 (usually 801), TwinCAT 3 uses 851–899 (usually 851) |
 | **hostAMS** | No | `auto` | Host AMS net ID. Usually the IP address + `.1.1`. Must match a route on the PLC. `auto` derives it from `routeHostAddress` if set, otherwise from the outbound connection's local IP |
@@ -145,6 +145,8 @@ input:
 | **routeUsername** | No | `""` | Username for automatic UDP route registration on the PLC. If set, a route is registered before connecting (see [Route Registration](#route-registration)) |
 | **routePassword** | No | `""` | Password for automatic UDP route registration on the PLC |
 | **routeHostAddress** | No | `""` | IP address the PLC associates with the route. Required in Docker bridge networking (set to Docker host's IP). When `hostAMS` is `auto`, the AMS NetID is also derived from this. Auto-detected from outbound connection if empty (only correct with `host_network` or macvlan) |
+
+##### Symbols Format
 
 Symbols are specified in the format `function.variable:maxDelay:cycleTime`:
 - `MAIN.MYBOOL` — variable in the main program, uses default maxDelay and cycleTime
