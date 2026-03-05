@@ -8,16 +8,16 @@ This plugin is community supported only. If you encounter any issues, check out 
 ```yaml
 input:
   ads:
-    cycleTime: 100                    # Optional, default: 1000
+    cycleTime: 1000                   # Optional, default: 1000
     hostAMS: auto                     # Optional, default: auto
     intervalTime: 1000                # Optional, default: 1000
-    logLevel: error                   # Optional, default: disabled
+    logLevel: disabled                # Optional, default: disabled
     maxDelay: 100                     # Optional, default: 100
     readType: notification            # Optional, default: notification
     routeHostAddress: 192.168.1.123   # Optional, auto detected. Usually required when using docker.
     routePassword: "1"                # Optional, default: "". Required if using automatic UDP route registration on the PLC
     routeUsername: Administrator      # Optional, default: "". Required if using automatic UDP route registration on the PLC
-    runtimePort: 851                  # Optional, default: 801 for old TwinCAT 2
+    runtimePort: 801                  # Optional, default: 801 for old TwinCAT 2
     symbols:
       - MAIN.MYTRIGGER:0:10           # variable in the main program with 0ms max delay and 10ms cycle time
       - MAIN.myInt                    # variable in the main program, uses default maxDelay and cycleTime
@@ -25,7 +25,7 @@ input:
     targetAMS: 5.3.12.111.1.1         # Required, AMS net ID of the target.
     targetIP: 192.168.3.70            # Required, IP address of the Beckhoff PLC
     targetPort: 48898                 # Optional, default: 48898
-    transmissionMode: serverOnChange2 # Optional, default: serverOnChange
+    transmissionMode: serverOnChange  # Optional, default: serverOnChange
     upperCase: true                   # Optional, default: true
 ```
 ```yaml
