@@ -85,7 +85,7 @@ type ModbusInput struct {
 
 	// Standard
 	Controller       string        // e.g., "tcp://localhost:502"
-	TransmissionMode string        // Can be "TCP" (default), "RTUOverTCP", "ASCIIOverTCP"\
+	TransmissionMode string        // Can be "TCP" (default), "RTUoverTCP", "ASCIIoverTCP"\
 	SlaveIDs         []byte        // This allows to fetch the same Addresses from different SlaveIDs
 	Timeout          time.Duration // Timeout for the connection
 	BusyRetries      int           // Maximum number of retries when the device is busy
@@ -170,23 +170,23 @@ var errAddressOverflow = errors.New("address overflow")
 var ModbusConfigSpec = service.NewConfigSpec().
 	Summary("Creates an input that reads data from Modbus devices. Created & maintained by the United Manufacturing Hub. About us: www.umh.app").
 	Description("This input plugin enables Benthos to read data directly from Modbus devices using the Modbus protocol.").
-	Field(service.NewDurationField("timeBetweenReads").Description("The time between two reads of a Modbus device. Useful if you want to read the device every x seconds. Not to be confused with TimeBetweenRequests.").Default("1s")).
-	Field(service.NewStringField("controller").Description("The Modbus controller address, e.g., 'tcp://localhost:502'").Default("tcp://localhost:502")).
-	Field(service.NewStringField("transmissionMode").Description("Transmission mode: 'TCP', 'RTUOverTCP', or 'ASCIIOverTCP'").Default("TCP")).
+	Field(service.NewDurationField("timeBetweenReads").Description("The time between two reads of a Modbus device. Useful if you want to read the device every x seconds. Not to be confused with TimeBetweenRequests.").Default("1s").Advanced()).
+	Field(service.NewStringField("controller").Description("The Modbus controller address, e.g., 'tcp://localhost:502'").Default("tcp://localhost:502").Advanced()).
+	Field(service.NewStringField("transmissionMode").Description("Transmission mode: 'TCP', 'RTUoverTCP', or 'ASCIIoverTCP'").Default("TCP").Advanced()).
 	Field(service.NewIntListField("slaveIDs").Description("Slave IDs of the Modbus devices to read from 1-255").Default([]int{1})).
-	Field(service.NewDurationField("timeout").Description("").Default("1s")).
-	Field(service.NewIntField("busyRetries").Description("Maximum number of retries when the device is busy").Default(3)).
-	Field(service.NewDurationField("busyRetriesWait").Description("Time to wait between retries when the device is busy").Default("200ms")).
-	Field(service.NewStringField("optimization").Description("Request optimization algorithm: 'none' or 'max_insert'").Default("none")).
-	Field(service.NewIntField("optimizationMaxRegisterFill").Description("Maximum number of registers to insert for optimization").Default(50)).
-	Field(service.NewStringField("byteOrder").Description("Byte order: 'ABCD', 'DCBA', 'BADC', or 'CDAB'").Default("ABCD")).
+	Field(service.NewDurationField("timeout").Description("").Default("1s").Advanced()).
+	Field(service.NewIntField("busyRetries").Description("Maximum number of retries when the device is busy").Default(3).Advanced()).
+	Field(service.NewDurationField("busyRetriesWait").Description("Time to wait between retries when the device is busy").Default("200ms").Advanced()).
+	Field(service.NewStringField("optimization").Description("Request optimization algorithm: 'none' or 'max_insert'").Default("none").Advanced()).
+	Field(service.NewIntField("optimizationMaxRegisterFill").Description("Maximum number of registers to insert for optimization").Default(50).Advanced()).
+	Field(service.NewStringField("byteOrder").Description("Byte order: 'ABCD', 'DCBA', 'BADC', or 'CDAB'").Default("ABCD").Advanced()).
 	Field(service.NewObjectField("workarounds",
 		service.NewDurationField("pauseAfterConnect").Description("Pause after connect to delay the first request").Default("0s"),
 		service.NewBoolField("oneRequestPerField").Description("Send each field in a separate request").Default(false),
 		service.NewBoolField("readCoilsStartingAtZero").Description("Read coils starting at address 0 instead of 1").Default(false),
 		service.NewStringField("stringRegisterLocation").Description("String byte-location in registers: 'lower', 'upper', or empty for both").Default(""),
 		service.NewDurationField("timeBetweenRequests").Description("TimeBetweenRequests is the time between two requests to the same device. Useful to avoid flooding the device. Not to be confused with TimeBetweenReads.").Default("0s")).
-		Description("Modbus workarounds. Required by some devices to work correctly. Should be left alone by default and must not be changed unless necessary.")).
+		Description("Modbus workarounds. Required by some devices to work correctly. Should be left alone by default and must not be changed unless necessary.").Advanced()).
 	Field(service.NewObjectListField("addresses",
 		service.NewStringField("name").Description("Field name"),
 		service.NewStringField("register").Description("Register type: 'coil', 'discrete', 'holding', or 'input'").Default("holding"),
