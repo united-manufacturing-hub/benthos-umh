@@ -174,7 +174,7 @@ func convertFieldToJSONSchema(field FieldSpec) map[string]interface{} {
 	}
 
 	// Handle array fields where type="array" (not kind="array")
-	if field.Type == "array" && len(field.Children) > 0 {
+	if field.Type == "array" && field.Kind != "map" && len(field.Children) > 0 {
 		// For arrays, the first child defines the items schema
 		schema["items"] = convertFieldToJSONSchema(field.Children[0])
 	}
