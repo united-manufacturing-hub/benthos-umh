@@ -260,6 +260,39 @@ var _ = Describe("JSON Schema Generator", func() {
 		})
 	})
 
+	Context("map kind handling", func() {
+		It("should convert kind=map to object with additionalProperties", func() {
+			field := FieldSpec{Name: "headers", Type: "string", Kind: "map"}
+			result := convertFieldToJSONSchema(field)
+			Expect(result["type"]).To(Equal("object"))
+			additionalProps, ok := result["additionalProperties"].(map[string]any)
+			Expect(ok).To(BeTrue())
+			Expect(additionalProps["type"]).To(Equal("string"))
+		})
+	})
+
+	Context("component reference types", func() {
+		DescribeTable("should map to object",
+			func(benthosType string) {
+				field := FieldSpec{Name: "testField", Type: benthosType}
+				result := convertFieldToJSONSchema(field)
+				Expect(result["type"]).To(Equal("object"))
+			},
+			Entry("input", "input"),
+			Entry("output", "output"),
+			Entry("processor", "processor"),
+			Entry("scanner", "scanner"),
+		)
+	})
+
+	Context("unknown type handling", func() {
+		It("should return empty schema for unknown type", func() {
+			field := FieldSpec{Name: "claims", Type: "unknown"}
+			result := convertFieldToJSONSchema(field)
+			Expect(result).NotTo(HaveKey("type"))
+		})
+	})
+
 	Context("convertPluginToJSONSchema (modbus-like complex plugin)", func() {
 		It("should convert a modbus-like plugin with mixed field types", func() {
 			plugin := PluginSpec{

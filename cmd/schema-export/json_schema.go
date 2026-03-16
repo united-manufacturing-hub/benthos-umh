@@ -42,6 +42,8 @@ func mapBenthosBaseType(t string) string {
 		return "object"
 	case "array":
 		return "array"
+	case "input", "output", "processor", "scanner":
+		return "object"
 	default:
 		// Default to string for unknown types
 		return "string"
@@ -51,20 +53,43 @@ func mapBenthosBaseType(t string) string {
 // benthosTypeToJSONSchemaType converts a Benthos type to JSON Schema type.
 // It handles the distinction between "type" (element type) and "kind" (container type).
 // For arrays, Benthos reports kind="array" with type being the element type (e.g., "int", "string", "object").
+// For maps, Benthos reports kind="map" with type being the value type (e.g., "string" for headers).
+// For unknown types, returns an empty schema (unconstrained — any JSON value is valid).
 func benthosTypeToJSONSchemaType(benthosType string, kind string) map[string]interface{} {
 	result := make(map[string]interface{})
 
-	// Check if this is an array container
-	if kind == "array" {
-		result["type"] = "array"
-		// Set items type based on the element type
-		result["items"] = map[string]interface{}{
-			"type": mapBenthosBaseType(benthosType),
+	// Check if this is a map container (e.g., http_client.headers)
+	if kind == "map" {
+		result["type"] = "object"
+		if benthosType == "unknown" {
+			result["additionalProperties"] = map[string]any{}
+		} else {
+			result["additionalProperties"] = map[string]interface{}{
+				"type": mapBenthosBaseType(benthosType),
+			}
 		}
 		return result
 	}
 
-	// Non-array: use the base type directly
+	// Check if this is an array container
+	if kind == "array" {
+		result["type"] = "array"
+		if benthosType == "unknown" {
+			result["items"] = map[string]any{}
+		} else {
+			result["items"] = map[string]interface{}{
+				"type": mapBenthosBaseType(benthosType),
+			}
+		}
+		return result
+	}
+
+	// Handle "unknown" type — any JSON value is valid (empty schema = unconstrained)
+	if benthosType == "unknown" {
+		return result
+	}
+
+	// Non-array, non-map: use the base type directly
 	result["type"] = mapBenthosBaseType(benthosType)
 	return result
 }
@@ -109,7 +134,7 @@ func convertFieldToJSONSchema(field FieldSpec) map[string]interface{} {
 		// Get the items map and add properties to it
 		items, ok := schema["items"].(map[string]interface{})
 		if !ok {
-			items = map[string]interface{}{}
+			items = map[string]any{}
 			schema["items"] = items
 		}
 		items["properties"] = properties
@@ -129,8 +154,8 @@ func convertFieldToJSONSchema(field FieldSpec) map[string]interface{} {
 		return schema
 	}
 
-	// Handle nested object fields (non-array objects with children)
-	if field.Type == "object" && field.Kind != "array" && len(field.Children) > 0 {
+	// Handle nested object fields (non-array, non-map objects with children)
+	if field.Type == "object" && field.Kind != "array" && field.Kind != "map" && len(field.Children) > 0 {
 		properties := make(map[string]interface{})
 		for _, child := range field.Children {
 			properties[child.Name] = convertFieldToJSONSchema(child)
