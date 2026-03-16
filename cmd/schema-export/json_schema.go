@@ -30,23 +30,23 @@ func validateFormat(format string) error {
 }
 
 // mapBenthosBaseType converts a Benthos type string to JSON Schema type string.
-func mapBenthosBaseType(t string) string {
+// Returns the mapped type and whether the type was recognized.
+func mapBenthosBaseType(t string) (string, bool) {
 	switch t {
 	case "string":
-		return "string"
+		return "string", true
 	case "int", "float", "number":
-		return "number"
+		return "number", true
 	case "bool":
-		return "boolean"
+		return "boolean", true
 	case "object":
-		return "object"
+		return "object", true
 	case "array":
-		return "array"
+		return "array", true
 	case "input", "output", "processor", "scanner":
-		return "object"
+		return "object", true
 	default:
-		// Default to string for unknown types
-		return "string"
+		return "", false
 	}
 }
 
@@ -54,43 +54,40 @@ func mapBenthosBaseType(t string) string {
 // It handles the distinction between "type" (element type) and "kind" (container type).
 // For arrays, Benthos reports kind="array" with type being the element type (e.g., "int", "string", "object").
 // For maps, Benthos reports kind="map" with type being the value type (e.g., "string" for headers).
-// For unknown types, returns an empty schema (unconstrained — any JSON value is valid).
+// For unrecognized types, returns an empty schema (unconstrained — any JSON value is valid).
 func benthosTypeToJSONSchemaType(benthosType string, kind string) map[string]interface{} {
 	result := make(map[string]interface{})
+	baseType, known := mapBenthosBaseType(benthosType)
 
-	// Check if this is a map container (e.g., http_client.headers)
 	if kind == "map" {
 		result["type"] = "object"
-		if benthosType == "unknown" {
+		if !known {
 			result["additionalProperties"] = map[string]any{}
 		} else {
-			result["additionalProperties"] = map[string]interface{}{
-				"type": mapBenthosBaseType(benthosType),
+			result["additionalProperties"] = map[string]any{
+				"type": baseType,
 			}
 		}
 		return result
 	}
 
-	// Check if this is an array container
 	if kind == "array" {
 		result["type"] = "array"
-		if benthosType == "unknown" {
+		if !known {
 			result["items"] = map[string]any{}
 		} else {
-			result["items"] = map[string]interface{}{
-				"type": mapBenthosBaseType(benthosType),
+			result["items"] = map[string]any{
+				"type": baseType,
 			}
 		}
 		return result
 	}
 
-	// Handle "unknown" type — any JSON value is valid (empty schema = unconstrained)
-	if benthosType == "unknown" {
+	if !known {
 		return result
 	}
 
-	// Non-array, non-map: use the base type directly
-	result["type"] = mapBenthosBaseType(benthosType)
+	result["type"] = baseType
 	return result
 }
 
