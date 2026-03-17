@@ -271,6 +271,28 @@ var _ = Describe("JSON Schema Generator", func() {
 		})
 	})
 
+	Context("map kind with unrecognized type", func() {
+		It("should produce unconstrained additionalProperties", func() {
+			field := FieldSpec{Name: "meta", Type: "unknown_thing", Kind: "map"}
+			result := convertFieldToJSONSchema(field)
+			Expect(result["type"]).To(Equal("object"))
+			additionalProps, ok := result["additionalProperties"].(map[string]any)
+			Expect(ok).To(BeTrue())
+			Expect(additionalProps).To(BeEmpty())
+		})
+	})
+
+	Context("array kind with unrecognized type", func() {
+		It("should produce unconstrained items", func() {
+			field := FieldSpec{Name: "params", Type: "unknown_thing", Kind: "array"}
+			result := convertFieldToJSONSchema(field)
+			Expect(result["type"]).To(Equal("array"))
+			items, ok := result["items"].(map[string]any)
+			Expect(ok).To(BeTrue())
+			Expect(items).To(BeEmpty())
+		})
+	})
+
 	Context("component reference types", func() {
 		DescribeTable("should map to object",
 			func(benthosType string) {

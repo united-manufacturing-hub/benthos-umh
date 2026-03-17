@@ -16,6 +16,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 )
 
 // validateFormat validates the format flag value
@@ -30,6 +31,8 @@ func validateFormat(format string) error {
 }
 
 // mapBenthosBaseType converts a Benthos type string to JSON Schema type string.
+// Handles primitive types, structural types (object, array), and component
+// reference types (input, output, processor, scanner) which map to "object".
 // Returns the mapped type and whether the type was recognized.
 func mapBenthosBaseType(t string) (string, bool) {
 	switch t {
@@ -46,6 +49,7 @@ func mapBenthosBaseType(t string) (string, bool) {
 	case "input", "output", "processor", "scanner":
 		return "object", true
 	default:
+		fmt.Fprintf(os.Stderr, "warning: unrecognized Benthos type %q, producing unconstrained schema\n", t)
 		return "", false
 	}
 }
