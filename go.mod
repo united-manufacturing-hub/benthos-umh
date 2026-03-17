@@ -27,7 +27,7 @@ require (
 )
 
 require (
-	github.com/RuneRoven/benthosADS v1.0.7
+	github.com/RuneRoven/benthosADS v1.0.8
 	github.com/RuneRoven/benthosAlarm v1.0.0
 	github.com/RuneRoven/benthosSMTP v0.0.1
 	github.com/cespare/xxhash/v2 v2.3.0
