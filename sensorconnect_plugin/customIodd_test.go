@@ -37,11 +37,11 @@ var _ = Describe("FetchAndStoreCustomIODD", func() {
 	)
 
 	BeforeEach(func() {
-		endpoint := os.Getenv("TEST_DEBUG_IFM_ENDPOINT")
+		testActive := os.Getenv("TEST_SENSORCONNECT_UNITTEST")
 
 		// Check if environment variables are set
-		if endpoint == "" {
-			Skip("Skipping test: environment variables not set")
+		if testActive == "" {
+			Skip("Skipping test: environment variables are not set")
 			return
 		}
 
