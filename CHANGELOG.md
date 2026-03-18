@@ -1,39 +1,15 @@
 # Changelog
 
-All notable changes to benthos-umh will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
 ## [Unreleased]
 
-### Added
+## [0.12.0]
 
-- **`modbus`**: New `unifiedAddresses` field for configuring Modbus addresses as single strings instead of multi-field objects. Format: `name.register.address.type[:key=value]*` (e.g. `temperature.holding.100.INT16:scale=0.1`). This aligns Modbus with S7comm and OPC UA which already use single-string address formats. The legacy `addresses` object list is deprecated but continues to work. Both fields are mutually exclusive.
-- **`modbus`**: New `modbus_tag_unified_address` metadata field on output messages containing the unified dotted address string.
+### Breaking Changes
 
-### Changed
+- **S7comm address format updated for non-Data Block memory areas** - PE, PA, MK, C, and T areas no longer require a block number. Write `PE.X0.0` instead of `PE0.X0.0`. Data Block addresses (`DB1.DW20`) are unchanged. The old format needs to be updated to remove the block number
 
-- **[BREAKING]** `uns_input`: Kafka headers now stored as strings in Benthos metadata by default instead of byte arrays. This fixes the issue where `msg.meta.location_path` appeared as ASCII byte array `[69,103,111,...]` in JavaScript processors instead of human-readable string `"enterprise.site..."`.
+### Fixes
 
-  **Migration:** If you have existing flows with workarounds like `String.fromCharCode(...msg.meta.location_path)`, you have two options:
-
-  1. **Keep legacy behavior (no code changes needed):**
-     ```yaml
-     input:
-       uns:
-         metadata_format: "bytes"  # Preserves old byte array behavior
-     ```
-
-  2. **Migrate to new behavior (recommended):**
-     - Remove `String.fromCharCode()` workarounds from your processors
-     - Use metadata directly: `const location = msg.meta.location_path;`
-     - Leave `metadata_format` unset or explicitly set to `"string"`
-
-  **Affected metadata fields:** `location_path`, `data_contract`, `tag_name`, `virtual_path`, and any custom Kafka headers.
-
-  **Default behavior:**
-  - New configs: `metadata_format: "string"` (correct behavior)
-  - To use legacy mode: explicitly set `metadata_format: "bytes"`
-
-  Addresses: #ENG-3435
+- **Fixed S7comm DateAndTime crash** - The `DateAndTime` data type previously caused a crash due to an incorrect buffer size and now reads correctly
+- **Fixed false "required" warnings in the Management Console editor** - Fields with children that already have default values were incorrectly marked as required when editing bridge configurations
+- **Fixed deprecated fields not shown as deprecated in the editor** - Fields marked as deprecated in bridge plugin definitions now correctly appear as deprecated in the Management Console editor
