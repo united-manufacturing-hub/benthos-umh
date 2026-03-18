@@ -744,7 +744,20 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 			// Filter by NodeClass - only send Variables to ResultChan
 			switch nodeDef.NodeClass {
 			case ua.NodeClassVariable:
-				// Variables: send to ResultChan (subscription list)
+				// Skip container/structural Variable nodes that have children.
+				// These are parent nodes (e.g., Siemens custom struct/array types like
+				// Meldungen, Betriebsmeldungen, Störmeldungen, Warnmeldungen) whose values are not meaningful on their own.
+				// Their actual data is accessed through their child nodes (e.g., [0], [1]).
+				// Only leaf Variable nodes (no children) carry real data values.
+				if len(children) > 0 {
+					if gwp.logger != nil {
+						gwp.logger.Debugf("Skipping container Variable node (has %d children) - not subscribing: nodeID=%s path=%s browseName=%s",
+							len(children), nodeDef.NodeID.String(), nodeDef.Path, nodeDef.BrowseName)
+					}
+					break
+				}
+
+				// Leaf Variables: send to ResultChan (subscription list)
 				if gwp.logger != nil {
 					gwp.logger.Debugf("Adding Variable to subscription list: nodeID=%s path=%s browseName=%s",
 						nodeDef.NodeID.String(), nodeDef.Path, nodeDef.BrowseName)

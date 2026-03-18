@@ -170,7 +170,7 @@ msg.meta.umh_topic = `umh.v1.${msg.meta.location_path}.${msg.meta.data_contract}
 
 ## Topic Naming Convention
 
-UMH topics follow strict validation rules defined in `pkg/umhtopic/`:
+UMH topics follow strict validation rules defined in `pkg/umh/topic/`:
 
 ### Pattern Structure
 
@@ -489,25 +489,50 @@ Field(service.NewIntField("queueSize").
 ### Core Commands
 ```bash
 make all          # Clean and build
-make target       # Build benthos binary
+make build        # Build benthos binary (outputs to tmp/bin/benthos)
 make clean        # Remove build artifacts
 make test         # Run all tests with Ginkgo
+make run CONFIG=./config/opcua-hex-test.yaml LOG_LEVEL=DEBUG  # Run locally with a config
 ```
 
 ### Plugin-Specific Tests
 ```bash
-make test-opcua              # OPC UA plugin tests
+make test-unit-opc           # OPC UA unit tests (sets TEST_OPCUA_UNIT=true)
+make test-integration-opc    # OPC UA integration tests (needs hardware env vars, see `make env`)
 make test-modbus             # Modbus plugin tests
-make test-s7                 # S7 protocol tests
+make test-s7comm             # S7 protocol tests
 make test-sparkplug          # Sparkplug B tests
 make test-eip                # Ethernet/IP tests
-make test-sensorconnect      # Sensorconnect tests
-make test-stream-processor   # Stream processor tests
-make test-tag-processor      # Tag processor tests
-make test-topic-browser      # Topic browser tests
+make test-sensorconnect      # Sensorconnect tests (runs serially)
+make test-stream-processor   # Stream processor tests (with -race)
+make test-tag-processor      # Tag processor tests (sets TEST_TAG_PROCESSOR=true)
+make test-noderedjs          # Node-RED JS tests (sets TEST_NODERED_JS=true)
+make test-topic-browser      # Topic browser tests (sets TEST_TOPIC_BROWSER=1)
 make test-downsampler        # Downsampler tests
-make test-classic-to-core    # Migration plugin tests
-make test-uns                # UNS output tests
+make test-classic-to-core    # Migration plugin tests (sets TEST_CLASSIC_TO_CORE=1)
+make test-pkg-umh-topic      # UMH topic library tests
+make test-uns                # UNS tests (excludes Redpanda-dependent tests)
+make test-uns-redpanda       # Full UNS tests (requires Docker for testcontainers)
+```
+
+### Lint & Format
+```bash
+make lint              # Run golangci-lint
+make lint-fix          # Auto-fix lint issues
+make fmt               # Format with gofumpt + gci (import ordering)
+```
+
+### Code Generation
+```bash
+make proto                              # Regenerate protobuf Go files
+make generate-schema VERSION=0.11.7     # Generate plugin schemas for ManagementConsole
+```
+
+### Fuzz & Benchmarks
+```bash
+make fuzz-stream-processor   # Run fuzz tests (press Ctrl+C to stop)
+make bench-stream-processor  # Benchmark stream processor
+make bench-pkg-umh-topic     # Benchmark topic parsing
 ```
 
 ### Utility Commands
@@ -515,8 +540,33 @@ make test-uns                # UNS output tests
 make license-check    # Verify Apache 2.0 headers
 make license-fix      # Add missing license headers
 make setup-test-deps  # Install test dependencies
+make install          # Install all dev tools (lint, fmt, license, protoc, etc.)
 make serve-pprof      # Run profiling server
+make env              # Show all test environment variables
 ```
+
+### Running a Single Test
+```bash
+# Run a single test by name pattern
+go run github.com/onsi/ginkgo/v2/ginkgo --focus "test name pattern" ./plugin_dir/...
+
+# Or use FIt/FDescribe in code to focus tests (don't commit these)
+FIt("should handle valid input", func() { ... })
+```
+
+### Test Environment Variables
+
+Many tests are gated by environment variables and silently skip without them. The `make test-*` targets set these automatically, but they matter when running tests directly with `go test` or Ginkgo.
+
+| Variable | Used by | Set by make target |
+|---|---|---|
+| `TEST_TAG_PROCESSOR=true` | tag_processor_plugin tests | `test-tag-processor` |
+| `TEST_OPCUA_UNIT=true` | opcua_plugin unit tests | `test-unit-opc` |
+| `TEST_NODERED_JS=true` | nodered_js_plugin tests | `test-noderedjs` |
+| `TEST_CLASSIC_TO_CORE=1` | classic_to_core_plugin tests | `test-classic-to-core` |
+| `TEST_TOPIC_BROWSER=1` | topic_browser_plugin tests | `test-topic-browser` |
+
+Run `make env` for the full list including hardware integration test variables.
 
 ## Testing Approach
 
@@ -527,9 +577,7 @@ make serve-pprof      # Run profiling server
   - Test real protocol connections
   - Validate end-to-end data flow
 - **YAML Validation**: Schema-based config testing
-- **Benchmarks**: Performance testing for critical paths
-  - `make bench-stream-processor`
-  - `make bench-pkg-umh-topic`
+- **Benchmarks**: Performance testing for critical paths (see Fuzz & Benchmarks section above)
 
 ### Test Patterns
 ```go
@@ -568,7 +616,7 @@ benthos-umh/
 ├── config/               # Configuration examples
 ├── docs/                 # Documentation (GitBook format)
 ├── pkg/                  # Shared packages
-│   └── umhtopic/         # UMH topic parsing
+│   └── umh/topic/        # UMH topic parsing
 ├── *_plugin/             # Protocol/processor plugins
 ├── Makefile              # Build automation
 └── Makefile.Common       # Shared Make configuration
@@ -577,11 +625,21 @@ benthos-umh/
 ## Important Notes
 
 - Default branch is `master` (not `main` or `staging`)
+- Go version: 1.25.5
+- GODEBUG: `x509negativeserial=1` (for Kepware OPC UA certificate compatibility)
+- Import ordering (enforced by `make fmt`): standard → third-party → `github.com/united-manufacturing-hub/benthos-umh`
 - Apache 2.0 license headers required on all source files
 - Ginkgo runs tests in parallel with randomization
 - Plugins are loaded dynamically at runtime
 - Configuration uses standard Benthos YAML format
 - Each plugin maintains its own documentation
+
+### External Plugins
+
+The bundle (`cmd/benthos/bundle/package.go`) also imports 3 external community plugins:
+- `github.com/RuneRoven/benthosADS` - Beckhoff ADS protocol
+- `github.com/RuneRoven/benthosAlarm` - Alarm plugin
+- `github.com/RuneRoven/benthosSMTP` - SMTP output
 
 ## UX Standards
 

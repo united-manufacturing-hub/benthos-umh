@@ -18,33 +18,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strconv"
 
 	"github.com/gopcua/opcua/ua"
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
-
-// Context key for capability probe flag
-type contextKey string
-
-const capabilityProbeKey contextKey = "capability_probe"
-
-// WithCapabilityProbe returns a context marked for capability probe operations.
-// Capability probe reads are expected to fail on servers that don't support optional features.
-func WithCapabilityProbe(ctx context.Context) context.Context {
-	return context.WithValue(ctx, capabilityProbeKey, true)
-}
-
-// isCapabilityProbe checks if context is marked for capability probe operations.
-func isCapabilityProbe(ctx context.Context) bool {
-	if val := ctx.Value(capabilityProbeKey); val != nil {
-		if b, ok := val.(bool); ok {
-			return b
-		}
-	}
-	return false
-}
 
 // getBytesFromValue returns the bytes and the tag type for a given OPC UA DataValue and NodeDef.
 func (g *OPCUAConnection) getBytesFromValue(dataValue *ua.DataValue, nodeDef NodeDef) ([]byte, string) {
@@ -55,7 +33,8 @@ func (g *OPCUAConnection) getBytesFromValue(dataValue *ua.DataValue, nodeDef Nod
 	}
 
 	if !errors.Is(dataValue.Status, ua.StatusOK) {
-		g.Log.Warnf("Received bad status %v for node %s", dataValue.Status, nodeDef.NodeID.String())
+		g.Log.Warnf("Skipping node %s: status %v", nodeDef.NodeID.String(), dataValue.Status)
+		return nil, ""
 	}
 
 	b := make([]byte, 0)
@@ -105,6 +84,41 @@ func (g *OPCUAConnection) getBytesFromValue(dataValue *ua.DataValue, nodeDef Nod
 	case uint64:
 		b = append(b, []byte(strconv.FormatUint(v, 10))...)
 		tagType = "number"
+	case *ua.ExtensionObject:
+		if v.Value == nil {
+			// Unregistered type — skip (binary data already discarded by gopcua)
+			g.Log.Warnf("Skipping node %s: ExtensionObject type %s not decodable (custom UDT not registered)",
+				nodeDef.NodeID.String(), v.TypeID.NodeID.String())
+			return nil, ""
+		}
+		// Type was registered and decoded — serialize the actual value
+		jsonBytes, err := json.Marshal(v.Value)
+		if err != nil {
+			g.Log.Errorf("Error marshaling ExtensionObject value for node %s: %v", nodeDef.NodeID.String(), err)
+			return nil, ""
+		}
+		b = append(b, jsonBytes...)
+		tagType = "string"
+	case []*ua.ExtensionObject:
+		// Filter: collect only decoded Extension Objects
+		var decoded []interface{}
+		for _, eo := range v {
+			if eo != nil && eo.Value != nil {
+				decoded = append(decoded, eo.Value)
+			}
+		}
+		if len(decoded) == 0 {
+			g.Log.Warnf("Skipping node %s: array of %d ExtensionObjects, none decodable (custom UDTs not registered)",
+				nodeDef.NodeID.String(), len(v))
+			return nil, ""
+		}
+		jsonBytes, err := json.Marshal(decoded)
+		if err != nil {
+			g.Log.Errorf("Error marshaling ExtensionObject array for node %s: %v", nodeDef.NodeID.String(), err)
+			return nil, ""
+		}
+		b = append(b, jsonBytes...)
+		tagType = "string"
 	default:
 		// Convert unknown types to JSON
 		jsonBytes, err := json.Marshal(v)
@@ -158,16 +172,6 @@ func (g *OPCUAConnection) Read(ctx context.Context, req *ua.ReadRequest) (*ua.Re
 
 		// return error and stop executing this function.
 		return nil, err
-	}
-
-	if !errors.Is(resp.Results[0].Status, ua.StatusOK) {
-		// Capability probes are expected to fail on servers without optional features
-		if isCapabilityProbe(ctx) {
-			g.Log.Debugf("Capability probe returned status: %v (expected for servers without this feature)", resp.Results[0].Status)
-		} else {
-			g.Log.Errorf("Status not OK: %v", resp.Results[0].Status)
-		}
-		return nil, fmt.Errorf("status not OK: %w", resp.Results[0].Status)
 	}
 
 	return resp, nil

@@ -39,11 +39,12 @@ The plugin has been rigorously tested with an array of datatypes, both as single
 * `Variant`
 * `XmlElement`
 
-There are specific datatypes which are currently not supported by the plugin and attempting to use them will result in errors. These include:
+There are specific datatypes which are currently not supported by the plugin:
 
 * Two-dimensional arrays
-* UA Extension Objects
 * Variant arrays (Arrays with multiple different datatypes)
+
+**UA Extension Objects** (custom vendor structs/UDTs) are automatically detected and skipped with a warning log. Since the browse phase discovers individual struct member nodes separately, the data within Extension Objects is still accessible by subscribing to those member nodes directly. If the Extension Object type is registered and decodable by the OPC UA library, it will be serialized as JSON.
 
 **Authentication and Security**
 

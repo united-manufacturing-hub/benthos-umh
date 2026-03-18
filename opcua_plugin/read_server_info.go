@@ -148,6 +148,7 @@ func (g *OPCUAInput) GetOPCUAServerInformation(ctx context.Context) (ServerInfo,
 		value := resp.Results[i]
 		if value == nil || value.Value == nil {
 			g.Log.Debugf("Received nil in item structure for OPC UA Server Information")
+			continue
 		}
 
 		message := g.createMessageFromValue(value, node)
@@ -244,9 +245,7 @@ func (g *OPCUAInput) queryOperationLimits(ctx context.Context) (*ServerCapabilit
 		TimestampsToReturn: ua.TimestampsToReturnBoth,
 	}
 
-	// Mark this as a capability probe - failures are expected for servers without OperationLimits
-	probeCtx := WithCapabilityProbe(ctx)
-	resp, err := g.Read(probeCtx, req)
+	resp, err := g.Read(ctx, req)
 	if err != nil {
 		return nil, err
 	}
