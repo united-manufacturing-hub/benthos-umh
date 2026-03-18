@@ -148,7 +148,7 @@ jobs:
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-opcua.yml
     with:
-      test_plc: ${{ needs.detect-changes.outputs.test_plc }}
+      test_plc: ${{ needs.detect-changes.outputs.test_plc == 'true' }}
     secrets: inherit
 
   test-modbus:
@@ -161,7 +161,7 @@ jobs:
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-modbus.yml
     with:
-      test_plc: ${{ needs.detect-changes.outputs.test_plc }}
+      test_plc: ${{ needs.detect-changes.outputs.test_plc == 'true' }}
     secrets: inherit
 
   test-s7:
@@ -174,7 +174,7 @@ jobs:
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-s7.yml
     with:
-      test_plc: ${{ needs.detect-changes.outputs.test_plc }}
+      test_plc: ${{ needs.detect-changes.outputs.test_plc == 'true' }}
     secrets: inherit
 
   test-sparkplug:
@@ -210,7 +210,7 @@ jobs:
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-sensorconnect.yml
     with:
-      test_plc: ${{ needs.detect-changes.outputs.test_plc }}
+      test_plc: ${{ needs.detect-changes.outputs.test_plc == 'true' }}
     secrets: inherit
 
   test-tag-processor:
