@@ -330,6 +330,15 @@ var _ = Describe("Test Against Wago-PLC", func() {
 })
 
 var _ = Describe("Per-Slave Address Routing", func() {
+	BeforeEach(func() {
+		testActive := os.Getenv("TEST_MODBUS_UNITTEST")
+
+		// Check if environment variables are set
+		if testActive == "" {
+			Skip("Skipping test: environment variables are not set")
+			return
+		}
+	})
 	// Helper to build per-slave RequestSets with validation and deduplication,
 	// mimicking the constructor logic. Optionally tracks deduplicated addresses.
 	buildPerSlaveRequestSets := func(input *ModbusInput, tracking map[byte][]ModbusDataItemWithAddress) error {

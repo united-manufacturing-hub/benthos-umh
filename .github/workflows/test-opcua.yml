@@ -17,9 +17,15 @@ name: Test OPC UA
 
 on:
   workflow_call:
+    inputs:
+      test_plc:
+        description: run plc if running in merge_queue
+        default: true
+        required: true
+        type: boolean
 
 jobs:
-  test:
+  test-unit:
     name: OPCUA Unittest
     runs-on: depot-ubuntu-24.04
     steps:
@@ -34,7 +40,8 @@ jobs:
 
   test-plc:
     name: OPCUA PLCs
-    needs: [test]
+    needs: [test-unit]
+    if: ${{ inputs.test_plc == true }}
     concurrency:
       group: opcua-plc
       cancel-in-progress: false
@@ -180,6 +187,7 @@ jobs:
   test-kepware:
     name: OPCUA Kepware
     needs: [test-plc]
+    if: ${{ inputs.test_plc == true }}
     concurrency:
       group: opcua-plc
       cancel-in-progress: false

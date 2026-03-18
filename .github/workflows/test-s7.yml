@@ -17,9 +17,15 @@ name: Test S7
 
 on:
   workflow_call:
+    inputs:
+      test_plc:
+        description: run plc if running in merge_queue
+        default: true
+        required: true
+        type: boolean
 
 jobs:
-  test:
+  test-unit:
     name: S7 Unittest
     runs-on: depot-ubuntu-24.04
     timeout-minutes: 30
@@ -37,7 +43,8 @@ jobs:
 
   test-plc:
     name: S7 PLC
-    needs: [test]
+    needs: [test-unit]
+    if: ${{ inputs.test_plc == true }}
     concurrency:
       group: s7-plc
       cancel-in-progress: false
@@ -84,7 +91,6 @@ jobs:
         env:
           TEST_S7_RACK: 0
           TEST_S7_SLOT: 1
-          TEST_S7COMM_UNITTEST: true
         run: |
           if [ -z "$TEST_S7_TCPDEVICE" ]; then
             echo "no s7 device available for testing"
