@@ -61,6 +61,7 @@
     {
       "description": "Sync Go version in Dockerfile and go.mod",
       "matchDepNames": ["golang", "go"],
+      "matchUpdateTypes": ["minor", "patch", "major"],
       "groupName": "Go version",
       "groupSlug": "go-version"
     }

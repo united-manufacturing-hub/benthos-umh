@@ -13,37 +13,14 @@
 # limitations under the License.
 
 ---
-name: OPCUA
+name: Test OPC UA
 
 on:
-  push:
-    branches:
-      - '**'
-
-concurrency:
-  group: opcua
-  cancel-in-progress: false
+  workflow_call:
 
 jobs:
-  changes:
-    runs-on: depot-ubuntu-24.04
-    permissions:
-      contents: read
-      pull-requests: read
-    outputs:
-      plugin: ${{ steps.filter.outputs.changed }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-      - name: Check for relevant changes
-        id: filter
-        uses: ./.github/actions/path-filter
-        with:
-          plugin_path: 'opcua_plugin/**'
-
-  go-test-opcua-unit:
-    needs: changes
-    if: ${{ needs.changes.outputs.plugin == 'true' }}
+  test:
+    name: OPCUA Unittest
     runs-on: depot-ubuntu-24.04
     steps:
       - name: Checkout
@@ -55,13 +32,13 @@ jobs:
       - name: Run OPC UA Unit Tests
         run: make test-unit-opc
 
-  go-test-opcua-plc:
-    needs: changes
-    if: ${{ needs.changes.outputs.plugin == 'true' }}
+  test-plc:
+    name: OPCUA PLCs
+    needs: [test]
+    concurrency:
+      group: opcua-plc
+      cancel-in-progress: false
     runs-on: depot-ubuntu-24.04
-    permissions:
-      packages: write
-      contents: read
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -200,13 +177,13 @@ jobs:
         run: |
           docker stop $OPCSIM_CONTAINER || true
           docker ps
-  go-test-kepware-plc:
-    needs: [changes, go-test-opcua-plc]
-    if: ${{ needs.changes.outputs.plugin == 'true' }}
+  test-kepware:
+    name: OPCUA Kepware
+    needs: [test-plc]
+    concurrency:
+      group: opcua-plc
+      cancel-in-progress: false
     runs-on: depot-ubuntu-24.04
-    permissions:
-      packages: write
-      contents: read
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -252,20 +229,3 @@ jobs:
             exit 1
           fi
           make test-integration-opc
-
-  result:
-    needs: [changes, go-test-opcua-unit, go-test-opcua-plc, go-test-kepware-plc]
-    if: always()
-    runs-on: depot-ubuntu-24.04
-    steps:
-      - name: Check result
-        run: |
-          if [[ "${{ needs.changes.outputs.plugin }}" != "true" ]]; then
-            echo "No relevant changes, tests were skipped"
-            exit 0
-          fi
-          if [[ "${{ needs.go-test-opcua-unit.result }}" == "failure" || "${{ needs.go-test-opcua-plc.result }}" == "failure" || "${{ needs.go-test-kepware-plc.result }}" == "failure" ]]; then
-            echo "Tests failed"
-            exit 1
-          fi
-          echo "Tests passed"

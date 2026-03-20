@@ -13,27 +13,39 @@
 # limitations under the License.
 
 ---
-name: s7-plc
+name: Test S7
 
 on:
-  push:
-    branches:
-      - '**'
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-
-concurrency:
-  group: s7-plc-test
-  cancel-in-progress: true
+  workflow_call:
 
 jobs:
-  go-test-s7-plc:
+  test:
+    name: S7 Unittest
     runs-on: depot-ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
+      - name: Install Ginkgo
+        run: go install github.com/onsi/ginkgo/v2/ginkgo
+      - name: Test
+        env:
+          TEST_S7COMM_UNITTEST: true
+        run: make test-s7comm
+
+  test-plc:
+    name: S7 PLC
+    needs: [test]
+    concurrency:
+      group: s7-plc
+      cancel-in-progress: false
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Install Ginkgo
