@@ -331,11 +331,11 @@ var _ = Describe("Test Against Wago-PLC", func() {
 
 var _ = Describe("Per-Slave Address Routing", func() {
 	BeforeEach(func() {
-		testActive := os.Getenv("TEST_MODBUS_UNITTEST")
+		testActive, ok := os.LookupEnv("TEST_MODBUS_UNITTEST")
 
-		// Check if environment variables are set
-		if testActive == "" {
-			Skip("Skipping test: environment variables are not set")
+		// Check if unit test variable is set
+		if !ok || testActive == "FALSE" {
+			Skip("Skipping test: TEST_MODBUS_UNITTEST env variable is not set or is FALSE")
 			return
 		}
 	})

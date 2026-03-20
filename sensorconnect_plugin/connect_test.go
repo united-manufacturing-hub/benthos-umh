@@ -36,11 +36,11 @@ var _ = Describe("SensorConnect Plugin Unittests", func() {
 	)
 
 	BeforeEach(func() {
-		testActive := os.Getenv("TEST_SENSORCONNECT_UNITTEST")
+		testActive, ok := os.LookupEnv("TEST_SENSORCONNECT_UNITTEST")
 
-		// Check if environment variables are set
-		if testActive == "" {
-			Skip("Skipping test: environment variables are not set")
+		// Check if unit test variable is set
+		if !ok || testActive == "FALSE" {
+			Skip("Skipping test: TEST_SENSORCONNECT_UNITTEST env variable is not set or is FALSE")
 			return
 		}
 
