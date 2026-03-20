@@ -316,12 +316,17 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		return nil, fmt.Errorf("unknown optimization %q", m.Optimization)
 	}
 
-	// Read in addresses: try new unified 'addr' format first, fall back to legacy 'addresses'
+	// Read in addresses: try new unified format first, fall back to legacy 'addresses'
 	unifiedAddressesConf, unifiedAddressesErr := conf.FieldStringList("unifiedAddresses")
 	addressesConf, addressesErr := conf.FieldObjectList("addresses")
 
 	hasUnifiedAddresses := unifiedAddressesErr == nil && len(unifiedAddressesConf) > 0
 	hasAddresses := addressesErr == nil && len(addressesConf) > 0
+
+	// If both fields failed to parse, report the errors
+	if unifiedAddressesErr != nil && addressesErr != nil {
+		return nil, fmt.Errorf("failed to parse address configuration: unifiedAddresses: %w, addresses: %v", unifiedAddressesErr, addressesErr)
+	}
 
 	// Mutual exclusion: cannot use both
 	if hasUnifiedAddresses && hasAddresses {
