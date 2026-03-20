@@ -20,6 +20,7 @@ Below is the extended metadata output schema provided by the plugin:
 | `modbus_tag_length`        | The length of the tag in registers, relevant for string or array data types.    |
 | `modbus_tag_register`      | The specific Modbus register type where the tag is located.                     |
 | `modbus_tag_slaveid`       | The slave ID where the tag is coming from                                       |
+| `modbus_tag_unified_address`  | Unified dotted address string (e.g. `temperature.holding.100.INT16`)            |
 
 This enhanced metadata schema provides comprehensive data for each read operation, ensuring that users have all necessary details for effective data management and application integration.
 
@@ -250,7 +251,52 @@ input:
     stringRegisterLocation: 'upper'
     ```
 
-**Addresses**
+**Unified Address Format (`unifiedAddresses`)**
+
+The preferred way to configure Modbus addresses is using the unified `unifiedAddresses` string list. Each address is a single string with the format:
+
+```
+name.register.address.type[:key=value]*
+```
+
+**Required positional segments** (dot-separated):
+1. `name` — tag name (no dots allowed)
+2. `register` — one of: `coil`, `discrete`, `holding`, `input`
+3. `address` — numeric 0–65535
+4. `type` — one of: `BIT`, `INT8L`, `INT8H`, `UINT8L`, `UINT8H`, `INT16`, `UINT16`, `INT32`, `UINT32`, `INT64`, `UINT64`, `FLOAT16`, `FLOAT32`, `FLOAT64`, `STRING`
+
+**Optional key-value pairs** (colon-separated):
+- `slave=<0-255>` — restrict to specific slave ID (default: 0 = all)
+- `length=<n>` — register count, only valid for STRING type
+- `bit=<0-7>` — bit number, only valid for BIT type
+- `scale=<float>` — scaling factor
+- `output=<INT64|UINT64|FLOAT64|STRING>` — output type
+
+```yaml
+input:
+  modbus:
+    controller: 'tcp://localhost:502'
+    slaveIDs: [1]
+    unifiedAddresses:
+      - "temperature.holding.100.INT16"
+      - "motor_status.discrete.1.BIT:bit=3"
+      - "serial_number.holding.200.STRING:length=10"
+      - "pressure.holding.300.FLOAT32:scale=0.1:output=FLOAT64:slave=2"
+```
+
+**Migration from `addresses` to `unifiedAddresses`**
+
+| Old format | New format |
+|---|---|
+| `name: "temp"`, `register: "holding"`, `address: 100`, `type: "INT16"` | `temp.holding.100.INT16` |
+| `name: "flag"`, `register: "discrete"`, `address: 1`, `type: "BIT"`, `bit: 3` | `flag.discrete.1.BIT:bit=3` |
+| `name: "serial"`, `register: "holding"`, `address: 200`, `type: "STRING"`, `length: 10` | `serial.holding.200.STRING:length=10` |
+
+> **Note**: The `unifiedAddresses` and `addresses` fields are mutually exclusive. Using both will result in an error.
+
+**Addresses (Deprecated)**
+
+> **Deprecated**: Use the `unifiedAddresses` string list format above instead.
 
 The Modbus plugin provides a highly configurable way to specify which data points (addresses) to read from Modbus devices. Each address configuration allows precise definition of what data to read, how it's interpreted, and how it should be scaled or formatted before use.
 
