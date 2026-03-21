@@ -32,10 +32,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-      - name: Setup Go
-        uses: ./.github/actions/setup-go
-      - name: Install Ginkgo
-        run: go install github.com/onsi/ginkgo/v2/ginkgo
+      - name: Setup Test Environment
+        uses: ./.github/actions/setup-test
       - name: Test
         env:
           TEST_SENSORCONNECT_UNITTEST: true
@@ -50,10 +48,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-      - name: Setup Go
-        uses: ./.github/actions/setup-go
-      - name: Install Ginkgo
-        run: go install github.com/onsi/ginkgo/v2/ginkgo
+      - name: Setup Test Environment
+        uses: ./.github/actions/setup-test
       - name: Test
         env:
           TEST_DEBUG_IFM_ENDPOINT: ${{ secrets.TEST_DEBUG_IFM_ENDPOINT }}

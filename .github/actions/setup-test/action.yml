@@ -13,20 +13,14 @@
 # limitations under the License.
 
 ---
-name: Test Stream Processor
+name: Setup Test Environment
+description: Setup Go and install Ginkgo test framework.
 
-on:
-  workflow_call:
-
-jobs:
-  test:
-    name: Stream Processor Unittest
-    runs-on: depot-ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-      - name: Setup Test Environment
-        uses: ./.github/actions/setup-test
-      - name: Test
-        run: make test-stream-processor
+runs:
+  using: composite
+  steps:
+    - name: Setup Go
+      uses: ./.github/actions/setup-go
+    - name: Install Ginkgo
+      shell: bash
+      run: go install github.com/onsi/ginkgo/v2/ginkgo

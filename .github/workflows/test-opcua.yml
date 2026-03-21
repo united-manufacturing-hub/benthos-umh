@@ -31,10 +31,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-      - name: Setup Go
-        uses: ./.github/actions/setup-go
-      - name: Install Ginkgo
-        run: go install github.com/onsi/ginkgo/v2/ginkgo
+      - name: Setup Test Environment
+        uses: ./.github/actions/setup-test
       - name: Run OPC UA Unit Tests
         run: make test-unit-opc
 
@@ -50,10 +48,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-      - name: Setup Go
-        uses: ./.github/actions/setup-go
-      - name: Install Ginkgo
-        run: go install github.com/onsi/ginkgo/v2/ginkgo
+      - name: Setup Test Environment
+        uses: ./.github/actions/setup-test
       - name: Install Tcping
         run: go install github.com/cloverstd/tcping@v0.1.1
       - name: Check S7 port availability
@@ -196,10 +192,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-      - name: Setup Go
-        uses: ./.github/actions/setup-go
-      - name: Install Ginkgo
-        run: go install github.com/onsi/ginkgo/v2/ginkgo
+      - name: Setup Test Environment
+        uses: ./.github/actions/setup-test
       - name: Install Tcping
         run: go install github.com/cloverstd/tcping@v0.1.1
 
