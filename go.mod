@@ -40,8 +40,8 @@ require (
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/kaptinlin/jsonschema v0.7.5
 	github.com/prometheus/client_golang v1.23.2
-	github.com/redpanda-data/benthos/v4 v4.67.0
-	github.com/redpanda-data/connect/public/bundle/free/v4 v4.82.0
+	github.com/redpanda-data/benthos/v4 v4.68.0
+	github.com/redpanda-data/connect/public/bundle/free/v4 v4.83.0
 	github.com/robinson/gos7 v0.0.0-20241205073040-7ea1d6fb9d20
 	github.com/testcontainers/testcontainers-go v0.41.0
 	github.com/testcontainers/testcontainers-go/modules/redpanda v0.41.0
@@ -50,7 +50,7 @@ require (
 	golang.org/x/crypto v0.49.0
 	golang.org/x/sys v0.42.0
 	google.golang.org/protobuf v1.36.11
-	k8s.io/apimachinery v0.35.2
+	k8s.io/apimachinery v0.35.3
 )
 
 require (
@@ -405,7 +405,7 @@ require (
 	github.com/redpanda-data/common-go/authz v0.2.0 // indirect
 	github.com/redpanda-data/common-go/license v0.0.0-20260109170727-1dd9f5d22ee1 // indirect
 	github.com/redpanda-data/common-go/redpanda-otel-exporter v0.4.0 // indirect
-	github.com/redpanda-data/connect/v4 v4.82.0 // indirect
+	github.com/redpanda-data/connect/v4 v4.83.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rickb777/period v1.0.24 // indirect
 	github.com/rickb777/plural v1.4.8 // indirect
