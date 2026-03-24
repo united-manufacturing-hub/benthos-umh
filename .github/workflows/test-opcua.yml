@@ -20,7 +20,6 @@ on:
     inputs:
       test_plc:
         description: run plc if running in merge_queue
-        default: true
         required: true
         type: boolean
 

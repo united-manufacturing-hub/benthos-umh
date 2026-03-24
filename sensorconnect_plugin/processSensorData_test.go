@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -32,7 +33,7 @@ var _ = Describe("ProcessSensorData", func() {
 		testActive, ok := os.LookupEnv("TEST_SENSORCONNECT_UNITTEST")
 
 		// Check if unit test variable is set
-		if !ok || testActive == "FALSE" {
+		if !ok || strings.ToLower(testActive) == "false" {
 			Skip("Skipping test: TEST_SENSORCONNECT_UNITTEST env variable is not set or is FALSE")
 			return
 		}
@@ -230,7 +231,7 @@ var _ = Describe("float32T bug (ENG-2010)", func() {
 		testActive, ok := os.LookupEnv("TEST_SENSORCONNECT_UNITTEST")
 
 		// Check if unit test variable is set
-		if !ok || testActive == "FALSE" {
+		if !ok || strings.ToLower(testActive) == "false" {
 			Skip("Skipping test: TEST_SENSORCONNECT_UNITTEST env variable is not set or is FALSE")
 			return
 		}

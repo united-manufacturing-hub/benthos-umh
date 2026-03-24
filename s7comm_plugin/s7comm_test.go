@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -34,7 +35,7 @@ var _ = Describe("S7Comm Plugin Unittests", func() {
 		testActive, ok := os.LookupEnv("TEST_S7COMM_UNITTEST")
 
 		// Check if unit test variable is set
-		if !ok || testActive == "FALSE" {
+		if !ok || strings.ToLower(testActive) == "false" {
 			Skip("Skipping test: TEST_S7COMM_UNITTEST env variable is not set or is FALSE")
 			return
 		}
