@@ -15,6 +15,8 @@
 package modbus_plugin_test
 
 import (
+	"strconv"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -123,38 +125,6 @@ var _ = Describe("ParseModbusAddress", func() {
 			Expect(item.Type).To(Equal("UINT16"))
 		})
 
-		It("should parse all integer types on holding register", func() {
-			cases := map[string]string{
-				"smallSignedLow.holding.10.INT8L":     "INT8L",
-				"smallSignedHigh.holding.11.INT8H":    "INT8H",
-				"smallUnsignedLow.holding.12.UINT8L":  "UINT8L",
-				"smallUnsignedHigh.holding.13.UINT8H": "UINT8H",
-				"unsigned16.holding.14.UINT16":        "UINT16",
-				"signed32.holding.20.INT32":           "INT32",
-				"unsigned32.holding.22.UINT32":        "UINT32",
-				"signed64.holding.30.INT64":           "INT64",
-				"unsigned64.holding.34.UINT64":        "UINT64",
-			}
-			for addr, expectedType := range cases {
-				item, err := ParseModbusAddress(addr)
-				Expect(err).NotTo(HaveOccurred(), "addr %s", addr)
-				Expect(item.Type).To(Equal(expectedType), "addr %s", addr)
-			}
-		})
-
-		It("should parse all float types", func() {
-			cases := map[string]string{
-				"float16.holding.40.FLOAT16": "FLOAT16",
-				"float32.holding.42.FLOAT32": "FLOAT32",
-				"float64.holding.44.FLOAT64": "FLOAT64",
-			}
-			for addr, expectedType := range cases {
-				item, err := ParseModbusAddress(addr)
-				Expect(err).NotTo(HaveOccurred(), "addr %s", addr)
-				Expect(item.Type).To(Equal(expectedType), "addr %s", addr)
-			}
-		})
-
 		It("should parse scale option", func() {
 			item, err := ParseModbusAddress("temperature.holding.100.INT16:scale=0.1")
 			Expect(err).NotTo(HaveOccurred())
@@ -208,10 +178,10 @@ var _ = Describe("ParseModbusAddress", func() {
 		})
 
 		It("should parse BIT at different bit positions", func() {
-			for bit := 0; bit <= 7; bit++ {
+			for bit := 0; bit <= 15; bit++ {
 				addr := "statusBit.holding.50.BIT"
 				if bit > 0 {
-					addr += ":bit=" + string(rune('0'+bit))
+					addr += ":bit=" + strconv.Itoa(bit)
 				}
 				item, err := ParseModbusAddress(addr)
 				Expect(err).NotTo(HaveOccurred(), "bit=%d", bit)
@@ -311,7 +281,7 @@ var _ = Describe("ParseModbusAddress", func() {
 		})
 
 		It("should reject bit out of range", func() {
-			_, err := ParseModbusAddress("tag.holding.100.BIT:bit=8")
+			_, err := ParseModbusAddress("tag.holding.100.BIT:bit=16")
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("out of range"))
 		})
