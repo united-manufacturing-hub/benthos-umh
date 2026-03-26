@@ -220,7 +220,8 @@ func FormatModbusAddress(item ModbusDataItemWithAddress) string {
 	b.WriteByte('.')
 	b.WriteString(item.Type)
 
-	// Optional key-value pairs (in a stable order)
+	// Optional key-value pairs (in a stable order).
+	// Zero-value options (bit=0, length=0, slaveID=0, scale=0) are omitted to produce canonical form.
 	if item.SlaveID != 0 {
 		b.WriteString(":slaveID=")
 		b.WriteString(strconv.Itoa(int(item.SlaveID)))
