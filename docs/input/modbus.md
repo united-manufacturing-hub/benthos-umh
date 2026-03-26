@@ -281,7 +281,7 @@ input:
       - "temperature.holding.100.INT16"
       - "motor_status.discrete.1.BIT:bit=3"
       - "serial_number.holding.200.STRING:length=10"
-      - "pressure.holding.300.FLOAT32:scale=0.1:output=FLOAT64:slave=2"
+      - "pressure.holding.300.FLOAT32:scale=0.1:output=FLOAT64:slaveID=2"
 ```
 
 **Migration from `addresses` to `unifiedAddresses`**
