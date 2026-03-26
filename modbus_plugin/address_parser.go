@@ -168,8 +168,8 @@ func ParseModbusAddress(addr string) (ModbusDataItemWithAddress, error) {
 				return item, fmt.Errorf("invalid bit value %q: %w", value, err)
 			}
 
-			if bit < 0 || bit > 7 {
-				return item, fmt.Errorf("bit %d out of range (0-7)", bit)
+			if bit < 0 || bit > 15 {
+				return item, fmt.Errorf("bit %d out of range (0-15)", bit)
 			}
 
 			item.Bit = uint16(bit)

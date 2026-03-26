@@ -268,7 +268,7 @@ name.register.address.type[:key=value]*
 **Optional key-value pairs** (colon-separated):
 - `slave=<0-255>` — restrict to specific slave ID (default: 0 = all)
 - `length=<n>` — register count, only valid for STRING type
-- `bit=<0-7>` — bit number, only valid for BIT type
+- `bit=<0-15>` — bit number, only valid for BIT type
 - `scale=<float>` — scaling factor
 - `output=<INT64|UINT64|FLOAT64|STRING|BOOL|UINT16>` — output type
 
