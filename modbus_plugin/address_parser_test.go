@@ -198,111 +198,33 @@ var _ = Describe("ParseModbusAddress", func() {
 	})
 
 	Context("invalid addresses", func() {
-		It("should reject empty string", func() {
-			_, err := ParseModbusAddress("")
-			Expect(err).To(HaveOccurred())
-		})
-
-		It("should reject too few positional segments", func() {
-			_, err := ParseModbusAddress("name.holding.100")
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("exactly 4"))
-		})
-
-		It("should reject too many positional segments", func() {
-			_, err := ParseModbusAddress("name.holding.100.INT16.extra")
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("exactly 4"))
-		})
-
-		It("should reject empty name", func() {
-			_, err := ParseModbusAddress(".holding.100.INT16")
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("empty name"))
-		})
-
-		It("should reject invalid register", func() {
-			_, err := ParseModbusAddress("tag.unknown.100.INT16")
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("invalid register"))
-		})
-
-		It("should reject non-numeric address", func() {
-			_, err := ParseModbusAddress("tag.holding.abc.INT16")
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("invalid address"))
-		})
-
-		It("should reject address out of range", func() {
-			_, err := ParseModbusAddress("tag.holding.70000.INT16")
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("out of range"))
-		})
-
-		It("should reject negative address", func() {
-			_, err := ParseModbusAddress("tag.holding.-1.INT16")
-			Expect(err).To(HaveOccurred())
-		})
-
-		It("should reject invalid type", func() {
-			_, err := ParseModbusAddress("tag.holding.100.INVALID")
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("invalid type"))
-		})
-
-		It("should reject unknown option key", func() {
-			_, err := ParseModbusAddress("tag.holding.100.INT16:unknown=1")
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("unknown option key"))
-		})
-
-		It("should reject duplicate option key", func() {
-			_, err := ParseModbusAddress("tag.holding.100.INT16:slaveID=1:slaveID=2")
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("duplicate"))
-		})
-
-		It("should reject length on non-STRING type", func() {
-			_, err := ParseModbusAddress("tag.holding.100.INT16:length=10")
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("length option is only valid for STRING"))
-		})
-
-		It("should reject bit on non-BIT type", func() {
-			_, err := ParseModbusAddress("tag.holding.100.INT16:bit=3")
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("bit option is only valid for BIT"))
-		})
-
-		It("should reject slave out of range", func() {
-			_, err := ParseModbusAddress("tag.holding.100.INT16:slaveID=256")
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("out of range"))
-		})
-
-		It("should reject bit out of range", func() {
-			_, err := ParseModbusAddress("tag.holding.100.BIT:bit=16")
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("out of range"))
-		})
-
-		It("should reject invalid output type", func() {
-			_, err := ParseModbusAddress("tag.holding.100.INT16:output=INVALID")
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("invalid output type"))
-		})
-
-		It("should reject malformed option (missing =)", func() {
-			_, err := ParseModbusAddress("tag.holding.100.INT16:slaveID")
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("expected key=value"))
-		})
-
-		It("should reject invalid scale value", func() {
-			_, err := ParseModbusAddress("tag.holding.100.INT16:scale=abc")
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("invalid scale"))
-		})
+		DescribeTable("should reject invalid input",
+			func(addr string, expectedErr string) {
+				_, err := ParseModbusAddress(addr)
+				Expect(err).To(HaveOccurred())
+				if expectedErr != "" {
+					Expect(err.Error()).To(ContainSubstring(expectedErr))
+				}
+			},
+			Entry("empty string", "", "empty address"),
+			Entry("too few segments", "name.holding.100", "exactly 4"),
+			Entry("too many segments", "name.holding.100.INT16.extra", "exactly 4"),
+			Entry("empty name", ".holding.100.INT16", "empty name"),
+			Entry("invalid register", "tag.unknown.100.INT16", "invalid register"),
+			Entry("non-numeric address", "tag.holding.abc.INT16", "invalid address"),
+			Entry("address out of range", "tag.holding.70000.INT16", "out of range"),
+			Entry("negative address", "tag.holding.-1.INT16", ""),
+			Entry("invalid type", "tag.holding.100.INVALID", "invalid type"),
+			Entry("unknown option key", "tag.holding.100.INT16:unknown=1", "unknown option key"),
+			Entry("duplicate option key", "tag.holding.100.INT16:slaveID=1:slaveID=2", "duplicate"),
+			Entry("length on non-STRING", "tag.holding.100.INT16:length=10", "length option is only valid for STRING"),
+			Entry("bit on non-BIT", "tag.holding.100.INT16:bit=3", "bit option is only valid for BIT"),
+			Entry("slave out of range", "tag.holding.100.INT16:slaveID=256", "out of range"),
+			Entry("bit out of range", "tag.holding.100.BIT:bit=16", "out of range"),
+			Entry("invalid output type", "tag.holding.100.INT16:output=INVALID", "invalid output type"),
+			Entry("malformed option", "tag.holding.100.INT16:slaveID", "expected key=value"),
+			Entry("invalid scale value", "tag.holding.100.INT16:scale=abc", "invalid scale"),
+		)
 	})
 
 	Context("roundtrip", func() {
