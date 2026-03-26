@@ -72,7 +72,7 @@ func ParseModbusAddress(addr string) (ModbusDataItemWithAddress, error) {
 	var item ModbusDataItemWithAddress
 
 	if addr == "" {
-		return item, fmt.Errorf("empty address string")
+		return ModbusDataItemWithAddress{}, fmt.Errorf("empty address string")
 	}
 
 	// Split on ':' → first element is positional, rest are key-value options
@@ -83,37 +83,37 @@ func ParseModbusAddress(addr string) (ModbusDataItemWithAddress, error) {
 	// Split positional part on '.'
 	segments := strings.Split(positional, ".")
 	if len(segments) != 4 {
-		return item, fmt.Errorf("expected exactly 4 dot-separated segments (name.register.address.type), got %d", len(segments))
+		return ModbusDataItemWithAddress{}, fmt.Errorf("expected exactly 4 dot-separated segments (name.register.address.type), got %d", len(segments))
 	}
 
 	// 1. Name
 	name := segments[0]
 	if name == "" {
-		return item, fmt.Errorf("empty name in address %q", addr)
+		return ModbusDataItemWithAddress{}, fmt.Errorf("empty name in address %q", addr)
 	}
 	item.Name = name
 
 	// 2. Register
 	register := segments[1]
 	if !validRegisters[register] {
-		return item, fmt.Errorf("invalid register %q, must be one of: coil, discrete, holding, input", register)
+		return ModbusDataItemWithAddress{}, fmt.Errorf("invalid register %q, must be one of: coil, discrete, holding, input", register)
 	}
 	item.Register = register
 
 	// 3. Address
 	address, err := strconv.Atoi(segments[2])
 	if err != nil {
-		return item, fmt.Errorf("invalid address %q: %w", segments[2], err)
+		return ModbusDataItemWithAddress{}, fmt.Errorf("invalid address %q: %w", segments[2], err)
 	}
 	if address < 0 || address > 65535 {
-		return item, fmt.Errorf("address %d out of range (0-65535)", address)
+		return ModbusDataItemWithAddress{}, fmt.Errorf("address %d out of range (0-65535)", address)
 	}
 	item.Address = uint16(address)
 
 	// 4. Type
 	typeName := segments[3]
 	if !validTypes[typeName] {
-		return item, fmt.Errorf("invalid type %q", typeName)
+		return ModbusDataItemWithAddress{}, fmt.Errorf("invalid type %q", typeName)
 	}
 	item.Type = typeName
 
@@ -126,16 +126,16 @@ func ParseModbusAddress(addr string) (ModbusDataItemWithAddress, error) {
 
 		kv := strings.SplitN(opt, "=", 2)
 		if len(kv) != 2 {
-			return item, fmt.Errorf("invalid option %q, expected key=value", opt)
+			return ModbusDataItemWithAddress{}, fmt.Errorf("invalid option %q, expected key=value", opt)
 		}
 
 		key, value := kv[0], kv[1]
 		if !validOptionKeys[key] {
-			return item, fmt.Errorf("unknown option key %q", key)
+			return ModbusDataItemWithAddress{}, fmt.Errorf("unknown option key %q", key)
 		}
 
 		if seenKeys[key] {
-			return item, fmt.Errorf("duplicate option key %q", key)
+			return ModbusDataItemWithAddress{}, fmt.Errorf("duplicate option key %q", key)
 		}
 		seenKeys[key] = true
 
@@ -143,46 +143,46 @@ func ParseModbusAddress(addr string) (ModbusDataItemWithAddress, error) {
 		case "slaveID":
 			slaveID, err := strconv.Atoi(value)
 			if err != nil {
-				return item, fmt.Errorf("invalid slave value %q: %w", value, err)
+				return ModbusDataItemWithAddress{}, fmt.Errorf("invalid slave value %q: %w", value, err)
 			}
 
 			if slaveID < 0 || slaveID > 255 {
-				return item, fmt.Errorf("slave %d out of range (0-255)", slaveID)
+				return ModbusDataItemWithAddress{}, fmt.Errorf("slave %d out of range (0-255)", slaveID)
 			}
 
 			item.SlaveID = byte(slaveID)
 		case "length":
 			length, err := strconv.Atoi(value)
 			if err != nil {
-				return item, fmt.Errorf("invalid length value %q: %w", value, err)
+				return ModbusDataItemWithAddress{}, fmt.Errorf("invalid length value %q: %w", value, err)
 			}
 
 			if length < 0 || length > 65535 {
-				return item, fmt.Errorf("length %d out of range (0-65535)", length)
+				return ModbusDataItemWithAddress{}, fmt.Errorf("length %d out of range (0-65535)", length)
 			}
 
 			item.Length = uint16(length)
 		case "bit":
 			bit, err := strconv.Atoi(value)
 			if err != nil {
-				return item, fmt.Errorf("invalid bit value %q: %w", value, err)
+				return ModbusDataItemWithAddress{}, fmt.Errorf("invalid bit value %q: %w", value, err)
 			}
 
 			if bit < 0 || bit > 15 {
-				return item, fmt.Errorf("bit %d out of range (0-15)", bit)
+				return ModbusDataItemWithAddress{}, fmt.Errorf("bit %d out of range (0-15)", bit)
 			}
 
 			item.Bit = uint16(bit)
 		case "scale":
 			scale, err := strconv.ParseFloat(value, 64)
 			if err != nil {
-				return item, fmt.Errorf("invalid scale value %q: %w", value, err)
+				return ModbusDataItemWithAddress{}, fmt.Errorf("invalid scale value %q: %w", value, err)
 			}
 
 			item.Scale = scale
 		case "output":
 			if !validOutputTypes[value] {
-				return item, fmt.Errorf("invalid output type %q, must be one of: INT64, UINT64, FLOAT64, STRING, BOOL, UINT16", value)
+				return ModbusDataItemWithAddress{}, fmt.Errorf("invalid output type %q, must be one of: INT64, UINT64, FLOAT64, STRING, BOOL, UINT16", value)
 			}
 
 			item.Output = value
@@ -191,12 +191,12 @@ func ParseModbusAddress(addr string) (ModbusDataItemWithAddress, error) {
 
 	// Cross-validate: length only with STRING
 	if item.Length != 0 && item.Type != "STRING" {
-		return item, fmt.Errorf("length option is only valid for STRING type, got %q", item.Type)
+		return ModbusDataItemWithAddress{}, fmt.Errorf("length option is only valid for STRING type, got %q", item.Type)
 	}
 
 	// Cross-validate: bit only with BIT
 	if item.Bit != 0 && item.Type != "BIT" {
-		return item, fmt.Errorf("bit option is only valid for BIT type, got %q", item.Type)
+		return ModbusDataItemWithAddress{}, fmt.Errorf("bit option is only valid for BIT type, got %q", item.Type)
 	}
 
 	return item, nil
