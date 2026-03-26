@@ -83,7 +83,11 @@ func ParseModbusAddress(addr string) (ModbusDataItemWithAddress, error) {
 	// Split positional part on '.'
 	segments := strings.Split(positional, ".")
 	if len(segments) != 4 {
-		return ModbusDataItemWithAddress{}, fmt.Errorf("expected exactly 4 dot-separated segments (name.register.address.type), got %d", len(segments))
+		hint := ""
+		if len(segments) > 4 {
+			hint = ". note: the name segment cannot contain dots"
+		}
+		return ModbusDataItemWithAddress{}, fmt.Errorf("expected exactly 4 dot-separated segments (name.register.address.type), got %d%s", len(segments), hint)
 	}
 
 	// 1. Name
