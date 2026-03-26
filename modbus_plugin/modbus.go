@@ -362,6 +362,14 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 
 	// Must have at least one
 	if !hasUnifiedAddresses && !hasAddresses {
+		if unifiedAddressesErr != nil {
+			return nil, fmt.Errorf("addresses are empty (unifiedAddresses parse error: %w)", unifiedAddressesErr)
+		}
+
+		if addressesErr != nil {
+			return nil, fmt.Errorf("addresses are empty (addresses parse error: %w)", addressesErr)
+		}
+
 		return nil, fmt.Errorf("addresses are empty: provide either 'unifiedAddresses' or 'addresses'")
 	}
 
