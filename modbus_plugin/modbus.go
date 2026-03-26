@@ -685,7 +685,12 @@ func (m *ModbusInput) newTag(item ModbusDataItemWithAddress) (modbusTag, error) 
 		name:           item.Name,
 		address:        item.Address,
 		length:         fieldLength,
-		unifiedAddress: FormatModbusAddress(item),
+		unifiedAddress: func() string {
+			if item.Type == "" {
+				return ""
+			}
+			return FormatModbusAddress(item)
+		}(),
 	}
 
 	// Handle type conversions for coil and discrete registers
