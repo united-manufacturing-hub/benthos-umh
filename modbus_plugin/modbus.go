@@ -191,7 +191,7 @@ var ModbusConfigSpec = service.NewConfigSpec().
 	Field(service.NewStringListField("unifiedAddresses").
 		Description("Unified address strings. Format: 'name.register.address.type[:key=value]*'. " +
 			"Example: 'temperature.holding.100.INT16'. " +
-			"When provided, the 'addresses' field is ignored.").
+			"Mutually exclusive with 'addresses'; providing both will result in an error.").
 		Default([]string{}).
 		Optional()).
 	Field(service.NewObjectListField("addresses",
