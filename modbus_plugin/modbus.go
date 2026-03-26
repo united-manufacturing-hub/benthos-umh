@@ -189,7 +189,7 @@ var ModbusConfigSpec = service.NewConfigSpec().
 		service.NewDurationField("timeBetweenRequests").Description("TimeBetweenRequests is the time between two requests to the same device. Useful to avoid flooding the device. Not to be confused with TimeBetweenReads.").Default("0s")).
 		Description("Modbus workarounds. Required by some devices to work correctly. Should be left alone by default and must not be changed unless necessary.").Advanced()).
 	Field(service.NewStringListField("unifiedAddresses").
-		Description("Unified address strings. Format: 'name.register.address.type[:key=value]*'. " +
+		Description("Unified address strings. Format: 'name.register.address.type[:key=value]*'. "+
 			"Mutually exclusive with 'addresses'; providing both will result in an error.").
 		Examples(
 			[]string{"temperature.holding.100.INT16"},
@@ -682,9 +682,9 @@ func (m *ModbusInput) newTag(item ModbusDataItemWithAddress) (modbusTag, error) 
 
 	// Initialize the field
 	f := modbusTag{
-		name:           item.Name,
-		address:        item.Address,
-		length:         fieldLength,
+		name:    item.Name,
+		address: item.Address,
+		length:  fieldLength,
 		unifiedAddress: func() string {
 			if item.Type == "" {
 				return ""
