@@ -190,8 +190,12 @@ var ModbusConfigSpec = service.NewConfigSpec().
 		Description("Modbus workarounds. Required by some devices to work correctly. Should be left alone by default and must not be changed unless necessary.").Advanced()).
 	Field(service.NewStringListField("unifiedAddresses").
 		Description("Unified address strings. Format: 'name.register.address.type[:key=value]*'. " +
-			"Example: 'temperature.holding.100.INT16'. " +
 			"Mutually exclusive with 'addresses'; providing both will result in an error.").
+		Examples(
+			[]string{"temperature.holding.100.INT16"},
+			[]string{"motor_status.discrete.1.BIT:bit=3"},
+			[]string{"pressure.holding.300.FLOAT32:scale=0.1:output=FLOAT64:slaveID=2"},
+		).
 		Default([]string{}).
 		Optional()).
 	Field(service.NewObjectListField("addresses",
