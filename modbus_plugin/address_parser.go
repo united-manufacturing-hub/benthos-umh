@@ -190,12 +190,12 @@ func ParseModbusAddress(addr string) (ModbusDataItemWithAddress, error) {
 	}
 
 	// Cross-validate: length only with STRING
-	if item.Length != 0 && item.Type != "STRING" {
+	if seenKeys["length"] && item.Type != "STRING" {
 		return ModbusDataItemWithAddress{}, fmt.Errorf("length option is only valid for STRING type, got %q", item.Type)
 	}
 
 	// Cross-validate: bit only with BIT
-	if item.Bit != 0 && item.Type != "BIT" {
+	if seenKeys["bit"] && item.Type != "BIT" {
 		return ModbusDataItemWithAddress{}, fmt.Errorf("bit option is only valid for BIT type, got %q", item.Type)
 	}
 
