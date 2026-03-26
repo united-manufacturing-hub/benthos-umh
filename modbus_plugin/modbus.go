@@ -208,6 +208,33 @@ var ModbusConfigSpec = service.NewConfigSpec().
 		Optional().
 		Deprecated())
 
+// validateAndAppend checks slaveID membership, validates type/register compatibility,
+// deduplicates by tag ID, and appends the item to the address list.
+func (m *ModbusInput) validateAndAppend(
+	addresses []ModbusDataItemWithAddress,
+	item ModbusDataItemWithAddress,
+	seed maphash.Seed,
+	seenFields map[uint64]struct{},
+) ([]ModbusDataItemWithAddress, error) {
+	if item.SlaveID != 0 && !slices.Contains(m.SlaveIDs, item.SlaveID) {
+		return addresses, fmt.Errorf("address %q has slaveID %d which is not in the top-level slaveIDs list. Add %d to slaveIDs or set slaveID to 0 to read from all slaves", item.Name, item.SlaveID, item.SlaveID)
+	}
+
+	if valErr := validateAddressItem(item); valErr != nil {
+		return addresses, valErr
+	}
+
+	tid := tagIDWithSlave(seed, item)
+	if _, exists := seenFields[tid]; exists {
+		m.Log.Warnf("Duplicate field %q register=%s address=%d slaveID=%d, ignoring",
+			item.Name, item.Register, item.Address, item.SlaveID)
+		return addresses, nil
+	}
+	seenFields[tid] = struct{}{}
+
+	return append(addresses, item), nil
+}
+
 // newModbusInput is the constructor function for ModbusInput. It parses the plugin configuration,
 // establishes a connection with the Modbus device, and initializes the input plugin instance.
 func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
@@ -423,26 +450,11 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 			}
 			item.SlaveID = byte(slaveIDInt)
 
-			// Validate: if slaveID is non-zero, it must exist in the top-level slaveIDs list
-			if item.SlaveID != 0 && !slices.Contains(m.SlaveIDs, item.SlaveID) {
-				return nil, fmt.Errorf("address %q has slaveID %d which is not in the top-level slaveIDs list. Add %d to slaveIDs or set slaveID to 0 to read from all slaves", item.Name, item.SlaveID, item.SlaveID)
+			var appendErr error
+			m.Addresses, appendErr = m.validateAndAppend(m.Addresses, item, seed, seenFields)
+			if appendErr != nil {
+				return nil, appendErr
 			}
-
-			// Validate type/register compatibility
-			if valErr := validateAddressItem(item); valErr != nil {
-				return nil, valErr
-			}
-
-			// First-pass dedup: catches identical YAML entries (same register+address+slaveID)
-			tid := tagIDWithSlave(seed, item)
-			if _, exists := seenFields[tid]; exists {
-				m.Log.Warnf("Duplicate field %q register=%s address=%d slaveID=%d, ignoring",
-					item.Name, item.Register, item.Address, item.SlaveID)
-				continue
-			}
-			seenFields[tid] = struct{}{}
-
-			m.Addresses = append(m.Addresses, item)
 		}
 	} else {
 		// New unifiedAddresses format
@@ -452,26 +464,11 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 				return nil, fmt.Errorf("unifiedAddresses %q: %w", addrStr, parseErr)
 			}
 
-			// Validate: if slaveID is non-zero, it must exist in the top-level slaveIDs list
-			if item.SlaveID != 0 && !slices.Contains(m.SlaveIDs, item.SlaveID) {
-				return nil, fmt.Errorf("address %q has slaveID %d which is not in the top-level slaveIDs list. Add %d to slaveIDs or set slaveID to 0 to read from all slaves", item.Name, item.SlaveID, item.SlaveID)
+			var appendErr error
+			m.Addresses, appendErr = m.validateAndAppend(m.Addresses, item, seed, seenFields)
+			if appendErr != nil {
+				return nil, fmt.Errorf("unifiedAddresses %q: %w", addrStr, appendErr)
 			}
-
-			// Validate type/register compatibility (same as legacy path)
-			if valErr := validateAddressItem(item); valErr != nil {
-				return nil, fmt.Errorf("unifiedAddresses %q: %w", addrStr, valErr)
-			}
-
-			// First-pass dedup
-			tid := tagIDWithSlave(seed, item)
-			if _, exists := seenFields[tid]; exists {
-				m.Log.Warnf("Duplicate field %q register=%s address=%d slaveID=%d, ignoring",
-					item.Name, item.Register, item.Address, item.SlaveID)
-				continue
-			}
-			seenFields[tid] = struct{}{}
-
-			m.Addresses = append(m.Addresses, item)
 		}
 	}
 
