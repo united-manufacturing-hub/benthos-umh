@@ -325,7 +325,7 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 
 	// If both fields failed to parse, report the errors
 	if unifiedAddressesErr != nil && addressesErr != nil {
-		return nil, fmt.Errorf("failed to parse address configuration: unifiedAddresses: %w, addresses: %v", unifiedAddressesErr, addressesErr)
+		return nil, fmt.Errorf("failed to parse address configuration: unifiedAddresses: %w, addresses: %w", unifiedAddressesErr, addressesErr)
 	}
 
 	// Mutual exclusion: cannot use both
