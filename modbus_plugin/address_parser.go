@@ -62,6 +62,8 @@ var validOutputTypes = map[string]bool{
 	"UINT64":  true,
 	"FLOAT64": true,
 	"STRING":  true,
+	"BOOL":    true,
+	"UINT16":  true,
 }
 
 // ParseModbusAddress parses a unified address string of the form
@@ -180,7 +182,7 @@ func ParseModbusAddress(addr string) (ModbusDataItemWithAddress, error) {
 			item.Scale = scale
 		case "output":
 			if !validOutputTypes[value] {
-				return item, fmt.Errorf("invalid output type %q, must be one of: INT64, UINT64, FLOAT64, STRING", value)
+				return item, fmt.Errorf("invalid output type %q, must be one of: INT64, UINT64, FLOAT64, STRING, BOOL, UINT16", value)
 			}
 
 			item.Output = value

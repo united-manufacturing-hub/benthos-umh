@@ -270,7 +270,7 @@ name.register.address.type[:key=value]*
 - `length=<n>` — register count, only valid for STRING type
 - `bit=<0-7>` — bit number, only valid for BIT type
 - `scale=<float>` — scaling factor
-- `output=<INT64|UINT64|FLOAT64|STRING>` — output type
+- `output=<INT64|UINT64|FLOAT64|STRING|BOOL|UINT16>` — output type
 
 ```yaml
 input:
