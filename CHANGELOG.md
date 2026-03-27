@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`modbus`**: New `unifiedAddresses` field for configuring Modbus addresses as single strings instead of multi-field objects. Format: `name.register.address.type[:key=value]*` (e.g. `temperature.holding.100.INT16:scale=0.1`). This aligns Modbus with S7comm and OPC UA which already use single-string address formats. The legacy `addresses` object list is deprecated but continues to work. Both fields are mutually exclusive.
+- **`modbus`**: New `modbus_tag_unified_address` metadata field on output messages containing the unified dotted address string.
+
 ### Changed
 
 - **[BREAKING]** `uns_input`: Kafka headers now stored as strings in Benthos metadata by default instead of byte arrays. This fixes the issue where `msg.meta.location_path` appeared as ASCII byte array `[69,103,111,...]` in JavaScript processors instead of human-readable string `"enterprise.site..."`.
