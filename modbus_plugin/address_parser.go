@@ -151,7 +151,7 @@ func ParseModbusAddress(addr string) (ModbusDataItemWithAddress, error) {
 			}
 
 			if slaveID < 0 || slaveID > 255 {
-				return ModbusDataItemWithAddress{}, fmt.Errorf("slave %d out of range (0-255)", slaveID)
+				return ModbusDataItemWithAddress{}, fmt.Errorf("slaveID %d out of range (0-255)", slaveID)
 			}
 
 			item.SlaveID = byte(slaveID)
