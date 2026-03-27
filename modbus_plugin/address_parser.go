@@ -147,7 +147,7 @@ func ParseModbusAddress(addr string) (ModbusDataItemWithAddress, error) {
 		case "slaveID":
 			slaveID, err := strconv.Atoi(value)
 			if err != nil {
-				return ModbusDataItemWithAddress{}, fmt.Errorf("invalid slave value %q: %w", value, err)
+				return ModbusDataItemWithAddress{}, fmt.Errorf("invalid slaveID value %q: %w", value, err)
 			}
 
 			if slaveID < 0 || slaveID > 255 {
