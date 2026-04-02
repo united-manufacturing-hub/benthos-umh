@@ -154,11 +154,12 @@ type RequestSet struct {
 }
 
 type modbusTag struct {
-	name      string
-	address   uint16
-	length    uint16
-	omit      bool
-	converter converterFunc
+	name           string
+	address        uint16
+	length         uint16
+	omit           bool
+	converter      converterFunc
+	unifiedAddress string // unified dotted address string (e.g. "temperature.holding.100.INT16")
 }
 
 type converterFunc func([]byte) interface{}
@@ -171,7 +172,7 @@ var ModbusConfigSpec = service.NewConfigSpec().
 	Summary("Creates an input that reads data from Modbus devices. Created & maintained by the United Manufacturing Hub. About us: www.umh.app").
 	Description("This input plugin enables Benthos to read data directly from Modbus devices using the Modbus protocol.").
 	Field(service.NewDurationField("timeBetweenReads").Description("The time between two reads of a Modbus device. Useful if you want to read the device every x seconds. Not to be confused with TimeBetweenRequests.").Default("1s").Advanced()).
-	Field(service.NewStringField("controller").Description("The Modbus controller address, e.g., 'tcp://localhost:502'").Default("tcp://localhost:502").Advanced()).
+	Field(service.NewStringField("controller").Description("The Modbus controller address, e.g., 'tcp://localhost:502'").Default("tcp://localhost:502")).
 	Field(service.NewStringField("transmissionMode").Description("Transmission mode: 'TCP', 'RTUoverTCP', or 'ASCIIoverTCP'").Default("TCP").Advanced()).
 	Field(service.NewIntListField("slaveIDs").Description("Slave IDs of the Modbus devices to read from 1-255").Default([]int{1})).
 	Field(service.NewDurationField("timeout").Description("").Default("1s").Advanced()).
@@ -187,6 +188,16 @@ var ModbusConfigSpec = service.NewConfigSpec().
 		service.NewStringField("stringRegisterLocation").Description("String byte-location in registers: 'lower', 'upper', or empty for both").Default(""),
 		service.NewDurationField("timeBetweenRequests").Description("TimeBetweenRequests is the time between two requests to the same device. Useful to avoid flooding the device. Not to be confused with TimeBetweenReads.").Default("0s")).
 		Description("Modbus workarounds. Required by some devices to work correctly. Should be left alone by default and must not be changed unless necessary.").Advanced()).
+	Field(service.NewStringListField("unifiedAddresses").
+		Description("Unified address strings. Format: 'name.register.address.type[:key=value]*'. "+
+			"Mutually exclusive with 'addresses'; providing both will result in an error.").
+		Examples(
+			[]string{"temperature.holding.100.INT16"},
+			[]string{"motor_status.discrete.1.BIT:bit=3"},
+			[]string{"pressure.holding.300.FLOAT32:scale=0.1:output=FLOAT64:slaveID=2"},
+		).
+		Default([]string{}).
+		Optional()).
 	Field(service.NewObjectListField("addresses",
 		service.NewStringField("name").Description("Field name"),
 		service.NewStringField("register").Description("Register type: 'coil', 'discrete', 'holding', or 'input'").Default("holding"),
@@ -197,7 +208,36 @@ var ModbusConfigSpec = service.NewConfigSpec().
 		service.NewFloatField("scale").Description("Factor to scale the variable with").Default(0.0),
 		service.NewStringField("output").Description("Type of resulting field: 'INT64', 'UINT64', 'FLOAT64' or 'STRING'").Default(""),
 		service.NewIntField("slaveID").Description("Optional: only read this address from the specified slave ID. If 0 or omitted, read from all configured slaveIDs.").Default(0)).
-		Description("List of Modbus addresses to read"))
+		Description("Deprecated: use 'unifiedAddresses' instead. List of Modbus addresses to read").
+		Optional().
+		Deprecated())
+
+// validateAndAppend checks slaveID membership, validates type/register compatibility,
+// deduplicates by tag ID, and appends the item to the address list.
+func (m *ModbusInput) validateAndAppend(
+	addresses []ModbusDataItemWithAddress,
+	item ModbusDataItemWithAddress,
+	seed maphash.Seed,
+	seenFields map[uint64]struct{},
+) ([]ModbusDataItemWithAddress, error) {
+	if item.SlaveID != 0 && !slices.Contains(m.SlaveIDs, item.SlaveID) {
+		return addresses, fmt.Errorf("address %q has slaveID %d which is not in the top-level slaveIDs list. Add %d to slaveIDs or set slaveID to 0 to read from all slaves", item.Name, item.SlaveID, item.SlaveID)
+	}
+
+	if valErr := validateAddressItem(item); valErr != nil {
+		return addresses, valErr
+	}
+
+	tid := tagIDWithSlave(seed, item)
+	if _, exists := seenFields[tid]; exists {
+		m.Log.Warnf("Duplicate field %q register=%s address=%d slaveID=%d, ignoring",
+			item.Name, item.Register, item.Address, item.SlaveID)
+		return addresses, nil
+	}
+	seenFields[tid] = struct{}{}
+
+	return append(addresses, item), nil
+}
 
 // newModbusInput is the constructor function for ModbusInput. It parses the plugin configuration,
 // establishes a connection with the Modbus device, and initializes the input plugin instance.
@@ -307,171 +347,141 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		return nil, fmt.Errorf("unknown optimization %q", m.Optimization)
 	}
 
-	// Read in addresses
-	addressesConf, err := conf.FieldObjectList("addresses")
-	if err != nil {
-		return nil, err
+	// Read in addresses: try new unified format first, fall back to legacy 'addresses'
+	unifiedAddressesConf, unifiedAddressesErr := conf.FieldStringList("unifiedAddresses")
+	addressesConf, addressesErr := conf.FieldObjectList("addresses")
+
+	hasUnifiedAddresses := unifiedAddressesErr == nil && len(unifiedAddressesConf) > 0
+	hasAddresses := addressesErr == nil && len(addressesConf) > 0
+
+	// If both fields failed to parse, report the errors
+	if unifiedAddressesErr != nil && addressesErr != nil {
+		return nil, fmt.Errorf("failed to parse address configuration: unifiedAddresses: %w, addresses: %w", unifiedAddressesErr, addressesErr)
 	}
 
-	// Reject any configuration without fields as it would be pointless
-	if len(addressesConf) == 0 {
-		return nil, fmt.Errorf("adresses are empty")
+	// Mutual exclusion: cannot use both
+	if hasUnifiedAddresses && hasAddresses {
+		return nil, fmt.Errorf("cannot use both 'unifiedAddresses' and 'addresses' fields; use 'unifiedAddresses' for new configs")
+	}
+
+	// Must have at least one
+	if !hasUnifiedAddresses && !hasAddresses {
+		if unifiedAddressesErr != nil {
+			return nil, fmt.Errorf("addresses are empty (unifiedAddresses parse error: %w)", unifiedAddressesErr)
+		}
+
+		if addressesErr != nil {
+			return nil, fmt.Errorf("addresses are empty (addresses parse error: %w)", addressesErr)
+		}
+
+		return nil, fmt.Errorf("addresses are empty: provide either 'unifiedAddresses' or 'addresses'")
 	}
 
 	// used to de-duplicate
 	seenFields := make(map[uint64]struct{})
 	seed := maphash.MakeSeed()
 
-	for _, addrConf := range addressesConf {
-		item := ModbusDataItemWithAddress{}
+	if hasAddresses && !hasUnifiedAddresses {
+		// Legacy path: parse from object list
+		m.Log.Warnf("Using deprecated 'addresses' object format. Migrate to 'unifiedAddresses' string list.")
 
-		// Name
-		if item.Name, err = addrConf.FieldString("name"); err != nil {
-			return nil, err
-		}
+		for _, addrConf := range addressesConf {
+			item := ModbusDataItemWithAddress{}
 
-		// mandatory
-		if item.Name == "" {
-			return nil, fmt.Errorf("empty field name in request")
-		}
+			// Name
+			if item.Name, err = addrConf.FieldString("name"); err != nil {
+				return nil, err
+			}
 
-		// Register
-		if item.Register, err = addrConf.FieldString("register"); err != nil {
-			return nil, err
-		}
+			// mandatory
+			if item.Name == "" {
+				return nil, fmt.Errorf("empty field name in request")
+			}
 
-		switch item.Register {
-		case "":
-			item.Register = "holding"
-		case "coil", "discrete", "holding", "input":
-		default:
-			return nil, fmt.Errorf("unknown register-type %q for field %q", item.Register, item.Name)
-		}
+			// Register
+			if item.Register, err = addrConf.FieldString("register"); err != nil {
+				return nil, err
+			}
 
-		// Address
-		var (
-			addr   int
-			length int
-			bit    int
-		)
-		if addr, err = addrConf.FieldInt("address"); err != nil {
-			return nil, err
-		}
-		if addr < 0 || addr > 65535 { // Check if the value is within the range of uint16
-			return nil, fmt.Errorf("value out of range for uint16: %d", addr)
-		}
-		item.Address = uint16(addr) // Convert int to uint16
-
-		if item.Type, err = addrConf.FieldString("type"); err != nil {
-			return nil, err
-		}
-
-		if length, err = addrConf.FieldInt("length"); err != nil {
-			return nil, err
-		}
-		if length < 0 || length > 65535 { // Check if the value is within the range of uint16
-			return nil, fmt.Errorf("value out of range for uint16: %d", length)
-		}
-		item.Length = uint16(length) // Convert int to uint16
-
-		if bit, err = addrConf.FieldInt("bit"); err != nil {
-			return nil, err
-		}
-		if bit < 0 || bit > 65535 { // Check if the value is within the range of uint16
-			return nil, fmt.Errorf("value out of range for uint16: %d", bit)
-		}
-		item.Bit = uint16(bit) // Convert int to uint16
-
-		if item.Scale, err = addrConf.FieldFloat("scale"); err != nil {
-			return nil, err
-		}
-		if item.Output, err = addrConf.FieldString("output"); err != nil {
-			return nil, err
-		}
-
-		// Parse slaveID
-		var slaveIDInt int
-		if slaveIDInt, err = addrConf.FieldInt("slaveID"); err != nil {
-			return nil, err
-		}
-		if slaveIDInt < 0 || slaveIDInt > 255 {
-			return nil, fmt.Errorf("slaveID out of range (0-255) for field %q: %d", item.Name, slaveIDInt)
-		}
-		item.SlaveID = byte(slaveIDInt)
-
-		// Validate: if slaveID is non-zero, it must exist in the top-level slaveIDs list
-		if item.SlaveID != 0 && !slices.Contains(m.SlaveIDs, item.SlaveID) {
-			return nil, fmt.Errorf("address %q has slaveID %d which is not in the top-level slaveIDs list. Add %d to slaveIDs or set slaveID to 0 to read from all slaves", item.Name, item.SlaveID, item.SlaveID)
-		}
-
-		// Check the input and output type for all fields as we later need
-		// it to determine the number of registers to query.
-		switch item.Register {
-		case "holding", "input":
-			// Check the input type
-			switch item.Type {
+			switch item.Register {
 			case "":
-			case "INT8L", "INT8H", "INT16", "INT32", "INT64",
-				"UINT8L", "UINT8H", "UINT16", "UINT32", "UINT64",
-				"FLOAT16", "FLOAT32", "FLOAT64":
-				if item.Length != 0 {
-					return nil, fmt.Errorf("length option cannot be used for type %q of field %q", item.Type, item.Name)
-				}
-				if item.Bit != 0 {
-					return nil, fmt.Errorf("bit option cannot be used for type %q of field %q", item.Type, item.Name)
-				}
-				if item.Output == "STRING" {
-					return nil, fmt.Errorf("cannot output field %q as string", item.Name)
-				}
-			case "STRING":
-				if item.Length < 1 {
-					return nil, fmt.Errorf("missing length for string field %q", item.Name)
-				}
-				if item.Bit != 0 {
-					return nil, fmt.Errorf("bit option cannot be used for type %q of field %q", item.Type, item.Name)
-				}
-				if item.Scale != 0.0 {
-					return nil, fmt.Errorf("scale option cannot be used for string field %q", item.Name)
-				}
-				if item.Output != "" && item.Output != "STRING" {
-					return nil, fmt.Errorf("invalid output type %q for string field %q", item.Type, item.Name)
-				}
-			case "BIT":
-				if item.Length != 0 {
-					return nil, fmt.Errorf("length option cannot be used for type %q of field %q", item.Type, item.Name)
-				}
-				if item.Output == "STRING" {
-					return nil, fmt.Errorf("cannot output field %q as string", item.Name)
-				}
+				item.Register = "holding"
+			case "coil", "discrete", "holding", "input":
 			default:
-				return nil, fmt.Errorf("unknown register data-type %q for field %q", item.Type, item.Name)
+				return nil, fmt.Errorf("unknown register-type %q for field %q", item.Register, item.Name)
 			}
 
-			// Check output type
-			switch item.Output {
-			case "", "INT64", "UINT64", "FLOAT64", "STRING":
-			default:
-				return nil, fmt.Errorf("unknown output data-type %q for field %q", item.Output, item.Name)
+			// Address
+			var (
+				addr   int
+				length int
+				bit    int
+			)
+			if addr, err = addrConf.FieldInt("address"); err != nil {
+				return nil, err
 			}
-		case "coil", "discrete":
-			// Bit register types can only be UINT64 or BOOL
-			switch item.Output {
-			case "", "UINT16", "BOOL":
-			default:
-				return nil, fmt.Errorf("unknown output data-type %q for field %q", item.Output, item.Name)
+			if addr < 0 || addr > 65535 { // Check if the value is within the range of uint16
+				return nil, fmt.Errorf("value out of range for uint16: %d", addr)
+			}
+			item.Address = uint16(addr) // Convert int to uint16
+
+			if item.Type, err = addrConf.FieldString("type"); err != nil {
+				return nil, err
+			}
+
+			if length, err = addrConf.FieldInt("length"); err != nil {
+				return nil, err
+			}
+			if length < 0 || length > 65535 { // Check if the value is within the range of uint16
+				return nil, fmt.Errorf("value out of range for uint16: %d", length)
+			}
+			item.Length = uint16(length) // Convert int to uint16
+
+			if bit, err = addrConf.FieldInt("bit"); err != nil {
+				return nil, err
+			}
+			if bit < 0 || bit > 65535 { // Check if the value is within the range of uint16
+				return nil, fmt.Errorf("value out of range for uint16: %d", bit)
+			}
+			item.Bit = uint16(bit) // Convert int to uint16
+
+			if item.Scale, err = addrConf.FieldFloat("scale"); err != nil {
+				return nil, err
+			}
+			if item.Output, err = addrConf.FieldString("output"); err != nil {
+				return nil, err
+			}
+
+			// Parse slaveID
+			var slaveIDInt int
+			if slaveIDInt, err = addrConf.FieldInt("slaveID"); err != nil {
+				return nil, err
+			}
+			if slaveIDInt < 0 || slaveIDInt > 255 {
+				return nil, fmt.Errorf("slaveID out of range (0-255) for field %q: %d", item.Name, slaveIDInt)
+			}
+			item.SlaveID = byte(slaveIDInt)
+
+			var appendErr error
+			m.Addresses, appendErr = m.validateAndAppend(m.Addresses, item, seed, seenFields)
+			if appendErr != nil {
+				return nil, appendErr
 			}
 		}
+	} else {
+		// New unifiedAddresses format
+		for _, addrStr := range unifiedAddressesConf {
+			item, parseErr := ParseModbusAddress(addrStr)
+			if parseErr != nil {
+				return nil, fmt.Errorf("unifiedAddresses %q: %w", addrStr, parseErr)
+			}
 
-		// First-pass dedup: catches identical YAML entries (same register+address+slaveID)
-		tagID := tagIDWithSlave(seed, item)
-		if _, exists := seenFields[tagID]; exists {
-			m.Log.Warnf("Duplicate field %q register=%s address=%d slaveID=%d, ignoring",
-				item.Name, item.Register, item.Address, item.SlaveID)
-			continue
+			var appendErr error
+			m.Addresses, appendErr = m.validateAndAppend(m.Addresses, item, seed, seenFields)
+			if appendErr != nil {
+				return nil, fmt.Errorf("unifiedAddresses %q: %w", addrStr, appendErr)
+			}
 		}
-		seenFields[tagID] = struct{}{}
-
-		m.Addresses = append(m.Addresses, item)
 	}
 
 	// Build per-slave address lists
@@ -675,6 +685,12 @@ func (m *ModbusInput) newTag(item ModbusDataItemWithAddress) (modbusTag, error) 
 		name:    item.Name,
 		address: item.Address,
 		length:  fieldLength,
+		unifiedAddress: func() string {
+			if item.Type == "" {
+				return ""
+			}
+			return FormatModbusAddress(item)
+		}(),
 	}
 
 	// Handle type conversions for coil and discrete registers
@@ -933,8 +949,68 @@ func (m *ModbusInput) createMessageFromValue(item modbusTag, rawValue []byte, re
 	message.MetaSet("modbus_tag_length", strconv.Itoa(int(item.length)))       // This is the length of the tag
 	message.MetaSet("modbus_tag_register", registerName)                       // This is the register where the tag is located
 	message.MetaSet("modbus_tag_slaveid", strconv.Itoa(int(m.CurrentSlaveID))) // This is the slaveID that we are currently reading
+	if item.unifiedAddress != "" {
+		message.MetaSet("modbus_tag_unified_address", item.unifiedAddress) // Unified dotted address string
+	}
 
 	return message
+}
+
+// validateAddressItem checks type/register compatibility for a parsed ModbusDataItemWithAddress.
+func validateAddressItem(item ModbusDataItemWithAddress) error {
+	switch item.Register {
+	case "holding", "input":
+		switch item.Type {
+		case "":
+		case "INT8L", "INT8H", "INT16", "INT32", "INT64",
+			"UINT8L", "UINT8H", "UINT16", "UINT32", "UINT64",
+			"FLOAT16", "FLOAT32", "FLOAT64":
+			if item.Length != 0 {
+				return fmt.Errorf("length option cannot be used for type %q of field %q", item.Type, item.Name)
+			}
+			if item.Bit != 0 {
+				return fmt.Errorf("bit option cannot be used for type %q of field %q", item.Type, item.Name)
+			}
+			if item.Output == "STRING" {
+				return fmt.Errorf("cannot output field %q as string", item.Name)
+			}
+		case "STRING":
+			if item.Length < 1 {
+				return fmt.Errorf("missing length for string field %q", item.Name)
+			}
+			if item.Bit != 0 {
+				return fmt.Errorf("bit option cannot be used for type %q of field %q", item.Type, item.Name)
+			}
+			if item.Scale != 0.0 {
+				return fmt.Errorf("scale option cannot be used for string field %q", item.Name)
+			}
+			if item.Output != "" && item.Output != "STRING" {
+				return fmt.Errorf("invalid output type %q for string field %q", item.Type, item.Name)
+			}
+		case "BIT":
+			if item.Length != 0 {
+				return fmt.Errorf("length option cannot be used for type %q of field %q", item.Type, item.Name)
+			}
+			if item.Output == "STRING" {
+				return fmt.Errorf("cannot output field %q as string", item.Name)
+			}
+		default:
+			return fmt.Errorf("unknown register data-type %q for field %q", item.Type, item.Name)
+		}
+
+		switch item.Output {
+		case "", "INT64", "UINT64", "FLOAT64", "STRING":
+		default:
+			return fmt.Errorf("unknown output data-type %q for field %q", item.Output, item.Name)
+		}
+	case "coil", "discrete":
+		switch item.Output {
+		case "", "UINT16", "BOOL":
+		default:
+			return fmt.Errorf("unknown output data-type %q for field %q", item.Output, item.Name)
+		}
+	}
+	return nil
 }
 
 func sanitize(s string) string {
