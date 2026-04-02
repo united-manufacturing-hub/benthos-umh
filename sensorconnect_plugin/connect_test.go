@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -36,11 +37,11 @@ var _ = Describe("SensorConnect Plugin Unittests", func() {
 	)
 
 	BeforeEach(func() {
-		endpoint := os.Getenv("TEST_DEBUG_IFM_ENDPOINT")
+		testActive, ok := os.LookupEnv("TEST_SENSORCONNECT_UNITTEST")
 
-		// Check if environment variables are set
-		if endpoint == "" {
-			Skip("Skipping test: environment variables not set")
+		// Check if unit test variable is set
+		if !ok || strings.ToLower(testActive) == "false" {
+			Skip("Skipping test: TEST_SENSORCONNECT_UNITTEST env variable is not set or is FALSE")
 			return
 		}
 

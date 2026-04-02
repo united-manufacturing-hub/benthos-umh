@@ -1,39 +1,26 @@
 # Changelog
 
-All notable changes to benthos-umh will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
 ## [Unreleased]
 
-### Added
+## [0.12.1]
 
-- **`modbus`**: New `unifiedAddresses` field for configuring Modbus addresses as single strings instead of multi-field objects. Format: `name.register.address.type[:key=value]*` (e.g. `temperature.holding.100.INT16:scale=0.1`). This aligns Modbus with S7comm and OPC UA which already use single-string address formats. The legacy `addresses` object list is deprecated but continues to work. Both fields are mutually exclusive.
-- **`modbus`**: New `modbus_tag_unified_address` metadata field on output messages containing the unified dotted address string.
+### Improvements
 
-### Changed
+- Unified Address Field for Modbus: introduces `unifiedAddresses` as a single-string alternative to the existing address object list. Format: `name.register.address.type[:key=value]*` (e.g., `temperature.holding.100.INT16:scale=0.1`). The legacy `addresses` object list continues to work with a deprecation warning. Both fields are mutually exclusive
 
-- **[BREAKING]** `uns_input`: Kafka headers now stored as strings in Benthos metadata by default instead of byte arrays. This fixes the issue where `msg.meta.location_path` appeared as ASCII byte array `[69,103,111,...]` in JavaScript processors instead of human-readable string `"enterprise.site..."`.
+### Fixes
 
-  **Migration:** If you have existing flows with workarounds like `String.fromCharCode(...msg.meta.location_path)`, you have two options:
+- Map fields in the JSON schema incorrectly produced `"type": "string"` instead of `"type": "object"` with `additionalProperties`. Component reference types (`input`, `output`, `processor`, `scanner`) and unknown types had the same issue -- all now map to the correct schema types
+- ADS symbol downloads failed in certain configurations -- bumped ADS plugin to v1.0.8 which fixes the issue
 
-  1. **Keep legacy behavior (no code changes needed):**
-     ```yaml
-     input:
-       uns:
-         metadata_format: "bytes"  # Preserves old byte array behavior
-     ```
+## [0.12.0]
 
-  2. **Migrate to new behavior (recommended):**
-     - Remove `String.fromCharCode()` workarounds from your processors
-     - Use metadata directly: `const location = msg.meta.location_path;`
-     - Leave `metadata_format` unset or explicitly set to `"string"`
+### Improvements
 
-  **Affected metadata fields:** `location_path`, `data_contract`, `tag_name`, `virtual_path`, and any custom Kafka headers.
+- S7 addresses for PE, PA, MK, C, and T areas no longer require a block number. You can now write `PE.X0.0` instead of `PE0.X0.0`. The old format still works but logs a deprecation warning and will be removed in a future version. Data Block addresses (`DB1.DW20`) are unchanged
 
-  **Default behavior:**
-  - New configs: `metadata_format: "string"` (correct behavior)
-  - To use legacy mode: explicitly set `metadata_format: "bytes"`
+### Fixes
 
-  Addresses: #ENG-3435
+- The S7 `DateAndTime` data type crashed due to an incorrect buffer size and now reads correctly
+- Fields with children that already have default values were incorrectly marked as required when editing bridge configurations -- they are now correctly treated as optional
+- Fields marked as deprecated in bridge plugin definitions were not flagged in the Management Console editor -- they now correctly appear as deprecated

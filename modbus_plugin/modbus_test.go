@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/grid-x/modbus"
@@ -330,6 +331,15 @@ var _ = Describe("Test Against Wago-PLC", func() {
 })
 
 var _ = Describe("Per-Slave Address Routing", func() {
+	BeforeEach(func() {
+		testActive, ok := os.LookupEnv("TEST_MODBUS_UNITTEST")
+
+		// Check if unit test variable is set
+		if !ok || strings.ToLower(testActive) == "false" {
+			Skip("Skipping test: TEST_MODBUS_UNITTEST env variable is not set or is FALSE")
+			return
+		}
+	})
 	// Helper to build per-slave RequestSets with validation and deduplication,
 	// mimicking the constructor logic. Optionally tracks deduplicated addresses.
 	buildPerSlaveRequestSets := func(input *ModbusInput, tracking map[byte][]ModbusDataItemWithAddress) error {

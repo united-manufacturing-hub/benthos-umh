@@ -17,10 +17,31 @@ name: Test Modbus
 
 on:
   workflow_call:
+    inputs:
+      test_plc:
+        description: run plc if running in merge_queue
+        required: true
+        type: boolean
 
 jobs:
-  test:
+  test-unit:
+    name: Modbus Unittest
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Setup Test Environment
+        uses: ./.github/actions/setup-test
+      - name: Test
+        env:
+          TEST_MODBUS_UNITTEST: true
+        run: make test-modbus
+
+  test-plc:
     name: Modbus PLC
+    needs: [test-unit]
+    if: ${{ inputs.test_plc == true }}
     concurrency:
       group: modbus-plc
       cancel-in-progress: false
@@ -28,11 +49,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
-      - name: Setup Go
-        uses: ./.github/actions/setup-go
-      - name: Install Ginkgo
-        run: go install github.com/onsi/ginkgo/v2/ginkgo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Setup Test Environment
+        uses: ./.github/actions/setup-test
       - name: Install Tcping
         run: go install github.com/cloverstd/tcping@v0.1.1
 
