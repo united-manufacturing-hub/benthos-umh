@@ -25,11 +25,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
-      - name: Setup Go
-        uses: ./.github/actions/setup-go
-      - name: Install Ginkgo
-        run: go install github.com/onsi/ginkgo/v2/ginkgo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Setup Test Environment
+        uses: ./.github/actions/setup-test
       - name: Test
         env:
           TEST_DOWNSAMPLER: 1

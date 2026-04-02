@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -29,11 +30,11 @@ var _ = Describe("ProcessSensorData", func() {
 	var s *sensorconnect_plugin.SensorConnectInput
 
 	BeforeEach(func() {
-		endpoint := os.Getenv("TEST_DEBUG_IFM_ENDPOINT")
+		testActive, ok := os.LookupEnv("TEST_SENSORCONNECT_UNITTEST")
 
-		// Check if environment variables are set
-		if endpoint == "" {
-			Skip("Skipping test: environment variables not set")
+		// Check if unit test variable is set
+		if !ok || strings.ToLower(testActive) == "false" {
+			Skip("Skipping test: TEST_SENSORCONNECT_UNITTEST env variable is not set or is FALSE")
 			return
 		}
 
@@ -227,11 +228,11 @@ var _ = Describe("float32T bug (ENG-2010)", func() {
 	var s *sensorconnect_plugin.SensorConnectInput
 
 	BeforeEach(func() {
-		endpoint := os.Getenv("TEST_DEBUG_IFM_ENDPOINT")
+		testActive, ok := os.LookupEnv("TEST_SENSORCONNECT_UNITTEST")
 
-		// Check if environment variables are set
-		if endpoint == "" {
-			Skip("Skipping test: environment variables not set")
+		// Check if unit test variable is set
+		if !ok || strings.ToLower(testActive) == "false" {
+			Skip("Skipping test: TEST_SENSORCONNECT_UNITTEST env variable is not set or is FALSE")
 			return
 		}
 
