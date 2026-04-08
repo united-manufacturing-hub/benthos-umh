@@ -29,6 +29,8 @@ import (
 
 	"github.com/dop251/goja"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin/cache"
 )
 
 // NodeREDJSProcessor defines the processor that wraps the JavaScript processor.
@@ -37,6 +39,7 @@ type NodeREDJSProcessor struct {
 	originalCode      string
 	vmpool            sync.Pool
 	logger            *service.Logger
+	cache             cache.Store
 	messagesProcessed *service.MetricCounter
 	messagesErrored   *service.MetricCounter
 	messagesDropped   *service.MetricCounter
@@ -57,6 +60,7 @@ func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service
 		originalCode:      code,
 		vmpool:            sync.Pool{}, // No New function - Get() will return nil when pool is empty
 		logger:            logger,
+		cache:             cache.NewMemoryStore(),
 		messagesProcessed: metrics.NewCounter("messages_processed"),
 		messagesErrored:   metrics.NewCounter("messages_errored"),
 		messagesDropped:   metrics.NewCounter("messages_dropped"),
@@ -312,8 +316,30 @@ func (u *NodeREDJSProcessor) SetupJSEnvironment(vm *goja.Runtime, jsMsg map[stri
 		"error": func(data ...any) { u.logger.Error(FormatConsoleLogMsg(data)) },
 	}
 
-	if err := vm.Set("console", console); err != nil {
+	err := vm.Set("console", console)
+	if err != nil {
 		return fmt.Errorf("failed to set console in JS environment: %w", err)
+	}
+
+	cacheObj := map[string]any{
+		"set": func(key string, value any) {
+			u.cache.Set(key, value)
+		},
+		"get": func(key string) any {
+			v, ok := u.cache.Get(key)
+			if !ok {
+				return goja.Undefined()
+			}
+			return v
+		},
+		"delete": func(key string) {
+			u.cache.Delete(key)
+		},
+	}
+
+	err = vm.Set("cache", cacheObj)
+	if err != nil {
+		return fmt.Errorf("failed to set cache in JS environment: %w", err)
 	}
 
 	return nil
@@ -468,7 +494,7 @@ Message content: %v`,
 
 // Close gracefully shuts down the processor.
 func (u *NodeREDJSProcessor) Close(_ context.Context) error {
-	return nil
+	return u.cache.Close()
 }
 
 func init() {
@@ -501,6 +527,25 @@ console.log("Message metadata:", msg.meta);
 // Example 6: Modify metadata
 msg.meta.processed = true;
 msg.meta.count = (msg.meta.count || 0) + 1;
+return msg;
+
+// Example 7: Persistent counter across messages using cache
+var count = cache.get("count") || 0;
+count++;
+cache.set("count", count);
+msg.payload = count;
+return msg;
+
+// Example 8: Alarm state that only fires once per active condition
+var alarmed = cache.get("alarm_active") || false;
+if (msg.payload > 100 && !alarmed) {
+  cache.set("alarm_active", true);
+  msg.meta.alarm = "triggered";
+  return msg;
+}
+if (msg.payload <= 100 && alarmed) {
+  cache.set("alarm_active", false);
+}
 return msg;`))
 
 	err := service.RegisterBatchProcessor(

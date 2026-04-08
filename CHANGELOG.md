@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Improvements
+
+- Cache API for JavaScript processors: new `cache.set(key, value)`, `cache.get(key, default)`, and `cache.delete(key)` methods for tracking state across messages. Previously, state management required complex Benthos `branch`/`request_map`/`result_map` configurations. Now you can store any JSON-compatible value (strings, numbers, objects, arrays) directly from JavaScript. `cache.get` requires a default value to prevent silent undefined bugs. Available in both `nodered_js` and `tag_processor`. Currently in-memory only (lost on restart), persistent backend planned
+
 ## [0.12.2]
 
 ### Improvements

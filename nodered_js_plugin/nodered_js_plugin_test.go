@@ -21,6 +21,7 @@ import (
 	"math"
 	"math/big"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -846,6 +847,242 @@ nodered_js:
 		})
 	})
 })
+
+var _ = Describe("NodeREDJS cache", func() {
+	BeforeEach(func() {
+		if os.Getenv("TEST_NODERED_JS") == "" {
+			Skip("Skipping Node-RED JS tests: TEST_NODERED_JS not set")
+		}
+	})
+
+	buildStream := func(code string) (service.MessageHandlerFunc, *[]*service.Message, context.CancelFunc) {
+		builder := service.NewStreamBuilder()
+		handler, err := builder.AddProducerFunc()
+		Expect(err).NotTo(HaveOccurred())
+
+		err = builder.AddProcessorYAML("nodered_js:\n  code: |\n" + indentLines(code, "    "))
+		Expect(err).NotTo(HaveOccurred())
+
+		var msgs []*service.Message
+		err = builder.AddConsumerFunc(func(_ context.Context, m *service.Message) error {
+			msgs = append(msgs, m)
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		stream, err := builder.Build()
+		Expect(err).NotTo(HaveOccurred())
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		go func() { _ = stream.Run(ctx) }()
+		return handler, &msgs, cancel
+	}
+
+	When("using cache", func() {
+		It("set then get returns the stored value", func() {
+			handler, msgs, cancel := buildStream(`
+cache.set("k", 42);
+msg.payload = cache.get("k");
+return msg;
+`)
+			defer cancel()
+
+			err := handler(context.Background(), newMsg("ignored"))
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() int { return len(*msgs) }).Should(Equal(1))
+			Expect(payloadFloat(*msgs, 0)).To(Equal(float64(42)))
+		})
+
+		It("get on unknown key returns undefined (falsy)", func() {
+			handler, msgs, cancel := buildStream(`
+var v = cache.get("nope");
+msg.payload = (v === undefined) ? "undefined" : "defined";
+return msg;
+`)
+			defer cancel()
+
+			err := handler(context.Background(), newMsg("ignored"))
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() int { return len(*msgs) }).Should(Equal(1))
+			Expect(payloadString(*msgs, 0)).To(Equal("undefined"))
+		})
+
+		It("delete removes a key", func() {
+			handler, msgs, cancel := buildStream(`
+cache.set("x", 1);
+cache.delete("x");
+var v = cache.get("x");
+msg.payload = (v === undefined) ? "gone" : "present";
+return msg;
+`)
+			defer cancel()
+
+			err := handler(context.Background(), newMsg("ignored"))
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() int { return len(*msgs) }).Should(Equal(1))
+			Expect(payloadString(*msgs, 0)).To(Equal("gone"))
+		})
+
+		It("value persists across consecutive messages", func() {
+			handler, msgs, cancel := buildStream(`
+var count = cache.get("count");
+if (count === undefined) { count = 0; }
+count++;
+cache.set("count", count);
+msg.payload = count;
+return msg;
+`)
+			defer cancel()
+
+			ctx := context.Background()
+			for i := 0; i < 3; i++ {
+				err := handler(ctx, newMsg("tick"))
+				Expect(err).NotTo(HaveOccurred())
+			}
+			Eventually(func() int { return len(*msgs) }).Should(Equal(3))
+			Expect(payloadFloat(*msgs, 2)).To(Equal(float64(3)))
+		})
+
+		It("stores and retrieves an object value", func() {
+			handler, msgs, cancel := buildStream(`
+cache.set("obj", { temperature: 42.5, unit: "C" });
+var obj = cache.get("obj");
+msg.payload = obj.temperature;
+return msg;
+`)
+			defer cancel()
+
+			err := handler(context.Background(), newMsg("ignored"))
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() int { return len(*msgs) }).Should(Equal(1))
+			Expect(payloadFloat(*msgs, 0)).To(Equal(42.5))
+		})
+
+		It("is safe under concurrent message processing", func() {
+			handler, msgs, cancel := buildStream(`
+var n = cache.get("n");
+if (n === undefined) { n = 0; }
+cache.set("n", n + 1);
+msg.payload = "ok";
+return msg;
+`)
+			defer cancel()
+
+			const numMsgs = 30
+			ctx := context.Background()
+			var wg sync.WaitGroup
+			wg.Add(numMsgs)
+			for i := 0; i < numMsgs; i++ {
+				go func() {
+					defer wg.Done()
+					_ = handler(ctx, newMsg("concurrent"))
+				}()
+			}
+			wg.Wait()
+			Eventually(func() int { return len(*msgs) }).Should(Equal(numMsgs))
+		})
+
+		It("cache is shared across VM pool instances", func() {
+			handler, msgs, cancel := buildStream(`
+var v = cache.get("shared");
+if (v === undefined) {
+  cache.set("shared", "seeded");
+  msg.payload = "first";
+} else {
+  msg.payload = v;
+}
+return msg;
+`)
+			defer cancel()
+
+			ctx := context.Background()
+			for i := 0; i < 5; i++ {
+				err := handler(ctx, newMsg("x"))
+				Expect(err).NotTo(HaveOccurred())
+			}
+			Eventually(func() int { return len(*msgs) }).Should(Equal(5))
+			// Every message after the first must see "seeded".
+			for i := 1; i < 5; i++ {
+				Expect(payloadString(*msgs, i)).To(Equal("seeded"))
+			}
+		})
+
+		It("numeric key coercion: number passed as key is coerced to string", func() {
+			handler, msgs, cancel := buildStream(`
+cache.set("42", "byStringKey");
+msg.payload = cache.get("42");
+return msg;
+`)
+			defer cancel()
+
+			err := handler(context.Background(), newMsg("ignored"))
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() int { return len(*msgs) }).Should(Equal(1))
+			Expect(payloadString(*msgs, 0)).To(Equal("byStringKey"))
+		})
+
+		It("fallback pattern works without panicking", func() {
+			handler, msgs, cancel := buildStream(`
+var state = cache.get("state") || { alarm: false, count: 0 };
+state.count++;
+cache.set("state", state);
+msg.payload = state.count;
+return msg;
+`)
+			defer cancel()
+
+			ctx := context.Background()
+			for i := 0; i < 2; i++ {
+				err := handler(ctx, newMsg("tick"))
+				Expect(err).NotTo(HaveOccurred())
+			}
+			Eventually(func() int { return len(*msgs) }).Should(Equal(2))
+			Expect(payloadFloat(*msgs, 1)).To(Equal(float64(2)))
+		})
+	})
+})
+
+// newMsg creates a service.Message with the given string payload.
+func newMsg(payload string) *service.Message {
+	return service.NewMessage([]byte(payload))
+}
+
+// payloadString extracts the string payload from messages[i].
+func payloadString(msgs []*service.Message, i int) string {
+	s, err := msgs[i].AsStructured()
+	Expect(err).NotTo(HaveOccurred())
+	str, ok := s.(string)
+	Expect(ok).To(BeTrue(), "expected string payload, got %T: %v", s, s)
+	return str
+}
+
+// payloadFloat extracts a numeric payload as float64 (goja may return int64 for whole numbers).
+func payloadFloat(msgs []*service.Message, i int) float64 {
+	s, err := msgs[i].AsStructured()
+	Expect(err).NotTo(HaveOccurred())
+	switch v := s.(type) {
+	case float64:
+		return v
+	case int64:
+		return float64(v)
+	case int:
+		return float64(v)
+	default:
+		Fail(fmt.Sprintf("expected numeric payload, got %T: %v", s, s))
+		return 0
+	}
+}
+
+// indentLines prepends prefix to every line of s.
+func indentLines(s, prefix string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		if l != "" {
+			lines[i] = prefix + l
+		}
+	}
+	return strings.Join(lines, "\n")
+}
 
 var _ = Describe("js logmessage", func() {
 	DescribeTable("format",
