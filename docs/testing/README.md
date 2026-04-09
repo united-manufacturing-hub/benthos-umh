@@ -74,3 +74,36 @@ Requires:
 ```bash
 TEST_S7COMM_UNITTEST=true
 ```
+
+## Target: Beckhoff CX7000 (ADS, TwinCAT 3)
+
+- Model number: CX7000
+- TwinCAT 3
+
+Requires:
+```bash
+TEST_ADS_TC3_TARGET_IP="192.168.1.100"
+TEST_ADS_TC3_TARGET_AMS="192.168.1.100.1.1"
+TEST_ADS_TC3_RUNTIME_PORT=851
+TEST_ADS_TC3_SYMBOL="MAIN.MyVariable"
+```
+
+## Target: Beckhoff CX1020 (ADS, TwinCAT 2)
+
+- Model number: CX1020
+- TwinCAT 2
+
+Requires:
+```bash
+TEST_ADS_TC2_TARGET_IP="192.168.1.200"
+TEST_ADS_TC2_TARGET_AMS="192.168.1.200.1.1"
+TEST_ADS_TC2_RUNTIME_PORT=801
+TEST_ADS_TC2_SYMBOL="MAIN.MYBOOL"
+```
+
+## Target: Unit Tests (ADS)
+
+Requires:
+```bash
+TEST_ADS_UNITTEST=true
+```
