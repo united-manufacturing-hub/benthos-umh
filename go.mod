@@ -27,9 +27,9 @@ require (
 )
 
 require (
-	github.com/RuneRoven/benthosADS v1.0.9
 	github.com/RuneRoven/benthosAlarm v1.0.0
 	github.com/RuneRoven/benthosSMTP v0.0.1
+	github.com/RuneRoven/go-ads v1.1.0
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/danomagnum/gologix v0.27.2-beta
 	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
@@ -43,6 +43,7 @@ require (
 	github.com/redpanda-data/benthos/v4 v4.68.0
 	github.com/redpanda-data/connect/public/bundle/free/v4 v4.83.0
 	github.com/robinson/gos7 v0.0.0-20241205073040-7ea1d6fb9d20
+	github.com/rs/zerolog v1.34.0
 	github.com/testcontainers/testcontainers-go v0.41.0
 	github.com/testcontainers/testcontainers-go/modules/redpanda v0.41.0
 	github.com/twmb/franz-go v1.20.7
@@ -411,7 +412,6 @@ require (
 	github.com/rickb777/plural v1.4.8 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
-	github.com/rs/zerolog v1.34.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/samber/lo v1.52.0 // indirect
 	github.com/sashabaranov/go-openai v1.41.2 // indirect
