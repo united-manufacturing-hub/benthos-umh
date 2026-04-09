@@ -22,7 +22,7 @@ type MemoryStore struct {
 	items map[string]any
 }
 
-// NewMemoryStore returns an initialised, empty MemoryStore.
+// NewMemoryStore returns a ready-to-use, empty MemoryStore.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{items: make(map[string]any)}
 }

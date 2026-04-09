@@ -1074,7 +1074,7 @@ func payloadFloat(msgs []*service.Message, i int) float64 {
 }
 
 // indentLines prepends prefix to every line of s.
-func indentLines(s, prefix string) string {
+func indentLines(s string, prefix string) string {
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
 		if l != "" {

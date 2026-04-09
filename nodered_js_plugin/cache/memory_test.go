@@ -87,7 +87,7 @@ var _ = Describe("MemoryStore", func() {
 			}()
 			go func() {
 				defer wg.Done()
-				store.Get("shared") //nolint:errcheck
+				store.Get("shared")
 			}()
 		}
 		wg.Wait()
