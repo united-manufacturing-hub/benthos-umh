@@ -116,6 +116,10 @@ test-uns-redpanda:
 test-s7comm:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./s7comm_plugin/...
 
+.PHONY: test-ads
+test-ads:
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./beckhoff_ads_plugin/...
+
 .PHONY: test-sensorconnect
 test-sensorconnect:
 	@$(GINKGO_CMD) $(GINKGO_SERIAL_FLAGS) ./sensorconnect_plugin/...

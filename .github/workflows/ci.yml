@@ -34,6 +34,7 @@ jobs:
       opcua: ${{ steps.filter.outputs.opcua }}
       modbus: ${{ steps.filter.outputs.modbus }}
       s7: ${{ steps.filter.outputs.s7 }}
+      ads: ${{ steps.filter.outputs.ads }}
       sparkplug: ${{ steps.filter.outputs.sparkplug }}
       eip: ${{ steps.filter.outputs.eip }}
       sensorconnect: ${{ steps.filter.outputs.sensorconnect }}
@@ -65,6 +66,9 @@ jobs:
             s7:
               - 's7comm_plugin/**'
               - '!s7comm_plugin/**/*.md'
+            ads:
+              - 'beckhoff_ads_plugin/**'
+              - '!beckhoff_ads_plugin/**/*.md'
             sparkplug:
               - 'sparkplug_plugin/**'
               - '!sparkplug_plugin/**/*.md'
@@ -164,6 +168,17 @@ jobs:
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-s7.yml
+    secrets: inherit
+
+  test-ads:
+    needs: [detect-changes, lint]
+    if: |
+      always() &&
+      needs.lint.result == 'success' &&
+      (needs.detect-changes.outputs.ads == 'true' ||
+       needs.detect-changes.outputs.gomod == 'true' ||
+       needs.detect-changes.outputs.cmd == 'true')
+    uses: ./.github/workflows/test-ads.yml
     secrets: inherit
 
   test-sparkplug:
@@ -289,6 +304,7 @@ jobs:
       - test-opcua
       - test-modbus
       - test-s7
+      - test-ads
       - test-sparkplug
       - test-eip
       - test-sensorconnect

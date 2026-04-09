@@ -1,0 +1,144 @@
+# Copyright 2026 UMH Systems GmbH
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+name: Test ADS
+
+on:
+  workflow_call:
+
+# TODO: Add the following GitHub secrets before enabling PLC tests:
+#   TEST_ADS_TC3_TARGET_IP      - IP address of the TwinCAT 3 PLC (e.g. 192.168.1.100)
+#   TEST_ADS_TC3_TARGET_AMS     - AMS Net ID of the TwinCAT 3 PLC (e.g. 192.168.1.100.1.1)
+#   TEST_ADS_TC3_ROUTE_USERNAME - PLC admin username for automatic route registration
+#   TEST_ADS_TC3_ROUTE_PASSWORD - PLC admin password for automatic route registration
+#   TEST_ADS_TC2_TARGET_IP      - IP address of the TwinCAT 2 PLC (optional, for TC2 tests)
+#   TEST_ADS_TC2_TARGET_AMS     - AMS Net ID of the TwinCAT 2 PLC (optional, for TC2 tests)
+#   TEST_ADS_TC2_ROUTE_USERNAME - PLC admin username for TC2 route registration (optional)
+#   TEST_ADS_TC2_ROUTE_PASSWORD - PLC admin password for TC2 route registration (optional)
+
+jobs:
+  test:
+    name: ADS Unittest
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
+      - name: Install Ginkgo
+        run: go install github.com/onsi/ginkgo/v2/ginkgo
+      - name: Test
+        env:
+          TEST_ADS_UNITTEST: true
+        run: make test-ads
+
+  test-plc-tc3:
+    name: ADS TwinCAT 3 PLC
+    needs: [test]
+    concurrency:
+      group: ads-tc3-plc
+      cancel-in-progress: false
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
+      - name: Install Ginkgo
+        run: go install github.com/onsi/ginkgo/v2/ginkgo
+      - name: Install Tcping
+        run: go install github.com/cloverstd/tcping@v0.1.1
+
+      - name: Check ADS TC3 port availability
+        id: check_ads_tc3
+        run: |
+          set +x
+          TARGET_IP="${{ secrets.TEST_ADS_TC3_TARGET_IP }}"
+          if [ -z "$TARGET_IP" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "TEST_ADS_TC3_TARGET_IP secret not configured"
+            exit 0
+          fi
+          if tcping -c 4 -T 1s "$TARGET_IP" 48898 | grep -qi "Connected"; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "ADS TC3 PLC reachable at $TARGET_IP:48898"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "ADS TC3 PLC not reachable at $TARGET_IP:48898"
+          fi
+
+      - name: Test
+        if: ${{ steps.check_ads_tc3.outputs.available == 'true' }}
+        env:
+          TEST_ADS_UNITTEST: true
+          TEST_ADS_TC3_TARGET_IP: ${{ secrets.TEST_ADS_TC3_TARGET_IP }}
+          TEST_ADS_TC3_TARGET_AMS: ${{ secrets.TEST_ADS_TC3_TARGET_AMS }}
+          TEST_ADS_TC3_RUNTIME_PORT: 851
+        run: make test-ads
+
+      - name: Skip notice
+        if: ${{ steps.check_ads_tc3.outputs.available != 'true' }}
+        run: echo "Skipping ADS TC3 PLC tests - device not available"
+
+  test-plc-tc2:
+    name: ADS TwinCAT 2 PLC
+    needs: [test]
+    concurrency:
+      group: ads-tc2-plc
+      cancel-in-progress: false
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
+      - name: Install Ginkgo
+        run: go install github.com/onsi/ginkgo/v2/ginkgo
+      - name: Install Tcping
+        run: go install github.com/cloverstd/tcping@v0.1.1
+
+      - name: Check ADS TC2 port availability
+        id: check_ads_tc2
+        run: |
+          set +x
+          TARGET_IP="${{ secrets.TEST_ADS_TC2_TARGET_IP }}"
+          if [ -z "$TARGET_IP" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "TEST_ADS_TC2_TARGET_IP secret not configured"
+            exit 0
+          fi
+          if tcping -c 4 -T 1s "$TARGET_IP" 48898 | grep -qi "Connected"; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "ADS TC2 PLC reachable at $TARGET_IP:48898"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "ADS TC2 PLC not reachable at $TARGET_IP:48898"
+          fi
+
+      - name: Test
+        if: ${{ steps.check_ads_tc2.outputs.available == 'true' }}
+        env:
+          TEST_ADS_UNITTEST: true
+          TEST_ADS_TC2_TARGET_IP: ${{ secrets.TEST_ADS_TC2_TARGET_IP }}
+          TEST_ADS_TC2_TARGET_AMS: ${{ secrets.TEST_ADS_TC2_TARGET_AMS }}
+          TEST_ADS_TC2_RUNTIME_PORT: 801
+        run: make test-ads
+
+      - name: Skip notice
+        if: ${{ steps.check_ads_tc2.outputs.available != 'true' }}
+        run: echo "Skipping ADS TC2 PLC tests - device not available"
