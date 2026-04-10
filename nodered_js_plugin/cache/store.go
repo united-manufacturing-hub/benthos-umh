@@ -14,14 +14,14 @@
 
 package cache
 
-// Store is used as the caching interface for nodered_js.
-type Store interface {
+// Cache is used as the caching interface for nodered_js.
+type Cache interface {
 	// Set stores value under key, overwriting any existing entry.
-	Set(key string, value any)
+	Set(key string, value any) error
 	// Get returns the value stored under key and if it even exists.
 	Get(key string) (any, bool)
 	// Delete removes the entry for key. No-op when key does not exist.
-	Delete(key string)
+	Delete(key string) error
 	// Close releases any resources held by the store.
 	Close() error
 }

@@ -16,6 +16,7 @@ package cache_test
 
 import (
 	"sync"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -27,7 +28,7 @@ var _ = Describe("MemoryStore", func() {
 	var store *cache.MemoryStore
 
 	BeforeEach(func() {
-		store = cache.NewMemoryStore()
+		store = cache.NewMemoryStore(0)
 	})
 
 	Describe("Get on a missing key", func() {
@@ -44,7 +45,7 @@ var _ = Describe("MemoryStore", func() {
 
 	DescribeTable("Set then Get round-trips",
 		func(key string, value any, matcher OmegaMatcher) {
-			store.Set(key, value)
+			Expect(store.Set(key, value)).To(Succeed())
 			v, ok := store.Get(key)
 			Expect(ok).To(BeTrue())
 			Expect(v).To(matcher)
@@ -58,22 +59,22 @@ var _ = Describe("MemoryStore", func() {
 	)
 
 	It("overwrites an existing key", func() {
-		store.Set("k", "first")
-		store.Set("k", "second")
+		Expect(store.Set("k", "first")).To(Succeed())
+		Expect(store.Set("k", "second")).To(Succeed())
 		v, ok := store.Get("k")
 		Expect(ok).To(BeTrue())
 		Expect(v).To(Equal("second"))
 	})
 
 	It("deletes an existing key", func() {
-		store.Set("k", "v")
-		store.Delete("k")
+		Expect(store.Set("k", "v")).To(Succeed())
+		Expect(store.Delete("k")).To(Succeed())
 		_, ok := store.Get("k")
 		Expect(ok).To(BeFalse())
 	})
 
 	It("delete is a no-op for a missing key", func() {
-		Expect(func() { store.Delete("nope") }).NotTo(Panic())
+		Expect(store.Delete("nope")).To(Succeed())
 	})
 
 	It("is safe for concurrent Set and Get", func() {
@@ -93,7 +94,40 @@ var _ = Describe("MemoryStore", func() {
 		wg.Wait()
 	})
 
-	It("satisfies the Store interface", func() {
-		var _ cache.Store = cache.NewMemoryStore()
+	It("returns error for empty key on Set and Delete", func() {
+		err := store.Set("", "value")
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("key must not be empty"))
+
+		err = store.Delete("")
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("key must not be empty"))
+	})
+
+	Describe("expiration", func() {
+		It("expires items after the default expiration", func() {
+			expStore := cache.NewMemoryStore(50 * time.Millisecond)
+			defer expStore.Close()
+
+			Expect(expStore.Set("k", "v")).To(Succeed())
+
+			v, ok := expStore.Get("k")
+			Expect(ok).To(BeTrue())
+			Expect(v).To(Equal("v"))
+
+			time.Sleep(100 * time.Millisecond)
+
+			_, ok = expStore.Get("k")
+			Expect(ok).To(BeFalse())
+		})
+
+		It("does not expire items when expiration is 0", func() {
+			Expect(store.Set("k", "v")).To(Succeed())
+			time.Sleep(10 * time.Millisecond)
+
+			v, ok := store.Get("k")
+			Expect(ok).To(BeTrue())
+			Expect(v).To(Equal("v"))
+		})
 	})
 })

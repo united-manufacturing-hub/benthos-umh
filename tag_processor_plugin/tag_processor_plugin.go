@@ -29,6 +29,7 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 
 	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin"
+	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin/cache"
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 )
 
@@ -161,8 +162,9 @@ type TagProcessor struct {
 }
 
 func newTagProcessor(config TagProcessorConfig, logger *service.Logger, metrics *service.Metrics) (*TagProcessor, error) {
-	// Create a NodeREDJSProcessor for SetupJSEnvironment helper
-	jsProcessor, err := nodered_js_plugin.NewNodeREDJSProcessor("", logger, metrics)
+	// TagProcessor only uses the JS processor for SetupJSEnvironment, not for caching.
+	// In-memory with no expiration is sufficient here.
+	jsProcessor, err := nodered_js_plugin.NewNodeREDJSProcessor("", logger, metrics, cache.NewMemoryStore(0))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create JS processor: %w", err)
 	}

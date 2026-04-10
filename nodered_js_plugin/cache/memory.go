@@ -14,39 +14,129 @@
 
 package cache
 
-import "sync"
+import (
+	"fmt"
+	"sync"
+	"time"
+)
+
+// Item wraps a cached value with an optional expiration timestamp.
+type Item struct {
+	Value      any
+	Expiration int64 // UnixNano; 0 means no expiration
+}
+
+// Expired returns true if the item has a set expiration that is in the past.
+func (item Item) Expired() bool {
+	if item.Expiration == 0 {
+		return false
+	}
+	return time.Now().UnixNano() > item.Expiration
+}
 
 // MemoryStore is used as key/value store for the first cache implementation.
 type MemoryStore struct {
-	mu    sync.RWMutex
-	items map[string]any
+	mu                sync.RWMutex
+	items             map[string]Item
+	defaultExpiration time.Duration
+	janitor           *janitor
 }
+
+var _ Cache = (*MemoryStore)(nil)
 
 // NewMemoryStore returns a ready-to-use, empty MemoryStore.
-func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{items: make(map[string]any)}
+func NewMemoryStore(defaultExpiration time.Duration) *MemoryStore {
+	m := &MemoryStore{
+		items:             make(map[string]Item),
+		defaultExpiration: defaultExpiration,
+	}
+	if defaultExpiration > 0 {
+		j := newJanitor(1 * time.Hour)
+		m.janitor = j
+		go j.run(m)
+	}
+	return m
 }
 
-func (m *MemoryStore) Set(key string, value any) {
+func (m *MemoryStore) Set(key string, value any) error {
+	if key == "" {
+		return fmt.Errorf("cache: key must not be empty")
+	}
+	var expiration int64
+	if m.defaultExpiration > 0 {
+		expiration = time.Now().Add(m.defaultExpiration).UnixNano()
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.items[key] = value
+	m.items[key] = Item{
+		Value:      value,
+		Expiration: expiration,
+	}
+	return nil
 }
 
 func (m *MemoryStore) Get(key string) (any, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	v, ok := m.items[key]
-	return v, ok
+	item, ok := m.items[key]
+	if !ok {
+		return nil, false
+	}
+	if item.Expired() {
+		return nil, false
+	}
+	return item.Value, true
 }
 
-func (m *MemoryStore) Delete(key string) {
+func (m *MemoryStore) Delete(key string) error {
+	if key == "" {
+		return fmt.Errorf("cache: key must not be empty")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.items, key)
+	return nil
 }
 
-// Close is a no-op for MemoryStore (nothing to release).
+// Close stops the janitor and releases resources.
 func (m *MemoryStore) Close() error {
+	if m.janitor != nil {
+		close(m.janitor.stop)
+	}
 	return nil
+}
+
+func (m *MemoryStore) deleteExpired() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for k, item := range m.items {
+		if item.Expired() {
+			delete(m.items, k)
+		}
+	}
+}
+
+type janitor struct {
+	interval time.Duration
+	stop     chan struct{}
+}
+
+func newJanitor(interval time.Duration) *janitor {
+	return &janitor{
+		interval: interval,
+		stop:     make(chan struct{}),
+	}
+}
+
+func (j *janitor) run(m *MemoryStore) {
+	ticker := time.NewTicker(j.interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			m.deleteExpired()
+		case <-j.stop:
+			return
+		}
+	}
 }

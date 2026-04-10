@@ -39,7 +39,7 @@ type NodeREDJSProcessor struct {
 	originalCode      string
 	vmpool            sync.Pool
 	logger            *service.Logger
-	cache             cache.Store
+	cache             cache.Cache
 	messagesProcessed *service.MetricCounter
 	messagesErrored   *service.MetricCounter
 	messagesDropped   *service.MetricCounter
@@ -48,7 +48,7 @@ type NodeREDJSProcessor struct {
 }
 
 // NewNodeREDJSProcessor creates a new NodeREDJSProcessor instance.
-func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service.Metrics) (*NodeREDJSProcessor, error) {
+func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service.Metrics, c cache.Cache) (*NodeREDJSProcessor, error) {
 	// Compile the JavaScript code once
 	program, err := goja.Compile("nodered-fn.js", code, false)
 	if err != nil {
@@ -60,7 +60,7 @@ func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service
 		originalCode:      code,
 		vmpool:            sync.Pool{}, // No New function - Get() will return nil when pool is empty
 		logger:            logger,
-		cache:             cache.NewMemoryStore(),
+		cache:             c,
 		messagesProcessed: metrics.NewCounter("messages_processed"),
 		messagesErrored:   metrics.NewCounter("messages_errored"),
 		messagesDropped:   metrics.NewCounter("messages_dropped"),
@@ -323,7 +323,10 @@ func (u *NodeREDJSProcessor) SetupJSEnvironment(vm *goja.Runtime, jsMsg map[stri
 
 	cacheObj := map[string]any{
 		"set": func(key string, value any) {
-			u.cache.Set(key, value)
+			err := u.cache.Set(key, value)
+			if err != nil {
+				u.logger.Errorf("cache.set failed: %v", err)
+			}
 		},
 		"get": func(key string) any {
 			v, ok := u.cache.Get(key)
@@ -333,7 +336,10 @@ func (u *NodeREDJSProcessor) SetupJSEnvironment(vm *goja.Runtime, jsMsg map[stri
 			return v
 		},
 		"delete": func(key string) {
-			u.cache.Delete(key)
+			err := u.cache.Delete(key)
+			if err != nil {
+				u.logger.Errorf("cache.delete failed: %v", err)
+			}
 		},
 	}
 
@@ -497,14 +503,14 @@ func (u *NodeREDJSProcessor) Close(_ context.Context) error {
 	return u.cache.Close()
 }
 
-func init() {
-	spec := service.NewConfigSpec().
-		Version("1.0.0").
-		Summary("A Node-RED style JavaScript processor.").
-		Description("Executes user-defined JavaScript code to process messages in a format similar to Node-RED functions.").
-		Field(service.NewStringField("code").
-			Description("The JavaScript code to execute. The code should be a function that processes the message.").
-			Example(`// Node-RED style function that returns the modified message
+// NodeREDJSConfigSpec defines the configuration options for the nodered_js processor.
+var NodeREDJSConfigSpec = service.NewConfigSpec().
+	Version("1.0.0").
+	Summary("A Node-RED style JavaScript processor.").
+	Description("Executes user-defined JavaScript code to process messages in a format similar to Node-RED functions.").
+	Field(service.NewStringField("code").
+		Description("The JavaScript code to execute. The code should be a function that processes the message.").
+		Example(`// Node-RED style function that returns the modified message
 // Example 1: Return message as-is
 return msg;
 
@@ -546,28 +552,62 @@ if (msg.payload > 100 && !alarmed) {
 if (msg.payload <= 100 && alarmed) {
   cache.set("alarm_active", false);
 }
-return msg;`))
+return msg;`)).
+	Field(service.NewObjectField("cache",
+		service.NewStringField("backend").
+			Description("Cache backend to use.").
+			Default("memory").
+			Examples("memory"),
+		service.NewDurationField("expiration").
+			Description("Default expiration duration for cached items. Items are automatically removed after expiration.").
+			Default("48h"),
+	).Description("Cache configuration for persistent state across messages.").
+		Default(map[string]any{
+			"backend":    "memory",
+			"expiration": "48h",
+		}).
+		Advanced())
 
+func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchProcessor, error) {
+	code, err := conf.FieldString("code")
+	if err != nil {
+		return nil, err
+	}
+
+	backend, err := conf.FieldString("cache", "backend")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse cache backend: %w", err)
+	}
+
+	expiration, err := conf.FieldDuration("cache", "expiration")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse cache expiration: %w", err)
+	}
+
+	var c cache.Cache
+	switch backend {
+	case "memory":
+		c = cache.NewMemoryStore(expiration)
+	default:
+		return nil, fmt.Errorf("unsupported cache backend: %q (supported: memory)", backend)
+	}
+
+	wrappedCode := fmt.Sprintf(`
+		(function(){
+			'use strict';
+			%s
+		})()
+	`, code)
+
+	return NewNodeREDJSProcessor(wrappedCode, mgr.Logger(), mgr.Metrics(), c)
+}
+
+func init() {
 	err := service.RegisterBatchProcessor(
 		"nodered_js",
-		spec,
+		NodeREDJSConfigSpec,
 		func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchProcessor, error) {
-			code, err := conf.FieldString("code")
-			if err != nil {
-				return nil, err
-			}
-			// Wrap the user's code in a function that handles the return value
-			wrappedCode := fmt.Sprintf(`
-				(function(){
-					'use strict';
-					%s
-				})()
-			`, code)
-			processor, err := NewNodeREDJSProcessor(wrappedCode, mgr.Logger(), mgr.Metrics())
-			if err != nil {
-				return nil, err
-			}
-			return processor, nil
+			return newNodeREDJSProcessor(conf, mgr)
 		})
 	if err != nil {
 		panic(err)
