@@ -116,7 +116,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: FOSSA Analyze and Test
-        uses: fossas/fossa-action@c528632729602c1aedb89e1cbe36e459f0576e25 # v1
+        uses: fossas/fossa-action@ff70fe9fe17cbd2040648f1c45e8ec4e4884dcf3 # v1
         with:
           api-key: ${{ secrets.FOSSA_API_KEY }}
           run-tests: true
