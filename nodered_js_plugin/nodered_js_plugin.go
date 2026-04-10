@@ -302,13 +302,25 @@ func stringify(data any, depth uint8) (string, error) {
 
 // SetupJSEnvironment sets up the JavaScript VM environment.
 func (u *NodeREDJSProcessor) SetupJSEnvironment(vm *goja.Runtime, jsMsg map[string]interface{}) error {
-	var err error
-
-	err = vm.Set("msg", jsMsg)
+	err := vm.Set("msg", jsMsg)
 	if err != nil {
 		return fmt.Errorf("failed to set message in JS environment: %w", err)
 	}
 
+	err = u.setupConsole(vm)
+	if err != nil {
+		return fmt.Errorf("failed to set console in JS environment: %w", err)
+	}
+
+	err = u.setupCache(vm)
+	if err != nil {
+		return fmt.Errorf("failed to set cache in JS environment: %w", err)
+	}
+
+	return nil
+}
+
+func (u *NodeREDJSProcessor) setupConsole(vm *goja.Runtime) error {
 	console := map[string]any{
 		"debug": func(data ...any) { u.logger.Debug(FormatConsoleLogMsg(data)) },
 		"log":   func(data ...any) { u.logger.Info(FormatConsoleLogMsg(data)) },
@@ -316,12 +328,10 @@ func (u *NodeREDJSProcessor) SetupJSEnvironment(vm *goja.Runtime, jsMsg map[stri
 		"warn":  func(data ...any) { u.logger.Warn(FormatConsoleLogMsg(data)) },
 		"error": func(data ...any) { u.logger.Error(FormatConsoleLogMsg(data)) },
 	}
+	return vm.Set("console", console)
+}
 
-	err = vm.Set("console", console)
-	if err != nil {
-		return fmt.Errorf("failed to set console in JS environment: %w", err)
-	}
-
+func (u *NodeREDJSProcessor) setupCache(vm *goja.Runtime) error {
 	cacheObj := map[string]any{
 		"set": func(key string, value any) {
 			err := u.cache.Set(key, value)
@@ -343,13 +353,7 @@ func (u *NodeREDJSProcessor) SetupJSEnvironment(vm *goja.Runtime, jsMsg map[stri
 			}
 		},
 	}
-
-	err = vm.Set("cache", cacheObj)
-	if err != nil {
-		return fmt.Errorf("failed to set cache in JS environment: %w", err)
-	}
-
-	return nil
+	return vm.Set("cache", cacheObj)
 }
 
 // HandleExecutionResult handles JavaScript execution results.
@@ -560,7 +564,7 @@ return msg;`)).
 			Default("memory").
 			Examples("memory"),
 		service.NewDurationField("expiration").
-			Description("Default expiration duration for cached items. Items are automatically removed after expiration.").
+			Description("Default expiration duration for cached items. Items are automatically removed after expiration. Set to 0s to disable expiration.").
 			Default("48h"),
 	).Description("Cache configuration for persistent state across messages.").
 		Default(map[string]any{
@@ -583,6 +587,9 @@ func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (
 	expiration, err := conf.FieldDuration("cache", "expiration")
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse cache expiration: %w", err)
+	}
+	if expiration < 0 {
+		return nil, fmt.Errorf("cache expiration must be >= 0, got %v", expiration)
 	}
 
 	var c cache.Cache
