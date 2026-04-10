@@ -106,6 +106,21 @@ jobs:
               - 'cmd/**'
             gomod:
               - 'go.{mod,sum}'
+  fossa:
+    name: FOSSA License Scan
+    needs: detect-changes
+    if: github.event_name != 'merge_group'
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: FOSSA Analyze and Test
+        uses: fossas/fossa-action@c528632729602c1aedb89e1cbe36e459f0576e25 # v1
+        with:
+          api-key: ${{ secrets.FOSSA_API_KEY }}
+          run-tests: true
+
   license-eye:
     needs: detect-changes
     runs-on: depot-ubuntu-24.04
@@ -297,6 +312,7 @@ jobs:
     name: Check Required Steps
     needs:
       - detect-changes
+      - fossa
       - license-eye
       - lint
       - test-opcua

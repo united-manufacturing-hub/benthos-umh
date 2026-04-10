@@ -76,6 +76,28 @@ jobs:
           provenance: false
           file: ./Dockerfile
 
+  fossa-container:
+    name: FOSSA Container Scan
+    needs: build-docker
+    if: github.ref == 'refs/heads/main'
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      packages: read
+    steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: FOSSA Container Analyze and Test
+        uses: fossas/fossa-action@c528632729602c1aedb89e1cbe36e459f0576e25 # v1
+        with:
+          api-key: ${{ secrets.FOSSA_API_KEY }}
+          container: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main
+          run-tests: true
+
   build-binaries:
     if: startsWith(github.ref, 'refs/tags/')
     timeout-minutes: 20
