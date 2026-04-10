@@ -91,7 +91,12 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: FOSSA Container Analyze and Test
+      - name: FOSSA Container Analyze
+        uses: fossas/fossa-action@ff70fe9fe17cbd2040648f1c45e8ec4e4884dcf3 # v1
+        with:
+          api-key: ${{ secrets.FOSSA_API_KEY }}
+          container: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main
+      - name: FOSSA Container Test
         uses: fossas/fossa-action@ff70fe9fe17cbd2040648f1c45e8ec4e4884dcf3 # v1
         with:
           api-key: ${{ secrets.FOSSA_API_KEY }}
