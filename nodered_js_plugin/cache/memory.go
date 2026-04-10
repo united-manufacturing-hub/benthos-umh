@@ -40,6 +40,7 @@ type MemoryStore struct {
 	items             map[string]Item
 	defaultExpiration time.Duration
 	janitor           *janitor
+	closeOnce         sync.Once
 }
 
 var _ Cache = (*MemoryStore)(nil)
@@ -100,9 +101,11 @@ func (m *MemoryStore) Delete(key string) error {
 
 // Close stops the janitor and releases resources.
 func (m *MemoryStore) Close() error {
-	if m.janitor != nil {
-		close(m.janitor.stop)
-	}
+	m.closeOnce.Do(func() {
+		if m.janitor != nil {
+			close(m.janitor.stop)
+		}
+	})
 	return nil
 }
 

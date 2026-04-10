@@ -302,12 +302,13 @@ func stringify(data any, depth uint8) (string, error) {
 
 // SetupJSEnvironment sets up the JavaScript VM environment.
 func (u *NodeREDJSProcessor) SetupJSEnvironment(vm *goja.Runtime, jsMsg map[string]interface{}) error {
-	// Set up the msg variable in the JS environment
-	if err := vm.Set("msg", jsMsg); err != nil {
+	var err error
+
+	err = vm.Set("msg", jsMsg)
+	if err != nil {
 		return fmt.Errorf("failed to set message in JS environment: %w", err)
 	}
 
-	// Set up console for logging that uses Benthos logger
 	console := map[string]any{
 		"debug": func(data ...any) { u.logger.Debug(FormatConsoleLogMsg(data)) },
 		"log":   func(data ...any) { u.logger.Info(FormatConsoleLogMsg(data)) },
@@ -316,7 +317,7 @@ func (u *NodeREDJSProcessor) SetupJSEnvironment(vm *goja.Runtime, jsMsg map[stri
 		"error": func(data ...any) { u.logger.Error(FormatConsoleLogMsg(data)) },
 	}
 
-	err := vm.Set("console", console)
+	err = vm.Set("console", console)
 	if err != nil {
 		return fmt.Errorf("failed to set console in JS environment: %w", err)
 	}
