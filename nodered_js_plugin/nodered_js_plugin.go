@@ -566,7 +566,7 @@ return msg;`)).
 		service.NewDurationField("expiration").
 			Description("Default expiration duration for cached items. Items are automatically removed after expiration. Set to 0s to disable expiration.").
 			Default("48h"),
-	).Description("Cache configuration for persistent state across messages.").
+	).Description("Cache configuration for maintaining state across messages. Currently only supports the memory backend, which is lost on restart.").
 		Default(map[string]any{
 			"backend":    "memory",
 			"expiration": "48h",
