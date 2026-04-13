@@ -237,7 +237,7 @@ func (p *TagProcessor) clearVMState(vm *goja.Runtime) error {
 }
 
 // setupMessageForVM prepares a VM with message data for execution
-func (p *TagProcessor) setupMessageForVM(vm *goja.Runtime, msg *service.Message, jsMsg map[string]interface{}) error {
+func (p *TagProcessor) setupMessageForVM(ctx context.Context, vm *goja.Runtime, msg *service.Message, jsMsg map[string]interface{}) error {
 	// Initialize meta if it doesn't exist
 	if _, exists := jsMsg["meta"]; !exists {
 		jsMsg["meta"] = make(map[string]interface{})
@@ -253,7 +253,7 @@ func (p *TagProcessor) setupMessageForVM(vm *goja.Runtime, msg *service.Message,
 	}
 
 	// Setup JS environment using helper from NodeREDJSProcessor
-	if err := p.jsProcessor.SetupJSEnvironment(vm, jsMsg); err != nil {
+	if err := p.jsProcessor.SetupJSEnvironment(ctx, vm, jsMsg); err != nil {
 		return fmt.Errorf("JS environment setup failed: %w", err)
 	}
 
@@ -266,7 +266,7 @@ func (p *TagProcessor) setupMessageForVM(vm *goja.Runtime, msg *service.Message,
 }
 
 // TODO: Each time there is any execution error, output the code where the error happened as well as the message that caused it (see nodered_js_plugin). Double-check that it is not being outputted twice.
-func (p *TagProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
+func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	// ───────────────── Store incoming metadata ────────────────────────────────
 	// For each message, capture its current meta fields and store them as JSON
 	// in msg.meta._initialMetadata. Also, record the original keys in _incomingKeys.
@@ -298,7 +298,7 @@ func (p *TagProcessor) ProcessBatch(_ context.Context, batch service.MessageBatc
 	// Process defaults with compiled program (Phase 2 optimization)
 	if p.defaultsProgram != nil {
 		var err error
-		batch, err = p.processMessageBatchWithProgram(batch, p.defaultsProgram, "defaults")
+		batch, err = p.processMessageBatchWithProgram(ctx, batch, p.defaultsProgram, "defaults")
 		if err != nil {
 			return nil, fmt.Errorf("error in defaults processing: %w", err)
 		}
@@ -309,7 +309,7 @@ func (p *TagProcessor) ProcessBatch(_ context.Context, batch service.MessageBatc
 		var newBatch service.MessageBatch
 
 		for _, msg := range batch {
-			processedMsgs, err := p.processConditionForMessageWithProgram(i, msg)
+			processedMsgs, err := p.processConditionForMessageWithProgram(ctx, i, msg)
 			if err != nil {
 				p.logError(err, "condition evaluation", msg)
 				continue
@@ -324,7 +324,7 @@ func (p *TagProcessor) ProcessBatch(_ context.Context, batch service.MessageBatc
 	// Process advanced processing with compiled program (Phase 2 optimization)
 	if p.advancedProgram != nil {
 		var err error
-		batch, err = p.processMessageBatchWithProgram(batch, p.advancedProgram, "advanced")
+		batch, err = p.processMessageBatchWithProgram(ctx, batch, p.advancedProgram, "advanced")
 		if err != nil {
 			return nil, fmt.Errorf("error in advanced processing: %w", err)
 		}
@@ -786,7 +786,7 @@ func (p *TagProcessor) executeCompiledProgram(vm *goja.Runtime, program *goja.Pr
 }
 
 // processMessageBatchWithProgram processes a batch using a compiled program for Phase 2 optimization
-func (p *TagProcessor) processMessageBatchWithProgram(batch service.MessageBatch, program *goja.Program, stageName string) (service.MessageBatch, error) {
+func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch service.MessageBatch, program *goja.Program, stageName string) (service.MessageBatch, error) {
 	if program == nil {
 		return batch, nil
 	}
@@ -806,7 +806,7 @@ func (p *TagProcessor) processMessageBatchWithProgram(batch service.MessageBatch
 		}
 
 		// Setup VM environment
-		if err = p.setupMessageForVM(vm, msg, jsMsg); err != nil {
+		if err = p.setupMessageForVM(ctx, vm, msg, jsMsg); err != nil {
 			p.logError(err, "JS environment setup", jsMsg)
 			p.putVM(vm)
 			return nil, fmt.Errorf("failed to setup JavaScript environment: %w", err)
@@ -852,7 +852,7 @@ func (p *TagProcessor) processMessageBatchWithProgram(batch service.MessageBatch
 }
 
 // processConditionForMessageWithProgram evaluates a condition using compiled programs (Phase 2 optimization)
-func (p *TagProcessor) processConditionForMessageWithProgram(conditionIndex int, msg *service.Message) (service.MessageBatch, error) {
+func (p *TagProcessor) processConditionForMessageWithProgram(ctx context.Context, conditionIndex int, msg *service.Message) (service.MessageBatch, error) {
 	// Get VM from pool and ensure it's returned
 	vm := p.getVM()
 	defer p.putVM(vm)
@@ -864,7 +864,7 @@ func (p *TagProcessor) processConditionForMessageWithProgram(conditionIndex int,
 	}
 
 	// Setup VM environment using optimized helper method
-	if err = p.setupMessageForVM(vm, msg, jsMsg); err != nil {
+	if err = p.setupMessageForVM(ctx, vm, msg, jsMsg); err != nil {
 		return nil, fmt.Errorf("JS environment setup failed: %w", err)
 	}
 
@@ -878,6 +878,7 @@ func (p *TagProcessor) processConditionForMessageWithProgram(conditionIndex int,
 	// If condition is true, process the message with the compiled condition action
 	if ifResult.ToBoolean() {
 		conditionBatch, err := p.processMessageBatchWithProgram(
+			ctx,
 			service.MessageBatch{msg},
 			p.conditionThenPrograms[conditionIndex],
 			fmt.Sprintf("condition-%d-then", conditionIndex))

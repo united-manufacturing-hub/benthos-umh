@@ -15,6 +15,7 @@
 package cache_test
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 
 var _ = Describe("MemoryStore", func() {
 	var store *cache.MemoryStore
+	ctx := context.Background()
 
 	BeforeEach(func() {
 		store = cache.NewMemoryStore(0)
@@ -33,20 +35,20 @@ var _ = Describe("MemoryStore", func() {
 
 	Describe("Get on a missing key", func() {
 		It("returns false", func() {
-			_, ok := store.Get("missing")
+			_, ok := store.Get(ctx, "missing")
 			Expect(ok).To(BeFalse())
 		})
 
 		It("returns nil value", func() {
-			v, _ := store.Get("missing")
+			v, _ := store.Get(ctx, "missing")
 			Expect(v).To(BeNil())
 		})
 	})
 
 	DescribeTable("Set then Get round-trips",
 		func(key string, value any, matcher OmegaMatcher) {
-			Expect(store.Set(key, value)).To(Succeed())
-			v, ok := store.Get(key)
+			Expect(store.Set(context.Background(), key, value)).To(Succeed())
+			v, ok := store.Get(context.Background(), key)
 			Expect(ok).To(BeTrue())
 			Expect(v).To(matcher)
 		},
@@ -59,22 +61,22 @@ var _ = Describe("MemoryStore", func() {
 	)
 
 	It("overwrites an existing key", func() {
-		Expect(store.Set("k", "first")).To(Succeed())
-		Expect(store.Set("k", "second")).To(Succeed())
-		v, ok := store.Get("k")
+		Expect(store.Set(ctx, "k", "first")).To(Succeed())
+		Expect(store.Set(ctx, "k", "second")).To(Succeed())
+		v, ok := store.Get(ctx, "k")
 		Expect(ok).To(BeTrue())
 		Expect(v).To(Equal("second"))
 	})
 
 	It("deletes an existing key", func() {
-		Expect(store.Set("k", "v")).To(Succeed())
-		Expect(store.Delete("k")).To(Succeed())
-		_, ok := store.Get("k")
+		Expect(store.Set(ctx, "k", "v")).To(Succeed())
+		Expect(store.Delete(ctx, "k")).To(Succeed())
+		_, ok := store.Get(ctx, "k")
 		Expect(ok).To(BeFalse())
 	})
 
 	It("delete is a no-op for a missing key", func() {
-		Expect(store.Delete("nope")).To(Succeed())
+		Expect(store.Delete(ctx, "nope")).To(Succeed())
 	})
 
 	It("is safe for concurrent Set and Get", func() {
@@ -84,22 +86,22 @@ var _ = Describe("MemoryStore", func() {
 		for i := 0; i < goroutines; i++ {
 			go func() {
 				defer wg.Done()
-				store.Set("shared", 1)
+				store.Set(ctx, "shared", 1)
 			}()
 			go func() {
 				defer wg.Done()
-				store.Get("shared")
+				store.Get(ctx, "shared")
 			}()
 		}
 		wg.Wait()
 	})
 
 	It("returns error for empty key on Set and Delete", func() {
-		err := store.Set("", "value")
+		err := store.Set(ctx, "", "value")
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("key must not be empty"))
 
-		err = store.Delete("")
+		err = store.Delete(ctx, "")
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("key must not be empty"))
 	})
@@ -109,23 +111,23 @@ var _ = Describe("MemoryStore", func() {
 			expStore := cache.NewMemoryStore(50 * time.Millisecond)
 			defer expStore.Close()
 
-			Expect(expStore.Set("k", "v")).To(Succeed())
+			Expect(expStore.Set(ctx, "k", "v")).To(Succeed())
 
-			v, ok := expStore.Get("k")
+			v, ok := expStore.Get(ctx, "k")
 			Expect(ok).To(BeTrue())
 			Expect(v).To(Equal("v"))
 
 			time.Sleep(100 * time.Millisecond)
 
-			_, ok = expStore.Get("k")
+			_, ok = expStore.Get(ctx, "k")
 			Expect(ok).To(BeFalse())
 		})
 
 		It("does not expire items when expiration is 0", func() {
-			Expect(store.Set("k", "v")).To(Succeed())
+			Expect(store.Set(ctx, "k", "v")).To(Succeed())
 			time.Sleep(10 * time.Millisecond)
 
-			v, ok := store.Get("k")
+			v, ok := store.Get(ctx, "k")
 			Expect(ok).To(BeTrue())
 			Expect(v).To(Equal("v"))
 		})

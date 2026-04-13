@@ -4,6 +4,8 @@ The Node-RED JavaScript processor allows you to write JavaScript code to process
 
 Use the `nodered_js` processor instead of the `tag_processor` when you need full control over the payload and require custom processing logic that goes beyond standard tag or time series data handling. This processor allows you to write custom JavaScript code to manipulate both the payload and metadata, providing the flexibility to implement complex transformations, conditional logic, or integrate with other systems.
 
+For the full list of available JavaScript globals (`msg`, `console`, `cache`), see the [JavaScript API Reference](javascript-api.md).
+
 **Configuration**
 
 ```yaml

@@ -301,7 +301,7 @@ func stringify(data any, depth uint8) (string, error) {
 }
 
 // SetupJSEnvironment sets up the JavaScript VM environment.
-func (u *NodeREDJSProcessor) SetupJSEnvironment(vm *goja.Runtime, jsMsg map[string]interface{}) error {
+func (u *NodeREDJSProcessor) SetupJSEnvironment(ctx context.Context, vm *goja.Runtime, jsMsg map[string]interface{}) error {
 	err := vm.Set("msg", jsMsg)
 	if err != nil {
 		return fmt.Errorf("failed to set message in JS environment: %w", err)
@@ -312,7 +312,7 @@ func (u *NodeREDJSProcessor) SetupJSEnvironment(vm *goja.Runtime, jsMsg map[stri
 		return fmt.Errorf("failed to set console in JS environment: %w", err)
 	}
 
-	err = u.setupCache(vm)
+	err = u.setupCache(ctx, vm)
 	if err != nil {
 		return fmt.Errorf("failed to set cache in JS environment: %w", err)
 	}
@@ -331,23 +331,23 @@ func (u *NodeREDJSProcessor) setupConsole(vm *goja.Runtime) error {
 	return vm.Set("console", console)
 }
 
-func (u *NodeREDJSProcessor) setupCache(vm *goja.Runtime) error {
+func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) error {
 	cacheObj := map[string]any{
 		"set": func(key string, value any) {
-			err := u.cache.Set(key, value)
+			err := u.cache.Set(ctx, key, value)
 			if err != nil {
 				u.logger.Errorf("cache.set failed: %v", err)
 			}
 		},
 		"get": func(key string) any {
-			v, ok := u.cache.Get(key)
+			v, ok := u.cache.Get(ctx, key)
 			if !ok {
 				return goja.Undefined()
 			}
 			return v
 		},
 		"delete": func(key string) {
-			err := u.cache.Delete(key)
+			err := u.cache.Delete(ctx, key)
 			if err != nil {
 				u.logger.Errorf("cache.delete failed: %v", err)
 			}
@@ -402,14 +402,13 @@ func FormatConsoleLogMsg(data []any) string {
 }
 
 // ProcessBatch applies the JavaScript code to each message in the batch.
-func (u *NodeREDJSProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
+func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	var resultBatch service.MessageBatch
 
 	for _, msg := range batch {
 		u.messagesProcessed.Incr(1)
 
-		// Process single message and return VM to pool immediately
-		processedMsg, shouldKeep, err := u.processSingleMessage(msg)
+		processedMsg, shouldKeep, err := u.processSingleMessage(ctx, msg)
 		if err != nil {
 			return nil, err
 		}
@@ -426,7 +425,7 @@ func (u *NodeREDJSProcessor) ProcessBatch(_ context.Context, batch service.Messa
 }
 
 // processSingleMessage processes a single message using a VM from the pool
-func (u *NodeREDJSProcessor) processSingleMessage(msg *service.Message) (*service.Message, bool, error) {
+func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *service.Message) (*service.Message, bool, error) {
 	vm := u.getVM()
 	defer u.putVM(vm)
 
@@ -451,7 +450,7 @@ func (u *NodeREDJSProcessor) processSingleMessage(msg *service.Message) (*servic
 	jsMsg["meta"] = meta
 
 	// Setup JS environment
-	if err = u.SetupJSEnvironment(vm, jsMsg); err != nil {
+	if err = u.SetupJSEnvironment(ctx, vm, jsMsg); err != nil {
 		u.messagesErrored.Incr(1)
 		u.logger.Errorf("%v\nMessage content: %v", err, jsMsg)
 		return nil, false, nil
@@ -556,6 +555,8 @@ if (msg.payload > 100 && !alarmed) {
 }
 if (msg.payload <= 100 && alarmed) {
   cache.set("alarm_active", false);
+  msg.meta.alarm = "cleared";
+  return msg;
 }
 return msg;`)).
 	Field(service.NewObjectField("cache",
@@ -564,12 +565,12 @@ return msg;`)).
 			Default("memory").
 			Examples("memory"),
 		service.NewDurationField("expiration").
-			Description("Default expiration duration for cached items. Items are automatically removed after expiration. Set to 0s to disable expiration.").
-			Default("48h"),
+			Description("Expiration duration for cached items. Items are automatically removed after expiration. Default 0s means no expiration.").
+			Default("0s"),
 	).Description("Cache configuration for maintaining state across messages. Currently only supports the memory backend, which is lost on restart.").
 		Default(map[string]any{
 			"backend":    "memory",
-			"expiration": "48h",
+			"expiration": "0s",
 		}).
 		Advanced())
 

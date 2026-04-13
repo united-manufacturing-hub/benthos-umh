@@ -15,6 +15,7 @@
 package cache
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -59,7 +60,7 @@ func NewMemoryStore(defaultExpiration time.Duration) *MemoryStore {
 	return m
 }
 
-func (m *MemoryStore) Set(key string, value any) error {
+func (m *MemoryStore) Set(_ context.Context, key string, value any) error {
 	if key == "" {
 		return fmt.Errorf("cache: key must not be empty")
 	}
@@ -76,7 +77,7 @@ func (m *MemoryStore) Set(key string, value any) error {
 	return nil
 }
 
-func (m *MemoryStore) Get(key string) (any, bool) {
+func (m *MemoryStore) Get(_ context.Context, key string) (any, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	item, ok := m.items[key]
@@ -89,7 +90,7 @@ func (m *MemoryStore) Get(key string) (any, bool) {
 	return item.Value, true
 }
 
-func (m *MemoryStore) Delete(key string) error {
+func (m *MemoryStore) Delete(_ context.Context, key string) error {
 	if key == "" {
 		return fmt.Errorf("cache: key must not be empty")
 	}
