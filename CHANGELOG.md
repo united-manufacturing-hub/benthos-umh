@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.12.2]
+
+### Fixes
+
+- Updated dependencies in authentication libraries: Updated OIDC and JOSE libraries to patch a denial-of-service vulnerability in token handling (CVE via Aikido) and a panic in JWE decryption
+
+### Improvements
+
+- Updated data bridge dependencies: Updated the underlying stream processing engine and protocol libraries to their latest stable versions
+
 ## [0.12.1]
 
 ### Improvements
