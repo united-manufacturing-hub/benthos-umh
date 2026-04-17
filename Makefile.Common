@@ -24,6 +24,7 @@ GRAPHVIZ_VERSION      = 939f896cd783daeed8ab08c446f3e2b79213f5e5d87d73bada58667f
 GOFUMPT_VERSION       = v0.7.0
 GCI_VERSION           = v0.13.5
 GOTESTSUM_VERSION     = v1.13.0
+CHANGIE_VERSION       = v1.24.0
 
 # ---------------------------------------------------
 # Pinned URLs for go install
@@ -36,6 +37,7 @@ PROTOC_GEN_GO_URL := google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_G
 GOFUMPT_URL       := mvdan.cc/gofumpt@$(GOFUMPT_VERSION)
 GCI_URL           := github.com/daixiang0/gci@$(GCI_VERSION)
 GOTESTSUM_URL     := gotest.tools/gotestsum@$(GOTESTSUM_VERSION)
+CHANGIE_URL       := github.com/miniscruff/changie@$(CHANGIE_VERSION)
 
 
 TOOLS_BIN_DIR    := $(SRC_ROOT)/.tools
@@ -52,6 +54,7 @@ DOT         := $(TOOLS_BIN_DIR)/graphviz/dot
 GOFUMPT     := $(TOOLS_BIN_DIR)/gofumpt
 GCI         := $(TOOLS_BIN_DIR)/gci
 GOTESTSUM   := $(TOOLS_BIN_DIR)/gotestsum
+CHANGIE     := $(TOOLS_BIN_DIR)/changie
 
 $(TOOLS_BIN_DIR):
 	@mkdir -p $@
@@ -80,11 +83,14 @@ $(GCI): $(TOOLS_BIN_DIR)
 $(GOTESTSUM): $(TOOLS_BIN_DIR)
 	@GOBIN=$(TOOLS_BIN_DIR) go install $(GOTESTSUM_URL)
 
+$(CHANGIE): $(TOOLS_BIN_DIR)
+	@GOBIN=$(TOOLS_BIN_DIR) go install $(CHANGIE_URL)
+
 .PHONY: install-license-eye
 install-license-eye: $(LICENSE_EYE)
 
 .PHONY: install-tools
-install-tools: $(LICENSE_EYE) $(LINT) $(NILAWAY) $(DOT) $(GOFUMPT) $(GCI) $(GOTESTSUM)
+install-tools: $(LICENSE_EYE) $(LINT) $(NILAWAY) $(DOT) $(GOFUMPT) $(GCI) $(GOTESTSUM) $(CHANGIE)
 
 .PHONY: help
 help:
