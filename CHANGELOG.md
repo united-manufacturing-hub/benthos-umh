@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.12.2]
+
+### Improvements
+
+- Updated Go dependencies, includes security fixes for OIDC and JOSE authentication libraries
+
 ## [0.12.1]
 
 ### Improvements
