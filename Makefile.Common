@@ -23,6 +23,7 @@ PROTOC_VERSION = cbbe65675855d0db6d94a43f565952c69ef7fc58081569837d44af3f044aa73
 GRAPHVIZ_VERSION = 939f896cd783daeed8ab08c446f3e2b79213f5e5d87d73bada58667f3bcd8906
 GOFUMPT_VERSION = v0.7.0
 GCI_VERSION = v0.13.5
+CHANGIE_VERSION = v1.24.0
 
 # ---------------------------------------------------
 # Pinned URLs for go install
@@ -34,6 +35,7 @@ NILAWAY_URL := go.uber.org/nilaway/cmd/nilaway@$(NILAWAY_VERSION)
 PROTOC_GEN_GO_URL := google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
 GOFUMPT_URL := mvdan.cc/gofumpt@$(GOFUMPT_VERSION)
 GCI_URL := github.com/daixiang0/gci@$(GCI_VERSION)
+CHANGIE_URL := github.com/miniscruff/changie@$(CHANGIE_VERSION)
 
 
 TOOLS_BIN_DIR    := $(SRC_ROOT)/.tools
@@ -49,6 +51,7 @@ PROTOC := docker run --rm -v $(PWD):$(PWD) -w $(PWD) rvolosatovs/protoc@sha256:$
 DOT := $(TOOLS_BIN_DIR)/graphviz/dot
 GOFUMPT := $(TOOLS_BIN_DIR)/gofumpt
 GCI := $(TOOLS_BIN_DIR)/gci
+CHANGIE := $(TOOLS_BIN_DIR)/changie
 
 $(TOOLS_BIN_DIR):
 	@mkdir -p $@
@@ -74,11 +77,14 @@ $(GOFUMPT): $(TOOLS_BIN_DIR)
 $(GCI): $(TOOLS_BIN_DIR)
 	@GOBIN=$(TOOLS_BIN_DIR) go install $(GCI_URL)
 
+$(CHANGIE): $(TOOLS_BIN_DIR)
+	@GOBIN=$(TOOLS_BIN_DIR) go install $(CHANGIE_URL)
+
 .PHONY: install-license-eye
 install-license-eye: $(LICENSE_EYE)
 
 .PHONY: install-tools
-install-tools: $(LICENSE_EYE) $(LINT) $(NILAWAY) $(DOT) $(GOFUMPT) $(GCI)
+install-tools: $(LICENSE_EYE) $(LINT) $(NILAWAY) $(DOT) $(GOFUMPT) $(GCI) $(CHANGIE)
 
 .PHONY: help
 help:

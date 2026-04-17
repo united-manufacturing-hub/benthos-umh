@@ -1,0 +1,22 @@
+changesDir: .changelog
+unreleasedDir: unreleased
+changelogPath: CHANGELOG.md
+versionExt: md
+versionFormat: '## [{{.Version}}]'
+kindFormat: '### {{.Kind}}'
+changeFormat: '- {{.Body}}'
+body:
+  block: true
+kinds:
+  - label: Breaking Changes
+    auto: major
+  - label: New Features
+    auto: minor
+  - label: Improvements
+    auto: minor
+  - label: Fixes
+    auto: patch
+newlines:
+  afterChangelogHeader: 1
+  beforeChangelogVersion: 1
+  endOfVersion: 1
