@@ -197,6 +197,10 @@ endif
 	$(CHANGIE) batch $(VERSION) --force
 	$(CHANGIE) merge
 
+.PHONY: changelog-diff
+changelog-diff: $(CHANGIE)
+	@$(CHANGIE) diff 1 | tail -n +2
+
 .PHONY: serve-pprof
 serve-pprof:
 	@export PATH="$(TOOLS_BIN_DIR)/graphviz:$$PATH" && \
