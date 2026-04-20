@@ -79,7 +79,11 @@ jobs:
   fossa-container:
     name: FOSSA Container Scan
     needs: build-docker
-    if: github.ref == 'refs/heads/main'
+    # Container license scan runs on staging so issues are caught
+    # before the staging -> main promotion PR. Source-level scanning
+    # (ci.yml) covers Go dependencies on every PR; this covers
+    # base image (Alpine) OS packages.
+    if: github.ref == 'refs/heads/staging'
     runs-on: depot-ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -95,12 +99,12 @@ jobs:
         uses: fossas/fossa-action@ff70fe9fe17cbd2040648f1c45e8ec4e4884dcf3 # v1
         with:
           api-key: ${{ secrets.FOSSA_API_KEY }}
-          container: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main
+          container: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:staging
       - name: FOSSA Container Test
         uses: fossas/fossa-action@ff70fe9fe17cbd2040648f1c45e8ec4e4884dcf3 # v1
         with:
           api-key: ${{ secrets.FOSSA_API_KEY }}
-          container: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main
+          container: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:staging
           run-tests: true
 
   build-binaries:
