@@ -149,9 +149,15 @@ func (g *OPCUAConnection) getBytesFromValue(dataValue *ua.DataValue, nodeDef Nod
 // Read performs a synchronous read operation on the OPC UA server using the provided ReadRequest.
 //
 // This function sends a ReadRequest to the OPC UA server and handles the response. It manages
-// specific error conditions by closing the current session and signaling that the client is
-// no longer connected, prompting reconnection attempts if necessary. Successful reads return
-// the ReadResponse, while errors are appropriately logged and propagated.
+// specific session/transport error conditions by closing the current session and signaling that
+// the client is no longer connected, prompting reconnection attempts if necessary.
+//
+// NOTE: Read only returns a non-nil error for session/transport failures. Per-result problems
+// (e.g. StatusBadDataTypeIDUnknown on a single node, UNCERTAIN values, undecodable
+// ExtensionObjects) are NOT surfaced as errors here — they are carried on each
+// resp.Results[i].Status. Callers must iterate resp.Results and inspect DataValue.Status per
+// entry (see statusIsBad and getBytesFromValue for the canonical BAD-severity filter used in
+// this plugin). Failing to do so will silently propagate bad values downstream.
 func (g *OPCUAConnection) Read(ctx context.Context, req *ua.ReadRequest) (*ua.ReadResponse, error) {
 	resp, err := g.Client.Read(ctx, req)
 	if err != nil {
