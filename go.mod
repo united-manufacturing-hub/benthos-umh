@@ -36,9 +36,9 @@ require (
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/google/uuid v1.6.0
 	github.com/gopcua/opcua v0.8.0
-	github.com/grid-x/modbus v0.0.0-20260325140807-cf9e1b9daae0
+	github.com/grid-x/modbus v0.0.0-20260122103929-e192bc287e6e
 	github.com/hashicorp/golang-lru/v2 v2.0.7
-	github.com/kaptinlin/jsonschema v0.7.7
+	github.com/kaptinlin/jsonschema v0.7.5
 	github.com/prometheus/client_golang v1.23.2
 	github.com/redpanda-data/benthos/v4 v4.70.0
 	github.com/redpanda-data/connect/public/bundle/free/v4 v4.87.0
@@ -50,7 +50,7 @@ require (
 	golang.org/x/crypto v0.50.0
 	golang.org/x/sys v0.43.0
 	google.golang.org/protobuf v1.36.11
-	k8s.io/apimachinery v0.35.3
+	k8s.io/apimachinery v0.35.4
 )
 
 require (
@@ -129,8 +129,8 @@ require (
 	github.com/authzed/authzed-go v1.8.0 // indirect
 	github.com/authzed/grpcutil v0.0.0-20260105210157-e237581949c2 // indirect
 	github.com/aws/aws-lambda-go v1.54.0 // indirect
-	github.com/aws/aws-sdk-go-v2 v1.41.5 // indirect
-	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.8 // indirect
+	github.com/aws/aws-sdk-go-v2 v1.41.6 // indirect
+	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.9 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.32.13 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.13 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.20.36 // indirect
@@ -139,31 +139,31 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/rds/auth v1.6.20 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.22.8 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.1.11 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.21 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.21 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.22 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.22 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.6 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.22 // indirect
-	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.50.4 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.23 // indirect
+	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.50.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.55.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.65.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.69.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/dynamodbstreams v1.32.13 // indirect
 	github.com/aws/aws-sdk-go-v2/service/firehose v1.42.12 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.7 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.13 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.8 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.14 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/endpoint-discovery v1.11.20 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.21 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.21 // indirect
-	github.com/aws/aws-sdk-go-v2/service/kinesis v1.43.5 // indirect
-	github.com/aws/aws-sdk-go-v2/service/lambda v1.88.5 // indirect
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.97.3 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.22 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.22 // indirect
+	github.com/aws/aws-sdk-go-v2/service/kinesis v1.43.6 // indirect
+	github.com/aws/aws-sdk-go-v2/service/lambda v1.89.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.99.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/signin v1.0.9 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sns v1.39.14 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.24 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.30.14 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.18 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.41.10 // indirect
-	github.com/aws/smithy-go v1.24.2 // indirect
+	github.com/aws/smithy-go v1.25.0 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/beanstalkd/go-beanstalk v0.2.0 // indirect
 	github.com/benhoyt/goawk v1.31.0 // indirect
@@ -194,7 +194,7 @@ require (
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/containerd/platforms v1.0.0-rc.2 // indirect
-	github.com/coreos/go-oidc/v3 v3.18.0 // indirect
+	github.com/coreos/go-oidc/v3 v3.17.0 // indirect
 	github.com/couchbase/gocb/v2 v2.12.1 // indirect
 	github.com/couchbase/gocbcore/v10 v10.9.1 // indirect
 	github.com/couchbase/gocbcoreps v0.1.5-0.20260107140814-1c3a03f888f8 // indirect
@@ -307,9 +307,9 @@ require (
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/jzelinskie/stringz v0.0.3 // indirect
-	github.com/kaptinlin/go-i18n v0.3.0 // indirect
+	github.com/kaptinlin/go-i18n v0.2.12 // indirect
 	github.com/kaptinlin/jsonpointer v0.4.17 // indirect
-	github.com/kaptinlin/messageformat-go v0.4.19 // indirect
+	github.com/kaptinlin/messageformat-go v0.4.18 // indirect
 	github.com/kevinburke/ssh_config v1.6.0 // indirect
 	github.com/klauspost/asmfmt v1.3.2 // indirect
 	github.com/klauspost/compress v1.18.5 // indirect
