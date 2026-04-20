@@ -152,7 +152,10 @@ jobs:
 
       - name: Extract release notes
         run: |
-          BODY=$(make changelog-diff)
+          BODY=$(make changelog-diff 2>/dev/null || true)
+          if [ -z "$BODY" ]; then
+            BODY="No changelog entries for this release."
+          fi
           {
             echo "RELEASE_BODY<<EOF"
             echo "$BODY"
