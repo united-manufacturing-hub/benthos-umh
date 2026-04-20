@@ -17,8 +17,13 @@ name: main
 
 on:
   push:
-    branches: [main, staging]
-  pull_request:
+    branches:
+      - '**'
+    tags:
+      - v*
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   build-docker:
@@ -30,39 +35,151 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ github.event.pull_request && github.head_ref || github.ref_name }}
+
+      - name: Setup Depot
+        uses: depot/setup-action@b0b1ea4f69e92ebf5dea3f8713a1b0c37b2126a5 # v1
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern=latest,include_prereleases=false
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha
 
       - name: Build and Push Docker Image
-        uses: ./.github/actions/build-docker
+        uses: depot/build-push-action@9785b135c3c76c33db102e45be96a25ab55cd507 # v1
         with:
-          image-name: ${{ github.repository }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          depot-project-id: ${{ secrets.DEPOT_PROJECT_ID }}
-          depot-token: ${{ secrets.DEPOT_TOKEN }}
+          project: ${{ secrets.DEPOT_PROJECT_ID }}
+          token: ${{ secrets.DEPOT_TOKEN }}
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ steps.meta.outputs.version }}
+          provenance: false
+          file: ./Dockerfile
 
-  comment-pr:
-    name: Comment PR with Image Tag
-    needs: build-docker
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
+  build-binaries:
+    if: startsWith(github.ref, 'refs/tags/')
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    runs-on: depot-ubuntu-24.04
     steps:
-      - name: Compute short SHA
-        id: short-sha
-        run: echo "SHORT_SHA=$(echo '${{ github.sha }}' | cut -c1-7)" >> "$GITHUB_OUTPUT"
-
-      - name: Comment image tag on PR
-        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3.0.4
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
-          header: docker-image
-          message: |
-            **Docker Image Built**
+          ref: ${{ github.event.pull_request && github.head_ref || github.ref_name }}
 
-            ```
-            ghcr.io/united-manufacturing-hub/benthos-umh:sha-${{ steps.short-sha.outputs.SHORT_SHA }}
-            ```
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
 
-            Pull with:
-            ```bash
-            docker pull ghcr.io/united-manufacturing-hub/benthos-umh:sha-${{ steps.short-sha.outputs.SHORT_SHA }}
-            ```
+      - name: Set up Build Environment
+        run: |
+          VERSION="${{ github.ref_name }}"
+          echo "GOOS=${{ matrix.goos }}" >> $GITHUB_ENV
+          echo "GOARCH=${{ matrix.goarch }}" >> $GITHUB_ENV
+          echo "APP_VERSION=${VERSION#v}" >> $GITHUB_ENV
+
+          if [ "${{ matrix.goos }}" == "windows" ]; then
+            FILE_EXTENSION=".exe"
+          else
+            FILE_EXTENSION=""
+          fi
+
+          echo "OUTPUT_NAME=benthos-${{ matrix.goos }}-${{ matrix.goarch }}${FILE_EXTENSION}" >> $GITHUB_ENV
+
+      - name: Build Binary
+        run: |
+          mkdir -p ./dist
+          GOOS=${{ env.GOOS }} GOARCH=${{ env.GOARCH }} \
+            CGO_ENABLED=0 GOPROXY=https://golangproxy.umh.app,https://proxy.golang.org,direct \
+            go build \
+            -ldflags "-s -w \
+            -X github.com/redpanda-data/benthos/v4/internal/cli.Version=${{ env.APP_VERSION }} \
+            -X github.com/redpanda-data/benthos/v4/internal/cli.DateBuilt=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o ./dist/${{ env.OUTPUT_NAME }} \
+            cmd/benthos/main.go
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: artifact-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ./dist/${{ env.OUTPUT_NAME }}
+
+  release:
+    if: needs.build-binaries.result == 'success'
+    needs: build-binaries
+    permissions:
+      contents: write
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
+
+      - name: Extract release notes
+        run: |
+          BODY=$(make changelog-diff)
+          {
+            echo "RELEASE_BODY<<EOF"
+            echo "$BODY"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: 'artifact-*-${{ github.run_id }}-${{ github.run_attempt }}'
+          path: ./artifacts
+
+      - name: Create or Update Release
+        uses: ncipollo/release-action@b7eabc95ff50cbeeedec83973935c8f306dfcd0b # v1.20.0
+        with:
+          tag: ${{ github.ref_name }}
+          artifacts: './artifacts/artifact-*-${{ github.run_id }}-${{ github.run_attempt }}/*'
+          token: ${{ secrets.GITHUB_TOKEN }}
+          allowUpdates: true
+          omitBodyDuringUpdate: true
+          body: ${{ env.RELEASE_BODY }}
+          prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'alpha') }}
+
+  update-umh-core:
+    needs: release
+    if: needs.release.result == 'success'
+    uses: ./.github/workflows/update-umh-core-version.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit

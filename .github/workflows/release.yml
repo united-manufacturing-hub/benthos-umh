@@ -103,6 +103,21 @@ jobs:
       contents: write
     runs-on: depot-ubuntu-24.04
     steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
+
+      - name: Extract release notes
+        run: |
+          BODY=$(make changelog-diff)
+          {
+            echo "RELEASE_BODY<<EOF"
+            echo "$BODY"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
       - name: Download Artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -117,6 +132,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           allowUpdates: true
           omitBodyDuringUpdate: true
+          body: ${{ env.RELEASE_BODY }}
           prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'alpha') }}
 
   update-umh-core:
