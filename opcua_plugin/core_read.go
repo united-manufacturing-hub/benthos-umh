@@ -24,6 +24,14 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
+// statusIsBad reports whether a StatusCode has BAD severity per OPC UA Part 8.
+// The top 2 bits of the 32-bit code encode severity: 00=Good, 01=Uncertain, 10/11=Bad.
+// GOOD variants (e.g. GoodClamped, GoodLocalOverride) and UNCERTAIN codes carry usable
+// data and must not be dropped by callers checking value validity.
+func statusIsBad(code ua.StatusCode) bool {
+	return uint32(code)>>30 >= 2
+}
+
 // getBytesFromValue returns the bytes and the tag type for a given OPC UA DataValue and NodeDef.
 func (g *OPCUAConnection) getBytesFromValue(dataValue *ua.DataValue, nodeDef NodeDef) ([]byte, string) {
 	variant := dataValue.Value
@@ -32,8 +40,8 @@ func (g *OPCUAConnection) getBytesFromValue(dataValue *ua.DataValue, nodeDef Nod
 		return nil, ""
 	}
 
-	if !errors.Is(dataValue.Status, ua.StatusOK) {
-		g.Log.Warnf("Skipping node %s: status %v", nodeDef.NodeID.String(), dataValue.Status)
+	if statusIsBad(dataValue.Status) {
+		g.Log.Warnf("Skipping node %s: bad status %v", nodeDef.NodeID.String(), dataValue.Status)
 		return nil, ""
 	}
 

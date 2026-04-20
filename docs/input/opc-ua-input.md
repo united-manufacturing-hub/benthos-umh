@@ -1,6 +1,6 @@
 # OPC UA (Input)
 
-The plugin is designed to browse and subscribe to all child nodes within a folder for each configured NodeID, provided that the NodeID represents a folder. It features a recursion depth of up to 10 levels, enabling thorough exploration of nested folder structures. The browsing specifically targets nodes organized under the OPC UA 'Organizes' relationship type, intentionally excluding nodes under 'HasProperty' and 'HasComponent' relationships. Additionally, the plugin does not browse Objects represented by red, blue, or green cube icons in UAExpert.
+The plugin is designed to browse and subscribe to all child nodes within a folder for each configured NodeID, provided that the NodeID represents a folder. It features a recursion depth of up to 10 levels, enabling thorough exploration of nested folder structures. The plugin recursively discovers nodes through HierarchicalReferences, which includes Organizes, HasComponent, HasProperty, and other hierarchical reference types. The plugin does not browse Objects represented by red, blue, or green cube icons in UAExpert.
 
 Subscriptions are selectively managed, with tags having a DataType of null being excluded from subscription. Also, by default, the plugin does not subscribe to the properties of a tag, such as minimum and maximum values.
 
@@ -44,7 +44,7 @@ There are specific datatypes which are currently not supported by the plugin:
 * Two-dimensional arrays
 * Variant arrays (Arrays with multiple different datatypes)
 
-**UA Extension Objects** (custom vendor structs/UDTs) are automatically detected and skipped with a warning log. Since the browse phase discovers individual struct member nodes separately, the data within Extension Objects is still accessible by subscribing to those member nodes directly. If the Extension Object type is registered and decodable by the OPC UA library, it will be serialized as JSON.
+**UA Extension Objects** (custom vendor structs/UDTs) are automatically detected and skipped with a warning log. Many Extension Object values are opaque and not automatically browseable. Member nodes are only discovered if the server models them via HierarchicalReferences (Organizes, HasComponent, HasProperty, or other hierarchical reference types). If member nodes are not exposed by the server, you can access them by specifying their NodeID directly in the configuration. If the Extension Object type is registered and decodable by the OPC UA library, it will be serialized as JSON.
 
 **Authentication and Security**
 
@@ -255,27 +255,6 @@ If you are unsure if the OPC UA server is actually sending new data, you can ena
 input:
   opcua:
     useHeartbeat: true
-```
-
-**Browse Hierarchical References (Option until version 0.5.2)**
-
-**NOTE**: This property is removed in version 0.6.0 and made as a standard way to browse OPCUA nodes. From version 0.6.0 onwards, opcua\_plugin will browse all nodes with Hierarchical References.
-
-The plugin offers an option to browse OPCUA nodes by following Hierarchical References. By default, this feature is disabled (`false`), which means the plugin will only browse a limited subset of reference types, including:
-
-* `HasComponent`
-* `Organizes`
-* `FolderType`
-* `HasNotifier`
-
-When set to `true`, the plugin will explore a broader range of node references. For a deeper understanding of the different reference types, refer to the [Standard References Type documentation](https://qiyuqi.gitbooks.io/opc-ua/content/Part3/Chapter7.html).
-
-**Recommendation**: Enable this option (`browseHierarchicalReferences: true`) for more comprehensive node discovery.
-
-```yaml
-input:
-  opcua:
-    browseHierarchicalReferences: true
 ```
 
 **Auto Reconnect**

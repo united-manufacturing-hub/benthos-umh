@@ -499,11 +499,8 @@ func (g *OPCUAInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, s
 			g.Log.Debugf("Received nil in item structure on node %s. This can occur when subscribing to an OPC UA folder and may be ignored.", node.NodeID.String())
 			continue
 		}
-		if value.Status != ua.StatusOK {
-			g.Log.Warnf("Skipping node %s: received status %v (unsupported data type?)",
-				node.NodeID.String(), value.Status)
-			continue
-		}
+		// Status handling is delegated to createMessageFromValue → getBytesFromValue,
+		// which is the single source of truth for deciding whether to emit a value.
 		message := g.createMessageFromValue(value, node)
 		if message != nil {
 			msgs = append(msgs, message)
