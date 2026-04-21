@@ -20,6 +20,7 @@
   - [Topic Browser](processing/topic-browser.md)
   - [Stream Processor](processing/stream-processor.md)
   - [Node-RED JavaScript Processor](processing/node-red-javascript-processor.md)
+  - [JavaScript API Reference](processing/javascript-api.md)
   - [More](https://docs.redpanda.com/redpanda-connect/components/processors/about/)
 - [Output](output/README.md)
   - [Sparkplug B (Output)](output/sparkplug-b-output.md)

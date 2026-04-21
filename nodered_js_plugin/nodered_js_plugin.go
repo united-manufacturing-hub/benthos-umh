@@ -339,12 +339,16 @@ func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) e
 				u.logger.Errorf("cache.set failed: %v", err)
 			}
 		},
-		"get": func(key string) any {
+		"get": func(call goja.FunctionCall) goja.Value {
+			if len(call.Arguments) < 2 {
+				panic(vm.NewTypeError("cache.get(key, default) requires 2 arguments"))
+			}
+			key := call.Arguments[0].String()
 			v, ok := u.cache.Get(ctx, key)
 			if !ok {
-				return goja.Undefined()
+				return call.Arguments[1]
 			}
-			return v
+			return vm.ToValue(v)
 		},
 		"delete": func(key string) {
 			err := u.cache.Delete(ctx, key)
@@ -540,65 +544,30 @@ msg.meta.count = (msg.meta.count || 0) + 1;
 return msg;
 
 // Example 7: Persistent counter across messages using cache
-var count = cache.get("count") || 0;
+var count = cache.get("count", 0);
 count++;
 cache.set("count", count);
 msg.payload = count;
 return msg;
 
 // Example 8: Alarm state that only fires once per active condition
-var alarmed = cache.get("alarm_active") || false;
-if (msg.payload > 100 && !alarmed) {
+var alarmed = cache.get("alarm_active", false);
+if (msg.payload.value > 100 && !alarmed) {
   cache.set("alarm_active", true);
   msg.meta.alarm = "triggered";
   return msg;
 }
-if (msg.payload <= 100 && alarmed) {
+if (msg.payload.value <= 100 && alarmed) {
   cache.set("alarm_active", false);
   msg.meta.alarm = "cleared";
   return msg;
 }
-return msg;`)).
-	Field(service.NewObjectField("cache",
-		service.NewStringField("backend").
-			Description("Cache backend to use.").
-			Default("memory").
-			Examples("memory"),
-		service.NewDurationField("expiration").
-			Description("Expiration duration for cached items. Items are automatically removed after expiration. Default 0s means no expiration.").
-			Default("0s"),
-	).Description("Cache configuration for maintaining state across messages. Currently only supports the memory backend, which is lost on restart.").
-		Default(map[string]any{
-			"backend":    "memory",
-			"expiration": "0s",
-		}).
-		Advanced())
+return msg;`))
 
 func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchProcessor, error) {
 	code, err := conf.FieldString("code")
 	if err != nil {
 		return nil, err
-	}
-
-	backend, err := conf.FieldString("cache", "backend")
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse cache backend: %w", err)
-	}
-
-	expiration, err := conf.FieldDuration("cache", "expiration")
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse cache expiration: %w", err)
-	}
-	if expiration < 0 {
-		return nil, fmt.Errorf("cache expiration must be >= 0, got %v", expiration)
-	}
-
-	var c cache.Cache
-	switch backend {
-	case "memory":
-		c = cache.NewMemoryStore(expiration)
-	default:
-		return nil, fmt.Errorf("unsupported cache backend: %q (supported: memory)", backend)
 	}
 
 	wrappedCode := fmt.Sprintf(`
@@ -608,7 +577,7 @@ func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (
 		})()
 	`, code)
 
-	return NewNodeREDJSProcessor(wrappedCode, mgr.Logger(), mgr.Metrics(), c)
+	return NewNodeREDJSProcessor(wrappedCode, mgr.Logger(), mgr.Metrics(), cache.NewMemoryStore(0))
 }
 
 func init() {
