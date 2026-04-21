@@ -508,7 +508,11 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 	if err != nil {
 		return nil, fmt.Errorf("failed to get structured payload: %w", err)
 	}
-	value := p.convertValue(structured)
+	datatype, _ := msg.MetaGet("datatype")
+	value, err := p.convertValue(structured, datatype)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert value: %w", err)
+	}
 
 	// Determine timestamp - use metadata timestamp_ms if available, otherwise current time
 	timestamp := time.Now().UnixMilli()
@@ -579,25 +583,50 @@ func (p *TagProcessor) parseTimestampToRFC3339Nano(value string) int64 {
 	return sentinelNoTimestamp
 }
 
-// convertValue recursively converts values to their appropriate types
-func (p *TagProcessor) convertValue(v interface{}) interface{} {
+// convertValue coerces v to the given datatype. Falls back to auto-detection when datatype is empty.
+func (p *TagProcessor) convertValue(v any, datatype string) (any, error) {
+	switch datatype {
+	case "string":
+		return fmt.Sprintf("%v", v), nil
+	case "number":
+		str := fmt.Sprintf("%v", v)
+		_, err := strconv.ParseFloat(str, 64)
+		if err != nil {
+			return nil, fmt.Errorf("cannot convert %q to number: %w", str, err)
+		}
+		return json.Number(str), nil
+	case "bool":
+		str := fmt.Sprintf("%v", v)
+		b, err := strconv.ParseBool(str)
+		if err != nil {
+			return nil, fmt.Errorf("cannot convert %q to bool: %w", str, err)
+		}
+		return b, nil
+	default:
+		return p.autoConvertValue(v), nil
+	}
+}
+
+// autoConvertValue auto-detects the value type when no explicit datatype is set.
+func (p *TagProcessor) autoConvertValue(v any) any {
 	switch val := v.(type) {
 	case bool:
 		return val
 	case string:
-		if num, err := strconv.ParseFloat(val, 64); err == nil {
+		num, err := strconv.ParseFloat(val, 64)
+		if err == nil {
 			return json.Number(fmt.Sprintf("%v", num))
 		}
 		return val
 	case float64, float32, int, int32, int64, uint, uint32, uint64:
 		return json.Number(fmt.Sprintf("%v", val))
-	case []interface{}:
+	case []any:
 		jsonBytes, err := json.Marshal(val)
 		if err != nil {
-			return fmt.Sprintf("%v", val) // fallback for safety
+			return fmt.Sprintf("%v", val)
 		}
 		return string(jsonBytes)
-	case map[string]interface{}:
+	case map[string]any:
 		jsonBytes, err := json.Marshal(val)
 		if err != nil {
 			return fmt.Sprintf("%v", val)
@@ -605,7 +634,8 @@ func (p *TagProcessor) convertValue(v interface{}) interface{} {
 		return string(jsonBytes)
 	default:
 		str := fmt.Sprintf("%v", val)
-		if num, err := strconv.ParseFloat(str, 64); err == nil {
+		num, err := strconv.ParseFloat(str, 64)
+		if err == nil {
 			return json.Number(fmt.Sprintf("%v", num))
 		}
 		return str
