@@ -93,10 +93,16 @@ func (g *OPCUAConnection) getBytesFromValue(dataValue *ua.DataValue, nodeDef Nod
 		b = append(b, []byte(strconv.FormatUint(v, 10))...)
 		tagType = "number"
 	case *ua.ExtensionObject:
-		if v.Value == nil {
-			// Unregistered type — skip (binary data already discarded by gopcua)
+		if v == nil || v.Value == nil {
+			// Unregistered type — skip (binary data already discarded by gopcua).
+			// Note: a typed-nil *ua.ExtensionObject still matches this case, so guard v itself.
+			// TypeID / TypeID.NodeID can also be nil for unknown extension types.
+			typeIDStr := "<unknown>"
+			if v != nil && v.TypeID != nil && v.TypeID.NodeID != nil {
+				typeIDStr = v.TypeID.NodeID.String()
+			}
 			g.Log.Warnf("Skipping node %s: ExtensionObject type %s not decodable (custom UDT not registered)",
-				nodeDef.NodeID.String(), v.TypeID.NodeID.String())
+				nodeDef.NodeID.String(), typeIDStr)
 			return nil, ""
 		}
 		// Type was registered and decoded — serialize the actual value
