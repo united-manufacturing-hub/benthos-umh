@@ -8,6 +8,7 @@
   "minimumReleaseAge": "7 days",
   "timezone": "Europe/Berlin",
   "schedule": ["* * * * 0"],
+  "separateMajorMinor": false,
   "packageRules": [
     {
       "matchManagers": ["github-actions"],
@@ -30,13 +31,6 @@
       "matchDepNames": ["go"],
       "matchManagers": ["gomod"],
       "rangeStrategy": "bump"
-    },
-    {
-      "description": "Sync Go version in Dockerfile and go.mod",
-      "matchDepNames": ["golang", "go"],
-      "matchUpdateTypes": ["minor", "patch", "major"],
-      "groupName": "Go version",
-      "groupSlug": "go-version"
     }
   ]
 }
