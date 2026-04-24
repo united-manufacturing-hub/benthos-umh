@@ -4,6 +4,8 @@ The Tag Processor is designed to prepare incoming data for the UMH data model. I
 
 Use the `tag_processor` compared to the `nodered_js` when you are processing tags or time series data and converting them to the UMH data model within the `_historian` data contract. This processor is optimized for handling structured time series data, automatically formats messages, and generates appropriate metadata.
 
+The JavaScript stages use the same environment as the `nodered_js` processor. For the full list of available globals (`msg`, `console`, `cache`), see the [JavaScript API Reference](javascript-api.md).
+
 **Message Formatting Behavior**
 
 The processor automatically formats different input types into a consistent structure with a "value" field:
