@@ -339,16 +339,16 @@ func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) e
 				u.logger.Errorf("cache.set failed: %v", err)
 			}
 		},
-		"get": func(call goja.FunctionCall) goja.Value {
-			if len(call.Arguments) < 2 {
-				panic(vm.NewTypeError("cache.get(key, default) requires 2 arguments"))
-			}
-			key := call.Arguments[0].String()
+		"get": func(key string) any {
 			v, ok := u.cache.Get(ctx, key)
 			if !ok {
-				return call.Arguments[1]
+				u.logger.Errorf("cache.get: key %q not found. Use cache.exists(key) to check before reading.", key)
+				return goja.Undefined()
 			}
-			return vm.ToValue(v)
+			return v
+		},
+		"exists": func(key string) bool {
+			return u.cache.Exists(ctx, key)
 		},
 		"delete": func(key string) {
 			err := u.cache.Delete(ctx, key)
@@ -544,14 +544,15 @@ msg.meta.count = (msg.meta.count || 0) + 1;
 return msg;
 
 // Example 7: Persistent counter across messages using cache
-var count = cache.get("count", 0);
+var count = 0;
+if (cache.exists("count")) { count = cache.get("count"); }
 count++;
 cache.set("count", count);
 msg.payload = count;
 return msg;
 
 // Example 8: Alarm state that only fires once per active condition
-var alarmed = cache.get("alarm_active", false);
+var alarmed = cache.exists("alarm_active") ? cache.get("alarm_active") : false;
 if (msg.payload.value > 100 && !alarmed) {
   cache.set("alarm_active", true);
   msg.meta.alarm = "triggered";

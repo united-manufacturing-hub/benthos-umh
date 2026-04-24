@@ -882,7 +882,7 @@ var _ = Describe("NodeREDJS cache", func() {
 		It("set then get returns the stored value", func() {
 			handler, msgs, cancel := buildStream(`
 cache.set("k", 42);
-msg.payload = cache.get("k", null);
+msg.payload = cache.get("k");
 return msg;
 `)
 			defer cancel()
@@ -893,10 +893,10 @@ return msg;
 			Expect(payloadFloat(*msgs, 0)).To(Equal(float64(42)))
 		})
 
-		It("get on unknown key returns the default", func() {
+		It("get on unknown key returns undefined", func() {
 			handler, msgs, cancel := buildStream(`
-var v = cache.get("nope", "fallback");
-msg.payload = v;
+var v = cache.get("nope");
+msg.payload = (typeof v === "undefined") ? "is_undefined" : "not_undefined";
 return msg;
 `)
 			defer cancel()
@@ -904,28 +904,45 @@ return msg;
 			err := handler(context.Background(), newMsg("ignored"))
 			Expect(err).NotTo(HaveOccurred())
 			Eventually(func() int { return len(*msgs) }).Should(Equal(1))
-			Expect(payloadString(*msgs, 0)).To(Equal("fallback"))
+			Expect(payloadString(*msgs, 0)).To(Equal("is_undefined"))
 		})
 
-		It("get with 1 argument throws TypeError", func() {
+		It("exists returns false for missing key", func() {
 			handler, msgs, cancel := buildStream(`
-cache.get("nope");
-msg.payload = "should not reach";
+msg.payload = cache.exists("nope");
 return msg;
 `)
 			defer cancel()
 
 			err := handler(context.Background(), newMsg("ignored"))
 			Expect(err).NotTo(HaveOccurred())
-			Consistently(func() int { return len(*msgs) }, "500ms").Should(Equal(0))
+			Eventually(func() int { return len(*msgs) }).Should(Equal(1))
+			s, sErr := (*msgs)[0].AsStructured()
+			Expect(sErr).NotTo(HaveOccurred())
+			Expect(s).To(Equal(false))
+		})
+
+		It("exists returns true for existing key", func() {
+			handler, msgs, cancel := buildStream(`
+cache.set("k", "v");
+msg.payload = cache.exists("k");
+return msg;
+`)
+			defer cancel()
+
+			err := handler(context.Background(), newMsg("ignored"))
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() int { return len(*msgs) }).Should(Equal(1))
+			s, sErr := (*msgs)[0].AsStructured()
+			Expect(sErr).NotTo(HaveOccurred())
+			Expect(s).To(Equal(true))
 		})
 
 		It("delete removes a key", func() {
 			handler, msgs, cancel := buildStream(`
 cache.set("x", 1);
 cache.delete("x");
-var v = cache.get("x", "gone");
-msg.payload = v;
+msg.payload = cache.exists("x");
 return msg;
 `)
 			defer cancel()
@@ -933,12 +950,17 @@ return msg;
 			err := handler(context.Background(), newMsg("ignored"))
 			Expect(err).NotTo(HaveOccurred())
 			Eventually(func() int { return len(*msgs) }).Should(Equal(1))
-			Expect(payloadString(*msgs, 0)).To(Equal("gone"))
+			s, sErr := (*msgs)[0].AsStructured()
+			Expect(sErr).NotTo(HaveOccurred())
+			Expect(s).To(Equal(false))
 		})
 
 		It("value persists across consecutive messages", func() {
 			handler, msgs, cancel := buildStream(`
-var count = cache.get("count", 0);
+var count = 0;
+if (cache.exists("count")) {
+  count = cache.get("count");
+}
 count++;
 cache.set("count", count);
 msg.payload = count;
@@ -958,7 +980,7 @@ return msg;
 		It("stores and retrieves an object value", func() {
 			handler, msgs, cancel := buildStream(`
 cache.set("obj", { temperature: 42.5, unit: "C" });
-var obj = cache.get("obj", null);
+var obj = cache.get("obj");
 msg.payload = obj.temperature;
 return msg;
 `)
@@ -972,7 +994,8 @@ return msg;
 
 		It("is safe under concurrent message processing", func() {
 			handler, msgs, cancel := buildStream(`
-var n = cache.get("n", 0);
+var n = 0;
+if (cache.exists("n")) { n = cache.get("n"); }
 cache.set("n", n + 1);
 msg.payload = "ok";
 return msg;
@@ -995,12 +1018,11 @@ return msg;
 
 		It("cache is shared across VM pool instances", func() {
 			handler, msgs, cancel := buildStream(`
-var v = cache.get("shared", null);
-if (v === null) {
+if (!cache.exists("shared")) {
   cache.set("shared", "seeded");
   msg.payload = "first";
 } else {
-  msg.payload = v;
+  msg.payload = cache.get("shared");
 }
 return msg;
 `)
@@ -1020,7 +1042,7 @@ return msg;
 		It("numeric key coercion: number passed as key is coerced to string", func() {
 			handler, msgs, cancel := buildStream(`
 cache.set("42", "byStringKey");
-msg.payload = cache.get("42", null);
+msg.payload = cache.get("42");
 return msg;
 `)
 			defer cancel()
@@ -1031,9 +1053,12 @@ return msg;
 			Expect(payloadString(*msgs, 0)).To(Equal("byStringKey"))
 		})
 
-		It("default value works with object fallback", func() {
+		It("exists + get pattern with object", func() {
 			handler, msgs, cancel := buildStream(`
-var state = cache.get("state", { alarm: false, count: 0 });
+if (!cache.exists("state")) {
+  cache.set("state", { alarm: false, count: 0 });
+}
+var state = cache.get("state");
 state.count++;
 cache.set("state", state);
 msg.payload = state.count;
@@ -1048,22 +1073,6 @@ return msg;
 			}
 			Eventually(func() int { return len(*msgs) }).Should(Equal(2))
 			Expect(payloadFloat(*msgs, 1)).To(Equal(float64(2)))
-		})
-
-		It("default value preserves falsy values like 0 and false", func() {
-			handler, msgs, cancel := buildStream(`
-cache.set("zero", 0);
-cache.set("falseVal", false);
-var z = cache.get("zero", 99);
-var f = cache.get("falseVal", true);
-msg.payload = { zero: z, falseVal: f };
-return msg;
-`)
-			defer cancel()
-
-			err := handler(context.Background(), newMsg("ignored"))
-			Expect(err).NotTo(HaveOccurred())
-			Eventually(func() int { return len(*msgs) }).Should(Equal(1))
 		})
 	})
 })

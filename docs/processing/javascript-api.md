@@ -44,23 +44,27 @@ Key-value store for maintaining state across messages. Persists across all messa
 The cache is automatic and requires no configuration.
 
 ```javascript
-cache.set(key, value)           // Store a value under key (string)
-cache.get(key, default)         // Retrieve a value, returns default if not found
-cache.delete(key)               // Remove a key
+cache.set(key, value)    // Store a value under key (string)
+cache.get(key)           // Retrieve a value, logs error if key not found
+cache.exists(key)        // Returns true if key exists, false otherwise
+cache.delete(key)        // Remove a key
 ```
 
-`cache.get` requires two arguments. The second argument is the default value returned when the key does not exist. This prevents silent `undefined` bugs in counters, alarm flags, and other state.
+Always use `cache.exists(key)` before `cache.get(key)` to avoid error logs on missing keys.
 
 ```javascript
-cache.get("counter", 0)         // returns 0 if missing
-cache.get("alarm_active", false)// returns false if missing
-cache.get("counter")            // TypeError — must provide default
+if (cache.exists("counter")) {
+  var count = cache.get("counter");
+} else {
+  var count = 0;
+}
 ```
 
 ### Counter
 
 ```javascript
-var count = cache.get("count", 0);
+var count = 0;
+if (cache.exists("count")) { count = cache.get("count"); }
 count++;
 cache.set("count", count);
 msg.payload = count;
@@ -70,7 +74,7 @@ return msg;
 ### Previous value comparison
 
 ```javascript
-var prev = cache.get("last_value", null);
+var prev = cache.exists("last_value") ? cache.get("last_value") : null;
 var delta = (prev !== null) ? msg.payload.value - prev : 0;
 cache.set("last_value", msg.payload.value);
 msg.payload.delta = delta;
@@ -80,7 +84,7 @@ return msg;
 ### History (last N values)
 
 ```javascript
-var history = cache.get("history", []);
+var history = cache.exists("history") ? cache.get("history") : [];
 history.push(msg.payload.value);
 if (history.length > 10) history.shift();
 cache.set("history", history);
@@ -90,7 +94,7 @@ return msg;
 ### Alarm state tracking
 
 ```javascript
-var alarmed = cache.get("alarm_active", false);
+var alarmed = cache.exists("alarm_active") ? cache.get("alarm_active") : false;
 if (msg.payload.value > 100 && !alarmed) {
   cache.set("alarm_active", true);
   msg.meta.alarm = "triggered";
@@ -107,7 +111,7 @@ return msg;
 ### Cycle time between events
 
 ```javascript
-var lastMs = cache.get("last_event_ms", null);
+var lastMs = cache.exists("last_event_ms") ? cache.get("last_event_ms") : null;
 if (lastMs !== null) {
   msg.payload.cycle_time_ms = Date.now() - lastMs;
 }
