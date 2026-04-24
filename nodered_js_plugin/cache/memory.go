@@ -90,11 +90,6 @@ func (m *MemoryStore) Get(_ context.Context, key string) (any, bool) {
 	return item.Value, true
 }
 
-func (m *MemoryStore) Exists(ctx context.Context, key string) bool {
-	_, ok := m.Get(ctx, key)
-	return ok
-}
-
 func (m *MemoryStore) Delete(_ context.Context, key string) error {
 	if key == "" {
 		return fmt.Errorf("cache: key must not be empty")

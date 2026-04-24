@@ -22,8 +22,6 @@ type Cache interface {
 	Set(ctx context.Context, key string, value any) error
 	// Get returns the value stored under key and if it even exists.
 	Get(ctx context.Context, key string) (any, bool)
-	// Exists returns true if key is present and not expired.
-	Exists(ctx context.Context, key string) bool
 	// Delete removes the entry for key. No-op when key does not exist.
 	Delete(ctx context.Context, key string) error
 	// Close releases any resources held by the store.

@@ -348,7 +348,8 @@ func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) e
 			return v
 		},
 		"exists": func(key string) bool {
-			return u.cache.Exists(ctx, key)
+			_, exists := u.cache.Get(ctx, key)
+			return exists
 		},
 		"delete": func(key string) {
 			err := u.cache.Delete(ctx, key)
