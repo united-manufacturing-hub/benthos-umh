@@ -919,7 +919,7 @@ return msg;
 			Eventually(func() int { return len(*msgs) }).Should(Equal(1))
 			s, sErr := (*msgs)[0].AsStructured()
 			Expect(sErr).NotTo(HaveOccurred())
-			Expect(s).To(Equal(false))
+			Expect(s).To(BeFalse())
 		})
 
 		It("exists returns true for existing key", func() {
@@ -935,7 +935,7 @@ return msg;
 			Eventually(func() int { return len(*msgs) }).Should(Equal(1))
 			s, sErr := (*msgs)[0].AsStructured()
 			Expect(sErr).NotTo(HaveOccurred())
-			Expect(s).To(Equal(true))
+			Expect(s).To(BeTrue())
 		})
 
 		It("delete removes a key", func() {
@@ -952,7 +952,7 @@ return msg;
 			Eventually(func() int { return len(*msgs) }).Should(Equal(1))
 			s, sErr := (*msgs)[0].AsStructured()
 			Expect(sErr).NotTo(HaveOccurred())
-			Expect(s).To(Equal(false))
+			Expect(s).To(BeFalse())
 		})
 
 		It("value persists across consecutive messages", func() {
