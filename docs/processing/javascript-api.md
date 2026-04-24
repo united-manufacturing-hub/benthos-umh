@@ -74,8 +74,14 @@ return msg;
 ### Previous value comparison
 
 ```javascript
-var prev = cache.exists("last_value") ? cache.get("last_value") : null;
-var delta = (prev !== null) ? msg.payload.value - prev : 0;
+var prev = null;
+if (cache.exists("last_value")) {
+  prev = cache.get("last_value");
+}
+var delta = 0;
+if (prev !== null) {
+  delta = msg.payload.value - prev;
+}
 cache.set("last_value", msg.payload.value);
 msg.payload.delta = delta;
 return msg;
@@ -84,7 +90,10 @@ return msg;
 ### History (last N values)
 
 ```javascript
-var history = cache.exists("history") ? cache.get("history") : [];
+var history = [];
+if (cache.exists("history")) {
+  history = cache.get("history");
+}
 history.push(msg.payload.value);
 if (history.length > 10) history.shift();
 cache.set("history", history);
@@ -94,7 +103,10 @@ return msg;
 ### Alarm state tracking
 
 ```javascript
-var alarmed = cache.exists("alarm_active") ? cache.get("alarm_active") : false;
+var alarmed = false;
+if (cache.exists("alarm_active")) {
+  alarmed = cache.get("alarm_active");
+}
 if (msg.payload.value > 100 && !alarmed) {
   cache.set("alarm_active", true);
   msg.meta.alarm = "triggered";
@@ -111,7 +123,10 @@ return msg;
 ### Cycle time between events
 
 ```javascript
-var lastMs = cache.exists("last_event_ms") ? cache.get("last_event_ms") : null;
+var lastMs = null;
+if (cache.exists("last_event_ms")) {
+  lastMs = cache.get("last_event_ms");
+}
 if (lastMs !== null) {
   msg.payload.cycle_time_ms = Date.now() - lastMs;
 }
