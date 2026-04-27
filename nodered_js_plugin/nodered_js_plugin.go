@@ -29,6 +29,8 @@ import (
 
 	"github.com/dop251/goja"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin/cache"
 )
 
 // NodeREDJSProcessor defines the processor that wraps the JavaScript processor.
@@ -37,6 +39,7 @@ type NodeREDJSProcessor struct {
 	originalCode      string
 	vmpool            sync.Pool
 	logger            *service.Logger
+	cache             cache.Cache
 	messagesProcessed *service.MetricCounter
 	messagesErrored   *service.MetricCounter
 	messagesDropped   *service.MetricCounter
@@ -45,7 +48,7 @@ type NodeREDJSProcessor struct {
 }
 
 // NewNodeREDJSProcessor creates a new NodeREDJSProcessor instance.
-func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service.Metrics) (*NodeREDJSProcessor, error) {
+func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service.Metrics, c cache.Cache) (*NodeREDJSProcessor, error) {
 	// Compile the JavaScript code once
 	program, err := goja.Compile("nodered-fn.js", code, false)
 	if err != nil {
@@ -57,6 +60,7 @@ func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service
 		originalCode:      code,
 		vmpool:            sync.Pool{}, // No New function - Get() will return nil when pool is empty
 		logger:            logger,
+		cache:             c,
 		messagesProcessed: metrics.NewCounter("messages_processed"),
 		messagesErrored:   metrics.NewCounter("messages_errored"),
 		messagesDropped:   metrics.NewCounter("messages_dropped"),
@@ -297,13 +301,26 @@ func stringify(data any, depth uint8) (string, error) {
 }
 
 // SetupJSEnvironment sets up the JavaScript VM environment.
-func (u *NodeREDJSProcessor) SetupJSEnvironment(vm *goja.Runtime, jsMsg map[string]interface{}) error {
-	// Set up the msg variable in the JS environment
-	if err := vm.Set("msg", jsMsg); err != nil {
+func (u *NodeREDJSProcessor) SetupJSEnvironment(ctx context.Context, vm *goja.Runtime, jsMsg map[string]interface{}) error {
+	err := vm.Set("msg", jsMsg)
+	if err != nil {
 		return fmt.Errorf("failed to set message in JS environment: %w", err)
 	}
 
-	// Set up console for logging that uses Benthos logger
+	err = u.setupConsole(vm)
+	if err != nil {
+		return fmt.Errorf("failed to set console in JS environment: %w", err)
+	}
+
+	err = u.setupCache(ctx, vm)
+	if err != nil {
+		return fmt.Errorf("failed to set cache in JS environment: %w", err)
+	}
+
+	return nil
+}
+
+func (u *NodeREDJSProcessor) setupConsole(vm *goja.Runtime) error {
 	console := map[string]any{
 		"debug": func(data ...any) { u.logger.Debug(FormatConsoleLogMsg(data)) },
 		"log":   func(data ...any) { u.logger.Info(FormatConsoleLogMsg(data)) },
@@ -311,12 +328,37 @@ func (u *NodeREDJSProcessor) SetupJSEnvironment(vm *goja.Runtime, jsMsg map[stri
 		"warn":  func(data ...any) { u.logger.Warn(FormatConsoleLogMsg(data)) },
 		"error": func(data ...any) { u.logger.Error(FormatConsoleLogMsg(data)) },
 	}
+	return vm.Set("console", console)
+}
 
-	if err := vm.Set("console", console); err != nil {
-		return fmt.Errorf("failed to set console in JS environment: %w", err)
+func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) error {
+	cacheObj := map[string]any{
+		"set": func(key string, value any) {
+			err := u.cache.Set(ctx, key, value)
+			if err != nil {
+				u.logger.Errorf("cache.set failed: %v", err)
+			}
+		},
+		"get": func(key string) any {
+			v, ok := u.cache.Get(ctx, key)
+			if !ok {
+				u.logger.Errorf("cache.get: key %q not found. Use cache.exists(key) to check before reading.", key)
+				return goja.Undefined()
+			}
+			return v
+		},
+		"exists": func(key string) bool {
+			_, exists := u.cache.Get(ctx, key)
+			return exists
+		},
+		"delete": func(key string) {
+			err := u.cache.Delete(ctx, key)
+			if err != nil {
+				u.logger.Errorf("cache.delete failed: %v", err)
+			}
+		},
 	}
-
-	return nil
+	return vm.Set("cache", cacheObj)
 }
 
 // HandleExecutionResult handles JavaScript execution results.
@@ -365,14 +407,13 @@ func FormatConsoleLogMsg(data []any) string {
 }
 
 // ProcessBatch applies the JavaScript code to each message in the batch.
-func (u *NodeREDJSProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
+func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	var resultBatch service.MessageBatch
 
 	for _, msg := range batch {
 		u.messagesProcessed.Incr(1)
 
-		// Process single message and return VM to pool immediately
-		processedMsg, shouldKeep, err := u.processSingleMessage(msg)
+		processedMsg, shouldKeep, err := u.processSingleMessage(ctx, msg)
 		if err != nil {
 			return nil, err
 		}
@@ -389,7 +430,7 @@ func (u *NodeREDJSProcessor) ProcessBatch(_ context.Context, batch service.Messa
 }
 
 // processSingleMessage processes a single message using a VM from the pool
-func (u *NodeREDJSProcessor) processSingleMessage(msg *service.Message) (*service.Message, bool, error) {
+func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *service.Message) (*service.Message, bool, error) {
 	vm := u.getVM()
 	defer u.putVM(vm)
 
@@ -414,7 +455,7 @@ func (u *NodeREDJSProcessor) processSingleMessage(msg *service.Message) (*servic
 	jsMsg["meta"] = meta
 
 	// Setup JS environment
-	if err = u.SetupJSEnvironment(vm, jsMsg); err != nil {
+	if err = u.SetupJSEnvironment(ctx, vm, jsMsg); err != nil {
 		u.messagesErrored.Incr(1)
 		u.logger.Errorf("%v\nMessage content: %v", err, jsMsg)
 		return nil, false, nil
@@ -468,17 +509,17 @@ Message content: %v`,
 
 // Close gracefully shuts down the processor.
 func (u *NodeREDJSProcessor) Close(_ context.Context) error {
-	return nil
+	return u.cache.Close()
 }
 
-func init() {
-	spec := service.NewConfigSpec().
-		Version("1.0.0").
-		Summary("A Node-RED style JavaScript processor.").
-		Description("Executes user-defined JavaScript code to process messages in a format similar to Node-RED functions.").
-		Field(service.NewStringField("code").
-			Description("The JavaScript code to execute. The code should be a function that processes the message.").
-			Example(`// Node-RED style function that returns the modified message
+// NodeREDJSConfigSpec defines the configuration options for the nodered_js processor.
+var NodeREDJSConfigSpec = service.NewConfigSpec().
+	Version("1.0.0").
+	Summary("A Node-RED style JavaScript processor.").
+	Description("Executes user-defined JavaScript code to process messages in a format similar to Node-RED functions.").
+	Field(service.NewStringField("code").
+		Description("The JavaScript code to execute. The code should be a function that processes the message.").
+		Example(`// Node-RED style function that returns the modified message
 // Example 1: Return message as-is
 return msg;
 
@@ -501,28 +542,52 @@ console.log("Message metadata:", msg.meta);
 // Example 6: Modify metadata
 msg.meta.processed = true;
 msg.meta.count = (msg.meta.count || 0) + 1;
+return msg;
+
+// Example 7: Persistent counter across messages using cache
+var count = 0;
+if (cache.exists("count")) { count = cache.get("count"); }
+count++;
+cache.set("count", count);
+msg.payload = count;
+return msg;
+
+// Example 8: Alarm state that only fires once per active condition
+var alarmed = cache.exists("alarm_active") ? cache.get("alarm_active") : false;
+if (msg.payload.value > 100 && !alarmed) {
+  cache.set("alarm_active", true);
+  msg.meta.alarm = "triggered";
+  return msg;
+}
+if (msg.payload.value <= 100 && alarmed) {
+  cache.set("alarm_active", false);
+  msg.meta.alarm = "cleared";
+  return msg;
+}
 return msg;`))
 
+func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchProcessor, error) {
+	code, err := conf.FieldString("code")
+	if err != nil {
+		return nil, err
+	}
+
+	wrappedCode := fmt.Sprintf(`
+		(function(){
+			'use strict';
+			%s
+		})()
+	`, code)
+
+	return NewNodeREDJSProcessor(wrappedCode, mgr.Logger(), mgr.Metrics(), cache.NewMemoryStore(0))
+}
+
+func init() {
 	err := service.RegisterBatchProcessor(
 		"nodered_js",
-		spec,
+		NodeREDJSConfigSpec,
 		func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchProcessor, error) {
-			code, err := conf.FieldString("code")
-			if err != nil {
-				return nil, err
-			}
-			// Wrap the user's code in a function that handles the return value
-			wrappedCode := fmt.Sprintf(`
-				(function(){
-					'use strict';
-					%s
-				})()
-			`, code)
-			processor, err := NewNodeREDJSProcessor(wrappedCode, mgr.Logger(), mgr.Metrics())
-			if err != nil {
-				return nil, err
-			}
-			return processor, nil
+			return newNodeREDJSProcessor(conf, mgr)
 		})
 	if err != nil {
 		panic(err)
