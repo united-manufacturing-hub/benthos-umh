@@ -7,6 +7,7 @@
 ### Improvements
 
 - Cache API for JavaScript processors: new `cache.set(key, value)`, `cache.get(key)`, `cache.exists(key)`, and `cache.delete(key)` methods for tracking state across messages. Previously, state management required complex Benthos `branch`/`request_map`/`result_map` configurations. Now you can store any JSON-compatible value (strings, numbers, objects, arrays) directly from JavaScript. Use `cache.exists(key)` before `cache.get(key)` to handle missing keys. Available in both `nodered_js` and `tag_processor`. Currently in-memory only (lost on restart), persistent backend planned
+- Tag processor now supports `msg.meta.datatype` to override value type auto-detection. Set to `"string"`, `"number"`, or `"bool"` to force the output type
 
 ## [0.12.2]
 
