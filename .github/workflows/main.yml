@@ -99,11 +99,13 @@ jobs:
         uses: fossas/fossa-action@ff70fe9fe17cbd2040648f1c45e8ec4e4884dcf3 # v1
         with:
           api-key: ${{ secrets.FOSSA_API_KEY }}
+          project: benthos-umh
           container: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:staging
       - name: FOSSA Container Test
         uses: fossas/fossa-action@ff70fe9fe17cbd2040648f1c45e8ec4e4884dcf3 # v1
         with:
           api-key: ${{ secrets.FOSSA_API_KEY }}
+          project: benthos-umh
           container: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:staging
           run-tests: true
 
