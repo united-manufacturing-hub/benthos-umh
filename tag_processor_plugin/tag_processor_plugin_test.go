@@ -2617,4 +2617,63 @@ tag_processor:
 			}
 		})
 	})
+
+	When("using msg.meta.datatype override", func() {
+		It("should preserve numeric string as string when datatype is string", func() {
+			builder := service.NewStreamBuilder()
+
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise.site";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "sap_number";
+    msg.meta.datatype = "string";
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messages = append(messages, msg)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage([]byte("1234567890"))
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				return len(messages)
+			}).Should(Equal(1))
+
+			msg := messages[0]
+			structured, err := msg.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := structured.(map[string]any)
+			Expect(ok).To(BeTrue())
+
+			value, ok := payload["value"]
+			Expect(ok).To(BeTrue())
+
+			strValue, ok := value.(string)
+			Expect(ok).To(BeTrue(), fmt.Sprintf("expected string but got %T: %v", value, value))
+			Expect(strValue).To(Equal("1.23456789e+09"))
+		})
+	})
 })
