@@ -30,7 +30,7 @@ jobs:
     steps:
       - name: Generate GitHub App Token
         id: generate-token
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3
         with:
           app-id: ${{ secrets.PR_APP_ID }}
           private-key: ${{ secrets.PR_APP_PK }}
@@ -64,7 +64,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Create Pull Request
-        uses: peter-evans/create-pull-request@84ae59a2cdc2258d6fa0732dd66352dddae2a412 # v7
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
         with:
           path: united-manufacturing-hub
           token: ${{ steps.generate-token.outputs.token }}
@@ -85,7 +85,7 @@ jobs:
     steps:
       - name: Generate GitHub App Token
         id: generate-token
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3
         with:
           app-id: ${{ secrets.PR_APP_ID }}
           private-key: ${{ secrets.PR_APP_PK }}
@@ -145,7 +145,7 @@ jobs:
           fi
 
       - name: Create Pull Request
-        uses: peter-evans/create-pull-request@84ae59a2cdc2258d6fa0732dd66352dddae2a412 # v7
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
         with:
           path: ManagementConsole
           token: ${{ steps.generate-token.outputs.token }}

@@ -56,7 +56,7 @@ jobs:
         id: plc-check
         run: echo "test_plc=${{ github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.base_ref == 'main') }}" >> "$GITHUB_OUTPUT"
       - name: Detect changes
-        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4
         id: filter
         with:
           initial-fetch-depth: 30
@@ -149,7 +149,7 @@ jobs:
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Cache golangci-lint
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             ~/.cache/golangci-lint
