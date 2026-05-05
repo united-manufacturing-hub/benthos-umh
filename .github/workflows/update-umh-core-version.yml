@@ -169,4 +169,5 @@ jobs:
           labels: |
             auto-generated
             schemas
+            skip-changelog-guard
           draft: false
