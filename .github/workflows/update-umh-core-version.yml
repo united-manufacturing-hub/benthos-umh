@@ -35,8 +35,6 @@ jobs:
           app-id: ${{ secrets.PR_APP_ID }}
           private-key: ${{ secrets.PR_APP_PK }}
           repositories: united-manufacturing-hub
-          labels: |
-            skip-changelog-guard
 
       - name: Checkout united-manufacturing-hub Repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -78,7 +76,6 @@ jobs:
           labels: |
             auto-generated
             dependencies
-            skip-changelog-guard
           draft: false
 
   update-management-console:
@@ -172,4 +169,5 @@ jobs:
           labels: |
             auto-generated
             schemas
+            skip-changelog-guard
           draft: false
