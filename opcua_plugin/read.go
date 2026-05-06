@@ -402,10 +402,13 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, servi
 		err     error
 	)
 
-	browseErr := g.getBrowseErr()
-	if browseErr != nil {
-		g.Log.Errorf("Browse failed asynchronously: %v, closing connection for reconnect", browseErr)
-		_ = g.Close(ctx)
+	err = g.getBrowseErr()
+	if err != nil {
+		g.Log.Errorf("Browse failed asynchronously: %v, closing connection for reconnect", err)
+		err = g.Close(ctx)
+		if err != nil {
+			g.Log.Errorf("Gentle closure failed: %v, reconnecting", err)
+		}
 		return nil, nil, service.ErrNotConnected
 	}
 

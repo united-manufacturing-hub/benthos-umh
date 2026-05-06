@@ -225,7 +225,6 @@ func (g *OPCUAConnection) Close(ctx context.Context) error {
 	g.cleanupBrowsing()
 	err := g.closeConnection(ctx)
 	if err != nil {
-		g.Log.Infof("Error closing OPC UA client: %v", err)
 		return err
 	}
 	g.Log.Infof("OPC UA client closed successfully.")
