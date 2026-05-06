@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -258,6 +259,10 @@ type OPCUAInput struct {
 	DeadbandType                 string
 	DeadbandValue                float64
 	ServerCapabilities           *ServerCapabilities
+
+	// browseErr signals async browse failure to ReadBatch (avoids self-Close deadlock).
+	browseErrMu sync.Mutex
+	browseErr   error
 }
 
 // unsubscribeAndResetHeartbeat unsubscribes from the OPC UA subscription and resets the heartbeat
@@ -275,6 +280,22 @@ func (g *OPCUAInput) unsubscribeAndResetHeartbeat(ctx context.Context) {
 	g.LastMessageReceived.Store(uint32(0))
 }
 
+// setBrowseErr stores the async browse failure for ReadBatch to consume.
+func (g *OPCUAInput) setBrowseErr(err error) {
+	g.browseErrMu.Lock()
+	defer g.browseErrMu.Unlock()
+	g.browseErr = err
+}
+
+// getBrowseErr returns and clears the pending browse failure, if any.
+func (g *OPCUAInput) getBrowseErr() error {
+	g.browseErrMu.Lock()
+	defer g.browseErrMu.Unlock()
+	err := g.browseErr
+	g.browseErr = nil
+	return err
+}
+
 // startBrowsing initiates the browsing process and handles errors
 func (g *OPCUAInput) startBrowsing(ctx context.Context) {
 	browseCtx, cancel := context.WithCancel(ctx)
@@ -286,8 +307,9 @@ func (g *OPCUAInput) startBrowsing(ctx context.Context) {
 		g.Log.Infof("Please note that browsing large node trees can take some time")
 
 		if err := g.BrowseAndSubscribeIfNeeded(browseCtx); err != nil {
+			// Do not call g.Close here: cleanupBrowsing would Wait on this goroutine itself.
 			g.Log.Errorf("Failed to subscribe: %v", err)
-			g.Close(ctx) // Safe to call Close here as we're in a separate goroutine
+			g.setBrowseErr(err)
 			return
 		}
 
@@ -379,6 +401,16 @@ func (g *OPCUAInput) ReadBatch(ctx context.Context) (service.MessageBatch, servi
 		ackFunc service.AckFunc
 		err     error
 	)
+
+	err = g.getBrowseErr()
+	if err != nil {
+		g.Log.Errorf("Browse failed asynchronously: %v, closing connection for reconnect", err)
+		err = g.Close(ctx)
+		if err != nil {
+			g.Log.Errorf("Gentle closure failed: %v, reconnecting", err)
+		}
+		return nil, nil, service.ErrNotConnected
+	}
 
 	if len(g.NodeList) == 0 {
 		g.Log.Debug("ReadBatch is called with empty nodelists. returning early from ReadBatch")
