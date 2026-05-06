@@ -203,7 +203,7 @@ func (g *OPCUAConnection) cleanupBrowsing() {
 }
 
 // closeConnection handles the actual connection closure
-func (g *OPCUAConnection) closeConnection(ctx context.Context) {
+func (g *OPCUAConnection) closeConnection(ctx context.Context) error {
 	// Call the custom cleanup function if set
 	if g.cleanup_func != nil {
 		g.cleanup_func(ctx)
@@ -211,19 +211,23 @@ func (g *OPCUAConnection) closeConnection(ctx context.Context) {
 
 	g.visited.Clear()
 
+	var err error
 	if g.Client != nil {
-		if err := g.Client.Close(ctx); err != nil {
-			g.Log.Infof("Error closing OPC UA client: %v", err)
-		}
+		err = g.Client.Close(ctx)
 		g.Client = nil
 	}
+	return err
 }
 
 // Close terminates the OPC UA connection with error logging
 func (g *OPCUAConnection) Close(ctx context.Context) error {
 	g.Log.Errorf("Initiating closure of OPC UA client...")
 	g.cleanupBrowsing()
-	g.closeConnection(ctx)
+	err := g.closeConnection(ctx)
+	if err != nil {
+		g.Log.Infof("Error closing OPC UA client: %v", err)
+		return err
+	}
 	g.Log.Infof("OPC UA client closed successfully.")
 	return nil
 }
@@ -232,6 +236,6 @@ func (g *OPCUAConnection) Close(ctx context.Context) error {
 func (g *OPCUAConnection) CloseExpected(ctx context.Context) {
 	g.Log.Infof("Initiating expected closure of OPC UA client...")
 	g.cleanupBrowsing()
-	g.closeConnection(ctx)
+	_ = g.closeConnection(ctx)
 	g.Log.Infof("OPC UA client closed successfully.")
 }
