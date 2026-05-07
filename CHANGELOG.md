@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixes
+
+- OPC-UA input could get stuck while browsing when a configured NodeID did not exist on the server, requiring a manual restart. Browse failures now trigger a clean reconnect
+
 ## 0.12.4
 
 ### Improvements
