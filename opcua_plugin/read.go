@@ -306,7 +306,11 @@ func (g *OPCUAInput) startBrowsing(ctx context.Context) {
 		defer g.browseWaitGroup.Done()
 		g.Log.Infof("Please note that browsing large node trees can take some time")
 
-		if err := g.BrowseAndSubscribeIfNeeded(browseCtx); err != nil {
+		err := g.BrowseAndSubscribeIfNeeded(browseCtx)
+		if err != nil {
+			if browseCtx.Err() != nil {
+				return
+			}
 			// Do not call g.Close here: cleanupBrowsing would Wait on this goroutine itself.
 			g.Log.Errorf("Failed to subscribe: %v", err)
 			g.setBrowseErr(err)
