@@ -132,6 +132,44 @@ var _ = Describe("Test against KepServer EX6", FlakeAttempts(3), func() {
 		}, false, nil, true),
 	)
 
+	// deadlock test, where goroutine from browsing wasn't able to kill itself
+	// it now should be successfully closed and try to reconnect
+	It("does not deadlock when subscribed NodeID does not exist", func() {
+		input = &OPCUAInput{
+			NodeIDs:          ParseNodeIDs([]string{"ns=2;s=NodeThatDoesNotExist.OnKepware"}),
+			SubscribeEnabled: true,
+			OPCUAConnection: &OPCUAConnection{
+				Endpoint:           endpoint,
+				Username:           username,
+				Password:           password,
+				ServerCertificates: make(map[*ua.EndpointDescription]string),
+				SecurityMode:       "None",
+				SecurityPolicy:     "None",
+			},
+		}
+
+		err := input.Connect(ctx)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Browse runs async. After it fails on Kepware (BadNodeIDUnknown),
+		// the next ReadBatch must surface service.ErrNotConnected so
+		// benthos triggers a reconnect.
+		Eventually(func() error {
+			_, _, readErr := input.ReadBatch(ctx)
+			return readErr
+		}, 15*time.Second, 100*time.Millisecond).Should(MatchError(service.ErrNotConnected))
+
+		// Close must complete in bounded time. Pre-fix this hung forever
+		// because the browse goroutine had called Close on itself.
+		done := make(chan struct{})
+		go func() {
+			defer GinkgoRecover()
+			_ = input.Close(ctx)
+			close(done)
+		}()
+		Eventually(done, 15*time.Second).Should(BeClosed())
+	})
+
 	// This should successfully connect to Kepware since we already trusted the
 	// generated certificates.
 	DescribeTable("Selecting a custom SecurityPolicy", func(input *OPCUAInput) {
