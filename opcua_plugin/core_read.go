@@ -50,7 +50,7 @@ func isCapabilityProbe(ctx context.Context) bool {
 func (g *OPCUAConnection) getBytesFromValue(dataValue *ua.DataValue, nodeDef NodeDef) ([]byte, string) {
 	variant := dataValue.Value
 	if variant == nil || variant.Value() == nil {
-		g.Log.Errorf("Variant is nil")
+		g.Log.Debugf("Status-only update for node %s without value, Status: %v", nodeDef.NodeID.String(), dataValue.Status)
 		return nil, ""
 	}
 
