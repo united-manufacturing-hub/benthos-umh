@@ -31,7 +31,6 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -803,13 +802,10 @@ func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 		if err != nil {
 			m.Log.Errorf("slave %d encountered an error: %v", slaveID, err)
 
-			// Check for "broken pipe" error
-			if isBrokenPipeError(err) {
-				m.Log.Errorf(
-					"Broken pipe error detected for slave %d. This indicates that the TCP/IP connection was unexpectedly closed by the server. Possible reasons include server restarts, server being offline, or network issues preventing communication between UMH and the Modbus server. Attempting to reconnect...",
-					slaveID,
-				)
-
+			// Non-protocol errors are transport-level (TCP write/read failure, timeout, reset) — request reconnect.
+			var mbErr *modbus.Error
+			if !errors.As(err, &mbErr) {
+				m.Log.Errorf("Modbus transport error for slave %d, requesting reconnect: %v", slaveID, err)
 				err = m.Close(ctx)
 				if err != nil {
 					m.Log.Errorf("Failed to close Modbus connection: %v", err)
@@ -817,9 +813,7 @@ func (m *ModbusInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 				return nil, nil, service.ErrNotConnected
 			}
 
-			var mbErr *modbus.Error
-			// Check if the error is a Modbus error and if the exception code is not "Server Device Busy"
-			if errors.As(err, &mbErr) && mbErr.ExceptionCode != modbus.ExceptionCodeServerDeviceBusy {
+			if mbErr.ExceptionCode != modbus.ExceptionCodeServerDeviceBusy {
 				m.Log.Errorf("slave %d encountered an error: %v", slaveID, mbErr)
 				return nil, nil, err
 			}
@@ -1203,32 +1197,4 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
-}
-
-// isBrokenPipeError checks whether the provided error is a "broken pipe" error.
-//
-// **Purpose:**
-// The underlying Modbus library's Send function does not correctly handle "broken pipe" errors,
-// which occur when attempting to write to a closed TCP connection. Without proper handling,
-// these errors can lead to unexpected disconnections and disrupt communication.
-//
-// **Why It's Necessary:**
-// Since the library lacks built-in logic to manage "broken pipe" errors by reconnecting,
-// this function identifies such errors. Detecting a "broken pipe" allows the application to
-// proactively close the current connection and trigger a reconnection mechanism, ensuring
-// continuous and reliable communication with the Modbus slaves.
-func isBrokenPipeError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if strings.Contains(err.Error(), "broken pipe") {
-		return true
-	}
-	var netErr *net.OpError
-	if errors.As(err, &netErr) {
-		if netErr.Err.Error() == "write: broken pipe" {
-			return true
-		}
-	}
-	return false
 }
