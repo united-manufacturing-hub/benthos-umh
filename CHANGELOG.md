@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixes
+
+- Modbus TCP input now recovers automatically from transaction-ID mismatches instead of staying permanently out of sync. Affected connections previously had to be restarted manually
+
 ## [0.12.5]
 
 ### Fixes
