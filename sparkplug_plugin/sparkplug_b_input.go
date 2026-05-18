@@ -51,17 +51,17 @@ func init() {
 	inputSpec := service.NewConfigSpec().
 		Version("2.0.0").
 		Summary("Sparkplug B MQTT input with idiomatic configuration").
-		Description(`A Sparkplug B input plugin with three Host modes:
+		Description(`A Sparkplug B input plugin with three Host roles:
 
-SPARKPLUG B HOST MODES:
+SPARKPLUG B HOST ROLES:
 - secondary_passive (default): Read-only consumer, no rebirth commands, safe for brownfield
 - secondary_active: Active consumer, sends rebirth commands, no STATE publishing
 - primary: Full Primary Host with STATE publishing and session management
 
 Key features:
-- Three-mode system for different deployment scenarios
-- Safe default mode prevents rebirth storms
-- Automatic STATE topic management with LWT (Primary mode only)
+- Three-role system for different deployment scenarios
+- Safe default role prevents rebirth storms
+- Automatic STATE topic management with LWT (Primary role only)
 - Sequence number validation and rebirth coordination
 - Alias resolution using BIRTH message metadata
 - Configurable message processing (splitting, extraction, filtering)
@@ -117,7 +117,7 @@ Key features:
 			Description("Sparkplug identity configuration")).
 		// Role Configuration
 		Field(service.NewStringField("role").
-			Description("Sparkplug Host mode: 'secondary_passive' (default), 'secondary_active', or 'primary'").
+			Description("Sparkplug Host role: 'secondary_passive' (default), 'secondary_active', or 'primary'").
 			Default("secondary_passive")).
 		// Discovery REBIRTH Configuration
 		Field(service.NewBoolField("request_birth_on_connect").
@@ -342,7 +342,7 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 		return nil, fmt.Errorf("failed to parse role: %w", err)
 	}
 
-	// Parse role into three-mode system
+	// Parse role into three-role system
 	switch roleStr {
 	case "secondary_passive":
 		config.Role = RoleSecondaryPassive
@@ -1236,7 +1236,7 @@ func (s *sparkplugInput) getDataTypeName(datatype uint32) string {
 func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
 	// Check if role allows rebirth requests
 	if s.config.Role == RoleSecondaryPassive {
-		s.logger.Debugf("Rebirth request suppressed for device %s (secondary_passive mode)", deviceKey)
+		s.logger.Debugf("Rebirth request suppressed for device %s (secondary_passive role)", deviceKey)
 		s.rebirthsSuppressed.Incr(1)
 		return
 	}
