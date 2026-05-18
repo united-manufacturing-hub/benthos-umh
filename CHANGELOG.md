@@ -2,10 +2,6 @@
 
 ## [Unreleased]
 
-### Fixes
-
-- Modbus TCP input now recovers automatically from transaction-ID mismatches instead of staying permanently out of sync. Affected connections previously had to be restarted manually
-
 ## [0.12.5]
 
 ### Fixes
@@ -13,6 +9,7 @@
 - OPC-UA input could get stuck while browsing when a configured NodeID did not exist on the server, requiring a manual restart. Browse failures now trigger a clean reconnect
 - OPC-UA input no longer spams `Variant is nil` errors when a node sends a status update without a value. These are harmless and now logged at debug level with the NodeID and status code
 - Modbus TCP input now reconnects immediately on any transport-level error (timeouts, resets, network failures), not just broken pipes. Previously these stuck the connection for up to 10 seconds
+- Modbus TCP input now recovers automatically from transaction-ID mismatches. Previously a missed or late Modbus response left the connection out of sync, every later poll failed, and it had to be restarted manually
 
 ## [0.12.4]
 
