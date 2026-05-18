@@ -1,6 +1,6 @@
 module github.com/united-manufacturing-hub/benthos-umh
 
-go 1.26.2
+go 1.26.3
 
 // to compile it on go 1.23
 replace github.com/parquet-go/parquet-go => github.com/parquet-go/parquet-go v0.29.0
@@ -40,8 +40,8 @@ require (
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/kaptinlin/jsonschema v0.7.13
 	github.com/prometheus/client_golang v1.23.2
-	github.com/redpanda-data/benthos/v4 v4.72.0
-	github.com/redpanda-data/connect/public/bundle/free/v4 v4.90.2
+	github.com/redpanda-data/benthos/v4 v4.73.0
+	github.com/redpanda-data/connect/public/bundle/free/v4 v4.90.3
 	github.com/robinson/gos7 v0.0.0-20241205073040-7ea1d6fb9d20
 	github.com/testcontainers/testcontainers-go v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/redpanda v0.42.0
@@ -404,7 +404,7 @@ require (
 	github.com/redpanda-data/common-go/authz v0.2.1-0.20260319205134-242ab3c168b8 // indirect
 	github.com/redpanda-data/common-go/license v0.0.0-20260318014216-2bbd72bde0a0 // indirect
 	github.com/redpanda-data/common-go/redpanda-otel-exporter v0.4.0 // indirect
-	github.com/redpanda-data/connect/v4 v4.90.2 // indirect
+	github.com/redpanda-data/connect/v4 v4.90.3 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rickb777/period v1.0.27 // indirect
 	github.com/rickb777/plural v1.4.10 // indirect
