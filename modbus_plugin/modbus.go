@@ -25,7 +25,6 @@ import (
 	"fmt"
 	"hash/maphash"
 	"math"
-	"net"
 	"net/url"
 	"reflect"
 	"regexp"
@@ -569,22 +568,24 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 
 	switch u.Scheme {
 	case "tcp":
-		host, port, err := net.SplitHostPort(u.Host)
-		if err != nil {
-			return nil, err
-		}
 		switch m.TransmissionMode {
 		case "", "auto", "TCP":
-			handler := modbus.NewTCPClientHandler(host + ":" + port)
+			handler := modbus.NewTCPClientHandler(u.Host)
 			handler.Timeout = m.Timeout
+			handler.ProtocolRecoveryTimeout = m.Timeout
+			handler.LinkRecoveryTimeout = m.Timeout
 			m.Handler = handler
 		case "RTUoverTCP":
-			handler := modbus.NewRTUOverTCPClientHandler(host + ":" + port)
+			handler := modbus.NewRTUOverTCPClientHandler(u.Host)
 			handler.Timeout = m.Timeout
+			handler.ProtocolRecoveryTimeout = m.Timeout
+			handler.LinkRecoveryTimeout = m.Timeout
 			m.Handler = handler
 		case "ASCIIoverTCP":
-			handler := modbus.NewASCIIOverTCPClientHandler(host + ":" + port)
+			handler := modbus.NewASCIIOverTCPClientHandler(u.Host)
 			handler.Timeout = m.Timeout
+			handler.ProtocolRecoveryTimeout = m.Timeout
+			handler.LinkRecoveryTimeout = m.Timeout
 			m.Handler = handler
 		default:
 			return nil, fmt.Errorf("invalid transmission mode %q for %q", m.TransmissionMode, u.Scheme)
