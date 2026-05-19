@@ -141,6 +141,7 @@ Here's how a Sparkplug B message maps to UMH-Core using the Modified Parris Meth
 ## Configuration Reference
 
 ### MQTT Section
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `mqtt.urls` | `[]string` | **required** | List of MQTT broker URLs |
@@ -153,12 +154,14 @@ Here's how a Sparkplug B message maps to UMH-Core using the Modified Parris Meth
 | `mqtt.clean_session` | `bool` | `true` | MQTT clean session flag |
 
 ### Identity Section
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `identity.group_id` | `string` | **required** | Sparkplug B Group ID |
 | `identity.edge_node_id` | `string` | `""` | Required only for `primary` role (used as host_id for STATE topic) |
 
 ### Role Section
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `role` | `string` | `"secondary_passive"` | Operating role for the Sparkplug B input plugin |
