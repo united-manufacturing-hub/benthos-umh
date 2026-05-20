@@ -44,9 +44,9 @@ type Identity struct {
 	DeviceID     string `yaml:"device_id"`     // Optional: Static device ID override. If empty and location_path provided, auto-generated via PARRIS
 }
 
-// Subscription configuration for primary_host role
+// Subscription configuration for host roles
 type Subscription struct {
-	Groups []string `yaml:"groups"` // Groups to subscribe to. Empty means all groups (+)
+	Groups []string `yaml:"groups"` // Groups to subscribe to. Empty defaults to [Identity.GroupID]; set ["+"] to subscribe to every group.
 }
 
 // Role defines the Sparkplug behavior mode for INPUT plugin (Host-only)
@@ -118,12 +118,14 @@ func (c *Config) getHostSubscriptionTopics() []string {
 	if len(c.Subscription.Groups) > 0 {
 		topics := make([]string, 0, len(c.Subscription.Groups))
 		for _, group := range c.Subscription.Groups {
+			// "+" sentinel passes through to spBv1.0/+/# (subscribe to all groups)
 			topics = append(topics, "spBv1.0/"+group+"/#")
 		}
 		return topics
 	}
-	// Default: listen to all groups
-	return []string{"spBv1.0/+/#"}
+	// Default: filter to identity.group_id (matches the publishing identity).
+	// To subscribe to all groups instead, set subscription.groups: ["+"].
+	return []string{"spBv1.0/" + c.Identity.GroupID + "/#"}
 }
 
 func (c *Config) GetSubscriptionTopics() []string {

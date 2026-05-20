@@ -915,6 +915,74 @@ var _ = Describe("Configuration Unit Tests", func() {
 			}
 		})
 	})
+
+	Context("Subscription Topic Defaulting", func() {
+		// ENG-4974: empty subscription.groups must filter to identity.group_id
+		// instead of subscribing to spBv1.0/+/# (all groups). The MQTT wildcard
+		// "+" is preserved as an explicit opt-in for the old all-groups behavior.
+
+		hostRoles := []sparkplugplugin.Role{
+			sparkplugplugin.RoleSecondaryPassive,
+			sparkplugplugin.RoleSecondaryActive,
+			sparkplugplugin.RolePrimaryHost,
+		}
+
+		It("should default to identity.group_id when subscription.groups is empty", func() {
+			for _, role := range hostRoles {
+				By(fmt.Sprintf("role=%s defaults to spBv1.0/<group_id>/#", role), func() {
+					config := &sparkplugplugin.Config{
+						Role: role,
+						Identity: sparkplugplugin.Identity{
+							GroupID:    "FactoryA",
+							EdgeNodeID: "HostNode", // satisfies primary's required field
+						},
+					}
+					Expect(config.GetSubscriptionTopics()).To(Equal([]string{"spBv1.0/FactoryA/#"}))
+				})
+			}
+		})
+
+		It("should subscribe to all groups when subscription.groups is ['+']", func() {
+			config := &sparkplugplugin.Config{
+				Role: sparkplugplugin.RoleSecondaryPassive,
+				Identity: sparkplugplugin.Identity{
+					GroupID: "FactoryA",
+				},
+				Subscription: sparkplugplugin.Subscription{
+					Groups: []string{"+"},
+				},
+			}
+			Expect(config.GetSubscriptionTopics()).To(Equal([]string{"spBv1.0/+/#"}))
+		})
+
+		It("should honor explicit subscription.groups overriding identity.group_id", func() {
+			config := &sparkplugplugin.Config{
+				Role: sparkplugplugin.RoleSecondaryPassive,
+				Identity: sparkplugplugin.Identity{
+					GroupID: "FactoryA",
+				},
+				Subscription: sparkplugplugin.Subscription{
+					Groups: []string{"FactoryB", "FactoryC"},
+				},
+			}
+			Expect(config.GetSubscriptionTopics()).To(Equal([]string{
+				"spBv1.0/FactoryB/#",
+				"spBv1.0/FactoryC/#",
+			}))
+		})
+
+		It("should produce the correct STATE topic from edge_node_id for primary role", func() {
+			// ENG-4974: edge_node_id is the Sparkplug v3.0 host_id for primary role
+			config := &sparkplugplugin.Config{
+				Role: sparkplugplugin.RolePrimaryHost,
+				Identity: sparkplugplugin.Identity{
+					GroupID:    "FactoryA",
+					EdgeNodeID: "UMH_Primary",
+				},
+			}
+			Expect(config.GetStateTopic()).To(Equal("spBv1.0/STATE/UMH_Primary"))
+		})
+	})
 })
 
 var _ = Describe("MessageProcessor Unit Tests", func() {

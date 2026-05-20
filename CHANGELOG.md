@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixes
+
+- Sparkplug B input: `identity.group_id` now filters the MQTT subscription by default. Previously an empty `subscription.groups` caused the plugin to subscribe to every Sparkplug group on the broker (`spBv1.0/+/#`) regardless of `identity.group_id`. To restore the old behavior, set `subscription.groups: ["+"]` explicitly.
+- Sparkplug B input: field descriptions and the primary-role startup log now state that `identity.edge_node_id` is used as the Sparkplug v3.0-compatible `host_id` in the STATE topic (`spBv1.0/STATE/<host_id>`).
+
 ## [0.12.5]
 
 ### Fixes
