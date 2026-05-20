@@ -57,7 +57,7 @@ input:
       urls: ["tcp://localhost:1883"]
     identity:
       group_id: "DeviceLevelTest"
-    # mode: "secondary_passive" is default - safest for brownfield deployments
+    # role: "secondary_passive" is default - safest for brownfield deployments
 
 pipeline:
   processors:
@@ -89,7 +89,7 @@ output:
   uns: {}
 ```
 
-This configuration safely reads all Sparkplug B messages and converts them to UMH-Core format. The default `secondary_passive` mode is read-only and won't interfere with existing Sparkplug infrastructure, making it safe to run multiple instances for load balancing and redundancy.
+This configuration safely reads all Sparkplug B messages and converts them to UMH-Core format. The default `secondary_passive` role is read-only and won't interfere with existing Sparkplug infrastructure, making it safe to run multiple instances for load balancing and redundancy.
 
 **To publish data as Sparkplug B**: After processing in the UNS, use the [Sparkplug B Output plugin](../output/sparkplug-b-output.md) to convert UMH-Core data back to Sparkplug B format for external systems.
 
@@ -141,6 +141,7 @@ Here's how a Sparkplug B message maps to UMH-Core using the Modified Parris Meth
 ## Configuration Reference
 
 ### MQTT Section
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `mqtt.urls` | `[]string` | **required** | List of MQTT broker URLs |
@@ -153,17 +154,19 @@ Here's how a Sparkplug B message maps to UMH-Core using the Modified Parris Meth
 | `mqtt.clean_session` | `bool` | `true` | MQTT clean session flag |
 
 ### Identity Section
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `identity.group_id` | `string` | **required** | Sparkplug B Group ID |
-| `identity.edge_node_id` | `string` | `""` | Required only for `primary` mode (used as host_id for STATE topic) |
+| `identity.edge_node_id` | `string` | `""` | Required only for `primary` role (used as host_id for STATE topic) |
 
-### Mode Section
+### Role Section
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `mode` | `string` | `"secondary_passive"` | Operating mode for the Sparkplug B input plugin |
+| `role` | `string` | `"secondary_passive"` | Operating role for the Sparkplug B input plugin |
 
-**Available Modes:**
+**Available Roles:**
 - `"secondary_passive"` (default): Read-only consumer, no rebirth commands sent
 - `"secondary_active"`: Consumer that can request rebirths when needed
 - `"primary"`: Full Primary Host with STATE publishing and session management
@@ -172,19 +175,19 @@ Here's how a Sparkplug B message maps to UMH-Core using the Modified Parris Meth
 
 ## Technical Details
 
-### Operating Modes Explained
+### Operating Roles Explained
 
-The Sparkplug B input plugin offers three operating modes that automatically configure all necessary settings. These modes provide clear choices for different deployment scenarios while eliminating the complexity of understanding Sparkplug B roles.
+The Sparkplug B input plugin offers three operating roles that automatically configure all necessary settings. These roles provide clear choices for different deployment scenarios while eliminating the complexity of understanding Sparkplug B roles.
 
-#### Mode Overview
+#### Role Overview
 
-| Mode | Role | Description | Safe for Brownfield |
+| Role | Role | Description | Safe for Brownfield |
 |------|------|-------------|---------------------|
 | `secondary_passive` | Secondary Host (Muted) | Read-only consumer, no rebirth commands | ✅ Yes (Default) |
 | `secondary_active` | Secondary Host (Unmuted) | Consumer that can request rebirths | ✅ Yes |
 | `primary` | Primary Host | Full host with STATE publishing | ⚠️ May conflict |
 
-#### Mode: `secondary_passive` (Default)
+#### Role: `secondary_passive` (Default)
 
 **What it does:**
 - Operates as a read-only Secondary Host
@@ -207,12 +210,12 @@ input:
       urls: ["tcp://localhost:1883"]
     identity:
       group_id: "FactoryA"
-    # mode: "secondary_passive" is the default
+    # role: "secondary_passive" is the default
 ```
 
-**Technical behavior:** Pure consumer mode with no command publishing capabilities.
+**Technical behavior:** Pure consumer role with no command publishing capabilities.
 
-#### Mode: `secondary_active`
+#### Role: `secondary_active`
 
 **What it does:**
 - Operates as an active Secondary Host
@@ -234,12 +237,12 @@ input:
       urls: ["tcp://localhost:1883"]
     identity:
       group_id: "FactoryA"
-    mode: "secondary_active"
+    role: "secondary_active"
 ```
 
 **Technical behavior:** Secondary Host with NCMD/DCMD publishing for rebirth requests.
 
-#### Mode: `primary`
+#### Role: `primary`
 
 **What it does:**
 - Operates as the Primary Host per Sparkplug B specification
@@ -262,7 +265,7 @@ input:
     identity:
       group_id: "FactoryA"
       edge_node_id: "UMH_Primary"  # Required for STATE topic
-    mode: "primary"
+    role: "primary"
 ```
 
 **Technical behavior:** Full Primary Host with STATE publishing and session management.
@@ -280,11 +283,11 @@ A cascading effect that occurs when multiple Secondary Hosts simultaneously requ
 5. Network and broker become saturated
 
 **Prevention:**
-- Use `secondary_passive` mode (default) in multi-consumer environments
+- Use `secondary_passive` role (default) in multi-consumer environments
 - Only use `secondary_active` when you're the sole consumer
 - Coordinate rebirth requests if multiple active consumers are necessary
 
-#### Choosing the Right Mode
+#### Choosing the Right Role
 
 **Start with `secondary_passive` if:**
 - You have any existing Sparkplug B infrastructure
@@ -307,7 +310,7 @@ A cascading effect that occurs when multiple Secondary Hosts simultaneously requ
 
 ### Advanced Configuration Options
 
-For users who need fine-grained control beyond the simplified modes, additional configuration options are available:
+For users who need fine-grained control beyond the simplified roles, additional configuration options are available:
 
 ```yaml
 input:
@@ -316,8 +319,8 @@ input:
       urls: ["tcp://localhost:1883"]
     identity:
       group_id: "FactoryA"
-      edge_node_id: "CustomHost"  # Optional for secondary modes
-    mode: "secondary_passive"
+      edge_node_id: "CustomHost"  # Optional for secondary role
+    role: "secondary_passive"
 
     # Advanced options (usually not needed)
     subscription:
@@ -327,9 +330,9 @@ input:
     # include_data_contract_in_device_id: true  # Add data contract to device ID
 ```
 
-### STATE Topic Behavior (primary mode only)
+### STATE Topic Behavior (primary role only)
 
-When using `primary` mode, the plugin publishes STATE messages according to Sparkplug B v3.0:
+When using `primary` role, the plugin publishes STATE messages according to Sparkplug B v3.0:
 
 ```
 spBv1.0/STATE/<host_id>
@@ -343,13 +346,13 @@ spBv1.0/STATE/<host_id>
 
 #### Multiple Instance Support
 
-**`secondary_passive` mode (default)**:
+**`secondary_passive` role (default)**:
 ✅ **Safe for multiple instances** - No STATE conflicts, no rebirth storms, load balancing friendly
 
-**`secondary_active` mode**:
+**`secondary_active` role**:
 ✅ **Can run multiple instances** - But be aware of potential rebirth storms
 
-**`primary` mode**:
+**`primary` role**:
 ⚠️ **Single instance only** - Publishes STATE messages for host arbitration
 
 ### Metadata Enrichment
