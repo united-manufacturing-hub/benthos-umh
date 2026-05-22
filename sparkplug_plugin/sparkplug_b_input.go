@@ -174,22 +174,27 @@ type sparkplugInput struct {
 	legacyAliasCache map[string]map[uint64]string // deviceKey -> (alias -> metric name)
 	stateMu          sync.RWMutex
 
-	// Discovery REBIRTH tracking
-	birthRequested map[string]time.Time // deviceKey -> last REBIRTH request time
+	// Per-node REBIRTH throttle. Shared between discovery rebirths
+	// (requestBirthIfNeeded) and alias-recovery rebirths
+	// (requestRebirthForUnresolvedAliases) so the two paths can't race on the
+	// same node and storm the broker.
+	birthRequested map[string]time.Time // nodeKey -> last REBIRTH request time
 	birthRequestMu sync.RWMutex         // Protects birthRequested map
 
 	// Metrics
-	messagesReceived   *service.MetricCounter
-	messagesProcessed  *service.MetricCounter
-	messagesDropped    *service.MetricCounter
-	messagesErrored    *service.MetricCounter
-	birthsProcessed    *service.MetricCounter
-	deathsProcessed    *service.MetricCounter
-	rebirthsRequested  *service.MetricCounter
-	rebirthsSuppressed *service.MetricCounter
-	sequenceErrors     *service.MetricCounter
-	aliasResolutions   *service.MetricCounter
-	discoveryRebirths  *service.MetricCounter // REBIRTH requests sent for discovery
+	messagesReceived        *service.MetricCounter
+	messagesProcessed       *service.MetricCounter
+	messagesDropped         *service.MetricCounter
+	messagesErrored         *service.MetricCounter
+	birthsProcessed         *service.MetricCounter
+	deathsProcessed         *service.MetricCounter
+	rebirthsRequested       *service.MetricCounter
+	rebirthsSuppressed      *service.MetricCounter
+	sequenceErrors          *service.MetricCounter
+	aliasResolutions        *service.MetricCounter
+	aliasResolutionFailures *service.MetricCounter // Per-metric: alias present in DATA but not in cache
+	discoveryRebirths       *service.MetricCounter // REBIRTH requests sent for discovery
+	aliasRebirths           Counter                // REBIRTH requests sent because DATA aliases were unresolved
 }
 
 type mqttMessage struct {
@@ -382,29 +387,31 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 	}
 
 	si := &sparkplugInput{
-		config:             config,
-		logger:             mgr.Logger(),
-		messages:           make(chan mqttMessage, 1000),
-		done:               make(chan struct{}),
-		nodeStates:         make(map[string]*nodeState),
-		legacyAliasCache:   make(map[string]map[uint64]string),
-		birthRequested:     make(map[string]time.Time), // Discovery REBIRTH tracking
-		aliasCache:         NewAliasCache(),
-		topicParser:        NewTopicParser(),
-		messageProcessor:   NewMessageProcessor(mgr.Logger()),
-		typeConverter:      NewTypeConverter(),
-		mqttClientBuilder:  NewMQTTClientBuilder(mgr),
-		messagesReceived:   mgr.Metrics().NewCounter("messages_received"),
-		messagesProcessed:  mgr.Metrics().NewCounter("messages_processed"),
-		messagesDropped:    mgr.Metrics().NewCounter("messages_dropped"),
-		messagesErrored:    mgr.Metrics().NewCounter("messages_errored"),
-		birthsProcessed:    mgr.Metrics().NewCounter("births_processed"),
-		deathsProcessed:    mgr.Metrics().NewCounter("deaths_processed"),
-		rebirthsRequested:  mgr.Metrics().NewCounter("rebirths_requested"),
-		rebirthsSuppressed: mgr.Metrics().NewCounter("rebirths_suppressed"),
-		sequenceErrors:     mgr.Metrics().NewCounter("sequence_errors"),
-		aliasResolutions:   mgr.Metrics().NewCounter("alias_resolutions"),
-		discoveryRebirths:  mgr.Metrics().NewCounter("discovery_rebirths"), // Discovery REBIRTH metric
+		config:                  config,
+		logger:                  mgr.Logger(),
+		messages:                make(chan mqttMessage, 1000),
+		done:                    make(chan struct{}),
+		nodeStates:              make(map[string]*nodeState),
+		legacyAliasCache:        make(map[string]map[uint64]string),
+		birthRequested:          make(map[string]time.Time), // Discovery REBIRTH tracking
+		aliasCache:              NewAliasCache(),
+		topicParser:             NewTopicParser(),
+		messageProcessor:        NewMessageProcessor(mgr.Logger()),
+		typeConverter:           NewTypeConverter(),
+		mqttClientBuilder:       NewMQTTClientBuilder(mgr),
+		messagesReceived:        mgr.Metrics().NewCounter("messages_received"),
+		messagesProcessed:       mgr.Metrics().NewCounter("messages_processed"),
+		messagesDropped:         mgr.Metrics().NewCounter("messages_dropped"),
+		messagesErrored:         mgr.Metrics().NewCounter("messages_errored"),
+		birthsProcessed:         mgr.Metrics().NewCounter("births_processed"),
+		deathsProcessed:         mgr.Metrics().NewCounter("deaths_processed"),
+		rebirthsRequested:       mgr.Metrics().NewCounter("rebirths_requested"),
+		rebirthsSuppressed:      mgr.Metrics().NewCounter("rebirths_suppressed"),
+		sequenceErrors:          mgr.Metrics().NewCounter("sequence_errors"),
+		aliasResolutions:        mgr.Metrics().NewCounter("alias_resolutions"),
+		aliasResolutionFailures: mgr.Metrics().NewCounter("alias_resolution_failures"),
+		discoveryRebirths:       mgr.Metrics().NewCounter("discovery_rebirths"),
+		aliasRebirths:           mgr.Metrics().NewCounter("alias_rebirths"),
 	}
 
 	return si, nil
@@ -721,7 +728,7 @@ func (s *sparkplugInput) processDataMessage(msgType MessageType, payload *sparkp
 
 	// Resolve aliases while holding lock (safe operation)
 	// NOTE: Alias resolution uses deviceKey - aliases ARE per-device from DBIRTH
-	s.resolveAliases(topicInfo.DeviceKey(), payload.Metrics)
+	unresolvedAliases := s.resolveAliases(topicInfo.DeviceKey(), payload.Metrics)
 
 	s.stateMu.Unlock()
 
@@ -734,11 +741,18 @@ func (s *sparkplugInput) processDataMessage(msgType MessageType, payload *sparkp
 		LogSequenceError(s.logger, s.sequenceErrors, nodeKey, prevSeq, currentSeq)
 	}
 
-	// I/O operations - rebirth requests go to the node
+	// Discovery and recovery are independent: a bridge that restarts with no retained
+	// BIRTH on the broker sees IsNewNode=true AND unresolvedAliases>0 on its first DATA
+	// and must recover even when RequestBirthOnConnect is off. The shared birthRequested
+	// throttle map prevents the two paths from racing on the same node.
 	if action.IsNewNode {
 		s.requestBirthIfNeeded(nodeKey)
-	} else if action.NeedsRebirth {
+	}
+	switch {
+	case action.NeedsRebirth:
 		s.sendRebirthRequest(nodeKey)
+	case unresolvedAliases > 0:
+		s.requestRebirthForUnresolvedAliases(nodeKey, unresolvedAliases)
 	}
 }
 
@@ -825,9 +839,10 @@ func (s *sparkplugInput) processCommandMessage(msgType MessageType, payload *spa
 		}
 	}
 
-	// Resolve aliases in command message (same as data messages)
-	// NOTE: Alias resolution uses deviceKey - aliases ARE per-device
-	s.resolveAliases(topicInfo.DeviceKey(), payload.Metrics)
+	// Resolve aliases for side effects (cache lookup + per-metric failure counter).
+	// Return is discarded: CMD messages don't trigger rebirth — the spec lists DATA
+	// without BIRTH as the rebirth condition, not CMD.
+	_ = s.resolveAliases(topicInfo.DeviceKey(), payload.Metrics)
 
 	// Create batch from command metrics - always split for UMH-Core format
 	batch := s.createSplitMessages(payload, msgType, topicInfo, originalTopic)
@@ -957,28 +972,45 @@ func (s *sparkplugInput) cacheAliases(deviceKey string, metrics []*sparkplugb.Pa
 //
 // Critical for Device-Level PARRIS: DDATA messages contain only aliases (for efficiency),
 // but downstream processing needs the original metric names from the DBIRTH certificate.
-func (s *sparkplugInput) resolveAliases(deviceKey string, metrics []*sparkplugb.Payload_Metric) {
-	// DEBUG: Log before alias resolution as recommended in the plan
+//
+// Returns the number of metrics that carried a real alias but could not be resolved. A non-zero
+// return signals that BIRTH context is missing for this device; DATA callers use this to trigger
+// a recovery rebirth.
+func (s *sparkplugInput) resolveAliases(deviceKey string, metrics []*sparkplugb.Payload_Metric) int {
 	s.logger.Debugf("🔍 resolveAliases: starting to resolve aliases for deviceKey=%s, %d metrics", deviceKey, len(metrics))
 
-	// Use core component instead of processor
 	count := s.aliasCache.ResolveAliases(deviceKey, metrics)
+
+	// Scan metrics once, applying the same "what counts as a real alias" filter as
+	// AliasCache (see sparkplug_b_core.go): alias must be non-nil AND non-zero, since
+	// alias 0 is a Sparkplug-reserved sentinel that never appears in the cache. A
+	// metric is "resolved" iff its Name is set and non-empty after the cache lookup.
+	var unresolved int
+	for _, metric := range metrics {
+		if metric == nil {
+			continue
+		}
+		if metric.Alias == nil || *metric.Alias == 0 {
+			continue
+		}
+		if metric.Name != nil && *metric.Name != "" {
+			s.logger.Debugf("   🎯 resolved alias %d -> '%s'", *metric.Alias, *metric.Name)
+			continue
+		}
+		s.logger.Debugf("   ❌ FAILED to resolve alias %d (no name found)", *metric.Alias)
+		s.aliasResolutionFailures.Incr(1)
+		unresolved++
+	}
+
 	if count > 0 {
 		s.aliasResolutions.Incr(int64(count))
 		s.logger.Debugf("✅ resolveAliases: resolved %d aliases for device %s", count, deviceKey)
-
-		// DEBUG: Log the actual resolutions (critical for debugging)
-		for _, metric := range metrics {
-			if metric.Name != nil && metric.Alias != nil {
-				s.logger.Debugf("   🎯 resolved alias %d -> '%s'", *metric.Alias, *metric.Name)
-			} else if metric.Alias != nil && metric.Name == nil {
-				s.logger.Debugf("   ❌ FAILED to resolve alias %d (no name found)", *metric.Alias)
-				s.messagesErrored.Incr(1) // Track alias resolution failures for monitoring
-			}
-		}
-	} else {
-		s.logger.Debugf("⚠️ resolveAliases: no aliases resolved for device %s - this could be the issue!", deviceKey)
 	}
+	if unresolved > 0 {
+		s.logger.Debugf("⚠️ resolveAliases: %d alias(es) unresolved for device %s — BIRTH context missing", unresolved, deviceKey)
+	}
+
+	return unresolved
 }
 
 func (s *sparkplugInput) parseSparkplugTopicDetailed(topic string) (MessageType, *TopicInfo) {
@@ -1360,6 +1392,39 @@ func (s *sparkplugInput) requestBirthIfNeeded(deviceKey string) {
 
 	// Increment discovery-specific metric
 	s.discoveryRebirths.Incr(1)
+}
+
+// requestRebirthForUnresolvedAliases sends a node-level REBIRTH command when a DATA message
+// references aliases that aren't present in the in-memory cache — almost always meaning the
+// bridge missed the corresponding NBIRTH/DBIRTH (e.g. broker held no retained BIRTH at the
+// time this bridge connected).
+//
+// Throttled via the same birthRequested map and BirthRequestThrottle window as the
+// discovery-rebirth path. Sharing the map (rather than a separate one) prevents the two code
+// paths from racing on the same node and flooding the broker. Role suppression for
+// secondary_passive is delegated to sendRebirthRequest, but we short-circuit here as well so
+// passive bridges never even touch the throttle bookkeeping.
+func (s *sparkplugInput) requestRebirthForUnresolvedAliases(nodeKey string, unresolvedCount int) {
+	if s.config.Role == RoleSecondaryPassive {
+		return
+	}
+
+	s.birthRequestMu.Lock()
+	lastRequested, exists := s.birthRequested[nodeKey]
+	now := time.Now()
+	if exists {
+		if elapsed := now.Sub(lastRequested); elapsed < s.config.BirthRequestThrottle {
+			s.birthRequestMu.Unlock()
+			s.logger.Debugf("Skipping alias-recovery REBIRTH for %s (throttled, last %v ago)", nodeKey, elapsed)
+			return
+		}
+	}
+	s.birthRequested[nodeKey] = now
+	s.birthRequestMu.Unlock()
+
+	s.logger.Infof("Requesting REBIRTH for node %s: DATA referenced %d unresolved alias(es) — BIRTH context missing", nodeKey, unresolvedCount)
+	s.sendRebirthRequest(nodeKey)
+	s.aliasRebirths.Incr(1)
 }
 
 // GetSequenceNumber extracts sequence number from payload, treating nil as 0 (implied)
