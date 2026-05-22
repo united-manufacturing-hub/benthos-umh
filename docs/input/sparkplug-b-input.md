@@ -89,7 +89,9 @@ output:
   uns: {}
 ```
 
-This configuration safely reads all Sparkplug B messages and converts them to UMH-Core format. The default `secondary_passive` role is read-only and won't interfere with existing Sparkplug infrastructure, making it safe to run multiple instances for load balancing and redundancy.
+This configuration reads Sparkplug B messages from the configured group and converts them to UMH-Core format. The default `secondary_passive` role is read-only and won't interfere with existing Sparkplug infrastructure, making it safe to run multiple instances for load balancing and redundancy.
+
+> `identity.group_id` is also the subscription filter. By default the plugin subscribes to `spBv1.0/<group_id>/#`, so the example above ingests only the `DeviceLevelTest` group. To listen to multiple groups, use `subscription.groups: ["GroupA", "GroupB"]`. To subscribe to every group on the broker, use the MQTT wildcard: `subscription.groups: ["+"]`. The subscribed topics are printed at startup (for example, `Operating as secondary_passive - subscribing to: [spBv1.0/DeviceLevelTest/#]`).
 
 **To publish data as Sparkplug B**: After processing in the UNS, use the [Sparkplug B Output plugin](../output/sparkplug-b-output.md) to convert UMH-Core data back to Sparkplug B format for external systems.
 
@@ -157,8 +159,8 @@ Here's how a Sparkplug B message maps to UMH-Core using the Modified Parris Meth
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `identity.group_id` | `string` | **required** | Sparkplug B Group ID |
-| `identity.edge_node_id` | `string` | `""` | Required only for `primary` role (used as host_id for STATE topic) |
+| `identity.group_id` | `string` | **required** | Sparkplug B Group ID. Also acts as the default subscription filter (`spBv1.0/<group_id>/#`). Override via `subscription.groups`. |
+| `identity.edge_node_id` | `string` | `""` | Required for the `primary` role, where it is used as the Sparkplug v3.0 `host_id` in the STATE topic (`spBv1.0/STATE/<host_id>`). Optional for secondary roles. |
 
 ### Role Section
 
@@ -194,7 +196,7 @@ The Sparkplug B input plugin offers three operating roles that automatically con
 - **Does NOT send rebirth commands** (fully passive)
 - Does NOT publish STATE messages
 - Safe to run multiple instances for scalability
-- Consumes all Sparkplug B messages without interfering
+- Consumes Sparkplug B messages from the configured group without interfering (set `subscription.groups: ["+"]` to consume every group)
 
 **When to use:**
 - ✅ **Default choice** - Safest option for any deployment
@@ -264,9 +266,11 @@ input:
       urls: ["tcp://localhost:1883"]
     identity:
       group_id: "FactoryA"
-      edge_node_id: "UMH_Primary"  # Required for STATE topic
+      edge_node_id: "UMH_Primary"  # Used as the Sparkplug v3.0 host_id
     role: "primary"
 ```
+
+> For the `primary` role, `identity.edge_node_id` is the Sparkplug v3.0 `host_id`. With the config above, the plugin publishes STATE messages on `spBv1.0/STATE/UMH_Primary`. The startup logs make this explicit: `Primary Host: using identity.edge_node_id='UMH_Primary' as Sparkplug v3.0 host_id for STATE topic spBv1.0/STATE/UMH_Primary`. The field is named `edge_node_id` for consistency with the secondary roles, but in `primary` mode it identifies the host.
 
 **Technical behavior:** Full Primary Host with STATE publishing and session management.
 
@@ -310,7 +314,7 @@ A cascading effect that occurs when multiple Secondary Hosts simultaneously requ
 
 ### Advanced Configuration Options
 
-For users who need fine-grained control beyond the simplified roles, additional configuration options are available:
+For users who need to override the default subscription behavior, `subscription.groups` lets you listen to multiple groups or to every group on the broker:
 
 ```yaml
 input:
@@ -322,13 +326,16 @@ input:
       edge_node_id: "CustomHost"  # Optional for secondary role
     role: "secondary_passive"
 
-    # Advanced options (usually not needed)
+    # Override the default subscription filter
     subscription:
-      groups: ["GroupA", "GroupB"]  # Specific groups instead of all
+      groups: ["FactoryA", "FactoryB"]   # Listen to several groups
+      # groups: ["+"]                      # Or: subscribe to every group (MQTT wildcard)
 
     # Future options (planned):
     # include_data_contract_in_device_id: true  # Add data contract to device ID
 ```
+
+When `subscription.groups` is omitted or empty, the plugin filters to `identity.group_id` (`spBv1.0/<group_id>/#`). Set this field only when you need to listen to groups other than your identity, or to opt back into the all-groups behavior with `["+"]`.
 
 ### STATE Topic Behavior (primary role only)
 

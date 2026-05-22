@@ -13,7 +13,8 @@
 # limitations under the License.
 
 # Sparkplug B Primary Host Configuration - Minimal Setup
-# Subscribes to all Sparkplug B messages and displays them
+# Subscribes to the "DeviceLevelTest" group (filtered by identity.group_id) and displays each message.
+# To subscribe to every group on the broker instead, add `subscription: { groups: ["+"] }`.
 # Requires: docker run -d --name mosquitto -p 1883:1883 eclipse-mosquitto:1.6
 
 input:

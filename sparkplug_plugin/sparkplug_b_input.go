@@ -104,10 +104,10 @@ Key features:
 		// Sparkplug Identity Configuration
 		Field(service.NewObjectField("identity",
 			service.NewStringField("group_id").
-				Description("Sparkplug Group ID (e.g., 'FactoryA')").
+				Description("Sparkplug Group ID (e.g., 'FactoryA'). Serves two purposes: it is the publishing identity, and it is the default subscription filter (subscribes to spBv1.0/<group_id>/#). Set subscription.groups to override the filter.").
 				Example("FactoryA"),
 			service.NewStringField("edge_node_id").
-				Description("For Primary Host: used as host_id for STATE topic (spBv1.0/STATE/<host_id>). For Secondary Host: optional.").
+				Description("For the 'primary' role this field is required and is used as the Sparkplug v3.0 host_id in the STATE topic (spBv1.0/STATE/<host_id>). For the 'secondary_passive' and 'secondary_active' roles it is optional and used only for identification.").
 				Example("PrimaryHost").
 				Optional(),
 			service.NewStringField("device_id").
@@ -131,11 +131,11 @@ Key features:
 		// Subscription Configuration
 		Field(service.NewObjectField("subscription",
 			service.NewStringListField("groups").
-				Description("Specific groups to subscribe to for primary_host role. Empty means all groups (+)").
+				Description("Groups to subscribe to. When empty (the default), the plugin filters to identity.group_id. Set multiple group IDs to listen to several groups, or [\"+\"] to subscribe to every group via the MQTT wildcard.").
 				Example([]string{"benthos", "factory1", "test"}).
 				Default([]string{}).
 				Optional()).
-			Description("Subscription filtering configuration for primary_host role").
+			Description("Subscription filtering configuration. Defaults to filtering by `identity.group_id`. Set `subscription.groups` to listen to multiple groups or to `[\"+\"]` to subscribe to every group.").
 			Optional())
 
 	err := service.RegisterBatchInput(
@@ -474,6 +474,8 @@ func (s *sparkplugInput) onConnect(client mqtt.Client) {
 	// Publish STATE ONLINE for primary host role
 	if s.config.Role == RolePrimaryHost {
 		stateTopic := s.config.GetStateTopic()
+		s.logger.Infof("Primary Host: using identity.edge_node_id='%s' as Sparkplug v3.0 host_id for STATE topic %s",
+			s.config.Identity.EdgeNodeID, stateTopic)
 		err := s.mqttClientBuilder.PublishWithMetrics(client, stateTopic, s.config.MQTT.QoS, false, "ONLINE")
 		if err != nil {
 			s.logger.Errorf("Failed to publish STATE ONLINE: %v", err)
