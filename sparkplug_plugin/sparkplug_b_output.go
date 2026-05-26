@@ -439,7 +439,9 @@ func (s *sparkplugOutput) Connect(_ context.Context) error {
 		WillTopic:        deathTopic,
 		WillPayload:      deathPayload,
 		WillQoS:          s.config.MQTT.QoS,
-		WillRetain:       true,
+		// LWT MUST NOT be retained per Sparkplug B v3.0 tck-id-message-flow-edge-node-birth-publish-will-message-will-retained;
+		// late subscribers learn node state via Sparkplug-Aware broker $sparkplug/certificates/# or by requesting rebirth.
+		WillRetain:       false,
 		OnConnect:        s.onConnect,
 		OnConnectionLost: s.onConnectionLost,
 	}
@@ -759,16 +761,17 @@ func (s *sparkplugOutput) Close(_ context.Context) error {
 	defer s.mu.Unlock()
 
 	if s.client != nil && s.client.IsConnected() {
-		// Publish DEATH message before disconnecting gracefully
-		// Note: DEATH messages use static configuration since no message context is available
-		// DEATH messages must be retained to clear the retained BIRTH message
+		// Publish DEATH message before disconnecting gracefully.
+		// Note: DEATH messages use static configuration since no message context is available.
+		// DEATH MUST NOT be retained per Sparkplug B v3.0 §5.4 (all non-STATE messages MUST be retain=false);
+		// late subscribers learn node state via Sparkplug-Aware broker $sparkplug/certificates/# or by requesting rebirth.
 		deathTopic, deathPayload := s.createDeathMessage(nil)
-		token := s.client.Publish(deathTopic, s.config.MQTT.QoS, true, deathPayload)
+		token := s.client.Publish(deathTopic, s.config.MQTT.QoS, false, deathPayload)
 		token.WaitTimeout(5 * time.Second)
 
 		if token.Error() == nil {
 			s.deathsPublished.Incr(1)
-			s.logger.Info("Published retained DEATH message before disconnect")
+			s.logger.Info("Published DEATH message before disconnect (retain=false)")
 		}
 
 		s.client.Disconnect(1000)
@@ -1018,7 +1021,8 @@ func (s *sparkplugOutput) createDeathMessage(_ *service.Message) (string, []byte
 // Key behaviors:
 // - Accumulates all known metrics for the device (current + previously seen)
 // - Assigns unique aliases for efficient DDATA transmission
-// - Sets retained flag per Sparkplug B specification
+// - Publishes with retain=false per Sparkplug B v3.0 §5.4 (only Primary Host STATE may be retained);
+//   retained DBIRTH would deliver stale alias-to-name maps to late subscribers
 // - Called on first device message OR when new metrics are discovered
 func (s *sparkplugOutput) publishDBIRTH(deviceID string, data map[string]interface{}) error {
 	if deviceID == "" {
@@ -1125,13 +1129,14 @@ func (s *sparkplugOutput) publishDBIRTH(deviceID string, data map[string]interfa
 		return fmt.Errorf("failed to marshal DBIRTH payload: %w", err)
 	}
 
-	// DBIRTH messages MUST be retained per Sparkplug B specification
-	token := s.client.Publish(topic, s.config.MQTT.QoS, true, payloadBytes)
+	// DBIRTH MUST NOT be retained per Sparkplug B v3.0 §5.4 (only Primary Host STATE may be retained);
+	// retained DBIRTH would deliver stale alias-to-name maps to late subscribers.
+	token := s.client.Publish(topic, s.config.MQTT.QoS, false, payloadBytes)
 	if token.Wait() && token.Error() != nil {
 		return fmt.Errorf("failed to publish DBIRTH message: %w", token.Error())
 	}
 
-	s.logger.Infof("Published retained DBIRTH message on topic: %s", topic)
+	s.logger.Infof("Published DBIRTH message on topic: %s (retain=false)", topic)
 	return nil
 }
 
@@ -1224,14 +1229,14 @@ func (s *sparkplugOutput) publishBirthMessage() error {
 		return fmt.Errorf("failed to marshal BIRTH payload: %w", err)
 	}
 
-	// BIRTH messages MUST be retained per Sparkplug B specification
-	// This allows Primary Hosts to receive current state when they connect
-	token := s.client.Publish(topic, s.config.MQTT.QoS, true, payloadBytes)
+	// NBIRTH MUST NOT be retained per Sparkplug B v3.0 §5.4 (only Primary Host STATE may be retained);
+	// retained NBIRTH would deliver stale alias-to-name maps to late subscribers.
+	token := s.client.Publish(topic, s.config.MQTT.QoS, false, payloadBytes)
 	if token.Wait() && token.Error() != nil {
 		return fmt.Errorf("failed to publish BIRTH message: %w", token.Error())
 	}
 
-	s.logger.Infof("Published retained BIRTH message on topic: %s", topic)
+	s.logger.Infof("Published BIRTH message on topic: %s (retain=false)", topic)
 	return nil
 }
 

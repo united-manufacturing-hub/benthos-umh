@@ -6,6 +6,7 @@
 
 - Sparkplug B input: `identity.group_id` now filters the MQTT subscription by default. Previously an empty `subscription.groups` caused the plugin to subscribe to every Sparkplug group on the broker (`spBv1.0/+/#`) regardless of `identity.group_id`. To restore the old behavior, set `subscription.groups: ["+"]` explicitly.
 - Sparkplug B input: field descriptions and the primary-role startup log now state that `identity.edge_node_id` is used as the Sparkplug v3.0-compatible `host_id` in the STATE topic (`spBv1.0/STATE/<host_id>`).
+- Sparkplug B output (`role: edge_node`): NBIRTH, DBIRTH, NDEATH/DDEATH (graceful Close) and the LWT registration were all published with `retain=true`, violating Sparkplug B v3.0 §5.4 which requires all non-STATE messages to be published with `retain=false` (only Primary Host STATE messages may be retained). Late subscribers received stale alias-to-name maps from the broker's retained store, producing subtly wrong name resolution after tag configuration changed. All five publishes now use `retain=false`. Wire-visible behavior change: late subscribers connecting after the Edge Node will no longer receive a retained BIRTH/DEATH from the broker — they must subscribe to `$sparkplug/certificates/#` on a Sparkplug-Aware broker, or request rebirth via `NCMD/Node Control/Rebirth`. Operators running `CleanSession=false` clients should re-subscribe to BIRTH topics from a Primary Host context.
 
 ## [0.12.5]
 
