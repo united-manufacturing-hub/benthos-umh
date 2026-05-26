@@ -6,7 +6,7 @@
 
 - Sparkplug B input: `identity.group_id` now filters the MQTT subscription by default. Previously an empty `subscription.groups` caused the plugin to subscribe to every Sparkplug group on the broker (`spBv1.0/+/#`) regardless of `identity.group_id`. To restore the old behavior, set `subscription.groups: ["+"]` explicitly.
 - Sparkplug B input: field descriptions and the primary-role startup log now state that `identity.edge_node_id` is used as the Sparkplug v3.0-compatible `host_id` in the STATE topic (`spBv1.0/STATE/<host_id>`).
-- Sparkplug B input: `secondary_active` and `primary` roles now send a rebirth request when DATA arrives referencing aliases the bridge hasn't seen (typically after a bridge restart with no retained `NBIRTH`/`DBIRTH` on the broker). Previously these roles stayed silent and tags surfaced as `…/_historian/alias_<n>` until something external triggered recovery. Throttled by `birth_request_throttle`; `secondary_passive` remains silent.
+- Sparkplug B input: `secondary_active` and `primary` roles now send a rebirth request when DATA arrives referencing aliases the bridge hasn't seen (typically after a bridge restart with no retained `NBIRTH`/`DBIRTH` on the broker). Previously these roles stayed silent and tags surfaced as `…/_historian/alias_<n>` until something external triggered recovery.
 
 ## [0.12.5]
 
