@@ -105,7 +105,7 @@ func (c *fakeMQTTClient) records() []recordedPublish {
 // newOutputForRetainTest builds a minimal *sparkplugOutput wired to a fake
 // mqtt.Client so unit tests can exercise publishBirthMessage(), publishDBIRTH(),
 // and Close() without a broker.
-func newOutputForRetainTest(fake *fakeMQTTClient, groupID, edgeNodeID, deviceID string) *sparkplugOutput {
+func newOutputForRetainTest(fake *fakeMQTTClient, groupID string, edgeNodeID string, deviceID string) *sparkplugOutput {
 	res := service.MockResources()
 	m := res.Metrics()
 	return &sparkplugOutput{

@@ -429,16 +429,16 @@ func (s *sparkplugOutput) Connect(_ context.Context) error {
 	deathTopic, deathPayload := s.createDeathMessage(nil)
 
 	mqttConfig := MQTTClientConfig{
-		BrokerURLs:       s.config.MQTT.URLs,
-		ClientID:         s.config.MQTT.ClientID,
-		Username:         s.config.MQTT.Credentials.Username,
-		Password:         s.config.MQTT.Credentials.Password,
-		KeepAlive:        s.config.MQTT.KeepAlive,
-		ConnectTimeout:   s.config.MQTT.ConnectTimeout,
-		CleanSession:     s.config.MQTT.CleanSession,
-		WillTopic:        deathTopic,
-		WillPayload:      deathPayload,
-		WillQoS:          s.config.MQTT.QoS,
+		BrokerURLs:     s.config.MQTT.URLs,
+		ClientID:       s.config.MQTT.ClientID,
+		Username:       s.config.MQTT.Credentials.Username,
+		Password:       s.config.MQTT.Credentials.Password,
+		KeepAlive:      s.config.MQTT.KeepAlive,
+		ConnectTimeout: s.config.MQTT.ConnectTimeout,
+		CleanSession:   s.config.MQTT.CleanSession,
+		WillTopic:      deathTopic,
+		WillPayload:    deathPayload,
+		WillQoS:        s.config.MQTT.QoS,
 		// LWT MUST NOT be retained per Sparkplug B v3.0 tck-id-message-flow-edge-node-birth-publish-will-message-will-retained;
 		// late subscribers learn node state via Sparkplug-Aware broker $sparkplug/certificates/# or by requesting rebirth.
 		WillRetain:       false,
@@ -1019,11 +1019,11 @@ func (s *sparkplugOutput) createDeathMessage(_ *service.Message) (string, []byte
 // focuses exclusively on device-specific metrics with proper alias definitions.
 //
 // Key behaviors:
-// - Accumulates all known metrics for the device (current + previously seen)
-// - Assigns unique aliases for efficient DDATA transmission
-// - Publishes with retain=false per Sparkplug B v3.0 §5.4 (only Primary Host STATE may be retained);
-//   retained DBIRTH would deliver stale alias-to-name maps to late subscribers
-// - Called on first device message OR when new metrics are discovered
+//   - Accumulates all known metrics for the device (current + previously seen)
+//   - Assigns unique aliases for efficient DDATA transmission
+//   - Publishes with retain=false per Sparkplug B v3.0 §5.4 (only Primary Host STATE may be retained);
+//     retained DBIRTH would deliver stale alias-to-name maps to late subscribers
+//   - Called on first device message OR when new metrics are discovered
 func (s *sparkplugOutput) publishDBIRTH(deviceID string, data map[string]interface{}) error {
 	if deviceID == "" {
 		return fmt.Errorf("device ID cannot be empty for DBIRTH")
