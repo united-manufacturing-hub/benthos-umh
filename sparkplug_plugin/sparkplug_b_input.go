@@ -1401,11 +1401,11 @@ func (s *sparkplugInput) requestBirthIfNeeded(deviceKey string) {
 //
 // Throttled via the same birthRequested map and BirthRequestThrottle window as the
 // discovery-rebirth path. Sharing the map (rather than a separate one) prevents the two code
-// paths from racing on the same node and flooding the broker. Role suppression for
-// secondary_passive is delegated to sendRebirthRequest, but we short-circuit here as well so
-// passive bridges never even touch the throttle bookkeeping.
+// paths from racing on the same node and flooding the broker. Role gating is allowlist-style
+// (primary + secondary_active only) so any future role defaults to silent; sendRebirthRequest
+// also enforces this, but short-circuiting here keeps passive bridges off the throttle map.
 func (s *sparkplugInput) requestRebirthForUnresolvedAliases(nodeKey string, unresolvedCount int) {
-	if s.config.Role == RoleSecondaryPassive {
+	if s.config.Role != RolePrimaryHost && s.config.Role != RoleSecondaryActive {
 		return
 	}
 

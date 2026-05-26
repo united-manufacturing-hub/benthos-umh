@@ -98,8 +98,8 @@ var _ = Describe("Rebirth on unresolved aliases", func() {
 
 		It("triggers a rebirth under primary host", func() {
 			// The CHANGELOG explicitly promises primary publishes rebirths. The role
-			// gate in requestRebirthForUnresolvedAliases only suppresses
-			// secondary_passive, so primary works by default — pin it.
+			// gate in requestRebirthForUnresolvedAliases is an allowlist of
+			// {primary, secondary_active}, so pin both branches with distinct tests.
 			wrapper := sparkplugplugin.NewSparkplugInputForTestingWithRole(sparkplugplugin.RolePrimaryHost)
 
 			wrapper.ProcessDataMessage("NDATA", aliasOnlyDataPayload(0, 101), topicInfo)
