@@ -98,6 +98,9 @@ jobs:
             classic_to_core:
               - 'classic_to_core_plugin/**'
               - '!classic_to_core_plugin/**/*.md'
+            snowflake_put:
+              - 'snowflake_put_plugin/**'
+              - '!snowflake_put_plugin/**/*.md'
             pkg:
               - 'pkg/**'
             cmd:
@@ -312,6 +315,17 @@ jobs:
     uses: ./.github/workflows/test-classic-to-core.yml
     secrets: inherit
 
+  test-snowflake-put:
+    needs: [detect-changes, lint]
+    if: |
+      always() &&
+      needs.lint.result == 'success' &&
+      (needs.detect-changes.outputs.snowflake_put == 'true' ||
+       needs.detect-changes.outputs.gomod == 'true' ||
+       needs.detect-changes.outputs.cmd == 'true')
+    uses: ./.github/workflows/test-snowflake-put.yml
+    secrets: inherit
+
   result:
     name: Check Required Steps
     needs:
@@ -332,6 +346,7 @@ jobs:
       - test-stream-processor
       - test-downsampler
       - test-classic-to-core
+      - test-snowflake-put
     if: always()
     runs-on: ubuntu-latest
     steps:
