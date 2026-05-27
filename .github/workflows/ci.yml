@@ -312,6 +312,33 @@ jobs:
     uses: ./.github/workflows/test-classic-to-core.yml
     secrets: inherit
 
+  comment-pr:
+    name: Comment PR with Image Tag
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Compute short SHA
+        id: short-sha
+        run: echo "SHORT_SHA=$(echo '${{ github.event.pull_request.head.sha }}' | cut -c1-7)" >> "$GITHUB_OUTPUT"
+
+      - name: Comment image tag on PR
+        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3.0.4
+        with:
+          header: docker-image
+          message: |
+            **Docker Image Built**
+
+            ```
+            ghcr.io/united-manufacturing-hub/benthos-umh:sha-${{ steps.short-sha.outputs.SHORT_SHA }}
+            ```
+
+            Pull with:
+            ```bash
+            docker pull ghcr.io/united-manufacturing-hub/benthos-umh:sha-${{ steps.short-sha.outputs.SHORT_SHA }}
+            ```
+
   result:
     name: Check Required Steps
     needs:
