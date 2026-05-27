@@ -47,6 +47,7 @@ jobs:
       pkg: ${{ steps.filter.outputs.pkg }}
       cmd: ${{ steps.filter.outputs.cmd }}
       gomod: ${{ steps.filter.outputs.gomod }}
+      code: ${{ steps.filter.outputs.code }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -104,6 +105,10 @@ jobs:
               - 'cmd/**'
             gomod:
               - 'go.{mod,sum}'
+            code:
+              - '**/*.go'
+              - 'go.{mod,sum}'
+              - 'Dockerfile'
   fossa:
     name: FOSSA License Scan
     needs: detect-changes
@@ -314,7 +319,8 @@ jobs:
 
   comment-pr:
     name: Comment PR with Image Tag
-    if: github.event_name == 'pull_request'
+    needs: detect-changes
+    if: github.event_name == 'pull_request' && needs.detect-changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
