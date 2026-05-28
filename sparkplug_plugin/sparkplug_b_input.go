@@ -1290,11 +1290,11 @@ func (s *sparkplugInput) getDataTypeName(datatype uint32) string {
 //
 // Holds birthRequestMu only for the read-write window; callers must not hold
 // any sparkplugInput lock when invoking it.
-func (s *sparkplugInput) stampOrThrottle(key string) (throttled bool, elapsed time.Duration) {
+func (s *sparkplugInput) stampOrThrottle(key string) (bool, time.Duration) {
 	s.birthRequestMu.Lock()
 	defer s.birthRequestMu.Unlock()
 	if last, exists := s.birthRequested[key]; exists {
-		elapsed = time.Since(last)
+		elapsed := time.Since(last)
 		if elapsed < s.config.BirthRequestThrottle {
 			return true, elapsed
 		}
