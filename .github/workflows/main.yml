@@ -17,10 +17,9 @@ name: main
 
 on:
   push:
-    branches:
-      - '**'
-    tags:
-      - v*
+    branches: [main]
+    tags: [v*]
+  pull_request:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -35,8 +34,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        with:
-          ref: ${{ github.event.pull_request && github.head_ref || github.ref_name }}
 
       - name: Setup Depot
         uses: depot/setup-action@b0b1ea4f69e92ebf5dea3f8713a1b0c37b2126a5 # v1
@@ -75,6 +72,34 @@ jobs:
             APP_VERSION=${{ steps.meta.outputs.version }}
           provenance: false
           file: ./Dockerfile
+
+  comment-pr:
+    name: Comment PR with Image Tag
+    needs: build-docker
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Compute short SHA
+        id: short-sha
+        run: echo "SHORT_SHA=$(echo '${{ github.sha }}' | cut -c1-7)" >> "$GITHUB_OUTPUT"
+
+      - name: Comment image tag on PR
+        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3.0.4
+        with:
+          header: docker-image
+          message: |
+            **Docker Image Built**
+
+            ```
+            ghcr.io/united-manufacturing-hub/benthos-umh:sha-${{ steps.short-sha.outputs.SHORT_SHA }}
+            ```
+
+            Pull with:
+            ```bash
+            docker pull ghcr.io/united-manufacturing-hub/benthos-umh:sha-${{ steps.short-sha.outputs.SHORT_SHA }}
+            ```
 
 
   build-binaries:

@@ -47,7 +47,6 @@ jobs:
       pkg: ${{ steps.filter.outputs.pkg }}
       cmd: ${{ steps.filter.outputs.cmd }}
       gomod: ${{ steps.filter.outputs.gomod }}
-      code: ${{ steps.filter.outputs.code }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -105,10 +104,6 @@ jobs:
               - 'cmd/**'
             gomod:
               - 'go.{mod,sum}'
-            code:
-              - '**/*.go'
-              - 'go.{mod,sum}'
-              - 'Dockerfile'
   fossa:
     name: FOSSA License Scan
     needs: detect-changes
@@ -316,45 +311,6 @@ jobs:
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-classic-to-core.yml
     secrets: inherit
-
-  comment-pr:
-    name: Comment PR with Image Tag
-    needs: detect-changes
-    if: github.event_name == 'pull_request' && needs.detect-changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      checks: read
-      pull-requests: write
-    steps:
-      - name: Wait for Docker image build
-        uses: lewagon/wait-on-check-action@9312864dfbc9fd208e9c0417843430751c042800 # v1.7.0
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          check-name: build-docker
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 20
-          allowed-conclusions: success
-
-      - name: Compute short SHA
-        id: short-sha
-        run: echo "SHORT_SHA=$(echo '${{ github.event.pull_request.head.sha }}' | cut -c1-7)" >> "$GITHUB_OUTPUT"
-
-      - name: Comment image tag on PR
-        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3.0.4
-        with:
-          header: docker-image
-          message: |
-            **Docker Image Built**
-
-            ```
-            ghcr.io/united-manufacturing-hub/benthos-umh:sha-${{ steps.short-sha.outputs.SHORT_SHA }}
-            ```
-
-            Pull with:
-            ```bash
-            docker pull ghcr.io/united-manufacturing-hub/benthos-umh:sha-${{ steps.short-sha.outputs.SHORT_SHA }}
-            ```
 
   result:
     name: Check Required Steps
