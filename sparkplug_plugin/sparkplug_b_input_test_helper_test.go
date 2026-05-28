@@ -81,6 +81,11 @@ func NewSparkplugInputForTestingWithRole(role Role) *SparkplugInputTestWrapper {
 	input := &sparkplugInput{
 		config: Config{
 			Role: role,
+			// RequestBirthOnConnect defaults to false here (Go zero value).
+			// Production defaults to true; see the field default near line 125.
+			// The wrapper leaves it false so each test isolates one rebirth
+			// reason at a time; tests exercising the discovery path call
+			// SetRequestBirthOnConnect(true) explicitly.
 		},
 		logger:                  logger,
 		nodeStates:              make(map[string]*nodeState),
@@ -102,6 +107,7 @@ func NewSparkplugInputForTestingWithRole(role Role) *SparkplugInputTestWrapper {
 		aliasResolutions:        metrics.NewCounter("alias_resolutions"),
 		aliasResolutionFailures: metrics.NewCounter("alias_resolution_failures"),
 		discoveryRebirths:       metrics.NewCounter("discovery_rebirths"),
+		sequenceGapRebirths:     metrics.NewCounter("sequence_gap_rebirths"),
 		aliasRebirths:           aliasRebirths,
 	}
 
@@ -114,8 +120,17 @@ func (w *SparkplugInputTestWrapper) SetBirthRequestThrottle(d time.Duration) {
 	w.input.config.BirthRequestThrottle = d
 }
 
+// SetRequestBirthOnConnect overrides the RequestBirthOnConnect feature flag for tests that
+// need to verify the role gate fires regardless of feature flag state. The role gate is
+// checked before the feature flag in sendRebirthRequest, so tests asserting passive-role
+// suppression of the discovery reason should set this to true to prove the role gate (not
+// the feature flag) is what suppressed the rebirth.
+func (w *SparkplugInputTestWrapper) SetRequestBirthOnConnect(enabled bool) {
+	w.input.config.RequestBirthOnConnect = enabled
+}
+
 // SeedAliasCache pre-populates the alias cache for the given deviceKey from the supplied
-// (name, alias) pair metrics — used by tests that need a "BIRTH already applied" baseline.
+// (name, alias) pair metrics. Tests use this for a "BIRTH already applied" baseline.
 func (w *SparkplugInputTestWrapper) SeedAliasCache(deviceKey string, metrics []*sparkplugb.Payload_Metric) {
 	w.input.aliasCache.CacheAliases(deviceKey, metrics)
 }
@@ -129,10 +144,11 @@ func (w *SparkplugInputTestWrapper) GetBirthRequestedAt(nodeKey string) (time.Ti
 	return t, ok
 }
 
-// GetAliasRebirthsCount returns the number of times requestRebirthForUnresolvedAliases
-// ran to completion (passed role + throttle gates) since this wrapper was created.
-// Stronger than GetBirthRequestedAt: increments only after the call site is reached,
-// independent of the throttle bookkeeping.
+// GetAliasRebirthsCount returns the number of times sendRebirthRequest ran with
+// rebirthReasonUnresolvedAliases past the role + throttle gates since this wrapper
+// was created. Stronger than GetBirthRequestedAt: increments only after the
+// alias-recovery branch is reached, and is reason-specific so co-occurring
+// reasons (e.g. discovery, sequence-gap) don't pollute the count.
 func (w *SparkplugInputTestWrapper) GetAliasRebirthsCount() int64 {
 	return w.aliasRebirthsCounter.Value()
 }

@@ -173,6 +173,13 @@ Here's how a Sparkplug B message maps to UMH-Core using the Modified Parris Meth
 - `"secondary_active"`: Consumer that can request rebirths when needed
 - `"primary"`: Full Primary Host with STATE publishing and session management
 
+### Rebirth Configuration
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `request_birth_on_connect` | `bool` | `true` | Send REBIRTH when DATA arrives from a node with no prior BIRTH on this bridge. Typical after a bridge restart. Ignored under `secondary_passive`. Controls only the discovery path; sequence-gap and unresolved-aliases recovery always run for `secondary_active` and `primary`. |
+| `birth_request_throttle` | `duration` | `"1s"` | Minimum time between REBIRTH commands to the same node, shared across every rebirth reason. Collapses simultaneous discovery, sequence-gap, and unresolved-aliases signals into one broker command per window. Set to `0` to disable throttling. |
+
 ---
 
 ## Technical Details
@@ -290,6 +297,8 @@ A cascading effect that occurs when multiple Secondary Hosts simultaneously requ
 - Use `secondary_passive` role (default) in multi-consumer environments
 - Only use `secondary_active` when you're the sole consumer
 - Coordinate rebirth requests if multiple active consumers are necessary
+
+> **How throttling prevents rebirth storms.** This plugin rate-limits REBIRTH commands per node via `birth_request_throttle` (default `1s`). Without it, the alias-recovery path would loop until the next BIRTH arrives: every DATA in the round-trip window references the same uncached aliases and triggers another rebirth. Suppressed rebirths log at `info` when the throttle has been active longer than 100ms; same-dispatch co-fires (multiple reasons triggered by one DATA) log at `debug`. Throttling is an implementation choice, not Sparkplug B v3.0 behavior; the spec uses MAY for the Host's rebirth obligation and does not specify pacing. Set `birth_request_throttle: 0` to disable.
 
 #### Choosing the Right Role
 

@@ -121,11 +121,11 @@ Key features:
 			Default("secondary_passive")).
 		// Discovery REBIRTH Configuration
 		Field(service.NewBoolField("request_birth_on_connect").
-			Description("Send REBIRTH requests to newly discovered nodes on connection (secondary_active/primary only). Enables complete tag discovery by requesting BIRTH messages when nodes are first seen.").
-			Default(false).
+			Description("Send REBIRTH when DATA arrives from a node with no prior BIRTH on this bridge. Typical after a bridge restart with no retained NBIRTH/DBIRTH on the broker. Ignored under `secondary_passive`. Controls only the discovery path; sequence-gap and unresolved-aliases recovery always run.").
+			Default(true).
 			Optional()).
 		Field(service.NewDurationField("birth_request_throttle").
-			Description("Minimum time between REBIRTH requests to prevent command storms. Applied per-node to rate-limit discovery.").
+			Description("Minimum time between REBIRTH commands to the same node, applied across every rebirth reason. Prevents the alias-recovery storm where DATA arriving in the BIRTH round-trip window fires another rebirth. Set to `0` to disable throttling.").
 			Default("1s").
 			Optional()).
 		// Subscription Configuration
@@ -174,12 +174,17 @@ type sparkplugInput struct {
 	legacyAliasCache map[string]map[uint64]string // deviceKey -> (alias -> metric name)
 	stateMu          sync.RWMutex
 
-	// Per-node REBIRTH throttle. Shared between discovery rebirths
-	// (requestBirthIfNeeded) and alias-recovery rebirths
-	// (requestRebirthForUnresolvedAliases) so the two paths can't race on the
-	// same node and storm the broker.
+	// Per-node REBIRTH throttle. Shared across every reason sendRebirthRequest
+	// dispatches (discovery, sequence gap, unresolved aliases) so concurrent
+	// reasons on the same node collapse into a single NCMD per throttle window.
+	// Unbounded: grows once per unique nodeKey ever observed by this process.
+	// For long-running bridges seeing GUID-per-session edges (AGVs, CI), a
+	// follow-up TTL eviction may be warranted.
+	//
+	// Lock ordering: callers must release stateMu before acquiring
+	// birthRequestMu. The pattern in processDataMessage demonstrates this.
 	birthRequested map[string]time.Time // nodeKey -> last REBIRTH request time
-	birthRequestMu sync.RWMutex         // Protects birthRequested map
+	birthRequestMu sync.RWMutex         // Protects birthRequested
 
 	// Metrics
 	messagesReceived        *service.MetricCounter
@@ -194,6 +199,7 @@ type sparkplugInput struct {
 	aliasResolutions        *service.MetricCounter
 	aliasResolutionFailures *service.MetricCounter // Per-metric: alias present in DATA but not in cache
 	discoveryRebirths       *service.MetricCounter // REBIRTH requests sent for discovery
+	sequenceGapRebirths     *service.MetricCounter // REBIRTH requests sent because of a sequence number gap
 	aliasRebirths           Counter                // REBIRTH requests sent because DATA aliases were unresolved
 }
 
@@ -216,6 +222,29 @@ type StateAction struct {
 type Counter interface {
 	Incr(delta int64, labelValues ...string)
 }
+
+// sameDispatchThreshold separates "two reasons firing on the same DATA message"
+// (co-fire, logs at debug) from "a genuine retry inside the throttle window"
+// (logs at info). 100ms is far below the default 1s throttle but well above the
+// microsecond gap between sequential calls inside one processDataMessage.
+const sameDispatchThreshold = 100 * time.Millisecond
+
+// rebirthReason tags why sendRebirthRequest was invoked. It picks the right
+// metric counter, decides whether the RequestBirthOnConnect feature flag
+// applies, and stamps the log line so dashboards can attribute each NCMD
+// to the signal that triggered it.
+//
+// String-backed (matching MessageType in sparkplug_b_core.go) so the zero
+// value is the empty string rather than a real reason; a future caller
+// forgetting the reason argument fails the switch instead of silently taking
+// the discovery path.
+type rebirthReason string
+
+const (
+	rebirthReasonDiscovery         rebirthReason = "discovery"
+	rebirthReasonSequenceGap       rebirthReason = "sequence-gap"
+	rebirthReasonUnresolvedAliases rebirthReason = "unresolved-aliases"
+)
 
 // UpdateNodeState is a pure function that updates node state and determines required actions.
 // This function encapsulates all state transition logic for DATA message processing,
@@ -362,9 +391,6 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 	// Parse discovery REBIRTH configuration
 	config.RequestBirthOnConnect, _ = conf.FieldBool("request_birth_on_connect")
 	config.BirthRequestThrottle, _ = conf.FieldDuration("birth_request_throttle")
-	if config.BirthRequestThrottle == 0 {
-		config.BirthRequestThrottle = 1 * time.Second // Ensure minimum throttle
-	}
 
 	// Parse subscription section using namespace (optional)
 	if conf.Contains("subscription") {
@@ -393,7 +419,7 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 		done:                    make(chan struct{}),
 		nodeStates:              make(map[string]*nodeState),
 		legacyAliasCache:        make(map[string]map[uint64]string),
-		birthRequested:          make(map[string]time.Time), // Discovery REBIRTH tracking
+		birthRequested:          make(map[string]time.Time), // Per-node REBIRTH throttle
 		aliasCache:              NewAliasCache(),
 		topicParser:             NewTopicParser(),
 		messageProcessor:        NewMessageProcessor(mgr.Logger()),
@@ -411,6 +437,7 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 		aliasResolutions:        mgr.Metrics().NewCounter("alias_resolutions"),
 		aliasResolutionFailures: mgr.Metrics().NewCounter("alias_resolution_failures"),
 		discoveryRebirths:       mgr.Metrics().NewCounter("discovery_rebirths"),
+		sequenceGapRebirths:     mgr.Metrics().NewCounter("sequence_gap_rebirths"),
 		aliasRebirths:           mgr.Metrics().NewCounter("alias_rebirths"),
 	}
 
@@ -685,29 +712,12 @@ func (s *sparkplugInput) processBirthMessage(msgType MessageType, payload *spark
 	s.logger.Debugf("Processed %s for device %s (node: %s)", msgType, topicInfo.DeviceKey(), nodeKey)
 }
 
-// processDataMessage handles DATA messages (NDATA/DDATA) with sequence validation.
-//
-// Architecture:
-// 1. Updates node state and validates sequences (under lock, delegated to UpdateNodeState)
-// 2. Resolves metric aliases (under lock)
-// 3. Logs sequence errors and new node discovery (after lock release)
-// 4. Triggers MQTT I/O operations (after lock release)
-//
-// Lock Strategy:
-// - Acquires stateMu lock once at the beginning
-// - Delegates state mutation to pure UpdateNodeState function
-// - Releases lock before any I/O operations (logging, MQTT)
-// - Minimizes lock hold time to reduce contention
-//
-// State Updates:
-// - New nodes: Creates initial state and requests BIRTH via MQTT
-// - Valid sequence: Updates LastSeq and LastSeen, no action needed
-// - Sequence gap: Marks node offline, requests rebirth via MQTT
-//
-// Thread Safety:
-// - All state access protected by stateMu lock
-// - No I/O operations performed while holding lock
-// - Deterministic behavior ensured by UpdateNodeState pure function
+// processDataMessage handles NDATA/DDATA messages. State mutation
+// (sequence-number tracking, alias resolution) runs under stateMu; logging
+// and MQTT I/O run after the lock is released. Three rebirth reasons may fire
+// independently on the same message: discovery (new node), sequence-gap
+// (UpdateNodeState detected a missing seq), and unresolved-aliases (DATA
+// referenced aliases not in the cache).
 func (s *sparkplugInput) processDataMessage(msgType MessageType, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
 	s.stateMu.Lock()
 
@@ -741,18 +751,25 @@ func (s *sparkplugInput) processDataMessage(msgType MessageType, payload *sparkp
 		LogSequenceError(s.logger, s.sequenceErrors, nodeKey, prevSeq, currentSeq)
 	}
 
-	// Discovery and recovery are independent: a bridge that restarts with no retained
-	// BIRTH on the broker sees IsNewNode=true AND unresolvedAliases>0 on its first DATA
-	// and must recover even when RequestBirthOnConnect is off. The shared birthRequested
-	// throttle map prevents the two paths from racing on the same node.
+	// Three independent conditions can each trigger a rebirth on the same DATA
+	// message. The call sites stay flat (no in-code precedence) because the
+	// shared throttle inside sendRebirthRequest collapses concurrent reasons
+	// into at most one broker command per BirthRequestThrottle window, and
+	// each reason ticks its own per-reason counter for dashboard attribution.
+	// Collapsing into an ordered chain would lose that per-reason metric
+	// breakdown without affecting NCMD output.
+	//
+	// A bridge restart with no retained BIRTH (IsNewNode=true AND
+	// unresolvedAliases>0) still recovers when RequestBirthOnConnect is off,
+	// because the alias-recovery reason bypasses that feature flag.
 	if action.IsNewNode {
-		s.requestBirthIfNeeded(nodeKey)
+		s.sendRebirthRequest(nodeKey, rebirthReasonDiscovery)
 	}
-	switch {
-	case action.NeedsRebirth:
-		s.sendRebirthRequest(nodeKey)
-	case unresolvedAliases > 0:
-		s.requestRebirthForUnresolvedAliases(nodeKey, unresolvedAliases)
+	if action.NeedsRebirth {
+		s.sendRebirthRequest(nodeKey, rebirthReasonSequenceGap)
+	}
+	if unresolvedAliases > 0 {
+		s.sendRebirthRequest(nodeKey, rebirthReasonUnresolvedAliases)
 	}
 }
 
@@ -840,7 +857,7 @@ func (s *sparkplugInput) processCommandMessage(msgType MessageType, payload *spa
 	}
 
 	// Resolve aliases for side effects (cache lookup + per-metric failure counter).
-	// Return is discarded: CMD messages don't trigger rebirth — the spec lists DATA
+	// Return is discarded: CMD messages don't trigger rebirth. The spec lists DATA
 	// without BIRTH as the rebirth condition, not CMD.
 	_ = s.resolveAliases(topicInfo.DeviceKey(), payload.Metrics)
 
@@ -1267,46 +1284,106 @@ func (s *sparkplugInput) getDataTypeName(datatype uint32) string {
 	}
 }
 
-func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
-	// Check if role allows rebirth requests
+// stampOrThrottle atomically checks the throttle map for `key` and, if no
+// recent entry is found, stamps the current time. Returns throttled=true with
+// the elapsed time since the previous stamp when suppression is required.
+//
+// Holds birthRequestMu only for the read-write window; callers must not hold
+// any sparkplugInput lock when invoking it.
+func (s *sparkplugInput) stampOrThrottle(key string) (throttled bool, elapsed time.Duration) {
+	s.birthRequestMu.Lock()
+	defer s.birthRequestMu.Unlock()
+	if last, exists := s.birthRequested[key]; exists {
+		elapsed = time.Since(last)
+		if elapsed < s.config.BirthRequestThrottle {
+			return true, elapsed
+		}
+	}
+	s.birthRequested[key] = time.Now()
+	return false, 0
+}
+
+// sendRebirthRequest publishes an NCMD/DCMD Rebirth for the given key. The reason
+// drives which feature flags apply and which metric counter ticks.
+//
+// Gates applied in order: role (RoleSecondaryPassive never publishes), feature
+// flag (RequestBirthOnConnect applies only to the discovery reason), shared
+// throttle (birthRequested keyed by `key`, default 1s window).
+//
+// Counter semantics: reason-specific counters (discoveryRebirths,
+// sequenceGapRebirths, aliasRebirths) tick after the throttle gate passes,
+// regardless of whether MQTT publish succeeds; they measure "policy decided
+// to send", not "broker received". rebirthsRequested ticks only on successful
+// publish. rebirthsSuppressed ticks on every gate that returns early.
+//
+// `key` must be a node-level key (group/node) for the spec-mandated
+// NCMD/Rebirth path. A 3-part device key (group/node/device) is also accepted
+// for DCMD/Rebirth, though current callers in processDataMessage always pass
+// nodeKey.
+func (s *sparkplugInput) sendRebirthRequest(key string, reason rebirthReason) {
 	if s.config.Role == RoleSecondaryPassive {
-		s.logger.Debugf("Rebirth request suppressed for device %s (secondary_passive role)", deviceKey)
+		s.logger.Debugf("Rebirth suppressed for %s (secondary_passive role, reason: %s)", key, reason)
 		s.rebirthsSuppressed.Incr(1)
 		return
 	}
+
+	if reason == rebirthReasonDiscovery && !s.config.RequestBirthOnConnect {
+		s.logger.Debugf("Discovery rebirth suppressed for %s (request_birth_on_connect=false)", key)
+		s.rebirthsSuppressed.Incr(1)
+		return
+	}
+
+	throttled, elapsed := s.stampOrThrottle(key)
+	if throttled {
+		s.rebirthsSuppressed.Incr(1)
+		if elapsed < sameDispatchThreshold {
+			s.logger.Debugf("Suppressed %s rebirth for %s (same-dispatch co-fire, %v after stamp)",
+				reason, key, elapsed)
+		} else {
+			s.logger.Infof("Suppressed %s rebirth for %s (throttled, last request %v ago)",
+				reason, key, elapsed)
+		}
+		return
+	}
+
+	switch reason {
+	case rebirthReasonDiscovery:
+		s.discoveryRebirths.Incr(1)
+	case rebirthReasonSequenceGap:
+		s.sequenceGapRebirths.Incr(1)
+	case rebirthReasonUnresolvedAliases:
+		s.aliasRebirths.Incr(1)
+	}
+
+	s.logger.Infof("Sending %s rebirth for %s", reason, key)
 
 	if s.client == nil || !s.client.IsConnected() {
 		return
 	}
 
-	// Parse device key to get topic components
-	parts := strings.Split(deviceKey, "/")
+	parts := strings.Split(key, "/")
 
-	// Validate deviceKey format (SparkplugB spec: group/node or group/node/device)
 	if len(parts) < 2 || len(parts) > 3 {
-		s.logger.Warnf("Invalid deviceKey format: expected 2-3 parts (group/node or group/node/device), got %d: %s",
-			len(parts), deviceKey)
+		s.logger.Warnf("Invalid rebirth key format: expected 2-3 parts (group/node or group/node/device), got %d: %s",
+			len(parts), key)
 		return
 	}
 
-	// Validate no empty parts (handles "group//device", "/group/node", "group/node/")
 	for i, part := range parts {
 		trimmed := strings.TrimSpace(part)
 		if trimmed == "" {
-			s.logger.Warnf("Invalid deviceKey: empty or whitespace-only part at index %d: %s - rebirth command will not be sent",
-				i, deviceKey)
+			s.logger.Warnf("Invalid rebirth key: empty or whitespace-only part at index %d: %s - rebirth command will not be sent",
+				i, key)
 			return
 		}
-		// Reject keys with leading/trailing whitespace (indicates malformed input)
 		if trimmed != part {
-			s.logger.Warnf("Invalid deviceKey: leading/trailing whitespace in part %d: %s - rebirth command will not be sent",
-				i, deviceKey)
+			s.logger.Warnf("Invalid rebirth key: leading/trailing whitespace in part %d: %s - rebirth command will not be sent",
+				i, key)
 			return
 		}
-		// Reject keys with embedded whitespace (SparkplugB identifiers should not contain spaces)
 		if strings.Contains(part, " ") {
-			s.logger.Warnf("Invalid deviceKey: embedded whitespace in part %d: %s - rebirth command will not be sent",
-				i, deviceKey)
+			s.logger.Warnf("Invalid rebirth key: embedded whitespace in part %d: %s - rebirth command will not be sent",
+				i, key)
 			return
 		}
 	}
@@ -1314,16 +1391,13 @@ func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
 	var topic string
 	var controlMetricName string
 	if len(parts) == 2 {
-		// Node level rebirth - send NCMD with "Node Control/Rebirth" metric
 		topic = fmt.Sprintf("spBv1.0/%s/NCMD/%s", parts[0], parts[1])
 		controlMetricName = "Node Control/Rebirth"
 	} else { // len(parts) == 3
-		// Device level rebirth - send DCMD with "Device Control/Rebirth" metric
 		topic = fmt.Sprintf("spBv1.0/%s/DCMD/%s/%s", parts[0], parts[1], parts[2])
 		controlMetricName = "Device Control/Rebirth"
 	}
 
-	// Create rebirth command payload
 	rebirthMetric := &sparkplugb.Payload_Metric{
 		Name: func() *string { s := controlMetricName; return &s }(),
 		Value: &sparkplugb.Payload_Metric_BooleanValue{
@@ -1344,87 +1418,20 @@ func (s *sparkplugInput) sendRebirthRequest(deviceKey string) {
 	}
 
 	token := s.client.Publish(topic, s.config.MQTT.QoS, false, payloadBytes)
-	if token.Wait() && token.Error() != nil {
+	// Match Close()'s pattern (line ~964): bound the publish so a TCP-black-holed
+	// broker can't stall the input pipeline. processDataMessage runs synchronously
+	// from ReadBatch; an unbounded Wait() here means a frozen broker freezes reads.
+	if !token.WaitTimeout(5 * time.Second) {
+		s.logger.Warnf("Timed out publishing %s rebirth for %s after 5s", reason, key)
+		return
+	}
+	if token.Error() != nil {
 		s.logger.Errorf("Failed to publish rebirth command: %v", token.Error())
 		return
 	}
 
 	s.rebirthsRequested.Incr(1)
-	s.logger.Infof("Sent rebirth request to %s on topic %s", deviceKey, topic)
-}
-
-// requestBirthIfNeeded sends REBIRTH request to newly discovered node (if configured and not recently requested)
-// This enables complete tag discovery by requesting BIRTH messages when nodes are first seen publishing DATA.
-func (s *sparkplugInput) requestBirthIfNeeded(deviceKey string) {
-	// Check if feature is enabled
-	if !s.config.RequestBirthOnConnect {
-		return
-	}
-
-	// Check if role allows REBIRTH requests
-	if s.config.Role == RoleSecondaryPassive {
-		return
-	}
-
-	// Check if already requested recently (with throttling)
-	s.birthRequestMu.Lock()
-	defer s.birthRequestMu.Unlock()
-
-	lastRequested, exists := s.birthRequested[deviceKey]
-	now := time.Now()
-
-	if exists {
-		// Check throttle window
-		timeSinceLastRequest := now.Sub(lastRequested)
-		if timeSinceLastRequest < s.config.BirthRequestThrottle {
-			s.logger.Debugf("Skipping discovery REBIRTH for %s (throttled, last request %v ago)",
-				deviceKey, timeSinceLastRequest)
-			return
-		}
-	}
-
-	// Mark as requested BEFORE sending (prevent concurrent requests)
-	s.birthRequested[deviceKey] = now
-
-	// Send REBIRTH request (reuse existing function)
-	s.logger.Infof("Sending discovery REBIRTH request to newly seen node: %s", deviceKey)
-	s.sendRebirthRequest(deviceKey)
-
-	// Increment discovery-specific metric
-	s.discoveryRebirths.Incr(1)
-}
-
-// requestRebirthForUnresolvedAliases sends a node-level REBIRTH command when a DATA message
-// references aliases that aren't present in the in-memory cache — almost always meaning the
-// bridge missed the corresponding NBIRTH/DBIRTH (e.g. broker held no retained BIRTH at the
-// time this bridge connected).
-//
-// Throttled via the same birthRequested map and BirthRequestThrottle window as the
-// discovery-rebirth path. Sharing the map (rather than a separate one) prevents the two code
-// paths from racing on the same node and flooding the broker. Role gating is allowlist-style
-// (primary + secondary_active only) so any future role defaults to silent; sendRebirthRequest
-// also enforces this, but short-circuiting here keeps passive bridges off the throttle map.
-func (s *sparkplugInput) requestRebirthForUnresolvedAliases(nodeKey string, unresolvedCount int) {
-	if s.config.Role != RolePrimaryHost && s.config.Role != RoleSecondaryActive {
-		return
-	}
-
-	s.birthRequestMu.Lock()
-	lastRequested, exists := s.birthRequested[nodeKey]
-	now := time.Now()
-	if exists {
-		if elapsed := now.Sub(lastRequested); elapsed < s.config.BirthRequestThrottle {
-			s.birthRequestMu.Unlock()
-			s.logger.Debugf("Skipping alias-recovery REBIRTH for %s (throttled, last %v ago)", nodeKey, elapsed)
-			return
-		}
-	}
-	s.birthRequested[nodeKey] = now
-	s.birthRequestMu.Unlock()
-
-	s.logger.Infof("Requesting REBIRTH for node %s: DATA referenced %d unresolved alias(es) — BIRTH context missing", nodeKey, unresolvedCount)
-	s.sendRebirthRequest(nodeKey)
-	s.aliasRebirths.Incr(1)
+	s.logger.Infof("Sent rebirth request to %s on topic %s", key, topic)
 }
 
 // GetSequenceNumber extracts sequence number from payload, treating nil as 0 (implied)
