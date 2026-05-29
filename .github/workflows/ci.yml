@@ -44,6 +44,7 @@ jobs:
       stream_processor: ${{ steps.filter.outputs.stream_processor }}
       downsampler: ${{ steps.filter.outputs.downsampler }}
       classic_to_core: ${{ steps.filter.outputs.classic_to_core }}
+      snowflake_put: ${{ steps.filter.outputs.snowflake_put }}
       pkg: ${{ steps.filter.outputs.pkg }}
       cmd: ${{ steps.filter.outputs.cmd }}
       gomod: ${{ steps.filter.outputs.gomod }}

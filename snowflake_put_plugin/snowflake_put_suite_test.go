@@ -1,0 +1,31 @@
+// Copyright 2026 UMH Systems GmbH
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package snowflake_put_plugin_test
+
+import (
+	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+)
+
+// TestSnowflakePut registers a Ginkgo suite so `make test` (`ginkgo -r`) discovers
+// this package alongside the vendored stdlib `testing.T` cases in
+// output_snowflake_put_test.go. Do not migrate the ported tests to Ginkgo —
+// keeping them stdlib preserves the faithful upstream-bento port.
+func TestSnowflakePut(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "SnowflakePut Suite")
+}

@@ -10,7 +10,7 @@ Ported from the upstream [warpstreamlabs/bento](https://github.com/warpstreamlab
 
 For configuration, examples, and behavior, refer to the upstream bento documentation:
 
-- **[bento.dev — `snowflake_put` output](https://www.bento.dev/docs/components/outputs/snowflake_put)**
+- **[warpstreamlabs/bento — `snowflake_put` docs (source)](https://github.com/warpstreamlabs/bento/blob/main/website/docs/components/outputs/snowflake_put.md)**
 
 ## Quick example
 

@@ -16,8 +16,9 @@
 // Portions of this file are derived from the warpstreamlabs/bento project:
 //   https://github.com/warpstreamlabs/bento/blob/main/internal/impl/snowflake/output_snowflake_put.go
 //
-// Original work Copyright (c) 2024-present Bento contributors, licensed under
-// the MIT License. A copy of the MIT License is reproduced in NOTICE.
+// Original work Copyright (c) 2020-2024 Ashley Jeffs and
+// Copyright (c) 2024-present Bento contributors, licensed under the MIT License.
+// A copy of the MIT License is reproduced in NOTICE.
 // -----------------------------------------------------------------------------
 
 package snowflake_put_plugin

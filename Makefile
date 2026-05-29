@@ -17,7 +17,7 @@ GINKGO_CMD=go run github.com/onsi/ginkgo/v2/ginkgo
 GINKGO_FLAGS=-r --output-interceptor-mode=none -trace -p --randomize-all --cover --coverprofile=cover.profile
 GINKGO_SERIAL_FLAGS=$(GINKGO_FLAGS) --procs=1
 
-GOTESTSUM_FLAGS=--format pkgname -- -race -cover
+GOTESTSUM_FLAGS=--format pkgname -- -race -coverprofile=cover.profile
 
 BENTHOS_BIN := tmp/bin/benthos
 LOG_LEVEL ?= INFO

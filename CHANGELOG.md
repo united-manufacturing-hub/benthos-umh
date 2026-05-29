@@ -10,7 +10,7 @@
 
 ### Improvements
 
-- New `snowflake_put` output: ports the [warpstreamlabs/bento Snowflake output](https://www.bento.dev/docs/components/outputs/snowflake_put) into benthos-umh for writing batched messages to Snowflake stages with optional Snowpipe ingestion. Supports user/password and key-pair auth, all gosnowflake compression modes, and per-message stage/Snowpipe interpolation
+- New `snowflake_put` output: ports the [warpstreamlabs/bento Snowflake output](https://github.com/warpstreamlabs/bento/blob/main/website/docs/components/outputs/snowflake_put.md) into benthos-umh for writing batched messages to Snowflake stages with optional Snowpipe ingestion. Supports user/password and key-pair auth, all gosnowflake compression modes, and per-message stage/Snowpipe interpolation
 
 ## [0.12.5]
 
