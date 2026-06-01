@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 // generateVersionedFilename creates a versioned filename by stripping 'v' prefix
@@ -56,6 +58,22 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Usage: schema-export -version 0.11.6 [-format benthos|json-schema]\n")
 		os.Exit(1)
+	}
+
+	if *format == "mapping" {
+		mapping := buildMapping(service.GlobalEnvironment(), inputOutputOverrides)
+		mappingData, err := json.MarshalIndent(mapping, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error marshaling mapping JSON: %v\n", err)
+			os.Exit(1)
+		}
+		err = os.WriteFile("input-output-mapping.json", mappingData, 0o644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing output: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("✅ Generated input→output mapping to input-output-mapping.json (%d pairs)\n", len(mapping))
+		return
 	}
 
 	schemas, err := generateSchemas()

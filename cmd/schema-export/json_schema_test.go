@@ -19,6 +19,24 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+var _ = Describe("validateFormat", func() {
+	DescribeTable("accepts valid formats and rejects others",
+		func(format string, expectErr bool) {
+			err := validateFormat(format)
+			if expectErr {
+				Expect(err).To(HaveOccurred())
+			} else {
+				Expect(err).NotTo(HaveOccurred())
+			}
+		},
+		Entry("benthos", "benthos", false),
+		Entry("json-schema", "json-schema", false),
+		Entry("mapping", "mapping", false),
+		Entry("empty", "", true),
+		Entry("garbage", "nope", true),
+	)
+})
+
 var _ = Describe("JSON Schema Generator", func() {
 	Context("when validating format flag", func() {
 		It("should accept 'benthos' format", func() {
