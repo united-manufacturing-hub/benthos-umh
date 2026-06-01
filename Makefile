@@ -190,6 +190,7 @@ endif
 	go build -o ./tmp/schema-export ./cmd/schema-export
 	./tmp/schema-export -version $(VERSION) -format benthos
 	./tmp/schema-export -version $(VERSION) -format json-schema
+	./tmp/schema-export -version $(VERSION) -format mapping
 
 .PHONY: serve-pprof
 serve-pprof:
