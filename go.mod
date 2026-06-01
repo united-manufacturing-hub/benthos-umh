@@ -54,6 +54,7 @@ require (
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78
 	golang.org/x/crypto v0.53.0
 	golang.org/x/sys v0.46.0
+	go.etcd.io/bbolt v1.4.3
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af
 	k8s.io/apimachinery v0.36.2
 )
