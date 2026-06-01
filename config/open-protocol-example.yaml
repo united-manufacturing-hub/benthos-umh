@@ -1,0 +1,69 @@
+# Copyright 2025 UMH Systems GmbH
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Example: read tightening results from an Atlas Copco Open Protocol controller
+# (Atlas Copco, Bosch Rexroth Nexo, Desoutter, Stanley, ...) into the UNS.
+#
+# The controller is the TCP server (default port 4545); this input is the
+# client. It logs in, subscribes to last-tightening results, acknowledges each
+# pushed result, keeps the link alive, and reconnects automatically.
+#
+# Run a local emulator to try this out:
+#   docker build -t umh-op-emulator open_protocol_plugin/testdata/emulator
+#   docker run --rm -p 4545:4545 umh-op-emulator
+input:
+  open_protocol:
+    endpoint: "127.0.0.1:4545"
+    subscribe: [last_tightening]
+    # generic_subscribe: [9999]      # advanced: subscribe arbitrary MIDs
+    # revision: 0                     # advanced
+    # keepalive_interval: 10s         # advanced
+    # request_timeout: 5s             # advanced
+    # reconnect:
+    #   max_backoff: 30s              # advanced
+
+pipeline:
+  processors:
+    # Route per message type on the op_mid metadata field.
+    - switch:
+        # MID 0061 (last tightening) arrives as structured JSON: emit one
+        # message per measurement (one tag, one topic).
+        - check: meta("op_mid") == "0061"
+          processors:
+            - tag_processor:
+                defaults: |
+                  msg.meta.location_path = "acme.plant.line1.station_" + msg.meta.op_station_id;
+                  msg.meta.data_contract = "_historian";
+                  msg.meta.virtual_path  = "spindle_" + msg.meta.op_spindle_id;
+                  // The plugin already decoded torque/angle/status into payload.
+                  const r = msg.payload;
+                  return [
+                    { payload: { value: r.torque_actual, timestamp_ms: Date.now() },
+                      meta: Object.assign({}, msg.meta, { tag_name: "torque_actual" }) },
+                    { payload: { value: r.angle_actual, timestamp_ms: Date.now() },
+                      meta: Object.assign({}, msg.meta, { tag_name: "angle_actual" }) },
+                    { payload: { value: r.tightening_ok, timestamp_ms: Date.now() },
+                      meta: Object.assign({}, msg.meta, { tag_name: "tightening_ok" }) },
+                  ];
+
+        # Everything else (e.g. alarms, MID 0071) arrives as the raw ASCII data
+        # field; decode it in bloblang as needed.
+        - processors:
+            - mapping: |
+                root = deleted()   # drop non-tightening messages in this example
+
+output:
+  # Inside UMH Core use the UNS output:
+  # uns: {}
+  stdout: {}
