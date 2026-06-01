@@ -564,12 +564,46 @@ if (msg.payload.value <= 100 && alarmed) {
   msg.meta.alarm = "cleared";
   return msg;
 }
-return msg;`))
+return msg;`)).
+	Field(service.NewObjectField("cache",
+		service.NewStringField("backend").
+			Description("Cache backend. 'memory' is in-process and lost on restart. 'bbolt' persists to a file on disk.").
+			Default("memory").
+			Examples("memory", "bbolt"),
+		service.NewStringField("path").
+			Description("File path for disk-backed backends (e.g. bbolt). Relative paths resolve against the working directory. Leading '~' expands to the home directory.").
+			Default("./cache.db"),
+	).
+		Description("Cache configuration for state across messages.").
+		Advanced())
 
 func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchProcessor, error) {
 	code, err := conf.FieldString("code")
 	if err != nil {
 		return nil, err
+	}
+
+	backend, err := conf.FieldString("cache", "backend")
+	if err != nil {
+		return nil, fmt.Errorf("parse cache.backend: %w", err)
+	}
+
+	path, err := conf.FieldString("cache", "path")
+	if err != nil {
+		return nil, fmt.Errorf("parse cache.path: %w", err)
+	}
+
+	var store cache.Cache
+	switch backend {
+	case "memory":
+		store = cache.NewMemoryStore(0)
+	case "bbolt":
+		store, err = cache.NewBboltStore(path, 0)
+		if err != nil {
+			return nil, fmt.Errorf("open bbolt cache: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported cache.backend %q (want 'memory' or 'bbolt')", backend)
 	}
 
 	wrappedCode := fmt.Sprintf(`
@@ -579,7 +613,7 @@ func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (
 		})()
 	`, code)
 
-	return NewNodeREDJSProcessor(wrappedCode, mgr.Logger(), mgr.Metrics(), cache.NewMemoryStore(0))
+	return NewNodeREDJSProcessor(wrappedCode, mgr.Logger(), mgr.Metrics(), store)
 }
 
 func init() {
