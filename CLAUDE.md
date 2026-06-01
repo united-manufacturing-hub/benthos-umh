@@ -30,6 +30,7 @@ Industrial protocol connectors that read data from field devices:
 - `s7comm_plugin/` - Siemens S7 protocol (S7-300/400/1200/1500)
 - `sparkplug_plugin/` - Sparkplug B MQTT protocol (Edge/Host)
 - `eip_plugin/` - Ethernet/IP protocol (Allen-Bradley)
+- `open_protocol_plugin/` - Atlas Copco Open Protocol (tightening controllers: Atlas Copco, Bosch Rexroth Nexo, Desoutter, Stanley); push/subscribe TCP client
 - `sensorconnect_plugin/` - ifm IO-Link Master integration
 
 **Integration**: Used in Bridge "Read" flows, orchestrated by UMH Core FSM
