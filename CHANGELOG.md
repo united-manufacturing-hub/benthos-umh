@@ -6,14 +6,7 @@
 
 - Sparkplug B input: `identity.group_id` now filters the MQTT subscription by default. Previously an empty `subscription.groups` caused the plugin to subscribe to every Sparkplug group on the broker (`spBv1.0/+/#`) regardless of `identity.group_id`. To restore the old behavior, set `subscription.groups: ["+"]` explicitly.
 - Sparkplug B input: field descriptions and the primary-role startup log now state that `identity.edge_node_id` is used as the Sparkplug v3.0-compatible `host_id` in the STATE topic (`spBv1.0/STATE/<host_id>`).
-- Sparkplug B input: `secondary_active` and `primary` roles now send a rebirth request when DATA arrives referencing aliases the bridge hasn't seen (typically after a bridge restart with no retained `NBIRTH`/`DBIRTH` on the broker). Previously these roles stayed silent and tags surfaced as `…/_historian/alias_<n>` until something external triggered recovery.
-- Sparkplug B input: the sequence-gap rebirth path is now rate-limited by `birth_request_throttle`, sharing the same per-node throttle window as the discovery and unresolved-aliases paths. Previously it issued one rebirth per detected gap, which could overwhelm the broker when a flaky edge produced repeated gaps. See docs for the `birth_request_throttle` setting (default `1s`).
-- Sparkplug B input: suppressed rebirths now log at `info` when the throttle has been active longer than 100ms, so operators can find "why didn't we rebirth?" in logs at default verbosity. Same-dispatch co-fires (multiple reasons triggered by one DATA message) log at `debug` to avoid noise on bridge restart.
-
-### Improvements
-
-- Sparkplug B input: `request_birth_on_connect` now defaults to `true`, so newly seen nodes are rebirthed automatically once `secondary_active`/`primary` bridges connect. Set it to `false` to opt back into the previous behavior. The flag is ignored under `secondary_passive` (passive bridges never publish commands).
-- Sparkplug B input: new `sequence_gap_rebirths` metric counter (parity with `discovery_rebirths` and `alias_rebirths`) ticks whenever a sequence-gap rebirth passes the throttle gate.
+- Sparkplug B input: bridges now request a rebirth when DATA references aliases the cache hasn't seen (typically after a bridge restart with no retained `NBIRTH`/`DBIRTH` on the broker). Previously tags surfaced as `…/_historian/alias_<n>` until something external triggered recovery. Related, `request_birth_on_connect` now defaults to `true`, so `secondary_active`/`primary` bridges also proactively rebirth newly seen nodes on connect; set it to `false` to keep the prior behavior (ignored under `secondary_passive`).
 
 ## [0.12.5]
 
