@@ -2,6 +2,10 @@
 
 Writes batched messages to a Snowflake stage with optional Snowpipe ingestion.
 
+## Why `snowflake_put` over `sql_insert`
+
+`sql_insert` issues row-by-row `INSERT`s that run on a Snowflake virtual warehouse, so all the ingestion cost lands on warehouse compute (billed per second). `snowflake_put` stages batched files and, when a Snowpipe is configured (key-pair auth plus a pre-created pipe), loads them through Snowpipe, Snowflake's serverless ingestion path billed per GB, so the warehouse no longer runs the ingestion (a warehouse must still be configured). For continuous, high-volume loads this is much cheaper. The benefit assumes files are batched to a reasonable size (Snowflake recommends ~100-250 MB); many tiny files add queue overhead that cancels out the saving. Without a Snowpipe configured, `snowflake_put` only stages files and a warehouse-run `COPY INTO` is still needed to load them. See Snowflake's [Snowpipe billing](https://docs.snowflake.com/en/user-guide/data-load-snowpipe-billing) docs for current rates.
+
 ## Source
 
 Ported from the upstream [warpstreamlabs/bento](https://github.com/warpstreamlabs/bento) project (MIT license).
