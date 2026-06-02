@@ -17,7 +17,6 @@ package open_protocol_plugin_test
 import (
 	"context"
 	"net"
-	"sync/atomic"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -33,8 +32,19 @@ func newTestSession(endpoint string, subs []string) *op.Session {
 		Revision:          1,
 		KeepAliveInterval: 50 * time.Millisecond,
 		RequestTimeout:    2 * time.Second,
-		MaxBackoff:        100 * time.Millisecond,
+		ReadTimeout:       2 * time.Second,
 	}, nil) // nil logger -> no-op
+}
+
+func newTestSessionWithReadTimeout(endpoint string, subs []string, readTimeout time.Duration) *op.Session {
+	return op.NewSession(op.SessionConfig{
+		Endpoint:          endpoint,
+		Subscriptions:     subs,
+		Revision:          1,
+		KeepAliveInterval: 50 * time.Millisecond,
+		RequestTimeout:    2 * time.Second,
+		ReadTimeout:       readTimeout,
+	}, nil)
 }
 
 var _ = Describe("Session FSM", func() {
@@ -55,17 +65,20 @@ var _ = Describe("Session FSM", func() {
 		defer fc.close()
 
 		s := newTestSession(fc.addr(), []string{"last_tightening"})
-		Expect(s.Start(ctx)).To(Succeed())
-		defer s.Stop()
+		Expect(s.Connect(ctx)).To(Succeed())
+		defer s.Close()
 
-		// A telegram should be forwarded on the output channel.
-		var tel op.Telegram
-		Eventually(s.Telegrams(), 2*time.Second).Should(Receive(&tel))
-		Expect(tel.Header.MID).To(Equal(op.MIDLastTightening))
+		// Read the result.
+		res, err := s.Read(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Telegram.Header.MID).To(Equal(op.MIDLastTightening))
 
-		lt, err := op.ParseLastTightening(tel)
+		lt, err := op.ParseLastTightening(res.Telegram)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(lt.TighteningOK).To(BeTrue())
+
+		// Ack it — the controller must see MID 0062.
+		res.Ack()
 
 		// The controller must have seen login, subscribe and an ack.
 		Expect(waitFor(2*time.Second, func() bool {
@@ -75,7 +88,7 @@ var _ = Describe("Session FSM", func() {
 		Expect(fc.receivedMIDs()).To(ContainElement(op.MIDLastTighteningSub))
 	})
 
-	It("returns an error from Start when the controller rejects login (MID 0004)", func() {
+	It("returns an error from Connect when the controller rejects login (MID 0004)", func() {
 		fc, err := newFakeController(func(fc *fakeController, conn net.Conn) {
 			defer conn.Close()
 			fr := op.NewFrameReader(conn)
@@ -91,7 +104,7 @@ var _ = Describe("Session FSM", func() {
 		defer fc.close()
 
 		s := newTestSession(fc.addr(), []string{"last_tightening"})
-		err = s.Start(ctx)
+		err = s.Connect(ctx)
 		Expect(err).To(HaveOccurred())
 	})
 
@@ -101,25 +114,123 @@ var _ = Describe("Session FSM", func() {
 		defer fc.close()
 
 		s := newTestSession(fc.addr(), []string{"last_tightening"})
-		Expect(s.Start(ctx)).To(Succeed())
-		defer s.Stop()
+		Expect(s.Connect(ctx)).To(Succeed())
+		defer s.Close()
 
 		Expect(waitFor(2*time.Second, func() bool {
 			return fc.countMID(op.MIDKeepAlive) >= 2
 		})).To(BeTrue(), "expected at least two keep-alive telegrams")
 	})
 
-	It("reconnects and replays login + subscriptions after the connection drops", func() {
-		var conns int32
+	// New tests required by the spec:
+
+	It("connects and bumps generation", func() {
+		fc, err := newFakeController(goodHandler(nil))
+		Expect(err).NotTo(HaveOccurred())
+		defer fc.close()
+
+		s := newTestSession(fc.addr(), []string{"last_tightening"})
+
+		Expect(s.Connect(ctx)).To(Succeed())
+		Expect(s.Generation()).To(Equal(uint64(1)))
+
+		Expect(s.Connect(ctx)).To(Succeed())
+		Expect(s.Generation()).To(Equal(uint64(2)))
+
+		_ = s.Close()
+	})
+
+	It("sends MID 0062 only after Ack() (not during Read)", func() {
+		result := []byte(build0061Data(true))
+		fc, err := newFakeController(goodHandler([][]byte{result}))
+		Expect(err).NotTo(HaveOccurred())
+		defer fc.close()
+
+		s := newTestSession(fc.addr(), []string{"last_tightening"})
+		Expect(s.Connect(ctx)).To(Succeed())
+		defer s.Close()
+
+		res, err := s.Read(ctx)
+		Expect(err).NotTo(HaveOccurred())
+
+		// No ack yet for 200ms.
+		Consistently(func() int {
+			return fc.countMID(op.MIDLastTighteningAck)
+		}, 200*time.Millisecond, 10*time.Millisecond).Should(Equal(0))
+
+		// Now ack.
+		res.Ack()
+
+		// Ack must arrive.
+		Eventually(func() int {
+			return fc.countMID(op.MIDLastTighteningAck)
+		}, 2*time.Second, 10*time.Millisecond).Should(Equal(1))
+	})
+
+	It("at most one 0062 even if Ack() called twice", func() {
+		result := []byte(build0061Data(true))
+		fc, err := newFakeController(goodHandler([][]byte{result}))
+		Expect(err).NotTo(HaveOccurred())
+		defer fc.close()
+
+		s := newTestSession(fc.addr(), []string{"last_tightening"})
+		Expect(s.Connect(ctx)).To(Succeed())
+		defer s.Close()
+
+		res, err := s.Read(ctx)
+		Expect(err).NotTo(HaveOccurred())
+
+		res.Ack()
+		res.Ack()
+
+		// Allow time for any duplicate to arrive.
+		time.Sleep(200 * time.Millisecond)
+		Expect(fc.countMID(op.MIDLastTighteningAck)).To(Equal(1))
+	})
+
+	It("stale Ack() after re-Connect is a no-op on the new connection", func() {
 		result := []byte(build0061Data(true))
 
+		// First connection: serves a result, then we re-Connect.
+		// Second connection: goodHandler with no results — we just check it
+		// receives NO 0062.
+		fc, err := newFakeController(goodHandlerPerConn([][]byte{result}))
+		Expect(err).NotTo(HaveOccurred())
+		defer fc.close()
+
+		s := newTestSession(fc.addr(), []string{"last_tightening"})
+
+		// Gen 1 connect + read.
+		Expect(s.Connect(ctx)).To(Succeed())
+		res, err := s.Read(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Telegram.Header.MID).To(Equal(op.MIDLastTightening))
+
+		// Re-connect (gen 2). The old result's Ack closure is now stale.
+		Expect(s.Connect(ctx)).To(Succeed())
+		defer s.Close()
+
+		// Count 0062 received on all connections before the stale ack.
+		before := fc.countMID(op.MIDLastTighteningAck)
+
+		// Fire the stale ack — must be a no-op (goes to nobody or dropped).
+		res.Ack()
+
+		// Give it time to potentially propagate.
+		time.Sleep(200 * time.Millisecond)
+
+		// The NEW connection (connection 2) must not have received a 0062
+		// attributable to the stale ack. Total count must not increase.
+		Expect(fc.countMID(op.MIDLastTighteningAck)).To(Equal(before))
+	})
+
+	It("fails Connect when subscribe is rejected (MID 0004)", func() {
 		fc, err := newFakeController(func(fc *fakeController, conn net.Conn) {
-			n := atomic.AddInt32(&conns, 1)
+			defer conn.Close()
 			fr := op.NewFrameReader(conn)
 			for {
 				tel, err := fc.readTelegram(fr)
 				if err != nil {
-					conn.Close()
 					return
 				}
 				switch tel.Header.MID {
@@ -127,13 +238,8 @@ var _ = Describe("Session FSM", func() {
 					ack := "01" + "0001" + "02" + "01" + "03" + padRight("UMHTestSim", 25)
 					_ = sendFrame(conn, op.MIDCommunicationStartAck, 1, []byte(ack))
 				case op.MIDLastTighteningSub:
-					_ = sendFrame(conn, op.MIDLastTightening, 1, result)
-					if n == 1 {
-						// Drop the first connection right after the first result,
-						// forcing the session to reconnect.
-						conn.Close()
-						return
-					}
+					// Reject the subscription.
+					_ = sendFrame(conn, op.MIDCommandError, 1, []byte("006097"))
 				}
 			}
 		})
@@ -141,25 +247,46 @@ var _ = Describe("Session FSM", func() {
 		defer fc.close()
 
 		s := newTestSession(fc.addr(), []string{"last_tightening"})
-		Expect(s.Start(ctx)).To(Succeed())
-		defer s.Stop()
+		err = s.Connect(ctx)
+		Expect(err).To(HaveOccurred())
+	})
 
-		// Drain results; we should receive at least two across the reconnect.
-		got := 0
-		Eventually(func() int {
-			select {
-			case <-s.Telegrams():
-				got++
-			default:
+	It("returns a Read error when no telegram arrives within read_timeout", func() {
+		// Handler: accepts login+subscribe (replies 0005), then goes silent.
+		fc, err := newFakeController(func(fc *fakeController, conn net.Conn) {
+			defer conn.Close()
+			fr := op.NewFrameReader(conn)
+			for {
+				tel, err := fc.readTelegram(fr)
+				if err != nil {
+					return
+				}
+				switch tel.Header.MID {
+				case op.MIDCommunicationStart:
+					ack := "01" + "0001" + "02" + "01" + "03" + padRight("UMHTestSim", 25)
+					_ = sendFrame(conn, op.MIDCommunicationStartAck, 1, []byte(ack))
+				case op.MIDLastTighteningSub:
+					// Confirm subscription with MID 0005.
+					_ = sendFrame(conn, op.MIDCommandAccepted, 1, nil)
+					// Then go silent (no more writes).
+					// Block forever until the connection is closed.
+					for {
+						if _, err := fr.ReadFrame(); err != nil {
+							return
+						}
+					}
+				}
 			}
-			return got
-		}, 3*time.Second, 10*time.Millisecond).Should(BeNumerically(">=", 2))
+		})
+		Expect(err).NotTo(HaveOccurred())
+		defer fc.close()
 
-		// The controller saw a second connection with a fresh login + subscribe.
-		Expect(waitFor(3*time.Second, func() bool {
-			return fc.connectionCount() >= 2 &&
-				fc.countMID(op.MIDCommunicationStart) >= 2 &&
-				fc.countMID(op.MIDLastTighteningSub) >= 2
-		})).To(BeTrue(), "expected login+subscribe to be replayed on reconnect")
+		// Small read timeout so the test doesn't hang.
+		s := newTestSessionWithReadTimeout(fc.addr(), []string{"last_tightening"}, 150*time.Millisecond)
+		Expect(s.Connect(ctx)).To(Succeed())
+		defer s.Close()
+
+		_, err = s.Read(ctx)
+		Expect(err).To(HaveOccurred())
 	})
 })

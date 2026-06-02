@@ -35,6 +35,9 @@ type fakeController struct {
 	received []op.Header
 	connObs  int // number of accepted connections
 
+	// perConnReceived tracks received MIDs broken down by connection index (1-based).
+	perConnReceived map[int][]int
+
 	handler func(fc *fakeController, conn net.Conn)
 }
 
@@ -45,7 +48,11 @@ func newFakeController(handler func(fc *fakeController, conn net.Conn)) (*fakeCo
 	if err != nil {
 		return nil, err
 	}
-	fc := &fakeController{ln: ln, handler: handler}
+	fc := &fakeController{
+		ln:              ln,
+		handler:         handler,
+		perConnReceived: make(map[int][]int),
+	}
 	go fc.acceptLoop()
 	return fc, nil
 }
@@ -58,8 +65,9 @@ func (fc *fakeController) acceptLoop() {
 		}
 		fc.mu.Lock()
 		fc.connObs++
+		connIdx := fc.connObs
 		fc.mu.Unlock()
-		go fc.handler(fc, conn)
+		go fc.handler(fc, connWithIndex{Conn: conn, fc: fc, idx: connIdx})
 	}
 }
 
@@ -68,9 +76,10 @@ func (fc *fakeController) addr() string { return fc.ln.Addr().String() }
 func (fc *fakeController) close() { _ = fc.ln.Close() }
 
 // record appends a received header (thread-safe).
-func (fc *fakeController) record(h op.Header) {
+func (fc *fakeController) record(h op.Header, connIdx int) {
 	fc.mu.Lock()
 	fc.received = append(fc.received, h)
+	fc.perConnReceived[connIdx] = append(fc.perConnReceived[connIdx], h.MID)
 	fc.mu.Unlock()
 }
 
@@ -89,6 +98,20 @@ func (fc *fakeController) receivedMIDs() []int {
 func (fc *fakeController) countMID(mid int) int {
 	n := 0
 	for _, m := range fc.receivedMIDs() {
+		if m == mid {
+			n++
+		}
+	}
+	return n
+}
+
+// countMIDOnConn returns how many telegrams with the given MID were received on
+// connection connIdx (1-based).
+func (fc *fakeController) countMIDOnConn(connIdx, mid int) int {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	n := 0
+	for _, m := range fc.perConnReceived[connIdx] {
 		if m == mid {
 			n++
 		}
@@ -115,6 +138,14 @@ func waitFor(timeout time.Duration, cond func() bool) bool {
 	return cond()
 }
 
+// connWithIndex wraps a net.Conn so the handler can call readTelegram and have
+// the telegram recorded against the right connection index.
+type connWithIndex struct {
+	net.Conn
+	fc  *fakeController
+	idx int
+}
+
 // --- handler building blocks ---
 
 // readTelegram reads and records one telegram from the connection.
@@ -127,7 +158,24 @@ func (fc *fakeController) readTelegram(fr *op.FrameReader) (op.Telegram, error) 
 	if err != nil {
 		return op.Telegram{}, err
 	}
-	fc.record(tel.Header)
+	// When called from a connWithIndex handler the fc.record call happens inside
+	// the typed handler below; when called directly (legacy handlers), use
+	// connIdx=0 as a sentinel.
+	fc.record(tel.Header, 0)
+	return tel, nil
+}
+
+// readTelegramConn reads and records one telegram, tagging it with connIdx.
+func (fc *fakeController) readTelegramConn(fr *op.FrameReader, connIdx int) (op.Telegram, error) {
+	frame, err := fr.ReadFrame()
+	if err != nil {
+		return op.Telegram{}, err
+	}
+	tel, err := op.ParseTelegram(frame)
+	if err != nil {
+		return op.Telegram{}, err
+	}
+	fc.record(tel.Header, connIdx)
 	return tel, nil
 }
 
@@ -137,14 +185,27 @@ func sendFrame(conn net.Conn, mid, rev int, data []byte) error {
 }
 
 // goodHandler is the default cooperative controller: it accepts login, replies
-// MID 0002, and on a last-tightening subscription (MID 0060) pushes the
-// supplied MID 0061 results, expecting a MID 0062 ack between each.
+// MID 0002, and on a last-tightening/alarm subscription (MID 0060/0070) first
+// replies MID 0005 (command accepted) to confirm the subscription, then pushes
+// the supplied MID 0061 results. The session's Connect handshake expects this
+// confirmation.
 func goodHandler(results [][]byte) func(fc *fakeController, conn net.Conn) {
 	return func(fc *fakeController, conn net.Conn) {
 		defer conn.Close()
+		// Unwrap connWithIndex if present so we can get the connIdx for recording.
+		var connIdx int
+		if cwi, ok := conn.(connWithIndex); ok {
+			connIdx = cwi.idx
+		}
 		fr := op.NewFrameReader(conn)
 		for {
-			tel, err := fc.readTelegram(fr)
+			var tel op.Telegram
+			var err error
+			if connIdx != 0 {
+				tel, err = fc.readTelegramConn(fr, connIdx)
+			} else {
+				tel, err = fc.readTelegram(fr)
+			}
 			if err != nil {
 				return
 			}
@@ -153,10 +214,59 @@ func goodHandler(results [][]byte) func(fc *fakeController, conn net.Conn) {
 				ack := "01" + "0001" + "02" + "01" + "03" + padRight("UMHTestSim", 25)
 				_ = sendFrame(conn, op.MIDCommunicationStartAck, 1, []byte(ack))
 			case op.MIDLastTighteningSub:
+				// Confirm subscription first (MID 0005), then push results.
+				_ = sendFrame(conn, op.MIDCommandAccepted, 1, nil)
 				for _, r := range results {
 					_ = sendFrame(conn, op.MIDLastTightening, 1, r)
 				}
-			case op.MIDAlarmSub, op.MIDKeepAlive, op.MIDLastTighteningAck, op.MIDAlarmAck:
+			case op.MIDAlarmSub:
+				// Confirm subscription first (MID 0005).
+				_ = sendFrame(conn, op.MIDCommandAccepted, 1, nil)
+			case op.MIDKeepAlive, op.MIDLastTighteningAck, op.MIDAlarmAck:
+				// accepted / ignored
+			}
+		}
+	}
+}
+
+// goodHandlerPerConn is like goodHandler but only sends results on the FIRST
+// connection, so we can test stale ack behaviour on the second connection.
+// It tracks which connection is which by connection index.
+func goodHandlerPerConn(firstConnResults [][]byte) func(fc *fakeController, conn net.Conn) {
+	return func(fc *fakeController, conn net.Conn) {
+		defer conn.Close()
+		var connIdx int
+		if cwi, ok := conn.(connWithIndex); ok {
+			connIdx = cwi.idx
+		}
+		fr := op.NewFrameReader(conn)
+		for {
+			var tel op.Telegram
+			var err error
+			if connIdx != 0 {
+				tel, err = fc.readTelegramConn(fr, connIdx)
+			} else {
+				tel, err = fc.readTelegram(fr)
+			}
+			if err != nil {
+				return
+			}
+			switch tel.Header.MID {
+			case op.MIDCommunicationStart:
+				ack := "01" + "0001" + "02" + "01" + "03" + padRight("UMHTestSim", 25)
+				_ = sendFrame(conn, op.MIDCommunicationStartAck, 1, []byte(ack))
+			case op.MIDLastTighteningSub:
+				// Always confirm subscription with MID 0005.
+				_ = sendFrame(conn, op.MIDCommandAccepted, 1, nil)
+				// Only push results on the first connection.
+				if connIdx == 1 {
+					for _, r := range firstConnResults {
+						_ = sendFrame(conn, op.MIDLastTightening, 1, r)
+					}
+				}
+			case op.MIDAlarmSub:
+				_ = sendFrame(conn, op.MIDCommandAccepted, 1, nil)
+			case op.MIDKeepAlive, op.MIDLastTighteningAck, op.MIDAlarmAck:
 				// accepted / ignored
 			}
 		}

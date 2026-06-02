@@ -42,9 +42,7 @@ func (nopLogger) Errorf(string, ...any) {}
 const (
 	defaultKeepAlive      = 10 * time.Second
 	defaultRequestTimeout = 5 * time.Second
-	defaultMaxBackoff     = 30 * time.Second
-	initialBackoff        = 250 * time.Millisecond
-	telegramBufferSize    = 1024
+	defaultReadTimeout    = 30 * time.Second
 	dialTimeout           = 10 * time.Second
 )
 
@@ -56,28 +54,37 @@ type SessionConfig struct {
 	Revision          int           // requested MID revision (0 = controller default / 1)
 	KeepAliveInterval time.Duration // MID 9999 cadence
 	RequestTimeout    time.Duration // timeout awaiting login / handshake replies
-	MaxBackoff        time.Duration // reconnect backoff ceiling
+	ReadTimeout       time.Duration // deadline for each Read call (0 → defaultReadTimeout)
 }
 
-// Session manages the lifecycle of a single Open Protocol connection: it dials
-// the controller, logs in (MID 0001 -> 0002), subscribes to the configured
-// event streams, acknowledges pushed results, keeps the link alive (MID 9999),
-// and transparently reconnects (replaying login + subscriptions) when the
-// connection drops. Received result telegrams are delivered on the channel
-// returned by Telegrams.
+// Result couples a forwardable telegram with its idempotent, generation-bound
+// 0062 ack closure.
+type Result struct {
+	Telegram Telegram
+	Ack      func()
+}
+
+var errNotConnected = fmt.Errorf("open protocol: not connected")
+
+// Session manages an Open Protocol connection following the Benthos-native
+// lifecycle: Connect establishes the session (login + confirmed subscriptions +
+// a connection-scoped keep-alive), Read delivers the next forwardable telegram,
+// and Close tears everything down. On connection loss Read returns an error and
+// the caller (Benthos) re-invokes Connect.
 type Session struct {
 	cfg SessionConfig
 	log Logger
 
-	out         chan Telegram
+	mu          sync.Mutex
+	conn        net.Conn
+	fr          *FrameReader
 	reassembler *Reassembler
+	pending     []Telegram         // telegrams read during handshake, to drain first
+	generation  uint64
+	kaCancel    context.CancelFunc
+	closed      bool
 
-	mu       sync.Mutex
-	conn     net.Conn // current connection (for Stop to interrupt blocking reads)
-	stopped  bool
-	writeMu  sync.Mutex // serialises writes (acks vs keep-alives) on a connection
-	wg       sync.WaitGroup
-	cancelFn context.CancelFunc
+	writeMu sync.Mutex
 }
 
 // NewSession creates a Session from cfg. A nil logger is replaced with a no-op.
@@ -91,208 +98,199 @@ func NewSession(cfg SessionConfig, log Logger) *Session {
 	if cfg.RequestTimeout <= 0 {
 		cfg.RequestTimeout = defaultRequestTimeout
 	}
-	if cfg.MaxBackoff <= 0 {
-		cfg.MaxBackoff = defaultMaxBackoff
+	if cfg.ReadTimeout <= 0 {
+		cfg.ReadTimeout = defaultReadTimeout
 	}
-	return &Session{
-		cfg:         cfg,
-		log:         log,
-		out:         make(chan Telegram, telegramBufferSize),
-		reassembler: NewReassembler(),
-	}
+	return &Session{cfg: cfg, log: log}
 }
 
-// Telegrams returns the channel on which fully-received (and reassembled)
-// result telegrams are delivered.
-func (s *Session) Telegrams() <-chan Telegram { return s.out }
+// Generation returns the current connection generation (monotonically increasing
+// with each successful Connect).
+func (s *Session) Generation() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.generation
+}
 
-// Start performs the initial connect + login + subscribe synchronously (so
-// configuration and connectivity errors surface immediately) and then spawns a
-// background goroutine that serves the connection and reconnects as needed.
-//
-// connectCtx bounds only the initial handshake; the long-lived serve/reconnect
-// loop runs under the session's own context (cancelled by Stop), so it survives
-// after the caller's connect-scoped context is cancelled.
-func (s *Session) Start(connectCtx context.Context) error {
-	conn, fr, err := s.connectAndHandshake(connectCtx)
+// Connect establishes (or re-establishes) the session: login + confirmed
+// subscriptions + a connection-scoped keep-alive. Re-runnable; tears down any
+// prior connection first.
+func (s *Session) Connect(ctx context.Context) error {
+	s.teardown()
+
+	conn, fr, pending, err := s.connectAndHandshake(ctx)
 	if err != nil {
 		return err
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
+	kaCtx, kaCancel := context.WithCancel(context.Background())
 	s.mu.Lock()
 	s.conn = conn
-	s.cancelFn = cancel
+	s.fr = fr
+	s.reassembler = NewReassembler()
+	s.pending = pending
+	s.generation++
+	s.kaCancel = kaCancel
+	s.closed = false
 	s.mu.Unlock()
 
-	s.wg.Add(1)
-	go s.serveLoop(ctx, conn, fr)
+	go s.keepAlive(kaCtx, conn)
 	return nil
 }
 
-// Stop cancels the session and closes the active connection. It blocks until
-// the background goroutine has exited.
-func (s *Session) Stop() {
+func (s *Session) teardown() {
 	s.mu.Lock()
-	if s.stopped {
-		s.mu.Unlock()
-		return
-	}
-	s.stopped = true
-	if s.cancelFn != nil {
-		s.cancelFn()
+	if s.kaCancel != nil {
+		s.kaCancel()
+		s.kaCancel = nil
 	}
 	if s.conn != nil {
 		_ = s.conn.Close()
+		s.conn = nil
+	}
+	s.fr = nil
+	s.pending = nil
+	s.mu.Unlock()
+}
+
+// Close idempotently stops the keep-alive and closes the connection.
+func (s *Session) Close() error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil
+	}
+	s.closed = true
+	if s.kaCancel != nil {
+		s.kaCancel()
+		s.kaCancel = nil
+	}
+	if s.conn != nil {
+		_ = s.conn.Close()
+		s.conn = nil
 	}
 	s.mu.Unlock()
-
-	s.wg.Wait()
-}
-
-// serveLoop serves the current connection and, on disconnect, reconnects with
-// exponential backoff until the context is cancelled.
-func (s *Session) serveLoop(ctx context.Context, conn net.Conn, fr *FrameReader) {
-	defer s.wg.Done()
-
-	backoff := initialBackoff
-	for {
-		err := s.serve(ctx, conn, fr)
-		if ctx.Err() != nil {
-			return
-		}
-		if err != nil {
-			s.log.Warnf("open protocol: connection to %s lost: %v; reconnecting", s.cfg.Endpoint, err)
-		}
-
-		// Reconnect with backoff.
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(backoff):
-			}
-
-			newConn, newFr, derr := s.connectAndHandshake(ctx)
-			if derr == nil {
-				s.mu.Lock()
-				s.conn = newConn
-				s.mu.Unlock()
-				conn, fr = newConn, newFr
-				backoff = initialBackoff
-				s.log.Infof("open protocol: reconnected to %s", s.cfg.Endpoint)
-				break
-			}
-
-			s.log.Warnf("open protocol: reconnect to %s failed: %v", s.cfg.Endpoint, derr)
-			backoff = nextBackoff(backoff, s.cfg.MaxBackoff)
-		}
-	}
-}
-
-// serve reads telegrams from conn until an error occurs, while a concurrent
-// goroutine emits keep-alives. It returns the error that ended the connection.
-func (s *Session) serve(ctx context.Context, conn net.Conn, fr *FrameReader) error {
-	serveCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	// Keep-alive emitter.
-	go func() {
-		t := time.NewTicker(s.cfg.KeepAliveInterval)
-		defer t.Stop()
-		for {
-			select {
-			case <-serveCtx.Done():
-				return
-			case <-t.C:
-				if err := s.write(conn, MIDKeepAlive, 1, nil); err != nil {
-					cancel() // wake the reader so serve returns
-					return
-				}
-			}
-		}
-	}()
-
-	for {
-		frame, err := fr.ReadFrame()
-		if err != nil {
-			return err
-		}
-		tel, err := ParseTelegram(frame)
-		if err != nil {
-			s.log.Warnf("open protocol: dropping malformed telegram: %v", err)
-			continue
-		}
-		if err := s.handle(serveCtx, conn, tel); err != nil {
-			return err
-		}
-	}
-}
-
-// handle processes one received telegram: it reassembles multi-part messages,
-// acknowledges pushed results, and forwards completed telegrams downstream.
-func (s *Session) handle(ctx context.Context, conn net.Conn, tel Telegram) error {
-	switch tel.Header.MID {
-	case MIDKeepAlive, MIDCommandAccepted:
-		return nil // link management / generic ack: nothing to forward
-	case MIDCommandError:
-		ce, _ := ParseCommandError(tel)
-		s.log.Warnf("open protocol: controller reported %v", ce)
-		return nil
-	}
-
-	complete, ok, err := s.reassembler.Push(tel)
-	if err != nil {
-		s.log.Warnf("open protocol: reassembly error: %v", err)
-		return nil
-	}
-	if !ok {
-		return nil // waiting for more parts
-	}
-
-	// Acknowledge pushed results before forwarding so a slow consumer cannot
-	// stall the controller's view of the link.
-	if ackMID, needsAck := ackFor(complete.Header.MID); needsAck {
-		if err := s.write(conn, ackMID, 1, nil); err != nil {
-			return fmt.Errorf("sending ack MID %04d: %w", ackMID, err)
-		}
-	}
-
-	select {
-	case s.out <- complete:
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-		// At-most-once: never block the read loop on a stalled consumer.
-		s.log.Warnf("open protocol: telegram buffer full, dropping MID %04d", complete.Header.MID)
-	}
 	return nil
 }
 
-// connectAndHandshake dials the controller, performs the login handshake and
-// sends the configured subscriptions. It returns the connection and the
-// FrameReader that buffers it (the same reader must be reused for serving, so
-// no buffered bytes are lost).
-func (s *Session) connectAndHandshake(ctx context.Context) (net.Conn, *FrameReader, error) {
+// Read returns the next forwardable telegram + its ack closure, or a connection
+// error (the input surfaces it as service.ErrNotConnected).
+func (s *Session) Read(ctx context.Context) (Result, error) {
+	s.mu.Lock()
+	conn, gen, fr := s.conn, s.generation, s.fr
+	// Pop any pending telegram buffered during handshake.
+	var pending *Telegram
+	if len(s.pending) > 0 {
+		t := s.pending[0]
+		s.pending = s.pending[1:]
+		pending = &t
+	}
+	s.mu.Unlock()
+	if conn == nil {
+		return Result{}, errNotConnected
+	}
+
+	for {
+		var tel Telegram
+		if pending != nil {
+			tel = *pending
+			pending = nil
+		} else {
+			if s.cfg.ReadTimeout > 0 {
+				_ = conn.SetReadDeadline(time.Now().Add(s.cfg.ReadTimeout))
+			}
+			frame, err := fr.ReadFrame()
+			if err != nil {
+				return Result{}, err
+			}
+			var perr error
+			tel, perr = ParseTelegram(frame)
+			if perr != nil {
+				s.log.Warnf("open protocol: dropping malformed telegram: %v", perr)
+				continue
+			}
+		}
+
+		switch tel.Header.MID {
+		case MIDKeepAlive, MIDCommandAccepted:
+			continue
+		case MIDCommandError:
+			ce, _ := ParseCommandError(tel)
+			s.log.Warnf("open protocol: controller reported %v", ce)
+			continue
+		}
+
+		complete, ok, rerr := s.reassembler.Push(tel)
+		if rerr != nil {
+			s.log.Warnf("open protocol: reassembly error: %v", rerr)
+			continue
+		}
+		if !ok {
+			continue
+		}
+		ackMID, needsAck := ackFor(complete.Header.MID)
+		return Result{Telegram: complete, Ack: s.makeAck(gen, conn, ackMID, needsAck)}, nil
+	}
+}
+
+// makeAck builds the idempotent, generation-bound MID 0062 sender. Lock order:
+// mu -> once -> writeMu. Stale generation or write failure => benign no-op.
+func (s *Session) makeAck(gen uint64, conn net.Conn, ackMID int, needsAck bool) func() {
+	var once sync.Once
+	return func() {
+		if !needsAck {
+			return
+		}
+		s.mu.Lock()
+		current := s.generation
+		s.mu.Unlock()
+		if current != gen {
+			return
+		}
+		once.Do(func() {
+			if err := s.write(conn, ackMID, 1, nil); err != nil {
+				s.log.Warnf("open protocol: 0062 ack write failed (benign): %v", err)
+			}
+		})
+	}
+}
+
+func (s *Session) keepAlive(ctx context.Context, conn net.Conn) {
+	t := time.NewTicker(s.cfg.KeepAliveInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := s.write(conn, MIDKeepAlive, 1, nil); err != nil {
+				_ = conn.Close() // next Read errors -> Benthos reconnects
+				return
+			}
+		}
+	}
+}
+
+// connectAndHandshake dials, logs in, and confirms each subscription. It returns
+// the conn, its FrameReader, and any forwardable telegrams read during the
+// handshake window (to be drained by Read first).
+func (s *Session) connectAndHandshake(ctx context.Context) (net.Conn, *FrameReader, []Telegram, error) {
 	d := net.Dialer{Timeout: dialTimeout}
 	conn, err := d.DialContext(ctx, "tcp", s.cfg.Endpoint)
 	if err != nil {
-		return nil, nil, fmt.Errorf("dialing %s: %w", s.cfg.Endpoint, err)
+		return nil, nil, nil, fmt.Errorf("dialing %s: %w", s.cfg.Endpoint, err)
 	}
-
 	fr := NewFrameReader(conn)
 
 	// Login (MID 0001) and await MID 0002 / 0004.
 	if err := s.write(conn, MIDCommunicationStart, s.cfg.Revision, nil); err != nil {
 		_ = conn.Close()
-		return nil, nil, fmt.Errorf("sending login: %w", err)
+		return nil, nil, nil, fmt.Errorf("sending login: %w", err)
 	}
-
 	tel, err := s.readWithTimeout(conn, fr, s.cfg.RequestTimeout)
 	if err != nil {
 		_ = conn.Close()
-		return nil, nil, fmt.Errorf("awaiting login reply: %w", err)
+		return nil, nil, nil, fmt.Errorf("awaiting login reply: %w", err)
 	}
 	switch tel.Header.MID {
 	case MIDCommunicationStartAck:
@@ -300,34 +298,60 @@ func (s *Session) connectAndHandshake(ctx context.Context) (net.Conn, *FrameRead
 	case MIDCommandError:
 		ce, _ := ParseCommandError(tel)
 		_ = conn.Close()
-		return nil, nil, ce
+		return nil, nil, nil, ce
 	default:
 		_ = conn.Close()
-		return nil, nil, fmt.Errorf("unexpected MID %04d during login", tel.Header.MID)
+		return nil, nil, nil, fmt.Errorf("unexpected MID %04d during login", tel.Header.MID)
 	}
 
-	// Subscribe.
-	for _, mid := range s.subscriptionMIDs() {
-		if err := s.write(conn, mid, 1, nil); err != nil {
-			_ = conn.Close()
-			return nil, nil, fmt.Errorf("subscribing (MID %04d): %w", mid, err)
+	var pending []Telegram
+
+	// Subscribe + confirm each.
+	confirmSub := func(subMID int) error {
+		if err := s.write(conn, subMID, 1, nil); err != nil {
+			return fmt.Errorf("subscribing (MID %04d): %w", subMID, err)
+		}
+		// Await confirmation; skip keep-alives; buffer a stray result as confirmation.
+		for {
+			rep, err := s.readWithTimeout(conn, fr, s.cfg.RequestTimeout)
+			if err != nil {
+				return fmt.Errorf("awaiting subscribe reply (MID %04d): %w", subMID, err)
+			}
+			switch rep.Header.MID {
+			case MIDKeepAlive:
+				continue
+			case MIDCommandAccepted:
+				return nil
+			case MIDCommandError:
+				ce, _ := ParseCommandError(rep)
+				return ce
+			default:
+				// A pushed result during the window also confirms; keep it for Read.
+				pending = append(pending, rep)
+				return nil
+			}
 		}
 	}
+	for _, mid := range s.subscriptionMIDs() {
+		if err := confirmSub(mid); err != nil {
+			_ = conn.Close()
+			return nil, nil, nil, err
+		}
+	}
+	// Generic subscribes remain fire-and-forget (experimental; not confirmed).
 	for _, gmid := range s.cfg.GenericMIDs {
-		// Generic data subscription (MID 0008). The data field carries the MID
-		// to subscribe to. Generic mode is experimental and intended to be
-		// validated against a real controller.
 		data := fmt.Sprintf("%04d", gmid)
 		if err := s.write(conn, MIDGenericSubscribe, 1, []byte(data)); err != nil {
 			_ = conn.Close()
-			return nil, nil, fmt.Errorf("generic-subscribing MID %04d: %w", gmid, err)
+			return nil, nil, nil, fmt.Errorf("generic-subscribing MID %04d: %w", gmid, err)
 		}
 	}
 
-	return conn, fr, nil
+	return conn, fr, pending, nil
 }
 
-// readWithTimeout reads a single telegram, bounded by timeout.
+// readWithTimeout reads a single telegram, bounded by timeout. The read
+// deadline is reset to zero on return so it does not leak into subsequent reads.
 func (s *Session) readWithTimeout(conn net.Conn, fr *FrameReader, timeout time.Duration) (Telegram, error) {
 	_ = conn.SetReadDeadline(time.Now().Add(timeout))
 	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
@@ -376,12 +400,4 @@ func ackFor(mid int) (int, bool) {
 	default:
 		return 0, false
 	}
-}
-
-func nextBackoff(cur, max time.Duration) time.Duration {
-	next := cur * 2
-	if next > max {
-		return max
-	}
-	return next
 }

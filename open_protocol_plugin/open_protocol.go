@@ -95,7 +95,6 @@ type openProtocolInput struct {
 	endpoint string
 	session  *Session
 	logger   *service.Logger
-	done     chan struct{}
 }
 
 func newOpenProtocolInput(conf *service.ParsedConfig, mgr *service.Resources) (*openProtocolInput, error) {
@@ -123,8 +122,9 @@ func newOpenProtocolInput(conf *service.ParsedConfig, mgr *service.Resources) (*
 	if err != nil {
 		return nil, err
 	}
-	maxBackoff, err := conf.FieldDuration(fieldReconnect, fieldMaxBackoff)
-	if err != nil {
+	// Parse reconnect.max_backoff for config compatibility; not used by the new
+	// Benthos-native lifecycle (Benthos owns the reconnect loop).
+	if _, err = conf.FieldDuration(fieldReconnect, fieldMaxBackoff); err != nil {
 		return nil, err
 	}
 
@@ -136,43 +136,36 @@ func newOpenProtocolInput(conf *service.ParsedConfig, mgr *service.Resources) (*
 		Revision:          revision,
 		KeepAliveInterval: keepAlive,
 		RequestTimeout:    requestTimeout,
-		MaxBackoff:        maxBackoff,
+		// ReadTimeout: 0 → defaultReadTimeout applies inside NewSession.
 	}, logger)
 
 	return &openProtocolInput{
 		endpoint: endpoint,
 		session:  sess,
 		logger:   logger,
-		done:     make(chan struct{}),
 	}, nil
 }
 
 func (in *openProtocolInput) Connect(ctx context.Context) error {
-	return in.session.Start(ctx)
+	return in.session.Connect(ctx)
 }
 
 func (in *openProtocolInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
-	select {
-	case <-ctx.Done():
-		return nil, nil, ctx.Err()
-	case <-in.done:
-		return nil, nil, service.ErrEndOfInput
-	case tel := <-in.session.Telegrams():
-		msg := in.telegramToMessage(tel)
-		return service.MessageBatch{msg},
-			func(context.Context, error) error { return nil }, // at-most-once
-			nil
+	res, err := in.session.Read(ctx)
+	if err != nil {
+		return nil, nil, service.ErrNotConnected
 	}
+	msg := in.telegramToMessage(res.Telegram)
+	return service.MessageBatch{msg}, func(_ context.Context, e error) error {
+		if e == nil {
+			res.Ack()
+		}
+		return nil
+	}, nil
 }
 
 func (in *openProtocolInput) Close(_ context.Context) error {
-	select {
-	case <-in.done:
-	default:
-		close(in.done)
-	}
-	in.session.Stop()
-	return nil
+	return in.session.Close()
 }
 
 // telegramToMessage converts a received telegram into a Benthos message. MID
