@@ -247,6 +247,12 @@ func (in *openProtocolInput) buildBatch(t Telegram) service.MessageBatch {
 	}
 
 	// Raw passthrough: non-0061, rev != 1, or malformed 0061.
+	// Edge #9: warn when MID 0061 is present but with an unsupported revision.
+	// The malformed-rev-1 path already logged above; only the non-rev-1 path is
+	// silent without this guard.
+	if t.Header.MID == MIDLastTightening && t.Header.Revision != 1 {
+		in.logger.Warnf("open protocol: MID 0061 revision %d != 1, emitting raw (native decode skipped)", t.Header.Revision)
+	}
 	msg := service.NewMessage(append([]byte{}, t.Data...))
 	msg.MetaSet("open_protocol_mid", midStr)
 	msg.MetaSet("open_protocol_revision", revStr)

@@ -251,6 +251,28 @@ var _ = Describe("Session FSM", func() {
 		Expect(err).To(HaveOccurred())
 	})
 
+	It("sends the login telegram (MID 0001) with Revision == 1 on the wire", func() {
+		// This kills the mutant that sends the wrong revision in connectAndHandshake.
+		// newTestSession sets Revision: 1; goodHandler records every received header
+		// in fc.received so we can inspect the exact revision carried on the wire.
+		fc, err := newFakeController(goodHandler(nil))
+		Expect(err).NotTo(HaveOccurred())
+		defer fc.close()
+
+		s := newTestSession(fc.addr(), []string{"last_tightening"})
+		Expect(s.Connect(ctx)).To(Succeed())
+		defer s.Close()
+
+		Expect(waitFor(2*time.Second, func() bool {
+			_, ok := fc.firstReceivedHeader(op.MIDCommunicationStart)
+			return ok
+		})).To(BeTrue(), "expected to receive a login telegram")
+
+		h, ok := fc.firstReceivedHeader(op.MIDCommunicationStart)
+		Expect(ok).To(BeTrue(), "MIDCommunicationStart header not found")
+		Expect(h.Revision).To(Equal(1), "login telegram must carry Revision == 1 on the wire")
+	})
+
 	It("returns a Read error when no telegram arrives within read_timeout", func() {
 		// Handler: accepts login+subscribe (replies 0005), then goes silent.
 		fc, err := newFakeController(func(fc *fakeController, conn net.Conn) {

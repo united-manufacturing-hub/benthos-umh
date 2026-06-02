@@ -105,6 +105,20 @@ func (fc *fakeController) countMID(mid int) int {
 	return n
 }
 
+// firstReceivedHeader returns the first Header recorded for the given MID, and
+// whether any such header was found. Used by tests that need to inspect fields
+// (e.g. Revision) of a specific telegram type sent by the client.
+func (fc *fakeController) firstReceivedHeader(mid int) (op.Header, bool) {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	for _, h := range fc.received {
+		if h.MID == mid {
+			return h, true
+		}
+	}
+	return op.Header{}, false
+}
+
 // waitFor polls cond until it returns true or the timeout elapses.
 func waitFor(timeout time.Duration, cond func() bool) bool {
 	deadline := time.Now().Add(timeout)

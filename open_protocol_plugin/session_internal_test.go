@@ -92,6 +92,35 @@ func TestMakeAckRetriesAfterFailedWrite(t *testing.T) {
 	}
 }
 
+// TestMakeAckConcurrentInvocationSendsOnce proves that firing the same ack
+// closure from multiple goroutines concurrently results in EXACTLY ONE
+// successful write. This guards the goroutine-safety of the sent-bool guard;
+// Benthos may invoke an AckFunc from different goroutines.
+func TestMakeAckConcurrentInvocationSendsOnce(t *testing.T) {
+	const N = 50
+	s := NewSession(SessionConfig{}, nil)
+	s.mu.Lock()
+	s.generation = 7
+	s.mu.Unlock()
+
+	conn := &scriptedConn{} // always succeeds
+	ack := s.makeAck(7, conn, MIDLastTighteningAck, true)
+
+	var wg sync.WaitGroup
+	wg.Add(N)
+	for range N {
+		go func() {
+			defer wg.Done()
+			ack()
+		}()
+	}
+	wg.Wait()
+
+	if got := conn.successCount(); got != 1 {
+		t.Fatalf("concurrent ack invocations: want exactly 1 successful write, got %d", got)
+	}
+}
+
 // TestMakeAckSuppressesStaleGenerationOnWritableConn proves the stale-ack
 // suppression is driven by the GENERATION check, not by a dead connection: the
 // conn is perfectly writable, yet a stale-generation ack records zero writes.
