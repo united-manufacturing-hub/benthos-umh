@@ -178,8 +178,9 @@ func (s *Session) Close() error {
 }
 
 // Read returns the next forwardable telegram + its ack closure, or a connection
-// error (the input surfaces it as service.ErrNotConnected).
-func (s *Session) Read(ctx context.Context) (Result, error) {
+// error (the input surfaces it as service.ErrNotConnected). Shutdown is driven
+// by Close closing the underlying connection, not by ctx cancellation.
+func (s *Session) Read(_ context.Context) (Result, error) {
 	s.mu.Lock()
 	conn, gen, fr, reasm := s.conn, s.generation, s.fr, s.reassembler
 	// Pop any pending telegram buffered during handshake.
@@ -343,7 +344,7 @@ func (s *Session) connectAndHandshake(ctx context.Context) (net.Conn, *FrameRead
 
 	var pending []Telegram
 
-	// Subscribe + confirm each. confirmSub closes over ctx to honour cancellation
+	// Subscribe + confirm each. confirmSub closes over ctx to honor cancellation
 	// even during a keep-alive flood from the controller.
 	confirmSub := func(subMID int) error {
 		if err := s.write(conn, subMID, 1, nil); err != nil {
@@ -407,9 +408,9 @@ func (s *Session) readWithTimeout(conn net.Conn, fr *FrameReader, timeout time.D
 	return ParseTelegram(frame)
 }
 
-// write serialises and sends one telegram, holding the write mutex so acks and
+// write serializes and sends one telegram, holding the write mutex so acks and
 // keep-alives never interleave on the wire.
-func (s *Session) write(conn net.Conn, mid, rev int, data []byte) error {
+func (s *Session) write(conn net.Conn, mid int, rev int, data []byte) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	_, err := conn.Write(BuildMessage(mid, rev, data))

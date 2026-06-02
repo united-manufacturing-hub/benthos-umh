@@ -22,14 +22,11 @@ import (
 )
 
 var _ = Describe("Header codec", func() {
-
 	Describe("ParseHeader", func() {
-
 		It("parses a well-formed 20-byte header (login accept MID 0002)", func() {
 			// 0020 0002 001 0 00 00 + 4 spare spaces = 20-byte header, empty data.
-			raw := []byte("00200002001000000    ")
 			// Replace the visible placeholder with the canonical 4 spare spaces.
-			raw = []byte("0020000200100" + "00" + "00" + "    ")
+			raw := []byte("0020000200100" + "00" + "00" + "    ")
 
 			h, err := op.ParseHeader(raw)
 			Expect(err).NotTo(HaveOccurred())
@@ -96,7 +93,6 @@ var _ = Describe("Header codec", func() {
 	})
 
 	Describe("BuildMessage", func() {
-
 		It("builds a login telegram (MID 0001) with length header and NUL terminator", func() {
 			msg := op.BuildMessage(1, 1, nil)
 			// 4 len + 4 mid + 3 rev + 1 ack + 2 station + 2 spindle + 4 spare = 20, then NUL.

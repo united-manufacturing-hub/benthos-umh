@@ -19,7 +19,7 @@ import (
 )
 
 // TestAtoiTrimOverflow proves FIX 3: atoiTrim returns 0 on overflow/parse
-// errors rather than the old behaviour of returning whatever strconv.Atoi
+// errors rather than the old behavior of returning whatever strconv.Atoi
 // returned (which on overflow was 0 anyway for negative overflow but
 // math.MaxInt64 / math.MinInt64 for positive/negative overflows before Go 1.17
 // changed to always returning 0 on overflow — regardless, the explicit check

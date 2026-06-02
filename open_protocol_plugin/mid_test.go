@@ -68,7 +68,6 @@ func padRight(s string, n int) string {
 }
 
 var _ = Describe("MID parsing", func() {
-
 	Describe("ParseTelegram", func() {
 		It("splits a frame into header and data field", func() {
 			frame := op.BuildMessage(61, 1, []byte("PAYLOAD"))
@@ -186,7 +185,7 @@ var _ = Describe("MID parsing", func() {
 				Header: op.Header{MID: 61, TotalParts: 2, PartNumber: 1},
 				Data:   []byte("FIRST-"),
 			}
-			out, complete, err := rs.Push(p1)
+			_, complete, err := rs.Push(p1)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(complete).To(BeFalse()) // waiting for part 2
 
@@ -194,7 +193,7 @@ var _ = Describe("MID parsing", func() {
 				Header: op.Header{MID: 61, TotalParts: 2, PartNumber: 2},
 				Data:   []byte("SECOND"),
 			}
-			out, complete, err = rs.Push(p2)
+			out, complete, err := rs.Push(p2)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(complete).To(BeTrue())
 			Expect(string(out.Data)).To(Equal("FIRST-SECOND"))
@@ -312,5 +311,4 @@ var _ = Describe("MID parsing", func() {
 			Expect(err).To(HaveOccurred(), "starting a new sequence when inflight map is full should return an error")
 		})
 	})
-
 })

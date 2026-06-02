@@ -51,7 +51,7 @@ var _ = Describe("FanOut", func() {
 		}
 		Expect(byName["torque_actual"]).To(BeNumerically("~", 50.12, 0.001))
 		Expect(byName["angle_actual"]).To(Equal(720))
-		Expect(byName["tightening_ok"]).To(Equal(true))
+		Expect(byName["tightening_ok"]).To(BeTrue())
 		Expect(byName["vin"]).To(Equal("WVWZZZ1KZAW000001"))
 		Expect(byName["tightening_id"]).To(Equal(42))
 	})

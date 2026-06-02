@@ -112,7 +112,7 @@ func ParseHeader(buf []byte) (Header, error) {
 // maxFrameLength (9999 bytes, the largest value the 4-digit ASCII length field
 // can encode). Violating this constraint panics: BuildMessage is internal-only
 // and the plugin never constructs frames larger than a handful of bytes.
-func BuildMessage(mid, revision int, data []byte) []byte {
+func BuildMessage(mid int, revision int, data []byte) []byte {
 	if revision <= 0 {
 		revision = 1
 	}

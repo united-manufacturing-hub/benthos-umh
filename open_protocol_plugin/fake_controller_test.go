@@ -172,7 +172,7 @@ func (fc *fakeController) readTelegramConn(fr *op.FrameReader, connIdx int) (op.
 	return tel, nil
 }
 
-func sendFrame(conn net.Conn, mid, rev int, data []byte) error {
+func sendFrame(conn net.Conn, mid int, rev int, data []byte) error {
 	_, err := conn.Write(op.BuildMessage(mid, rev, data))
 	return err
 }
@@ -223,7 +223,7 @@ func goodHandler(results [][]byte) func(fc *fakeController, conn net.Conn) {
 }
 
 // goodHandlerPerConn is like goodHandler but only sends results on the FIRST
-// connection, so we can test stale ack behaviour on the second connection.
+// connection, so we can test stale ack behavior on the second connection.
 // It tracks which connection is which by connection index.
 func goodHandlerPerConn(firstConnResults [][]byte) func(fc *fakeController, conn net.Conn) {
 	return func(fc *fakeController, conn net.Conn) {

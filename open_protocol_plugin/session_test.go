@@ -29,7 +29,7 @@ import (
 // the TCP connection, then never sends MID 0002 (login accept). This simulates
 // a buggy controller that floods keep-alives during the login window.
 func keepAliveFloodHandler(burstSize int) func(fc *fakeController, conn net.Conn) {
-	return func(fc *fakeController, conn net.Conn) {
+	return func(_ *fakeController, conn net.Conn) {
 		defer conn.Close()
 		for i := 0; i < burstSize; i++ {
 			if err := sendFrame(conn, op.MIDKeepAlive, 1, nil); err != nil {

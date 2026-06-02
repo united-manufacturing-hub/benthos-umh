@@ -24,13 +24,11 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"github.com/redpanda-data/benthos/v4/public/service"
-
 	// Register Benthos default components (e.g. the "none" tracer/metrics) so
 	// the StreamBuilder can build a stream in the test binary.
 	_ "github.com/redpanda-data/benthos/v4/public/components/io"
 	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
+	"github.com/redpanda-data/benthos/v4/public/service"
 
 	op "github.com/united-manufacturing-hub/benthos-umh/open_protocol_plugin"
 )
@@ -96,7 +94,6 @@ func build0061DataWithTimestamp(okStatus bool, ts string) string {
 }
 
 var _ = Describe("open_protocol Benthos input", func() {
-
 	// -----------------------------------------------------------------------
 	// Registration
 	// -----------------------------------------------------------------------
@@ -475,7 +472,7 @@ open_protocol:
 		const badTimestamp = "NOT-A-DATE         "
 
 		It("omits timestamp_ms but sets open_protocol_timestamp to the raw string", func() {
-			Expect(len(badTimestamp)).To(Equal(19), "test precondition: timestamp must be 19 chars")
+			Expect(badTimestamp).To(HaveLen(19), "test precondition: timestamp must be 19 chars")
 
 			result := []byte(build0061DataWithTimestamp(true, badTimestamp))
 			fc, fcErr := newFakeController(goodHandler([][]byte{result}))

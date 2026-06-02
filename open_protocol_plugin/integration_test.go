@@ -25,13 +25,12 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
+	_ "github.com/redpanda-data/benthos/v4/public/components/io"
+	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	_ "github.com/redpanda-data/benthos/v4/public/components/io"
-	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
 	_ "github.com/united-manufacturing-hub/benthos-umh/open_protocol_plugin"
 )
 

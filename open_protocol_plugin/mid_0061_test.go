@@ -141,7 +141,6 @@ func decodeFixture(f MID0061Fixture) (op.LastTightening, error) {
 }
 
 var _ = Describe("MID 0061 golden decode (rev-1)", func() {
-
 	// -----------------------------------------------------------------------
 	// Group 1: full decode with 10-digit tightening id (R2.16 spec width)
 	// -----------------------------------------------------------------------
@@ -225,7 +224,6 @@ var _ = Describe("MID 0061 golden decode (rev-1)", func() {
 	// 4) will decode a different integer and fail at least one assertion here.
 	// -----------------------------------------------------------------------
 	Describe("PID-23 exact-length consumption (mutation killers)", func() {
-
 		It("10-digit: '1234567890' decodes to exactly 1234567890 (no truncation/over-read)", func() {
 			f := defaultFixture()
 			f.TighteningID = "1234567890"

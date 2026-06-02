@@ -27,7 +27,6 @@ import (
 )
 
 var _ = Describe("TCP framer", func() {
-
 	// A couple of canonical, complete telegrams (header + NUL).
 	login := op.BuildMessage(1, 1, nil)               // MID 0001, len 20
 	result := op.BuildMessage(61, 1, []byte("HELLO")) // MID 0061, len 25

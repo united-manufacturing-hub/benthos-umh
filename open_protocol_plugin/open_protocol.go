@@ -202,10 +202,7 @@ func (in *openProtocolInput) buildBatch(t Telegram) service.MessageBatch {
 	// Rev-1 MID 0061 fan-out path.
 	if t.Header.MID == MIDLastTightening && t.Header.Revision == 1 {
 		lt, derr := ParseLastTightening(t)
-		if derr != nil {
-			in.logger.Warnf("open protocol: MID 0061 parse failed, emitting raw: %v", derr)
-			// Fall through to the raw path below.
-		} else {
+		if derr == nil {
 			// Compute the shared timestamp_ms.
 			tsRaw := lt.Timestamp
 			var tsMs string
@@ -244,6 +241,8 @@ func (in *openProtocolInput) buildBatch(t Telegram) service.MessageBatch {
 			}
 			return batch
 		}
+		in.logger.Warnf("open protocol: MID 0061 parse failed, emitting raw: %v", derr)
+		// Fall through to the raw path below.
 	}
 
 	// Raw passthrough: non-0061, rev != 1, or malformed 0061.

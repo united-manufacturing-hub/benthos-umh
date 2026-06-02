@@ -16,6 +16,7 @@ package open_protocol_plugin
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -68,17 +69,17 @@ func (fr *FrameReader) ReadFrame() ([]byte, error) {
 	// Read the remainder of the telegram (everything after the length field).
 	frame := make([]byte, length)
 	copy(frame, lenField)
-	if _, err := io.ReadFull(fr.r, frame[4:]); err != nil {
-		if err == io.EOF {
-			err = io.ErrUnexpectedEOF
+	if _, errRead := io.ReadFull(fr.r, frame[4:]); errRead != nil {
+		if errors.Is(errRead, io.EOF) {
+			errRead = io.ErrUnexpectedEOF
 		}
-		return nil, err
+		return nil, errRead
 	}
 
 	// Consume and validate the NUL terminator.
 	term, err := fr.r.ReadByte()
 	if err != nil {
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			err = io.ErrUnexpectedEOF
 		}
 		return nil, err
