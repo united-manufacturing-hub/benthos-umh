@@ -233,3 +233,6 @@ cmd/schema-export/schema-export
 
 # macOS
 .DS_Store
+
+# git worktrees (VSDD isolated workspace)
+.worktrees/
