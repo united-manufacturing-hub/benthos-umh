@@ -183,6 +183,15 @@ open_protocol:
 		)
 
 		BeforeEach(func() {
+			// Reset the shared capture buffer. This Describe has many It specs that
+			// all read `captured`, and under ginkgo --randomize-all they run in
+			// arbitrary order, re-running this BeforeEach each time. Without the
+			// reset, captured accumulates across specs and the exact-count
+			// assertion (HaveLen(18)) flakes depending on spec order.
+			mu.Lock()
+			captured = nil
+			mu.Unlock()
+
 			result := []byte(build0061DataWithTimestamp(true, testTimestamp))
 			var err error
 			fc, err = newFakeController(goodHandler([][]byte{result}))
