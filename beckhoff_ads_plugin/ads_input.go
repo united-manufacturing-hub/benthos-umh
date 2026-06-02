@@ -19,13 +19,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/redpanda-data/benthos/v4/public/service"
-
 	adsLib "github.com/RuneRoven/go-ads/v2"
+	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 // benthosLogHandler is a slog.Handler that forwards log records to a Benthos service.Logger.
@@ -679,15 +679,194 @@ func (g *AdsCommInput) Connect(ctx context.Context) error {
 	return nil
 }
 
-// ReadBatch satisfies the service.BatchInput interface.
-// Full implementation (ReadBatchPull, ReadBatchNotification) is in a follow-up PR.
-func (g *AdsCommInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
-	select {
-	case <-ctx.Done():
-		return nil, nil, ctx.Err()
-	default:
+func sanitize(s string) string {
+	re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+	return re.ReplaceAllString(s, "_")
+}
+
+func (g *AdsCommInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+	g.Log.Debugf("ReadBatchPull called")
+	start := time.Now()
+	if g.Handler == nil {
 		return nil, nil, service.ErrNotConnected
 	}
+
+	// Collect symbol names for batch read
+	names := make([]string, len(g.Symbols))
+	for i, symbol := range g.Symbols {
+		names[i] = symbol.Name
+	}
+
+	values, err := g.Handler.ReadMultipleSymbols(ctx, names)
+	if err != nil {
+		g.Log.Errorf("Batch read failed: %v", err)
+		if g.Handler.IsClosed() {
+			// Session permanently dead — async close to avoid blocking.
+			old := g.Handler
+			g.Handler = nil
+			go func() { _ = old.Close() }()
+			return nil, nil, service.ErrNotConnected
+		}
+		// Transient: reconnecting or PLC ADS not yet ready. Return empty batch
+		// immediately so the caller (test Eventually loop or Benthos retry) controls
+		// the retry rate. Small sleep avoids spinning in production.
+		g.Log.Warnf("Batch read failed (will retry): %v", err)
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+		return service.MessageBatch{}, func(_ context.Context, _ error) error { return nil }, nil
+	}
+
+	// Lazily populate dataTypes/dataSizes/baseTypes from the go-ads cache.
+	// Symbols are cached by go-ads after a successful ReadMultipleSymbols, so
+	// GetSymbol here reads from memory without any network round-trip.
+	for _, sym := range g.Symbols {
+		key := strings.ToLower(sym.Name)
+		if _, ok := g.dataTypes[key]; !ok {
+			if view, viewErr := g.Handler.GetSymbol(ctx, sym.Name); viewErr == nil {
+				g.dataTypes[key] = view.DataType
+				g.dataSizes[key] = view.Length
+				if bt := view.BaseTypeName(); bt != "" {
+					g.baseTypes[key] = bt
+				}
+			}
+		}
+	}
+
+	msgs := service.MessageBatch{}
+	for _, symbol := range g.Symbols {
+		val, ok := values[symbol.Name]
+		if !ok {
+			continue
+		}
+		valueMsg := service.NewMessage([]byte(val))
+		key := strings.ToLower(symbol.Name)
+		valueMsg.MetaSet("symbol_name", sanitize(symbol.Name))
+		if dt, ok := g.dataTypes[key]; ok {
+			valueMsg.MetaSet("data_type", dt)
+		}
+		if bt, ok := g.baseTypes[key]; ok {
+			valueMsg.MetaSet("base_type", bt)
+		}
+		if sz, ok := g.dataSizes[key]; ok {
+			valueMsg.MetaSet("data_size", strconv.FormatUint(uint64(sz), 10))
+		}
+		msgs = append(msgs, valueMsg)
+	}
+
+	// Fall back to individual reads if batch returned no results.
+	// Some PLCs don't support ADS sum read commands, causing ReadMultipleSymbols
+	// to silently skip all symbols.
+	if len(msgs) == 0 && len(g.Symbols) > 0 {
+		g.Log.Warnf("Batch read returned no results for %d symbols, falling back to individual reads", len(g.Symbols))
+		for _, symbol := range g.Symbols {
+			val, readErr := g.Handler.ReadFromSymbol(ctx, symbol.Name)
+			if readErr != nil {
+				g.Log.Errorf("Individual read failed for %s: %v", symbol.Name, readErr)
+				continue
+			}
+			valueMsg := service.NewMessage([]byte(val))
+			key := strings.ToLower(symbol.Name)
+			valueMsg.MetaSet("symbol_name", sanitize(symbol.Name))
+			if dt, ok := g.dataTypes[key]; ok {
+				valueMsg.MetaSet("data_type", dt)
+			}
+			if bt, ok := g.baseTypes[key]; ok {
+				valueMsg.MetaSet("base_type", bt)
+			}
+			if sz, ok := g.dataSizes[key]; ok {
+				valueMsg.MetaSet("data_size", strconv.FormatUint(uint64(sz), 10))
+			}
+			msgs = append(msgs, valueMsg)
+		}
+	}
+
+	// Sleep the remaining interval so the effective poll period matches
+	// IntervalTime regardless of read latency. On ctx cancellation (shutdown)
+	// discard the collected batch and return the error — no partial delivery.
+	if remaining := g.IntervalTime - time.Since(start); remaining > 0 {
+		select {
+		case <-time.After(remaining):
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		}
+	}
+	return msgs, func(_ context.Context, _ error) error { return nil }, nil
+}
+
+func (g *AdsCommInput) makeNotificationMessage(update *adsLib.Update) *service.Message {
+	msg := service.NewMessage([]byte(update.Value))
+	key := strings.ToLower(update.Variable)
+	name := update.Variable
+	if configured, ok := g.symbolNames[key]; ok {
+		name = configured
+	}
+	msg.MetaSet("symbol_name", sanitize(name))
+	if dt, ok := g.dataTypes[key]; ok {
+		msg.MetaSet("data_type", dt)
+	}
+	if bt, ok := g.baseTypes[key]; ok {
+		msg.MetaSet("base_type", bt)
+	}
+	if sz, ok := g.dataSizes[key]; ok {
+		msg.MetaSet("data_size", strconv.FormatUint(uint64(sz), 10))
+	}
+	return msg
+}
+
+func (g *AdsCommInput) ReadBatchNotification(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+	g.Log.Debugf("ReadBatchNotification called")
+
+	// Use a short-lived context so ReadBatch returns periodically even when no
+	// notifications arrive (e.g. slow-changing symbols). Caller loops immediately.
+	waitCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	var first *adsLib.Update
+	select {
+	case first = <-g.NotificationChan:
+		if first == nil {
+			g.Log.Warnf("Received nil update from ADS library, skipping")
+			return nil, func(_ context.Context, _ error) error { return nil }, nil
+		}
+	case <-g.done:
+		return nil, nil, service.ErrEndOfInput
+	case <-waitCtx.Done():
+		if g.Handler != nil && g.Handler.IsClosed() {
+			_ = g.Handler.Close()
+			g.Handler = nil
+			return nil, nil, service.ErrNotConnected
+		}
+		// No data within timeout — normal for slow-changing symbols or mid-reconnect.
+		return nil, func(_ context.Context, _ error) error { return nil }, nil
+	}
+
+	msgs := service.MessageBatch{g.makeNotificationMessage(first)}
+
+	// Drain all pending notifications from the buffer without blocking.
+	// go-ads blocks indefinitely when the channel is full, which stalls
+	// the ADS protocol listener. Draining here keeps the buffer available
+	// for incoming notifications.
+	for {
+		select {
+		case update := <-g.NotificationChan:
+			if update != nil {
+				msgs = append(msgs, g.makeNotificationMessage(update))
+			}
+		default:
+			return msgs, func(_ context.Context, _ error) error { return nil }, nil
+		}
+	}
+}
+
+func (g *AdsCommInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+	g.Log.Infof("ReadBatch called")
+	if g.ReadType == "notification" {
+		return g.ReadBatchNotification(ctx)
+	}
+	return g.ReadBatchPull(ctx)
 }
 
 // Close shuts down the ADS connection. ctx is required by the service.BatchInput interface;
