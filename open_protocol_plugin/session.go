@@ -83,7 +83,7 @@ type Session struct {
 	conn        net.Conn
 	fr          *FrameReader
 	reassembler *Reassembler
-	pending     []Telegram         // telegrams read during handshake, to drain first
+	pending     []Telegram // telegrams read during handshake, to drain first
 	generation  uint64
 	kaCancel    context.CancelFunc
 	closed      bool // true when Close() was called deliberately; distinct from a transient connection loss

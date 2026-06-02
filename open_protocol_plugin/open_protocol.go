@@ -214,16 +214,16 @@ func (in *openProtocolInput) buildBatch(t Telegram) service.MessageBatch {
 			}
 
 			commonMeta := map[string]string{
-				"open_protocol_mid":              midStr,
-				"open_protocol_revision":         revStr,
-				"open_protocol_timestamp":        tsRaw,
+				"open_protocol_mid":                   midStr,
+				"open_protocol_revision":              revStr,
+				"open_protocol_timestamp":             tsRaw,
 				"open_protocol_pset_change_timestamp": lt.PsetChangeTime,
-				"open_protocol_cell_id":          strconv.Itoa(lt.CellID),
-				"open_protocol_channel_id":       strconv.Itoa(lt.ChannelID),
-				"open_protocol_station_id":       strconv.Itoa(t.Header.StationID),
-				"open_protocol_spindle_id":       strconv.Itoa(t.Header.SpindleID),
-				"open_protocol_controller_name":  strings.TrimSpace(lt.ControllerName),
-				"open_protocol_endpoint":         in.endpoint,
+				"open_protocol_cell_id":               strconv.Itoa(lt.CellID),
+				"open_protocol_channel_id":            strconv.Itoa(lt.ChannelID),
+				"open_protocol_station_id":            strconv.Itoa(t.Header.StationID),
+				"open_protocol_spindle_id":            strconv.Itoa(t.Header.SpindleID),
+				"open_protocol_controller_name":       strings.TrimSpace(lt.ControllerName),
+				"open_protocol_endpoint":              in.endpoint,
 			}
 
 			tags := FanOut(lt)

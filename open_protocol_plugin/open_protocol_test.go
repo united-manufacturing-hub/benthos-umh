@@ -37,30 +37,30 @@ import (
 
 // capturedMsg holds the fields we want to inspect from a received message.
 type capturedMsg struct {
-	tagName    string
-	mid        string
-	revision   string
-	stationID  string
-	spindleID  string
-	endpoint   string
+	tagName     string
+	mid         string
+	revision    string
+	stationID   string
+	spindleID   string
+	endpoint    string
 	timestampMs string
-	structured any
-	raw        []byte
+	structured  any
+	raw         []byte
 	// full metadata snapshot for checking absence of keys
-	allMeta    map[string]string
+	allMeta map[string]string
 }
 
 // captureMsg snapshots all the metadata fields we care about from a message.
 func captureMsg(m *service.Message) capturedMsg {
-	tagName, _      := m.MetaGet("open_protocol_tag_name")
-	mid, _          := m.MetaGet("open_protocol_mid")
-	revision, _     := m.MetaGet("open_protocol_revision")
-	stationID, _    := m.MetaGet("open_protocol_station_id")
-	spindleID, _    := m.MetaGet("open_protocol_spindle_id")
-	endpoint, _     := m.MetaGet("open_protocol_endpoint")
-	tsMs, _         := m.MetaGet("timestamp_ms")
-	structured, _   := m.AsStructured()
-	raw, _          := m.AsBytes()
+	tagName, _ := m.MetaGet("open_protocol_tag_name")
+	mid, _ := m.MetaGet("open_protocol_mid")
+	revision, _ := m.MetaGet("open_protocol_revision")
+	stationID, _ := m.MetaGet("open_protocol_station_id")
+	spindleID, _ := m.MetaGet("open_protocol_spindle_id")
+	endpoint, _ := m.MetaGet("open_protocol_endpoint")
+	tsMs, _ := m.MetaGet("timestamp_ms")
+	structured, _ := m.AsStructured()
+	raw, _ := m.AsBytes()
 
 	// Collect all meta keys for absence assertions.
 	all := map[string]string{}
@@ -180,9 +180,9 @@ open_protocol:
 		const testTimestamp = "2026-06-02:14:30:15"
 
 		var (
-			fc      *fakeController
+			fc       *fakeController
 			captured []capturedMsg
-			mu      sync.Mutex
+			mu       sync.Mutex
 		)
 
 		BeforeEach(func() {
