@@ -62,9 +62,9 @@ Routing metadata is attached to every message: ` + "`open_protocol_mid`" + ` (4-
 			Default([]any{}).
 			Advanced()).
 		Field(service.NewIntField(fieldRevision).
-			Description("Requested MID revision during login. 0 lets the controller choose (treated as revision 1).").
-			Default(0).
-			Examples(0, 1).
+			Description("MID revision requested at login (sent as the 3-digit revision field of MID 0001). Pinned to 1; the plugin natively decodes only MID 0061 revision 1.").
+			Default(1).
+			Examples(1).
 			Advanced()).
 		Field(service.NewDurationField(fieldKeepAliveInterval).
 			Description("How often to send keep-alive telegrams (MID 9999).").
@@ -179,6 +179,8 @@ func (in *openProtocolInput) ReadBatch(ctx context.Context) (service.MessageBatc
 	return batch, func(_ context.Context, e error) error {
 		if e == nil {
 			res.Ack()
+		} else {
+			in.logger.Warnf("open protocol: downstream delivery failed; MID 0062 withheld, result left un-acked for controller re-push: %v", e)
 		}
 		return nil
 	}, nil

@@ -63,24 +63,6 @@ func ParseTelegram(frame []byte) (Telegram, error) {
 	return Telegram{Header: h, Data: data}, nil
 }
 
-// Decode returns a typed, natively-parsed value for the MIDs this plugin
-// understands in depth (currently only MID 0061, last tightening). The boolean
-// result is true when a native decode was produced; when false the caller
-// should fall back to emitting the raw data field for downstream (bloblang)
-// decoding, which is the intended path for all other MIDs (alarms, VIN, etc.).
-func Decode(t Telegram) (any, bool) {
-	switch t.Header.MID {
-	case MIDLastTightening:
-		lt, err := ParseLastTightening(t)
-		if err != nil {
-			return nil, false
-		}
-		return lt, true
-	default:
-		return nil, false
-	}
-}
-
 // pidField describes one parameter-ID field in a parameter-ID-formatted data
 // field: a 2-digit id followed by a fixed-width ASCII value.
 type pidField struct {

@@ -51,7 +51,7 @@ type SessionConfig struct {
 	Endpoint          string        // controller host:port (e.g. "10.0.0.42:4545")
 	Subscriptions     []string      // friendly subscription names: "last_tightening", "alarms"
 	GenericMIDs       []int         // additional MIDs to subscribe via the generic mechanism
-	Revision          int           // requested MID revision (0 = controller default / 1)
+	Revision          int           // requested MID revision (pinned to 1)
 	KeepAliveInterval time.Duration // MID 9999 cadence
 	RequestTimeout    time.Duration // timeout awaiting login / handshake replies
 	ReadTimeout       time.Duration // deadline for each Read call (0 → defaultReadTimeout)
@@ -243,10 +243,16 @@ func (s *Session) Read(ctx context.Context) (Result, error) {
 	}
 }
 
-// makeAck builds the idempotent, generation-bound MID 0062 sender. Lock order:
-// mu -> once -> writeMu. Stale generation or write failure => benign no-op.
+// makeAck builds the idempotent, generation-bound MID 0062 sender. The guard is
+// keyed on having sent a 0062 and latches only on a SUCCESSFUL write, so a
+// transient write failure does not permanently suppress a later retry. Lock
+// order: s.mu (released) -> local mu -> writeMu (inside s.write). Stale
+// generation => benign no-op; write failure => benign no-op without latching.
 func (s *Session) makeAck(gen uint64, conn net.Conn, ackMID int, needsAck bool) func() {
-	var once sync.Once
+	var (
+		mu   sync.Mutex
+		sent bool
+	)
 	return func() {
 		if !needsAck {
 			return
@@ -255,13 +261,18 @@ func (s *Session) makeAck(gen uint64, conn net.Conn, ackMID int, needsAck bool) 
 		current := s.generation
 		s.mu.Unlock()
 		if current != gen {
-			return
+			return // stale generation: controller re-pushes on the new session (Edge #22)
 		}
-		once.Do(func() {
-			if err := s.write(conn, ackMID, 1, nil); err != nil {
-				s.log.Warnf("open protocol: 0062 ack write failed (benign): %v", err)
-			}
-		})
+		mu.Lock()
+		defer mu.Unlock()
+		if sent {
+			return // a 0062 was already sent for this result
+		}
+		if err := s.write(conn, ackMID, 1, nil); err != nil {
+			s.log.Warnf("open protocol: 0062 ack write failed (benign, will retry on re-ack): %v", err)
+			return // do NOT latch on failure
+		}
+		sent = true
 	}
 }
 

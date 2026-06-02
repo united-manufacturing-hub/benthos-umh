@@ -231,22 +231,4 @@ var _ = Describe("MID parsing", func() {
 		})
 	})
 
-	Describe("Decode dispatch", func() {
-		It("returns a typed value for MID 0061 and raw for unknown MIDs", func() {
-			// 0061 -> typed
-			data := build0061Data(true)
-			frame := op.BuildMessage(61, 1, []byte(data))
-			tel, _ := op.ParseTelegram(frame[:len(frame)-1])
-			decoded, native := op.Decode(tel)
-			Expect(native).To(BeTrue())
-			_, ok := decoded.(op.LastTightening)
-			Expect(ok).To(BeTrue())
-
-			// 0071 (alarm) -> not natively decoded; caller falls back to raw data.
-			alarmFrame := op.BuildMessage(71, 1, []byte("RAWALARM"))
-			alarmTel, _ := op.ParseTelegram(alarmFrame[:len(alarmFrame)-1])
-			_, native = op.Decode(alarmTel)
-			Expect(native).To(BeFalse())
-		})
-	})
 })
