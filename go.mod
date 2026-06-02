@@ -27,9 +27,9 @@ require (
 )
 
 require (
-	github.com/RuneRoven/benthosADS v1.0.9
 	github.com/RuneRoven/benthosAlarm v1.0.0
 	github.com/RuneRoven/benthosSMTP v0.0.1
+	github.com/RuneRoven/go-ads/v2 v2.2.0
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/danomagnum/gologix v0.27.2-beta
 	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
