@@ -105,27 +105,6 @@ func (fc *fakeController) countMID(mid int) int {
 	return n
 }
 
-// countMIDOnConn returns how many telegrams with the given MID were received on
-// connection connIdx (1-based).
-func (fc *fakeController) countMIDOnConn(connIdx, mid int) int {
-	fc.mu.Lock()
-	defer fc.mu.Unlock()
-	n := 0
-	for _, m := range fc.perConnReceived[connIdx] {
-		if m == mid {
-			n++
-		}
-	}
-	return n
-}
-
-// connectionCount returns the number of connections accepted so far.
-func (fc *fakeController) connectionCount() int {
-	fc.mu.Lock()
-	defer fc.mu.Unlock()
-	return fc.connObs
-}
-
 // waitFor polls cond until it returns true or the timeout elapses.
 func waitFor(timeout time.Duration, cond func() bool) bool {
 	deadline := time.Now().Add(timeout)

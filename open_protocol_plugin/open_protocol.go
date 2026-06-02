@@ -17,6 +17,7 @@ package open_protocol_plugin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -153,6 +154,9 @@ func (in *openProtocolInput) Connect(ctx context.Context) error {
 func (in *openProtocolInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
 	res, err := in.session.Read(ctx)
 	if err != nil {
+		if errors.Is(err, errSessionClosed) {
+			return nil, nil, service.ErrEndOfInput
+		}
 		return nil, nil, service.ErrNotConnected
 	}
 	msg := in.telegramToMessage(res.Telegram)

@@ -66,6 +66,10 @@ type Result struct {
 
 var errNotConnected = fmt.Errorf("open protocol: not connected")
 
+// errSessionClosed is returned by Read when the session was deliberately
+// closed via Close(), as opposed to an unexpected connection loss.
+var errSessionClosed = fmt.Errorf("open protocol: session closed")
+
 // Session manages an Open Protocol connection following the Benthos-native
 // lifecycle: Connect establishes the session (login + confirmed subscriptions +
 // a connection-scoped keep-alive), Read delivers the next forwardable telegram,
@@ -82,7 +86,7 @@ type Session struct {
 	pending     []Telegram         // telegrams read during handshake, to drain first
 	generation  uint64
 	kaCancel    context.CancelFunc
-	closed      bool
+	closed      bool // true when Close() was called deliberately; distinct from a transient connection loss
 
 	writeMu sync.Mutex
 }
@@ -177,7 +181,7 @@ func (s *Session) Close() error {
 // error (the input surfaces it as service.ErrNotConnected).
 func (s *Session) Read(ctx context.Context) (Result, error) {
 	s.mu.Lock()
-	conn, gen, fr := s.conn, s.generation, s.fr
+	conn, gen, fr, reasm := s.conn, s.generation, s.fr, s.reassembler
 	// Pop any pending telegram buffered during handshake.
 	var pending *Telegram
 	if len(s.pending) > 0 {
@@ -186,7 +190,7 @@ func (s *Session) Read(ctx context.Context) (Result, error) {
 		pending = &t
 	}
 	s.mu.Unlock()
-	if conn == nil {
+	if conn == nil || reasm == nil {
 		return Result{}, errNotConnected
 	}
 
@@ -201,6 +205,12 @@ func (s *Session) Read(ctx context.Context) (Result, error) {
 			}
 			frame, err := fr.ReadFrame()
 			if err != nil {
+				s.mu.Lock()
+				closed := s.closed
+				s.mu.Unlock()
+				if closed {
+					return Result{}, errSessionClosed
+				}
 				return Result{}, err
 			}
 			var perr error
@@ -220,7 +230,7 @@ func (s *Session) Read(ctx context.Context) (Result, error) {
 			continue
 		}
 
-		complete, ok, rerr := s.reassembler.Push(tel)
+		complete, ok, rerr := reasm.Push(tel)
 		if rerr != nil {
 			s.log.Warnf("open protocol: reassembly error: %v", rerr)
 			continue
