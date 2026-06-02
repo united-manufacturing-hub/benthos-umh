@@ -101,4 +101,32 @@ var _ = Describe("TCP framer", func() {
 		_, err = fr.ReadFrame()
 		Expect(err).To(Equal(io.EOF))
 	})
+
+	// TEST 5 — framer length lower-bound guard (Edge #2).
+	//
+	// HeaderLength == 20. A length field that is a valid 4-digit number but < 20
+	// must be rejected as out-of-range. This exercises the
+	//   if length < HeaderLength || length > maxFrameLength
+	// branch in ReadFrame. A mutant that removes the lower-bound comparison
+	// (e.g. changes it to length > maxFrameLength) would pass 0019 or 0010 as
+	// valid, and these tests would fail.
+	It("rejects a length field of '0019' (< HeaderLength=20, numeric but out of range)", func() {
+		// Build a stream whose 4-byte length prefix decodes to 19.
+		// The remaining bytes are filler; ReadFrame should error before consuming them.
+		buf := append([]byte("0019"), bytes.Repeat([]byte("X"), 20)...)
+		buf = append(buf, 0x00) // NUL terminator (should never be reached)
+		fr := op.NewFrameReader(bytes.NewReader(buf))
+		_, err := fr.ReadFrame()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("out of range"))
+	})
+
+	It("rejects a length field of '0010' (< HeaderLength=20, numeric but out of range)", func() {
+		buf := append([]byte("0010"), bytes.Repeat([]byte("Y"), 20)...)
+		buf = append(buf, 0x00)
+		fr := op.NewFrameReader(bytes.NewReader(buf))
+		_, err := fr.ReadFrame()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("out of range"))
+	})
 })

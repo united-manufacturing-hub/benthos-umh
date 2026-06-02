@@ -229,6 +229,64 @@ var _ = Describe("MID parsing", func() {
 			_, _, err = rs.Push(op.Telegram{Header: h2, Data: big}) // 80 KiB > 64 KiB
 			Expect(err).To(HaveOccurred())
 		})
+
+		// TEST 3 — state discarded after out-of-order error, fresh sequence succeeds.
+		//
+		// A mutant that removes delete(rs.inflight, mid) on the out-of-order path
+		// would leave the poisoned partialTelegram in place; the fresh part-1 would
+		// then be rejected as "already in progress" or produce wrong output.
+		It("discards inflight state after an out-of-order error, then accepts a fresh sequence", func() {
+			rs := op.NewReassembler()
+
+			// Step 1: push a valid part 1 of 3.
+			p1 := op.Telegram{
+				Header: op.Header{MID: 61, TotalParts: 3, PartNumber: 1},
+				Data:   []byte("PART-ONE"),
+			}
+			_, complete, err := rs.Push(p1)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(complete).To(BeFalse())
+
+			// Step 2: push part 3, skipping part 2 → out-of-order error.
+			p3 := op.Telegram{
+				Header: op.Header{MID: 61, TotalParts: 3, PartNumber: 3},
+				Data:   []byte("PART-THREE"),
+			}
+			_, _, err = rs.Push(p3)
+			Expect(err).To(HaveOccurred(), "out-of-order part should return an error")
+
+			// Step 3: push a FRESH part 1 of 2 for the same MID.
+			fresh1 := op.Telegram{
+				Header: op.Header{MID: 61, TotalParts: 2, PartNumber: 1},
+				Data:   []byte("FRESH-A"),
+			}
+			_, complete, err = rs.Push(fresh1)
+			Expect(err).NotTo(HaveOccurred(), "fresh sequence should be accepted after error cleared state")
+			Expect(complete).To(BeFalse())
+
+			// Step 4: push part 2 of 2 → sequence completes.
+			fresh2 := op.Telegram{
+				Header: op.Header{MID: 61, TotalParts: 2, PartNumber: 2},
+				Data:   []byte("-FRESH-B"),
+			}
+			out, complete, err := rs.Push(fresh2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(complete).To(BeTrue())
+			Expect(string(out.Data)).To(Equal("FRESH-A-FRESH-B"))
+		})
+
+		// TEST 4 — maxAssembledBytes guard on the FIRST part alone.
+		//
+		// This exercises the part-1 size guard (distinct from the cumulative-append
+		// guard tested above, which only fires on part 2+).
+		It("rejects a part-1 whose data alone exceeds maxAssembledBytes (65 KiB)", func() {
+			rs := op.NewReassembler()
+			// 65 KiB > maxAssembledBytes (64 KiB).
+			big := make([]byte, 65*1024)
+			h1 := op.Header{MID: 9002, TotalParts: 2, PartNumber: 1}
+			_, _, err := rs.Push(op.Telegram{Header: h1, Data: big})
+			Expect(err).To(HaveOccurred(), "part-1 exceeding maxAssembledBytes should be rejected immediately")
+		})
 	})
 
 })

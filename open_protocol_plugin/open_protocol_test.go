@@ -391,6 +391,160 @@ open_protocol:
 	})
 
 	// -----------------------------------------------------------------------
+	// TEST 1 — non-UTC timezone end-to-end
+	// -----------------------------------------------------------------------
+	Describe("non-UTC timezone e2e (Europe/Berlin, CEST +02:00)", func() {
+		// Wall-clock timestamp carried in the MID 0061 data field.
+		// Europe/Berlin in CEST (summer time) is UTC+2, so 14:30:15 local
+		// is 12:30:15 UTC, which is 2 hours EARLIER in epoch than UTC interpretation.
+		const berlinTimestamp = "2026-06-02:14:30:15"
+
+		It("timestamp_ms reflects Europe/Berlin interpretation, not UTC", func() {
+			// Compute the expected epoch-ms: treat the wall-clock time as
+			// being in Europe/Berlin (CEST, +02:00 on this date).
+			loc, err := time.LoadLocation("Europe/Berlin")
+			Expect(err).NotTo(HaveOccurred())
+			want := time.Date(2026, 6, 2, 14, 30, 15, 0, loc).UnixMilli()
+			wantStr := strconv.FormatInt(want, 10)
+
+			// Also compute the UTC interpretation so we can assert they differ.
+			wantUTC := time.Date(2026, 6, 2, 14, 30, 15, 0, time.UTC).UnixMilli()
+			Expect(want).NotTo(Equal(wantUTC), "test precondition: Berlin epoch != UTC epoch")
+
+			// Build the fake controller that pushes this timestamp in a 0061.
+			result := []byte(build0061DataWithTimestamp(true, berlinTimestamp))
+			fc, fcErr := newFakeController(goodHandler([][]byte{result}))
+			Expect(fcErr).NotTo(HaveOccurred())
+			defer fc.close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			var mu sync.Mutex
+			var captured []capturedMsg
+
+			builder := service.NewStreamBuilder()
+			Expect(builder.AddInputYAML(fmt.Sprintf(`
+open_protocol:
+  endpoint: "%s"
+  subscribe: [last_tightening]
+  keepalive_interval: 50ms
+  request_timeout: 2s
+  timezone: "Europe/Berlin"
+`, fc.addr()))).To(Succeed())
+
+			Expect(builder.AddConsumerFunc(func(_ context.Context, m *service.Message) error {
+				cm := captureMsg(m)
+				mu.Lock()
+				captured = append(captured, cm)
+				mu.Unlock()
+				return nil
+			})).To(Succeed())
+
+			stream, buildErr := builder.Build()
+			Expect(buildErr).NotTo(HaveOccurred())
+			go func() {
+				defer GinkgoRecover()
+				_ = stream.Run(ctx)
+			}()
+
+			Eventually(func() int {
+				mu.Lock()
+				defer mu.Unlock()
+				return len(captured)
+			}, 5*time.Second, 20*time.Millisecond).Should(BeNumerically(">=", 18))
+
+			_ = stream.StopWithin(3 * time.Second)
+
+			mu.Lock()
+			first := captured[0]
+			mu.Unlock()
+
+			// All messages share the same timestamp_ms; check the first.
+			Expect(first.timestampMs).To(Equal(wantStr),
+				"timezone=Europe/Berlin must shift epoch by -7200000 ms vs UTC")
+		})
+	})
+
+	// -----------------------------------------------------------------------
+	// TEST 2 — unparseable timestamp in MID 0061 (Edge #14)
+	// -----------------------------------------------------------------------
+	Describe("unparseable timestamp in rev-1 MID 0061 (Edge #14)", func() {
+		// "NOT-A-DATE         " is exactly 19 chars — fits the param-20 layout
+		// but is not a valid YYYY-MM-DD:HH:MM:SS string.
+		const badTimestamp = "NOT-A-DATE         "
+
+		It("omits timestamp_ms but sets open_protocol_timestamp to the raw string", func() {
+			Expect(len(badTimestamp)).To(Equal(19), "test precondition: timestamp must be 19 chars")
+
+			result := []byte(build0061DataWithTimestamp(true, badTimestamp))
+			fc, fcErr := newFakeController(goodHandler([][]byte{result}))
+			Expect(fcErr).NotTo(HaveOccurred())
+			defer fc.close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			var mu sync.Mutex
+			var captured []capturedMsg
+
+			builder := service.NewStreamBuilder()
+			Expect(builder.AddInputYAML(fmt.Sprintf(`
+open_protocol:
+  endpoint: "%s"
+  subscribe: [last_tightening]
+  keepalive_interval: 50ms
+  request_timeout: 2s
+`, fc.addr()))).To(Succeed())
+
+			Expect(builder.AddConsumerFunc(func(_ context.Context, m *service.Message) error {
+				cm := captureMsg(m)
+				mu.Lock()
+				captured = append(captured, cm)
+				mu.Unlock()
+				return nil
+			})).To(Succeed())
+
+			stream, buildErr := builder.Build()
+			Expect(buildErr).NotTo(HaveOccurred())
+			go func() {
+				defer GinkgoRecover()
+				_ = stream.Run(ctx)
+			}()
+
+			// We expect 18 fanned messages (parse succeeds; only timestamp is bad).
+			Eventually(func() int {
+				mu.Lock()
+				defer mu.Unlock()
+				return len(captured)
+			}, 5*time.Second, 20*time.Millisecond).Should(BeNumerically(">=", 18))
+
+			_ = stream.StopWithin(3 * time.Second)
+
+			mu.Lock()
+			msgs := make([]capturedMsg, len(captured))
+			copy(msgs, captured)
+			mu.Unlock()
+
+			Expect(msgs).To(HaveLen(18), "unparseable timestamp still fans out 18 messages")
+
+			for i, m := range msgs {
+				// timestamp_ms must be ABSENT.
+				_, hasTsMs := m.allMeta["timestamp_ms"]
+				Expect(hasTsMs).To(BeFalse(),
+					"message %d should have no timestamp_ms when timestamp is unparseable", i)
+
+				// open_protocol_timestamp must carry the raw string.
+				rawTs, hasRaw := m.allMeta["open_protocol_timestamp"]
+				Expect(hasRaw).To(BeTrue(),
+					"message %d should have open_protocol_timestamp", i)
+				Expect(rawTs).To(Equal(badTimestamp),
+					"message %d open_protocol_timestamp should equal the raw 19-char string", i)
+			}
+		})
+	})
+
+	// -----------------------------------------------------------------------
 	// Raw passthrough — non-0061 MID (alarm MID 0071)
 	// -----------------------------------------------------------------------
 	Describe("raw passthrough for non-0061 MIDs (alarms)", func() {
