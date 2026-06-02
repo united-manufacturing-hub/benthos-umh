@@ -16,10 +16,11 @@ package open_protocol_plugin
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
@@ -31,8 +32,8 @@ const (
 	fieldRevision          = "revision"
 	fieldKeepAliveInterval = "keepalive_interval"
 	fieldRequestTimeout    = "request_timeout"
-	fieldReconnect         = "reconnect"
-	fieldMaxBackoff        = "max_backoff"
+	fieldTimezone          = "timezone"
+	fieldReadTimeout       = "read_timeout"
 )
 
 func configSpec() *service.ConfigSpec {
@@ -43,11 +44,11 @@ func configSpec() *service.ConfigSpec {
 
 The controller acts as the server (default port 4545); this input is the client. It establishes a long-lived session: it logs in (MID 0001), subscribes to the configured event streams, receives pushed result telegrams, acknowledges them, and keeps the link alive (MID 9999). It transparently reconnects and replays the login + subscriptions if the connection drops.
 
-For each received telegram the input emits one message:
-- MID 0061 (last tightening result) is natively decoded into a structured JSON object (torque, angle, status, IDs, timestamps).
-- All other MIDs are emitted as the raw ASCII data field, to be decoded downstream in bloblang.
+For each received telegram the input emits one or more messages:
+- MID 0061 rev-1 (last tightening result) is fanned out into 18 messages — one per measurement tag (torque, angle, statuses, IDs, etc.).
+- All other MIDs, or MID 0061 with a revision other than 1, are emitted as one raw message containing the ASCII data field.
 
-Routing metadata is attached to every message: ` + "`op_mid`" + `, ` + "`op_revision`" + `, ` + "`op_station_id`" + `, ` + "`op_spindle_id`" + ` and ` + "`op_endpoint`" + `. Route on ` + "`op_mid`" + ` to apply the right decoder per message type.`).
+Routing metadata is attached to every message: ` + "`open_protocol_mid`" + ` (4-digit), ` + "`open_protocol_revision`" + `, ` + "`open_protocol_station_id`" + `, ` + "`open_protocol_spindle_id`" + `, and ` + "`open_protocol_endpoint`" + `. For fanned-out MID 0061 messages, ` + "`open_protocol_tag_name`" + ` identifies the measurement and ` + "`timestamp_ms`" + ` carries the controller result timestamp as Unix milliseconds. Route on ` + "`open_protocol_mid`" + ` to apply the right decoder per message type.`).
 		Field(service.NewStringField(fieldEndpoint).
 			Description("The controller's TCP endpoint as host:port.").
 			Example("10.0.0.42:4545")).
@@ -73,12 +74,15 @@ Routing metadata is attached to every message: ` + "`op_mid`" + `, ` + "`op_revi
 			Description("How long to wait for the login/handshake reply before treating the connection as failed.").
 			Default("5s").
 			Advanced()).
-		Field(service.NewObjectField(fieldReconnect,
-			service.NewDurationField(fieldMaxBackoff).
-				Description("Maximum backoff between reconnection attempts.").
-				Default("30s"),
-		).
-			Description("Reconnection behaviour.").
+		Field(service.NewStringField(fieldTimezone).
+			Description("IANA timezone (e.g. Europe/Berlin) used to interpret the controller's zone-less result timestamp. Set to the controller's local zone.").
+			Default("UTC").
+			Example("UTC").
+			Example("Europe/Berlin").
+			Advanced()).
+		Field(service.NewDurationField(fieldReadTimeout).
+			Description("Max idle awaiting a telegram before the connection is treated as lost and Benthos reconnects. Must be >= 2x keepalive_interval.").
+			Default("30s").
 			Advanced())
 }
 
@@ -94,6 +98,7 @@ func init() {
 
 type openProtocolInput struct {
 	endpoint string
+	loc      *time.Location
 	session  *Session
 	logger   *service.Logger
 }
@@ -123,10 +128,20 @@ func newOpenProtocolInput(conf *service.ParsedConfig, mgr *service.Resources) (*
 	if err != nil {
 		return nil, err
 	}
-	// Parse reconnect.max_backoff for config compatibility; not used by the new
-	// Benthos-native lifecycle (Benthos owns the reconnect loop).
-	if _, err = conf.FieldDuration(fieldReconnect, fieldMaxBackoff); err != nil {
+	tz, err := conf.FieldString(fieldTimezone)
+	if err != nil {
 		return nil, err
+	}
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		return nil, fmt.Errorf("open protocol: invalid timezone %q: %w", tz, err)
+	}
+	readTimeout, err := conf.FieldDuration(fieldReadTimeout)
+	if err != nil {
+		return nil, err
+	}
+	if readTimeout < 2*keepAlive {
+		return nil, fmt.Errorf("open protocol: read_timeout (%s) must be >= 2x keepalive_interval (%s)", readTimeout, keepAlive)
 	}
 
 	logger := mgr.Logger()
@@ -137,11 +152,12 @@ func newOpenProtocolInput(conf *service.ParsedConfig, mgr *service.Resources) (*
 		Revision:          revision,
 		KeepAliveInterval: keepAlive,
 		RequestTimeout:    requestTimeout,
-		// ReadTimeout: 0 → defaultReadTimeout applies inside NewSession.
+		ReadTimeout:       readTimeout,
 	}, logger)
 
 	return &openProtocolInput{
 		endpoint: endpoint,
+		loc:      loc,
 		session:  sess,
 		logger:   logger,
 	}, nil
@@ -159,8 +175,8 @@ func (in *openProtocolInput) ReadBatch(ctx context.Context) (service.MessageBatc
 		}
 		return nil, nil, service.ErrNotConnected
 	}
-	msg := in.telegramToMessage(res.Telegram)
-	return service.MessageBatch{msg}, func(_ context.Context, e error) error {
+	batch := in.buildBatch(res.Telegram)
+	return batch, func(_ context.Context, e error) error {
 		if e == nil {
 			res.Ack()
 		}
@@ -172,26 +188,68 @@ func (in *openProtocolInput) Close(_ context.Context) error {
 	return in.session.Close()
 }
 
-// telegramToMessage converts a received telegram into a Benthos message. MID
-// 0061 is decoded into structured JSON; every other MID carries the raw data
-// field. Routing metadata is attached in both cases.
-func (in *openProtocolInput) telegramToMessage(t Telegram) *service.Message {
-	var msg *service.Message
-	if decoded, native := Decode(t); native {
-		if b, err := json.Marshal(decoded); err == nil {
-			msg = service.NewMessage(b)
+// buildBatch converts a received telegram into a Benthos MessageBatch.
+//
+// Rev-1 MID 0061 is fanned out into 18 messages — one per measurement tag.
+// Everything else (non-0061, or 0061 with revision != 1, or a malformed 0061)
+// is passed through as a single raw message.
+func (in *openProtocolInput) buildBatch(t Telegram) service.MessageBatch {
+	midStr := fmt.Sprintf("%04d", t.Header.MID)
+	revStr := strconv.Itoa(t.Header.Revision)
+
+	// Rev-1 MID 0061 fan-out path.
+	if t.Header.MID == MIDLastTightening && t.Header.Revision == 1 {
+		lt, derr := ParseLastTightening(t)
+		if derr != nil {
+			in.logger.Warnf("open protocol: MID 0061 parse failed, emitting raw: %v", derr)
+			// Fall through to the raw path below.
 		} else {
-			in.logger.Warnf("open protocol: failed to encode MID %04d, emitting raw: %v", t.Header.MID, err)
-			msg = service.NewMessage(append([]byte{}, t.Data...))
+			// Compute the shared timestamp_ms.
+			tsRaw := lt.Timestamp
+			var tsMs string
+			if instant, perr := ParseControllerTime(tsRaw, in.loc); perr == nil {
+				tsMs = strconv.FormatInt(instant.UnixMilli(), 10)
+			} else {
+				in.logger.Warnf("open protocol: MID 0061 timestamp parse failed (%v), tag_processor will use ingest time", perr)
+			}
+
+			commonMeta := map[string]string{
+				"open_protocol_mid":              midStr,
+				"open_protocol_revision":         revStr,
+				"open_protocol_timestamp":        tsRaw,
+				"open_protocol_pset_change_timestamp": lt.PsetChangeTime,
+				"open_protocol_cell_id":          strconv.Itoa(lt.CellID),
+				"open_protocol_channel_id":       strconv.Itoa(lt.ChannelID),
+				"open_protocol_station_id":       strconv.Itoa(t.Header.StationID),
+				"open_protocol_spindle_id":       strconv.Itoa(t.Header.SpindleID),
+				"open_protocol_controller_name":  strings.TrimSpace(lt.ControllerName),
+				"open_protocol_endpoint":         in.endpoint,
+			}
+
+			tags := FanOut(lt)
+			batch := make(service.MessageBatch, 0, len(tags))
+			for _, tag := range tags {
+				msg := service.NewMessage(nil)
+				msg.SetStructured(tag.Value)
+				for k, v := range commonMeta {
+					msg.MetaSet(k, v)
+				}
+				if tsMs != "" {
+					msg.MetaSet("timestamp_ms", tsMs)
+				}
+				msg.MetaSet("open_protocol_tag_name", tag.Name)
+				batch = append(batch, msg)
+			}
+			return batch
 		}
-	} else {
-		msg = service.NewMessage(append([]byte{}, t.Data...))
 	}
 
-	msg.MetaSet("op_mid", fmt.Sprintf("%04d", t.Header.MID))
-	msg.MetaSet("op_revision", strconv.Itoa(t.Header.Revision))
-	msg.MetaSet("op_station_id", strconv.Itoa(t.Header.StationID))
-	msg.MetaSet("op_spindle_id", strconv.Itoa(t.Header.SpindleID))
-	msg.MetaSet("op_endpoint", in.endpoint)
-	return msg
+	// Raw passthrough: non-0061, rev != 1, or malformed 0061.
+	msg := service.NewMessage(append([]byte{}, t.Data...))
+	msg.MetaSet("open_protocol_mid", midStr)
+	msg.MetaSet("open_protocol_revision", revStr)
+	msg.MetaSet("open_protocol_station_id", strconv.Itoa(t.Header.StationID))
+	msg.MetaSet("open_protocol_spindle_id", strconv.Itoa(t.Header.SpindleID))
+	msg.MetaSet("open_protocol_endpoint", in.endpoint)
+	return service.MessageBatch{msg}
 }

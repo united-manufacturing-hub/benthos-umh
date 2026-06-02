@@ -101,19 +101,22 @@ open_protocol:
 `, endpoint))).To(Succeed())
 
 		Expect(builder.AddConsumerFunc(func(_ context.Context, m *service.Message) error {
-			mid, _ := m.MetaGet("op_mid")
+			mid, _ := m.MetaGet("open_protocol_mid")
 			if mid != "0061" {
 				return nil
+			}
+			tagName, _ := m.MetaGet("open_protocol_tag_name")
+			if tagName == "" {
+				return nil // raw passthrough, not a fanned-out tag
 			}
 			structured, err := m.AsStructured()
 			if err != nil {
 				return nil
 			}
-			if obj, ok := structured.(map[string]any); ok {
-				mu.Lock()
-				got = append(got, obj)
-				mu.Unlock()
-			}
+			row := map[string]any{tagName: structured}
+			mu.Lock()
+			got = append(got, row)
+			mu.Unlock()
 			return nil
 		})).To(Succeed())
 
@@ -132,12 +135,18 @@ open_protocol:
 		}, 90*time.Second, 250*time.Millisecond).Should(BeNumerically(">=", 1))
 
 		mu.Lock()
-		first := got[0]
+		allRows := got
 		mu.Unlock()
-		// Sanity-check that the native decode produced the expected fields.
-		Expect(first).To(HaveKey("tightening_ok"))
-		Expect(first).To(HaveKey("torque_actual"))
-		Expect(first).To(HaveKey("tightening_id"))
+		// Sanity-check that the fan-out produced the expected tag names.
+		tagNames := map[string]struct{}{}
+		for _, row := range allRows {
+			for k := range row {
+				tagNames[k] = struct{}{}
+			}
+		}
+		Expect(tagNames).To(HaveKey("tightening_ok"))
+		Expect(tagNames).To(HaveKey("torque_actual"))
+		Expect(tagNames).To(HaveKey("tightening_id"))
 
 		_ = stream.StopWithin(5 * time.Second)
 	})
