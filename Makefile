@@ -95,6 +95,17 @@ test-noderedjs:
 	@TEST_NODERED_JS=true \
 		$(GINKGO_CMD) $(GINKGO_FLAGS) ./nodered_js_plugin/...
 
+.PHONY: test-open-protocol
+test-open-protocol:
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./open_protocol_plugin/...
+
+# Integration test: builds and runs the dockerized Open Protocol emulator.
+# Requires Docker. The emulator image clones the (GPL) emulator at build time.
+.PHONY: test-open-protocol-integration
+test-open-protocol-integration:
+	@TEST_OPEN_PROTOCOL=true \
+		$(GINKGO_CMD) $(GINKGO_FLAGS) --tags=integration ./open_protocol_plugin/...
+
 .PHONY: test-unit-opc
 test-unit-opc:
 	@TEST_OPCUA_UNIT=true \

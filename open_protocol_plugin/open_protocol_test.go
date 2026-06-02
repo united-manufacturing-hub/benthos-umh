@@ -1,0 +1,785 @@
+// Copyright 2025 UMH Systems GmbH
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package open_protocol_plugin_test
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"strconv"
+	"sync"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	// Register Benthos default components (e.g. the "none" tracer/metrics) so
+	// the StreamBuilder can build a stream in the test binary.
+	_ "github.com/redpanda-data/benthos/v4/public/components/io"
+	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
+	"github.com/redpanda-data/benthos/v4/public/service"
+
+	op "github.com/united-manufacturing-hub/benthos-umh/open_protocol_plugin"
+)
+
+// capturedMsg holds the fields we want to inspect from a received message.
+type capturedMsg struct {
+	tagName     string
+	mid         string
+	revision    string
+	stationID   string
+	spindleID   string
+	endpoint    string
+	timestampMs string
+	structured  any
+	raw         []byte
+	// full metadata snapshot for checking absence of keys
+	allMeta map[string]string
+}
+
+// captureMsg snapshots all the metadata fields we care about from a message.
+func captureMsg(m *service.Message) capturedMsg {
+	tagName, _ := m.MetaGet("open_protocol_tag_name")
+	mid, _ := m.MetaGet("open_protocol_mid")
+	revision, _ := m.MetaGet("open_protocol_revision")
+	stationID, _ := m.MetaGet("open_protocol_station_id")
+	spindleID, _ := m.MetaGet("open_protocol_spindle_id")
+	endpoint, _ := m.MetaGet("open_protocol_endpoint")
+	tsMs, _ := m.MetaGet("timestamp_ms")
+	structured, _ := m.AsStructured()
+	raw, _ := m.AsBytes()
+
+	// Collect all meta keys for absence assertions.
+	all := map[string]string{}
+	_ = m.MetaWalk(func(k, v string) error {
+		all[k] = v
+		return nil
+	})
+
+	return capturedMsg{
+		tagName:     tagName,
+		mid:         mid,
+		revision:    revision,
+		stationID:   stationID,
+		spindleID:   spindleID,
+		endpoint:    endpoint,
+		timestampMs: tsMs,
+		structured:  structured,
+		raw:         append([]byte{}, raw...),
+		allMeta:     all,
+	}
+}
+
+// build0061DataWithTimestamp returns a MID 0061 rev-1 data field using the
+// supplied timestamp string (19 chars, YYYY-MM-DD:HH:MM:SS) for param-20.
+func build0061DataWithTimestamp(okStatus bool, ts string) string {
+	f := defaultFixture()
+	f.TighteningOK = "0"
+	if okStatus {
+		f.TighteningOK = "1"
+	}
+	f.Timestamp = ts
+	return buildMID0061Data(f)
+}
+
+var _ = Describe("open_protocol Benthos input", func() {
+	// -----------------------------------------------------------------------
+	// Registration
+	// -----------------------------------------------------------------------
+	It("registers under the name 'open_protocol' with a valid config spec", func() {
+		env := service.NewEnvironment()
+		builder := env.NewStreamBuilder()
+		err := builder.AddInputYAML(`
+open_protocol:
+  endpoint: "127.0.0.1:4545"
+  subscribe: [60, 70]
+`)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	// -----------------------------------------------------------------------
+	// Task 10 — config validation
+	// -----------------------------------------------------------------------
+	Describe("config validation", func() {
+		// runStreamUntilErr builds a stream, starts Run in background, and
+		// returns the first non-nil error that Run produces (within 3s).
+		// The constructor errors surface at Run time in Benthos StreamBuilder.
+		runStreamUntilErr := func(yaml string) error {
+			builder := service.NewStreamBuilder()
+			if err := builder.AddInputYAML(yaml); err != nil {
+				return err
+			}
+			stream, err := builder.Build()
+			if err != nil {
+				return err
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			return stream.Run(ctx)
+		}
+
+		It("rejects an unknown timezone ('Mars/Phobos')", func() {
+			err := runStreamUntilErr(`
+open_protocol:
+  endpoint: "127.0.0.1:4545"
+  timezone: "Mars/Phobos"
+`)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("Mars/Phobos"))
+		})
+
+		It("rejects read_timeout < 2x keepalive_interval", func() {
+			err := runStreamUntilErr(`
+open_protocol:
+  endpoint: "127.0.0.1:4545"
+  read_timeout: 5s
+  keepalive_interval: 10s
+`)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("read_timeout"))
+		})
+
+		It("accepts read_timeout == 2x keepalive_interval (boundary is valid)", func() {
+			// This will fail to connect (no server) but should NOT error on the
+			// config itself. The Run context times out → context.DeadlineExceeded,
+			// which is NOT a config error.
+			err := runStreamUntilErr(`
+open_protocol:
+  endpoint: "127.0.0.1:1"
+  read_timeout: 20s
+  keepalive_interval: 10s
+`)
+			// Context deadline exceeded is fine — config was accepted.
+			// A config-related error would mention "read_timeout" or "timezone".
+			if err != nil {
+				Expect(err.Error()).NotTo(ContainSubstring("read_timeout"))
+				Expect(err.Error()).NotTo(ContainSubstring("timezone"))
+			}
+		})
+	})
+
+	// -----------------------------------------------------------------------
+	// Task 11 + 12 — fan-out (rev-1 MID 0061 → 18 messages)
+	// -----------------------------------------------------------------------
+	Describe("fan-out for rev-1 MID 0061", func() {
+		// Use timestamp "2026-06-02:14:30:15" so we can assert the exact epoch ms.
+		const testTimestamp = "2026-06-02:14:30:15"
+
+		var (
+			fc       *fakeController
+			captured []capturedMsg
+			mu       sync.Mutex
+		)
+
+		BeforeEach(func() {
+			// Reset the shared capture buffer. This Describe has many It specs that
+			// all read `captured`, and under ginkgo --randomize-all they run in
+			// arbitrary order, re-running this BeforeEach each time. Without the
+			// reset, captured accumulates across specs and the exact-count
+			// assertion (HaveLen(18)) flakes depending on spec order.
+			mu.Lock()
+			captured = nil
+			mu.Unlock()
+
+			result := []byte(build0061DataWithTimestamp(true, testTimestamp))
+			var err error
+			fc, err = newFakeController(goodHandler([][]byte{result}))
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			DeferCleanup(func() {
+				cancel()
+				fc.close()
+			})
+
+			builder := service.NewStreamBuilder()
+			Expect(builder.AddInputYAML(fmt.Sprintf(`
+open_protocol:
+  endpoint: "%s"
+  subscribe: [60]
+  keepalive_interval: 50ms
+  request_timeout: 2s
+  timezone: "UTC"
+`, fc.addr()))).To(Succeed())
+
+			Expect(builder.AddConsumerFunc(func(_ context.Context, m *service.Message) error {
+				cm := captureMsg(m)
+				mu.Lock()
+				captured = append(captured, cm)
+				mu.Unlock()
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			go func() {
+				defer GinkgoRecover()
+				_ = stream.Run(ctx)
+			}()
+
+			// Wait until we have exactly 18 messages (one full fan-out batch).
+			Eventually(func() int {
+				mu.Lock()
+				defer mu.Unlock()
+				return len(captured)
+			}, 5*time.Second, 20*time.Millisecond).Should(BeNumerically(">=", 18))
+
+			_ = stream.StopWithin(3 * time.Second)
+		})
+
+		It("emits exactly 18 messages for one tightening result", func() {
+			mu.Lock()
+			defer mu.Unlock()
+			Expect(captured).To(HaveLen(18))
+		})
+
+		It("all 18 messages share open_protocol_mid == '0061'", func() {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, m := range captured {
+				Expect(m.mid).To(Equal("0061"), "mid mismatch in message %+v", m)
+			}
+		})
+
+		It("all 18 messages share open_protocol_revision == '1'", func() {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, m := range captured {
+				Expect(m.revision).To(Equal("1"), "revision mismatch in message %+v", m)
+			}
+		})
+
+		It("all 18 messages share an identical non-empty timestamp_ms", func() {
+			mu.Lock()
+			defer mu.Unlock()
+			tsSet := map[string]struct{}{}
+			for _, m := range captured {
+				Expect(m.timestampMs).NotTo(BeEmpty(), "timestamp_ms should not be empty")
+				tsSet[m.timestampMs] = struct{}{}
+			}
+			Expect(tsSet).To(HaveLen(1), "all messages must share the same timestamp_ms")
+		})
+
+		It("timestamp_ms equals the UTC epoch-ms of the controller timestamp", func() {
+			// "2026-06-02:14:30:15" UTC → compute expected
+			t, err := time.Parse("2006-01-02:15:04:05", testTimestamp)
+			Expect(err).NotTo(HaveOccurred())
+			expected := strconv.FormatInt(t.UnixMilli(), 10)
+
+			mu.Lock()
+			defer mu.Unlock()
+			Expect(captured[0].timestampMs).To(Equal(expected))
+		})
+
+		It("the set of open_protocol_tag_name values includes the expected tags", func() {
+			mu.Lock()
+			defer mu.Unlock()
+			names := map[string]struct{}{}
+			for _, m := range captured {
+				names[m.tagName] = struct{}{}
+			}
+			for _, want := range []string{
+				"torque_actual", "angle_actual", "tightening_ok",
+				"vin", "tightening_id",
+			} {
+				Expect(names).To(HaveKey(want), "expected tag name %q in fan-out", want)
+			}
+		})
+
+		It("torque_actual payload ≈ 50.12", func() {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, m := range captured {
+				if m.tagName == "torque_actual" {
+					f, ok := m.structured.(float64)
+					Expect(ok).To(BeTrue(), "torque_actual value should be float64, got %T", m.structured)
+					Expect(f).To(BeNumerically("~", 50.12, 0.001))
+					return
+				}
+			}
+			Fail("torque_actual tag not found in fan-out")
+		})
+
+		It("tightening_ok payload == true", func() {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, m := range captured {
+				if m.tagName == "tightening_ok" {
+					b, ok := m.structured.(bool)
+					Expect(ok).To(BeTrue(), "tightening_ok value should be bool, got %T", m.structured)
+					Expect(b).To(BeTrue())
+					return
+				}
+			}
+			Fail("tightening_ok tag not found in fan-out")
+		})
+
+		It("vin appears as a tag (open_protocol_tag_name), NOT as a metadata key", func() {
+			mu.Lock()
+			defer mu.Unlock()
+			foundTag := false
+			for _, m := range captured {
+				if m.tagName == "vin" {
+					foundTag = true
+				}
+				// vin must not appear as a separate metadata key
+				_, hasVinMeta := m.allMeta["open_protocol_vin"]
+				Expect(hasVinMeta).To(BeFalse(), "vin should not be a metadata key")
+			}
+			Expect(foundTag).To(BeTrue(), "vin should appear as an open_protocol_tag_name")
+		})
+
+		It("tightening_id appears as a tag, NOT as a metadata key", func() {
+			mu.Lock()
+			defer mu.Unlock()
+			foundTag := false
+			for _, m := range captured {
+				if m.tagName == "tightening_id" {
+					foundTag = true
+				}
+				_, hasMeta := m.allMeta["open_protocol_tightening_id"]
+				Expect(hasMeta).To(BeFalse(), "tightening_id should not be a metadata key")
+			}
+			Expect(foundTag).To(BeTrue(), "tightening_id should appear as an open_protocol_tag_name")
+		})
+
+		It("job_id, pset_number, batch_counter, batch_size are tags (not metadata keys)", func() {
+			mu.Lock()
+			defer mu.Unlock()
+
+			// Collect all tag names across the 18 messages.
+			tagNames := map[string]struct{}{}
+			for _, m := range captured {
+				if m.tagName != "" {
+					tagNames[m.tagName] = struct{}{}
+				}
+			}
+
+			// These identifiers must appear as open_protocol_tag_name values.
+			for _, want := range []string{"job_id", "pset_number", "batch_counter", "batch_size"} {
+				Expect(tagNames).To(HaveKey(want), "expected %q to appear as open_protocol_tag_name", want)
+			}
+
+			// They must NOT appear as standalone metadata keys on any message.
+			for _, m := range captured {
+				for _, key := range []string{
+					"open_protocol_job_id",
+					"open_protocol_pset_number",
+					"open_protocol_batch_counter",
+					"open_protocol_batch_size",
+				} {
+					_, hasMeta := m.allMeta[key]
+					Expect(hasMeta).To(BeFalse(), "identifier %q must not be a metadata key", key)
+				}
+			}
+		})
+
+		It("no op_* metadata keys remain on any message", func() {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, m := range captured {
+				for k := range m.allMeta {
+					Expect(k).NotTo(HavePrefix("op_"), "old op_* metadata key %q found", k)
+				}
+			}
+		})
+	})
+
+	// -----------------------------------------------------------------------
+	// TEST 1 — non-UTC timezone end-to-end
+	// -----------------------------------------------------------------------
+	Describe("non-UTC timezone e2e (Europe/Berlin, CEST +02:00)", func() {
+		// Wall-clock timestamp carried in the MID 0061 data field.
+		// Europe/Berlin in CEST (summer time) is UTC+2, so 14:30:15 local
+		// is 12:30:15 UTC, which is 2 hours EARLIER in epoch than UTC interpretation.
+		const berlinTimestamp = "2026-06-02:14:30:15"
+
+		It("timestamp_ms reflects Europe/Berlin interpretation, not UTC", func() {
+			// Compute the expected epoch-ms: treat the wall-clock time as
+			// being in Europe/Berlin (CEST, +02:00 on this date).
+			loc, err := time.LoadLocation("Europe/Berlin")
+			Expect(err).NotTo(HaveOccurred())
+			want := time.Date(2026, 6, 2, 14, 30, 15, 0, loc).UnixMilli()
+			wantStr := strconv.FormatInt(want, 10)
+
+			// Also compute the UTC interpretation so we can assert they differ.
+			wantUTC := time.Date(2026, 6, 2, 14, 30, 15, 0, time.UTC).UnixMilli()
+			Expect(want).NotTo(Equal(wantUTC), "test precondition: Berlin epoch != UTC epoch")
+
+			// Build the fake controller that pushes this timestamp in a 0061.
+			result := []byte(build0061DataWithTimestamp(true, berlinTimestamp))
+			fc, fcErr := newFakeController(goodHandler([][]byte{result}))
+			Expect(fcErr).NotTo(HaveOccurred())
+			defer fc.close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			var mu sync.Mutex
+			var captured []capturedMsg
+
+			builder := service.NewStreamBuilder()
+			Expect(builder.AddInputYAML(fmt.Sprintf(`
+open_protocol:
+  endpoint: "%s"
+  subscribe: [60]
+  keepalive_interval: 50ms
+  request_timeout: 2s
+  timezone: "Europe/Berlin"
+`, fc.addr()))).To(Succeed())
+
+			Expect(builder.AddConsumerFunc(func(_ context.Context, m *service.Message) error {
+				cm := captureMsg(m)
+				mu.Lock()
+				captured = append(captured, cm)
+				mu.Unlock()
+				return nil
+			})).To(Succeed())
+
+			stream, buildErr := builder.Build()
+			Expect(buildErr).NotTo(HaveOccurred())
+			go func() {
+				defer GinkgoRecover()
+				_ = stream.Run(ctx)
+			}()
+
+			Eventually(func() int {
+				mu.Lock()
+				defer mu.Unlock()
+				return len(captured)
+			}, 5*time.Second, 20*time.Millisecond).Should(BeNumerically(">=", 18))
+
+			_ = stream.StopWithin(3 * time.Second)
+
+			mu.Lock()
+			first := captured[0]
+			mu.Unlock()
+
+			// All messages share the same timestamp_ms; check the first.
+			Expect(first.timestampMs).To(Equal(wantStr),
+				"timezone=Europe/Berlin must shift epoch by -7200000 ms vs UTC")
+		})
+	})
+
+	// -----------------------------------------------------------------------
+	// TEST 2 — unparseable timestamp in MID 0061 (Edge #14)
+	// -----------------------------------------------------------------------
+	Describe("unparseable timestamp in rev-1 MID 0061 (Edge #14)", func() {
+		// "NOT-A-DATE         " is exactly 19 chars — fits the param-20 layout
+		// but is not a valid YYYY-MM-DD:HH:MM:SS string.
+		const badTimestamp = "NOT-A-DATE         "
+
+		It("omits timestamp_ms but sets open_protocol_timestamp to the raw string", func() {
+			Expect(badTimestamp).To(HaveLen(19), "test precondition: timestamp must be 19 chars")
+
+			result := []byte(build0061DataWithTimestamp(true, badTimestamp))
+			fc, fcErr := newFakeController(goodHandler([][]byte{result}))
+			Expect(fcErr).NotTo(HaveOccurred())
+			defer fc.close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			var mu sync.Mutex
+			var captured []capturedMsg
+
+			builder := service.NewStreamBuilder()
+			Expect(builder.AddInputYAML(fmt.Sprintf(`
+open_protocol:
+  endpoint: "%s"
+  subscribe: [60]
+  keepalive_interval: 50ms
+  request_timeout: 2s
+`, fc.addr()))).To(Succeed())
+
+			Expect(builder.AddConsumerFunc(func(_ context.Context, m *service.Message) error {
+				cm := captureMsg(m)
+				mu.Lock()
+				captured = append(captured, cm)
+				mu.Unlock()
+				return nil
+			})).To(Succeed())
+
+			stream, buildErr := builder.Build()
+			Expect(buildErr).NotTo(HaveOccurred())
+			go func() {
+				defer GinkgoRecover()
+				_ = stream.Run(ctx)
+			}()
+
+			// We expect 18 fanned messages (parse succeeds; only timestamp is bad).
+			Eventually(func() int {
+				mu.Lock()
+				defer mu.Unlock()
+				return len(captured)
+			}, 5*time.Second, 20*time.Millisecond).Should(BeNumerically(">=", 18))
+
+			_ = stream.StopWithin(3 * time.Second)
+
+			mu.Lock()
+			msgs := make([]capturedMsg, len(captured))
+			copy(msgs, captured)
+			mu.Unlock()
+
+			Expect(msgs).To(HaveLen(18), "unparseable timestamp still fans out 18 messages")
+
+			for i, m := range msgs {
+				// timestamp_ms must be ABSENT.
+				_, hasTsMs := m.allMeta["timestamp_ms"]
+				Expect(hasTsMs).To(BeFalse(),
+					"message %d should have no timestamp_ms when timestamp is unparseable", i)
+
+				// open_protocol_timestamp must carry the raw string.
+				rawTs, hasRaw := m.allMeta["open_protocol_timestamp"]
+				Expect(hasRaw).To(BeTrue(),
+					"message %d should have open_protocol_timestamp", i)
+				Expect(rawTs).To(Equal(badTimestamp),
+					"message %d open_protocol_timestamp should equal the raw 19-char string", i)
+			}
+		})
+	})
+
+	// -----------------------------------------------------------------------
+	// Raw passthrough — non-0061 MID (alarm MID 0071)
+	// -----------------------------------------------------------------------
+	Describe("raw passthrough for non-0061 MIDs (alarms)", func() {
+		It("emits exactly ONE raw message for MID 0071, no open_protocol_tag_name", func() {
+			fc, err := newFakeController(func(fc *fakeController, conn net.Conn) {
+				defer conn.Close()
+				fr := op.NewFrameReader(conn)
+				for {
+					tel, err := fc.readTelegram(fr)
+					if err != nil {
+						return
+					}
+					switch tel.Header.MID {
+					case op.MIDCommunicationStart:
+						ack := "01" + "0001" + "02" + "01" + "03" + padRight("UMHTestSim", 25)
+						_ = sendFrame(conn, op.MIDCommunicationStartAck, 1, []byte(ack))
+					case op.MIDAlarmSub:
+						_ = sendFrame(conn, op.MIDAlarm, 1, []byte("ALARMPAYLOAD"))
+					}
+				}
+			})
+			Expect(err).NotTo(HaveOccurred())
+			defer fc.close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			var mu sync.Mutex
+			var captured []capturedMsg
+
+			builder := service.NewStreamBuilder()
+			Expect(builder.AddInputYAML(fmt.Sprintf(`
+open_protocol:
+  endpoint: "%s"
+  subscribe: [70]
+  keepalive_interval: 50ms
+  request_timeout: 2s
+`, fc.addr()))).To(Succeed())
+			Expect(builder.AddConsumerFunc(func(_ context.Context, m *service.Message) error {
+				cm := captureMsg(m)
+				mu.Lock()
+				captured = append(captured, cm)
+				mu.Unlock()
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+			go func() {
+				defer GinkgoRecover()
+				_ = stream.Run(ctx)
+			}()
+
+			Eventually(func() int {
+				mu.Lock()
+				defer mu.Unlock()
+				return len(captured)
+			}, 5*time.Second, 20*time.Millisecond).Should(BeNumerically(">=", 1))
+
+			_ = stream.StopWithin(3 * time.Second)
+
+			mu.Lock()
+			first := captured[0]
+			mu.Unlock()
+
+			Expect(first.mid).To(Equal("0071"))
+			Expect(string(first.raw)).To(Equal("ALARMPAYLOAD"))
+			Expect(first.tagName).To(BeEmpty(), "non-0061 should have no open_protocol_tag_name")
+		})
+	})
+
+	// -----------------------------------------------------------------------
+	// Raw passthrough — malformed rev-1 MID 0061 (parse error → one raw message)
+	// -----------------------------------------------------------------------
+	Describe("raw passthrough for malformed rev-1 MID 0061", func() {
+		It("emits ONE raw message when rev-1 0061 data is not a valid PID layout", func() {
+			fc, err := newFakeController(func(fc *fakeController, conn net.Conn) {
+				defer conn.Close()
+				fr := op.NewFrameReader(conn)
+				for {
+					tel, err := fc.readTelegram(fr)
+					if err != nil {
+						return
+					}
+					switch tel.Header.MID {
+					case op.MIDCommunicationStart:
+						ack := "01" + "0001" + "02" + "01" + "03" + padRight("UMHTestSim", 25)
+						_ = sendFrame(conn, op.MIDCommunicationStartAck, 1, []byte(ack))
+					case op.MIDLastTighteningSub:
+						// Confirm subscription (MID 0005), then push a rev-1 0061 with
+						// garbage data that cannot be parsed as a PID-format payload.
+						_ = sendFrame(conn, op.MIDCommandAccepted, 1, nil)
+						_ = sendFrame(conn, op.MIDLastTightening, 1, []byte("THIS-IS-NOT-PID-FORMAT"))
+					case op.MIDKeepAlive, op.MIDLastTighteningAck:
+						// ignored
+					}
+				}
+			})
+			Expect(err).NotTo(HaveOccurred())
+			defer fc.close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			var mu sync.Mutex
+			var captured []capturedMsg
+
+			builder := service.NewStreamBuilder()
+			Expect(builder.AddInputYAML(fmt.Sprintf(`
+open_protocol:
+  endpoint: "%s"
+  subscribe: [60]
+  keepalive_interval: 50ms
+  request_timeout: 2s
+`, fc.addr()))).To(Succeed())
+			Expect(builder.AddConsumerFunc(func(_ context.Context, m *service.Message) error {
+				cm := captureMsg(m)
+				mu.Lock()
+				captured = append(captured, cm)
+				mu.Unlock()
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+			go func() {
+				defer GinkgoRecover()
+				_ = stream.Run(ctx)
+			}()
+
+			Eventually(func() int {
+				mu.Lock()
+				defer mu.Unlock()
+				return len(captured)
+			}, 5*time.Second, 20*time.Millisecond).Should(BeNumerically(">=", 1))
+
+			_ = stream.StopWithin(3 * time.Second)
+
+			mu.Lock()
+			first := captured[0]
+			count := len(captured)
+			mu.Unlock()
+
+			// Must produce exactly ONE raw message — not the 18-message fan-out.
+			Expect(count).To(Equal(1), "malformed rev-1 0061 should emit exactly one raw message")
+			Expect(first.mid).To(Equal("0061"), "mid should be 0061")
+			Expect(first.tagName).To(BeEmpty(), "malformed rev-1 0061 should have no open_protocol_tag_name")
+			Expect(string(first.raw)).To(Equal("THIS-IS-NOT-PID-FORMAT"), "raw payload should be the unmodified data field")
+		})
+	})
+
+	// -----------------------------------------------------------------------
+	// Raw passthrough — rev-2 MID 0061 (not rev-1 → one raw message)
+	// -----------------------------------------------------------------------
+	Describe("raw passthrough for non-rev-1 MID 0061", func() {
+		It("emits ONE raw message for 0061 with revision 2, no tag_name", func() {
+			result := []byte(build0061Data(true))
+			fc, err := newFakeController(func(fc *fakeController, conn net.Conn) {
+				defer conn.Close()
+				fr := op.NewFrameReader(conn)
+				for {
+					tel, err := fc.readTelegram(fr)
+					if err != nil {
+						return
+					}
+					switch tel.Header.MID {
+					case op.MIDCommunicationStart:
+						ack := "01" + "0001" + "02" + "01" + "03" + padRight("UMHTestSim", 25)
+						_ = sendFrame(conn, op.MIDCommunicationStartAck, 1, []byte(ack))
+					case op.MIDLastTighteningSub:
+						// Confirm subscription, then push a 0061 with revision=2.
+						_ = sendFrame(conn, op.MIDCommandAccepted, 1, nil)
+						_ = sendFrame(conn, op.MIDLastTightening, 2, result)
+					case op.MIDKeepAlive, op.MIDLastTighteningAck:
+						// ignored
+					}
+				}
+			})
+			Expect(err).NotTo(HaveOccurred())
+			defer fc.close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			var mu sync.Mutex
+			var captured []capturedMsg
+
+			builder := service.NewStreamBuilder()
+			Expect(builder.AddInputYAML(fmt.Sprintf(`
+open_protocol:
+  endpoint: "%s"
+  subscribe: [60]
+  keepalive_interval: 50ms
+  request_timeout: 2s
+`, fc.addr()))).To(Succeed())
+			Expect(builder.AddConsumerFunc(func(_ context.Context, m *service.Message) error {
+				cm := captureMsg(m)
+				mu.Lock()
+				captured = append(captured, cm)
+				mu.Unlock()
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+			go func() {
+				defer GinkgoRecover()
+				_ = stream.Run(ctx)
+			}()
+
+			Eventually(func() int {
+				mu.Lock()
+				defer mu.Unlock()
+				return len(captured)
+			}, 5*time.Second, 20*time.Millisecond).Should(BeNumerically(">=", 1))
+
+			_ = stream.StopWithin(3 * time.Second)
+
+			mu.Lock()
+			first := captured[0]
+			// Ensure we got exactly one message (not 18).
+			count := len(captured)
+			mu.Unlock()
+
+			Expect(first.mid).To(Equal("0061"))
+			Expect(first.revision).To(Equal("2"))
+			Expect(first.tagName).To(BeEmpty(), "non-rev-1 0061 should have no open_protocol_tag_name")
+			Expect(count).To(Equal(1), "non-rev-1 0061 should emit exactly one message")
+		})
+	})
+})

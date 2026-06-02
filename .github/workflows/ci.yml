@@ -44,6 +44,7 @@ jobs:
       stream_processor: ${{ steps.filter.outputs.stream_processor }}
       downsampler: ${{ steps.filter.outputs.downsampler }}
       classic_to_core: ${{ steps.filter.outputs.classic_to_core }}
+      open_protocol: ${{ steps.filter.outputs.open_protocol }}
       pkg: ${{ steps.filter.outputs.pkg }}
       cmd: ${{ steps.filter.outputs.cmd }}
       gomod: ${{ steps.filter.outputs.gomod }}
@@ -98,6 +99,9 @@ jobs:
             classic_to_core:
               - 'classic_to_core_plugin/**'
               - '!classic_to_core_plugin/**/*.md'
+            open_protocol:
+              - 'open_protocol_plugin/**'
+              - '!open_protocol_plugin/**/*.md'
             pkg:
               - 'pkg/**'
             cmd:
@@ -312,6 +316,17 @@ jobs:
     uses: ./.github/workflows/test-classic-to-core.yml
     secrets: inherit
 
+  test-open-protocol:
+    needs: [detect-changes, lint]
+    if: |
+      always() &&
+      needs.lint.result == 'success' &&
+      (needs.detect-changes.outputs.open_protocol == 'true' ||
+       needs.detect-changes.outputs.gomod == 'true' ||
+       needs.detect-changes.outputs.cmd == 'true')
+    uses: ./.github/workflows/test-open-protocol.yml
+    secrets: inherit
+
   result:
     name: Check Required Steps
     needs:
@@ -332,6 +347,7 @@ jobs:
       - test-stream-processor
       - test-downsampler
       - test-classic-to-core
+      - test-open-protocol
     if: always()
     runs-on: ubuntu-latest
     steps:
