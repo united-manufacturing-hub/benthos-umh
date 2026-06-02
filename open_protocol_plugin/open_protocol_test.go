@@ -348,6 +348,37 @@ open_protocol:
 			Expect(foundTag).To(BeTrue(), "tightening_id should appear as an open_protocol_tag_name")
 		})
 
+		It("job_id, pset_number, batch_counter, batch_size are tags (not metadata keys)", func() {
+			mu.Lock()
+			defer mu.Unlock()
+
+			// Collect all tag names across the 18 messages.
+			tagNames := map[string]struct{}{}
+			for _, m := range captured {
+				if m.tagName != "" {
+					tagNames[m.tagName] = struct{}{}
+				}
+			}
+
+			// These identifiers must appear as open_protocol_tag_name values.
+			for _, want := range []string{"job_id", "pset_number", "batch_counter", "batch_size"} {
+				Expect(tagNames).To(HaveKey(want), "expected %q to appear as open_protocol_tag_name", want)
+			}
+
+			// They must NOT appear as standalone metadata keys on any message.
+			for _, m := range captured {
+				for _, key := range []string{
+					"open_protocol_job_id",
+					"open_protocol_pset_number",
+					"open_protocol_batch_counter",
+					"open_protocol_batch_size",
+				} {
+					_, hasMeta := m.allMeta[key]
+					Expect(hasMeta).To(BeFalse(), "identifier %q must not be a metadata key", key)
+				}
+			}
+		})
+
 		It("no op_* metadata keys remain on any message", func() {
 			mu.Lock()
 			defer mu.Unlock()
@@ -428,6 +459,86 @@ open_protocol:
 			Expect(first.mid).To(Equal("0071"))
 			Expect(string(first.raw)).To(Equal("ALARMPAYLOAD"))
 			Expect(first.tagName).To(BeEmpty(), "non-0061 should have no open_protocol_tag_name")
+		})
+	})
+
+	// -----------------------------------------------------------------------
+	// Raw passthrough — malformed rev-1 MID 0061 (parse error → one raw message)
+	// -----------------------------------------------------------------------
+	Describe("raw passthrough for malformed rev-1 MID 0061", func() {
+		It("emits ONE raw message when rev-1 0061 data is not a valid PID layout", func() {
+			fc, err := newFakeController(func(fc *fakeController, conn net.Conn) {
+				defer conn.Close()
+				fr := op.NewFrameReader(conn)
+				for {
+					tel, err := fc.readTelegram(fr)
+					if err != nil {
+						return
+					}
+					switch tel.Header.MID {
+					case op.MIDCommunicationStart:
+						ack := "01" + "0001" + "02" + "01" + "03" + padRight("UMHTestSim", 25)
+						_ = sendFrame(conn, op.MIDCommunicationStartAck, 1, []byte(ack))
+					case op.MIDLastTighteningSub:
+						// Confirm subscription (MID 0005), then push a rev-1 0061 with
+						// garbage data that cannot be parsed as a PID-format payload.
+						_ = sendFrame(conn, op.MIDCommandAccepted, 1, nil)
+						_ = sendFrame(conn, op.MIDLastTightening, 1, []byte("THIS-IS-NOT-PID-FORMAT"))
+					case op.MIDKeepAlive, op.MIDLastTighteningAck:
+						// ignored
+					}
+				}
+			})
+			Expect(err).NotTo(HaveOccurred())
+			defer fc.close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			var mu sync.Mutex
+			var captured []capturedMsg
+
+			builder := service.NewStreamBuilder()
+			Expect(builder.AddInputYAML(fmt.Sprintf(`
+open_protocol:
+  endpoint: "%s"
+  subscribe: [last_tightening]
+  keepalive_interval: 50ms
+  request_timeout: 2s
+`, fc.addr()))).To(Succeed())
+			Expect(builder.AddConsumerFunc(func(_ context.Context, m *service.Message) error {
+				cm := captureMsg(m)
+				mu.Lock()
+				captured = append(captured, cm)
+				mu.Unlock()
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+			go func() {
+				defer GinkgoRecover()
+				_ = stream.Run(ctx)
+			}()
+
+			Eventually(func() int {
+				mu.Lock()
+				defer mu.Unlock()
+				return len(captured)
+			}, 5*time.Second, 20*time.Millisecond).Should(BeNumerically(">=", 1))
+
+			_ = stream.StopWithin(3 * time.Second)
+
+			mu.Lock()
+			first := captured[0]
+			count := len(captured)
+			mu.Unlock()
+
+			// Must produce exactly ONE raw message — not the 18-message fan-out.
+			Expect(count).To(Equal(1), "malformed rev-1 0061 should emit exactly one raw message")
+			Expect(first.mid).To(Equal("0061"), "mid should be 0061")
+			Expect(first.tagName).To(BeEmpty(), "malformed rev-1 0061 should have no open_protocol_tag_name")
+			Expect(string(first.raw)).To(Equal("THIS-IS-NOT-PID-FORMAT"), "raw payload should be the unmodified data field")
 		})
 	})
 
