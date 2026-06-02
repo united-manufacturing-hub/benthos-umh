@@ -103,7 +103,7 @@ var _ = Describe("open_protocol Benthos input", func() {
 		err := builder.AddInputYAML(`
 open_protocol:
   endpoint: "127.0.0.1:4545"
-  subscribe: [last_tightening, alarms]
+  subscribe: [60, 70]
 `)
 		Expect(err).NotTo(HaveOccurred())
 	})
@@ -207,9 +207,10 @@ open_protocol:
 			Expect(builder.AddInputYAML(fmt.Sprintf(`
 open_protocol:
   endpoint: "%s"
-  subscribe: [last_tightening]
+  subscribe: [60]
   keepalive_interval: 50ms
   request_timeout: 2s
+  timezone: "UTC"
 `, fc.addr()))).To(Succeed())
 
 			Expect(builder.AddConsumerFunc(func(_ context.Context, m *service.Message) error {
@@ -433,7 +434,7 @@ open_protocol:
 			Expect(builder.AddInputYAML(fmt.Sprintf(`
 open_protocol:
   endpoint: "%s"
-  subscribe: [last_tightening]
+  subscribe: [60]
   keepalive_interval: 50ms
   request_timeout: 2s
   timezone: "Europe/Berlin"
@@ -498,7 +499,7 @@ open_protocol:
 			Expect(builder.AddInputYAML(fmt.Sprintf(`
 open_protocol:
   endpoint: "%s"
-  subscribe: [last_tightening]
+  subscribe: [60]
   keepalive_interval: 50ms
   request_timeout: 2s
 `, fc.addr()))).To(Succeed())
@@ -585,7 +586,7 @@ open_protocol:
 			Expect(builder.AddInputYAML(fmt.Sprintf(`
 open_protocol:
   endpoint: "%s"
-  subscribe: [alarms]
+  subscribe: [70]
   keepalive_interval: 50ms
   request_timeout: 2s
 `, fc.addr()))).To(Succeed())
@@ -662,7 +663,7 @@ open_protocol:
 			Expect(builder.AddInputYAML(fmt.Sprintf(`
 open_protocol:
   endpoint: "%s"
-  subscribe: [last_tightening]
+  subscribe: [60]
   keepalive_interval: 50ms
   request_timeout: 2s
 `, fc.addr()))).To(Succeed())
@@ -742,7 +743,7 @@ open_protocol:
 			Expect(builder.AddInputYAML(fmt.Sprintf(`
 open_protocol:
   endpoint: "%s"
-  subscribe: [last_tightening]
+  subscribe: [60]
   keepalive_interval: 50ms
   request_timeout: 2s
 `, fc.addr()))).To(Succeed())

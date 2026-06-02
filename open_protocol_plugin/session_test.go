@@ -46,10 +46,10 @@ func keepAliveFloodHandler(burstSize int) func(fc *fakeController, conn net.Conn
 	}
 }
 
-func newTestSession(endpoint string, subs []string) *op.Session {
+func newTestSession(endpoint string, subs []int) *op.Session {
 	return op.NewSession(op.SessionConfig{
 		Endpoint:          endpoint,
-		Subscriptions:     subs,
+		SubscribeMIDs:     subs,
 		Revision:          1,
 		KeepAliveInterval: 50 * time.Millisecond,
 		RequestTimeout:    2 * time.Second,
@@ -57,10 +57,10 @@ func newTestSession(endpoint string, subs []string) *op.Session {
 	}, nil) // nil logger -> no-op
 }
 
-func newTestSessionWithReadTimeout(endpoint string, subs []string, readTimeout time.Duration) *op.Session {
+func newTestSessionWithReadTimeout(endpoint string, subs []int, readTimeout time.Duration) *op.Session {
 	return op.NewSession(op.SessionConfig{
 		Endpoint:          endpoint,
-		Subscriptions:     subs,
+		SubscribeMIDs:     subs,
 		Revision:          1,
 		KeepAliveInterval: 50 * time.Millisecond,
 		RequestTimeout:    2 * time.Second,
@@ -85,7 +85,7 @@ var _ = Describe("Session FSM", func() {
 		Expect(err).NotTo(HaveOccurred())
 		defer fc.close()
 
-		s := newTestSession(fc.addr(), []string{"last_tightening"})
+		s := newTestSession(fc.addr(), []int{60})
 		Expect(s.Connect(ctx)).To(Succeed())
 		defer s.Close()
 
@@ -124,7 +124,7 @@ var _ = Describe("Session FSM", func() {
 		Expect(err).NotTo(HaveOccurred())
 		defer fc.close()
 
-		s := newTestSession(fc.addr(), []string{"last_tightening"})
+		s := newTestSession(fc.addr(), []int{60})
 		err = s.Connect(ctx)
 		Expect(err).To(HaveOccurred())
 	})
@@ -134,7 +134,7 @@ var _ = Describe("Session FSM", func() {
 		Expect(err).NotTo(HaveOccurred())
 		defer fc.close()
 
-		s := newTestSession(fc.addr(), []string{"last_tightening"})
+		s := newTestSession(fc.addr(), []int{60})
 		Expect(s.Connect(ctx)).To(Succeed())
 		defer s.Close()
 
@@ -150,7 +150,7 @@ var _ = Describe("Session FSM", func() {
 		Expect(err).NotTo(HaveOccurred())
 		defer fc.close()
 
-		s := newTestSession(fc.addr(), []string{"last_tightening"})
+		s := newTestSession(fc.addr(), []int{60})
 
 		Expect(s.Connect(ctx)).To(Succeed())
 		Expect(s.Generation()).To(Equal(uint64(1)))
@@ -167,7 +167,7 @@ var _ = Describe("Session FSM", func() {
 		Expect(err).NotTo(HaveOccurred())
 		defer fc.close()
 
-		s := newTestSession(fc.addr(), []string{"last_tightening"})
+		s := newTestSession(fc.addr(), []int{60})
 		Expect(s.Connect(ctx)).To(Succeed())
 		defer s.Close()
 
@@ -194,7 +194,7 @@ var _ = Describe("Session FSM", func() {
 		Expect(err).NotTo(HaveOccurred())
 		defer fc.close()
 
-		s := newTestSession(fc.addr(), []string{"last_tightening"})
+		s := newTestSession(fc.addr(), []int{60})
 		Expect(s.Connect(ctx)).To(Succeed())
 		defer s.Close()
 
@@ -219,7 +219,7 @@ var _ = Describe("Session FSM", func() {
 		Expect(err).NotTo(HaveOccurred())
 		defer fc.close()
 
-		s := newTestSession(fc.addr(), []string{"last_tightening"})
+		s := newTestSession(fc.addr(), []int{60})
 
 		// Gen 1 connect + read.
 		Expect(s.Connect(ctx)).To(Succeed())
@@ -267,7 +267,7 @@ var _ = Describe("Session FSM", func() {
 		Expect(err).NotTo(HaveOccurred())
 		defer fc.close()
 
-		s := newTestSession(fc.addr(), []string{"last_tightening"})
+		s := newTestSession(fc.addr(), []int{60})
 		err = s.Connect(ctx)
 		Expect(err).To(HaveOccurred())
 	})
@@ -280,7 +280,7 @@ var _ = Describe("Session FSM", func() {
 		Expect(err).NotTo(HaveOccurred())
 		defer fc.close()
 
-		s := newTestSession(fc.addr(), []string{"last_tightening"})
+		s := newTestSession(fc.addr(), []int{60})
 		Expect(s.Connect(ctx)).To(Succeed())
 		defer s.Close()
 
@@ -310,7 +310,7 @@ var _ = Describe("Session FSM", func() {
 		// session with a longer request_timeout to make the hang detectable.
 		s := op.NewSession(op.SessionConfig{
 			Endpoint:          fc.addr(),
-			Subscriptions:     []string{"last_tightening"},
+			SubscribeMIDs:     []int{60},
 			Revision:          1,
 			KeepAliveInterval: 50 * time.Millisecond,
 			RequestTimeout:    200 * time.Millisecond,
@@ -362,7 +362,7 @@ var _ = Describe("Session FSM", func() {
 		defer fc.close()
 
 		// Small read timeout so the test doesn't hang.
-		s := newTestSessionWithReadTimeout(fc.addr(), []string{"last_tightening"}, 150*time.Millisecond)
+		s := newTestSessionWithReadTimeout(fc.addr(), []int{60}, 150*time.Millisecond)
 		Expect(s.Connect(ctx)).To(Succeed())
 		defer s.Close()
 

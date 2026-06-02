@@ -20,7 +20,7 @@ This is a **read-only** input. It never writes parameter sets, jobs, or controll
 input:
   open_protocol:
     endpoint: "10.0.0.42:4545"
-    subscribe: [last_tightening]
+    subscribe: [60]
 ```
 
 **Full example**
@@ -29,7 +29,7 @@ input:
 input:
   open_protocol:
     endpoint: "10.0.0.42:4545"
-    subscribe: [last_tightening, alarms]
+    subscribe: [60, 70]
     timezone: "Europe/Berlin"
     keepalive_interval: 10s
     read_timeout: 30s
@@ -43,8 +43,8 @@ input:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `endpoint` | string | **required** | Controller TCP endpoint as `host:port` (e.g. `10.0.0.42:4545`) |
-| `subscribe` | string list | `[last_tightening]` | Event streams to subscribe to. `last_tightening` opens MID 0060/0061/0062; `alarms` opens MID 0070/0071/0072 |
-| `timezone` | string | `UTC` | IANA timezone used to interpret the controller's zone-less timestamps. **Set to the controller's local zone** (see [Timezone note](#timezone-note)) |
+| `subscribe` | int list | `[60]` | Subscription MIDs to open — the MID sent to the controller. `60` = last tightening (pushes MID 0061, acknowledged with MID 0062); `70` = alarms (pushes MID 0071, acknowledged with MID 0072). Data MID = subscribe MID + 1; ack MID = subscribe MID + 2 |
+| `timezone` | string | `Local` (host zone) | IANA timezone used to interpret the controller's zone-less timestamps. Defaults to the host/VM zone; set `UTC` or an explicit IANA zone (e.g. `Europe/Berlin`) to override (see [Timezone note](#timezone-note)) |
 | `read_timeout` | duration | `30s` | Max idle time in `Read` before the connection is declared lost and Benthos reconnects. Must be ≥ 2× `keepalive_interval` |
 | `keepalive_interval` | duration | `10s` | How often to send MID 9999 keep-alive telegrams |
 | `request_timeout` | duration | `5s` | How long to wait for login/subscribe handshake replies before failing |
@@ -113,7 +113,7 @@ Use a `switch` processor routing on `@open_protocol_mid` to decode these downstr
 input:
   open_protocol:
     endpoint: "10.0.0.42:4545"
-    subscribe: [last_tightening]
+    subscribe: [60]
     timezone: "Europe/Berlin"
 
 pipeline:

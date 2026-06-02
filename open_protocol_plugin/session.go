@@ -49,7 +49,7 @@ const (
 // SessionConfig configures an Open Protocol client session.
 type SessionConfig struct {
 	Endpoint          string        // controller host:port (e.g. "10.0.0.42:4545")
-	Subscriptions     []string      // friendly subscription names: "last_tightening", "alarms"
+	SubscribeMIDs     []int         // subscription MIDs to send to the controller (e.g. 60 for last tightening, 70 for alarms)
 	GenericMIDs       []int         // additional MIDs to subscribe via the generic mechanism
 	Revision          int           // requested MID revision (pinned to 1)
 	KeepAliveInterval time.Duration // MID 9999 cadence
@@ -76,8 +76,9 @@ var errSessionClosed = fmt.Errorf("open protocol: session closed")
 // and Close tears everything down. On connection loss Read returns an error and
 // the caller (Benthos) re-invokes Connect.
 type Session struct {
-	cfg SessionConfig
-	log Logger
+	cfg       SessionConfig
+	log       Logger
+	ackByData map[int]int // data MID -> ack MID, derived from SubscribeMIDs
 
 	mu          sync.Mutex
 	conn        net.Conn
@@ -105,7 +106,11 @@ func NewSession(cfg SessionConfig, log Logger) *Session {
 	if cfg.ReadTimeout <= 0 {
 		cfg.ReadTimeout = defaultReadTimeout
 	}
-	return &Session{cfg: cfg, log: log}
+	ackByData := make(map[int]int, len(cfg.SubscribeMIDs))
+	for _, sub := range cfg.SubscribeMIDs {
+		ackByData[sub+1] = sub + 2 // data = sub+1, ack = sub+2
+	}
+	return &Session{cfg: cfg, log: log, ackByData: ackByData}
 }
 
 // Generation returns the current connection generation (monotonically increasing
@@ -242,7 +247,7 @@ func (s *Session) Read(_ context.Context) (Result, error) {
 		if !ok {
 			continue
 		}
-		ackMID, needsAck := ackFor(complete.Header.MID)
+		ackMID, needsAck := s.ackByData[complete.Header.MID]
 		return Result{Telegram: complete, Ack: s.makeAck(gen, conn, ackMID, needsAck)}, nil
 	}
 }
@@ -377,7 +382,7 @@ func (s *Session) connectAndHandshake(ctx context.Context) (net.Conn, *FrameRead
 			}
 		}
 	}
-	for _, mid := range s.subscriptionMIDs() {
+	for _, mid := range s.cfg.SubscribeMIDs {
 		if err := confirmSub(mid); err != nil {
 			_ = conn.Close()
 			return nil, nil, nil, err
@@ -415,34 +420,4 @@ func (s *Session) write(conn net.Conn, mid int, rev int, data []byte) error {
 	defer s.writeMu.Unlock()
 	_, err := conn.Write(BuildMessage(mid, rev, data))
 	return err
-}
-
-// subscriptionMIDs maps the configured friendly subscription names to the MID
-// each one opens.
-func (s *Session) subscriptionMIDs() []int {
-	var mids []int
-	for _, name := range s.cfg.Subscriptions {
-		switch name {
-		case "last_tightening":
-			mids = append(mids, MIDLastTighteningSub)
-		case "alarms":
-			mids = append(mids, MIDAlarmSub)
-		default:
-			s.log.Warnf("open protocol: unknown subscription %q, ignoring", name)
-		}
-	}
-	return mids
-}
-
-// ackFor returns the acknowledgement MID for a pushed result MID, and whether
-// an acknowledgement is required.
-func ackFor(mid int) (int, bool) {
-	switch mid {
-	case MIDLastTightening:
-		return MIDLastTighteningAck, true
-	case MIDAlarm:
-		return MIDAlarmAck, true
-	default:
-		return 0, false
-	}
 }

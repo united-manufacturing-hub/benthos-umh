@@ -267,7 +267,7 @@ func newInputForTest(t *testing.T, endpoint string) *openProtocolInput {
 	t.Helper()
 	yaml := fmt.Sprintf(`
 endpoint: "%s"
-subscribe: [last_tightening]
+subscribe: [60]
 keepalive_interval: 50ms
 request_timeout: 2s
 `, endpoint)

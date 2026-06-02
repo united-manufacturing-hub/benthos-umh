@@ -52,11 +52,11 @@ Routing metadata is attached to every message: ` + "`open_protocol_mid`" + ` (4-
 		Field(service.NewStringField(fieldEndpoint).
 			Description("The controller's TCP endpoint as host:port.").
 			Example("10.0.0.42:4545")).
-		Field(service.NewStringListField(fieldSubscribe).
-			Description("Event streams to subscribe to. 'last_tightening' opens MID 0060/0061/0062; 'alarms' opens MID 0070/0071/0072.").
-			Default([]string{"last_tightening"}).
-			Example([]string{"last_tightening"}).
-			Example([]string{"last_tightening", "alarms"})).
+		Field(service.NewIntListField(fieldSubscribe).
+			Description("Subscription MIDs to open — the MID the plugin sends to the controller. 0060 = last tightening (pushes MID 0061), 0070 = alarms (pushes MID 0071). The plugin forwards the pushed data MID (subscribe MID + 1) and acknowledges it (subscribe MID + 2).").
+			Default([]any{60}).
+			Example([]any{60}).
+			Example([]any{60, 70})).
 		Field(service.NewIntListField(fieldGenericSubscribe).
 			Description("Additional MIDs to subscribe to via the generic subscription mechanism (MID 0008). Experimental; validate against your controller.").
 			Default([]any{}).
@@ -75,8 +75,9 @@ Routing metadata is attached to every message: ` + "`open_protocol_mid`" + ` (4-
 			Default("5s").
 			Advanced()).
 		Field(service.NewStringField(fieldTimezone).
-			Description("IANA timezone (e.g. Europe/Berlin) used to interpret the controller's zone-less result timestamp. Set to the controller's local zone.").
-			Default("UTC").
+			Description("IANA timezone (e.g. Europe/Berlin) used to interpret the controller's zone-less result timestamp. Defaults to 'Local' (the host/VM timezone); set 'UTC' or an explicit IANA zone to override.").
+			Default("Local").
+			Example("Local").
 			Example("UTC").
 			Example("Europe/Berlin").
 			Advanced()).
@@ -108,7 +109,7 @@ func newOpenProtocolInput(conf *service.ParsedConfig, mgr *service.Resources) (*
 	if err != nil {
 		return nil, err
 	}
-	subscribe, err := conf.FieldStringList(fieldSubscribe)
+	subscribe, err := conf.FieldIntList(fieldSubscribe)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +148,7 @@ func newOpenProtocolInput(conf *service.ParsedConfig, mgr *service.Resources) (*
 	logger := mgr.Logger()
 	sess := NewSession(SessionConfig{
 		Endpoint:          endpoint,
-		Subscriptions:     subscribe,
+		SubscribeMIDs:     subscribe,
 		GenericMIDs:       genericMIDs,
 		Revision:          revision,
 		KeepAliveInterval: keepAlive,

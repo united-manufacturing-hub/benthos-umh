@@ -94,7 +94,7 @@ var _ = Describe("open_protocol integration (dockerized emulator)", Serial, func
 		Expect(builder.AddInputYAML(fmt.Sprintf(`
 open_protocol:
   endpoint: "%s"
-  subscribe: [last_tightening]
+  subscribe: [60]
   keepalive_interval: 5s
   request_timeout: 10s
 `, endpoint))).To(Succeed())

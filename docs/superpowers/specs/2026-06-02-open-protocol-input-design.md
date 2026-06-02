@@ -303,8 +303,8 @@ have. The rebuild MUST make these changes:
 | Field | Type | Default | Class | Description |
 |-------|------|---------|-------|-------------|
 | `endpoint` | string | — | basic | Controller TCP endpoint `host:port` (e.g. `10.0.0.42:4545`) |
-| `subscribe` | string list | `[last_tightening]` | basic | Event streams: `last_tightening` (MID 0060/0061/0062), `alarms` (MID 0070/0071/0072) |
-| `timezone` | string | `UTC` | advanced | IANA zone (e.g. `Europe/Berlin`) used to interpret the controller's zone-less result timestamp. **Set to the controller's local zone.** |
+| `subscribe` | int list | `[60]` | basic | Subscription MIDs sent to the controller. `60` = last tightening (data MID 61, ack MID 62); `70` = alarms (data MID 71, ack MID 72). Data MID = subscribe MID + 1; ack MID = subscribe MID + 2 |
+| `timezone` | string | `Local` | advanced | IANA zone (e.g. `Europe/Berlin`) used to interpret the controller's zone-less result timestamp. Defaults to the host/VM zone (`Local`); set `UTC` or an explicit IANA zone to override. |
 | `revision` | int | `1` | advanced | MID revision requested at login; sent as the 3-digit revision field of MID 0001 (default ⇒ `001`). Pinned to 1; documented for forward-compat |
 | `generic_subscribe` | int list | `[]` | advanced | Extra MIDs via the generic mechanism (MID 0008). Experimental; sent fire-and-forget (not awaited/confirmed in `Connect`, unlike the named subscribes) |
 | `keepalive_interval` | duration | `10s` | advanced | MID 9999 cadence |
