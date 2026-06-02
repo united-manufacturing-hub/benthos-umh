@@ -137,6 +137,37 @@ var _ = Describe("MID parsing", func() {
 			_, err := op.ParseLastTightening(tel)
 			Expect(err).To(HaveOccurred())
 		})
+
+		// scanPIDFields guard mid.go:85 — pos+2 > len(data) truncation before the parameter id.
+		//
+		// A mutant that changes + to - in `pos+2 > len(data)` makes the guard
+		// `pos-2 > len(data)` which is almost never true (pos starts at 0), so a
+		// 1-byte data field would not be caught and the slice data[0:2] would panic.
+		// With the correct guard, ParseLastTightening must return a non-nil error.
+		It("errors (not panics) when the data field is too short to hold a parameter id (1 byte)", func() {
+			tel := op.Telegram{
+				Header: op.Header{MID: 61, Revision: 1, TotalParts: 1, PartNumber: 1},
+				Data:   []byte("0"),
+			}
+			_, err := op.ParseLastTightening(tel)
+			Expect(err).To(HaveOccurred())
+		})
+
+		// scanPIDFields guard mid.go:99 — pos+f.width > len(data) truncation after the parameter id.
+		//
+		// A mutant that changes + to - in `pos+f.width > len(data)` makes the guard
+		// fire only when pos < f.width, skipping the real truncation; reading
+		// data[pos:pos+f.width] would then slice beyond the end and panic.
+		// With the correct guard, ParseLastTightening must return a non-nil error.
+		It("errors (not panics) when data has a valid parameter id but no value bytes (2 bytes total)", func() {
+			// "01" is parameter id 01 (cell id, width 4); no value bytes follow.
+			tel := op.Telegram{
+				Header: op.Header{MID: 61, Revision: 1, TotalParts: 1, PartNumber: 1},
+				Data:   []byte("01"),
+			}
+			_, err := op.ParseLastTightening(tel)
+			Expect(err).To(HaveOccurred())
+		})
 	})
 
 	Describe("MID 0002 communication start acknowledge", func() {
@@ -285,6 +316,87 @@ var _ = Describe("MID parsing", func() {
 			h1 := op.Header{MID: 9002, TotalParts: 2, PartNumber: 1}
 			_, _, err := rs.Push(op.Telegram{Header: h1, Data: big})
 			Expect(err).To(HaveOccurred(), "part-1 exceeding maxAssembledBytes should be rejected immediately")
+		})
+
+		// Boundary: TotalParts == maxParts (16) must be ACCEPTED, not rejected.
+		//
+		// The guard is:  if t.Header.TotalParts > maxParts { return error }
+		// A mutant that changes > to >= would reject exactly 16, failing this test.
+		// maxParts is unexported; hardcode 16 with an explanatory comment.
+		It("accepts a part-1-of-16 sequence start (exactly maxParts=16)", func() {
+			rs := op.NewReassembler()
+			// 16 == maxParts (unexported const); sequence starts buffering.
+			h := op.Header{MID: 8100, TotalParts: 16, PartNumber: 1}
+			_, ok, err := rs.Push(op.Telegram{Header: h, Data: []byte("x")})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeFalse()) // buffering, not yet complete
+		})
+
+		// Boundary: part-1 data of EXACTLY maxAssembledBytes (64*1024) must be ACCEPTED.
+		//
+		// The guard is:  if len(t.Data) > maxAssembledBytes { return error }
+		// A mutant that changes > to >= would reject exactly 65536, failing this test.
+		It("accepts a part-1-of-2 whose data is exactly maxAssembledBytes (64 KiB)", func() {
+			rs := op.NewReassembler()
+			// 64*1024 == maxAssembledBytes (unexported const).
+			exact := make([]byte, 64*1024)
+			h1 := op.Header{MID: 9003, TotalParts: 2, PartNumber: 1}
+			_, ok, err := rs.Push(op.Telegram{Header: h1, Data: exact})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeFalse())
+		})
+
+		// Boundary: cumulative size == maxAssembledBytes (32 KiB + 32 KiB = 64 KiB) must COMPLETE.
+		//
+		// The guard is:  if len(p.buf)+len(t.Data) > maxAssembledBytes { return error }
+		// A mutant that changes > to >= would reject the completion push, failing this test.
+		It("completes a 2-part sequence whose total size is exactly maxAssembledBytes (32+32 KiB)", func() {
+			rs := op.NewReassembler()
+			half := make([]byte, 32*1024)
+			h1 := op.Header{MID: 9004, TotalParts: 2, PartNumber: 1}
+			_, ok, err := rs.Push(op.Telegram{Header: h1, Data: half})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeFalse())
+
+			h2 := op.Header{MID: 9004, TotalParts: 2, PartNumber: 2}
+			out, ok, err := rs.Push(op.Telegram{Header: h2, Data: half})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeTrue())
+			Expect(out.Data).To(HaveLen(64 * 1024))
+		})
+
+		// Boundary: 3-part in-order assembly must succeed and return concatenated data.
+		//
+		// A mutant that changes p.nextIdx++ to p.nextIdx-- would set nextIdx to 0
+		// after part 2, causing part 3 (PartNumber=3) to be rejected as out-of-order.
+		// With the correct increment, all 3 parts must assemble in order.
+		It("assembles a 3-part in-order sequence correctly", func() {
+			rs := op.NewReassembler()
+
+			p1 := op.Telegram{
+				Header: op.Header{MID: 9005, TotalParts: 3, PartNumber: 1},
+				Data:   []byte("ALPHA"),
+			}
+			_, ok, err := rs.Push(p1)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeFalse())
+
+			p2 := op.Telegram{
+				Header: op.Header{MID: 9005, TotalParts: 3, PartNumber: 2},
+				Data:   []byte("-BETA"),
+			}
+			_, ok, err = rs.Push(p2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeFalse())
+
+			p3 := op.Telegram{
+				Header: op.Header{MID: 9005, TotalParts: 3, PartNumber: 3},
+				Data:   []byte("-GAMMA"),
+			}
+			out, ok, err := rs.Push(p3)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeTrue())
+			Expect(string(out.Data)).To(Equal("ALPHA-BETA-GAMMA"))
 		})
 
 		// TEST 5 (FIX 1) — maxInflightMIDs cap on concurrent partial sequences.

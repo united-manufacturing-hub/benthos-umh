@@ -128,5 +128,44 @@ var _ = Describe("Header codec", func() {
 			// HeaderLength=20, so 9980 bytes of data → length 10000 > 9999.
 			Expect(func() { op.BuildMessage(1, 1, make([]byte, 9980)) }).To(Panic())
 		})
+
+		// Boundary: data of length 9979 → total length 9999 (exactly maxFrameLength).
+		//
+		// The guard is:  if length > maxFrameLength { panic }
+		// A mutant that changes > to >= would panic at 9999, failing this test.
+		It("does NOT panic when data makes the telegram exactly maxFrameLength (9999)", func() {
+			// HeaderLength=20 + 9979 data bytes = 9999 = maxFrameLength.
+			Expect(func() {
+				out := op.BuildMessage(1, 1, make([]byte, 9979))
+				// Assert the 4-byte length field encodes 9999.
+				Expect(string(out[0:4])).To(Equal("9999"))
+			}).NotTo(Panic())
+		})
+
+		// Boundary: revision 0 is normalised to 1 — the raw revision field must be "001".
+		//
+		// The guard is:  if revision <= 0 { revision = 1 }
+		// A mutant that changes <= to < would NOT normalise 0 → field stays "000".
+		// ParseHeader also normalises "000"→1, so we MUST check raw bytes to kill the mutant.
+		It("normalises revision 0 to 1 in the raw revision field bytes", func() {
+			out := op.BuildMessage(1, 0, nil)
+			// Bytes [8:11] are the 3-byte revision field written by BuildMessage.
+			Expect(string(out[8:11])).To(Equal("001"))
+		})
+
+		It("passes a positive revision through unchanged in the raw revision field bytes", func() {
+			out := op.BuildMessage(1, 5, nil)
+			Expect(string(out[8:11])).To(Equal("005"))
+		})
+
+		// Boundary: length field must equal HeaderLength + len(data).
+		//
+		// The arithmetic in BuildMessage is:  length := HeaderLength + len(data)
+		// A mutant that changes + to - would produce 20-3=17 → "0017".
+		It("encodes the correct length for a non-empty data payload (HeaderLength + len(data))", func() {
+			out := op.BuildMessage(1, 1, []byte("XYZ"))
+			// 20 + 3 = 23.
+			Expect(string(out[0:4])).To(Equal("0023"))
+		})
 	})
 })

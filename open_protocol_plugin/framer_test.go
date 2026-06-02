@@ -16,6 +16,7 @@ package open_protocol_plugin_test
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net"
 	"time"
@@ -127,5 +128,35 @@ var _ = Describe("TCP framer", func() {
 		_, err := fr.ReadFrame()
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("out of range"))
+	})
+
+	// Boundary: length == maxFrameLength (9999) must be ACCEPTED, not rejected.
+	//
+	// The guard is:  if length < HeaderLength || length > maxFrameLength
+	// A mutant that changes > to >= would reject 9999, failing this test.
+	It("accepts a frame whose length field is exactly maxFrameLength (9999)", func() {
+		// Build raw bytes: 4-byte ASCII "9999" + 9995 filler bytes + NUL terminator.
+		raw := []byte(fmt.Sprintf("%04d", 9999))
+		raw = append(raw, bytes.Repeat([]byte("X"), 9999-4)...)
+		raw = append(raw, 0x00)
+		fr := op.NewFrameReader(bytes.NewReader(raw))
+		frame, err := fr.ReadFrame()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(frame).To(HaveLen(9999))
+	})
+
+	// Boundary: length == HeaderLength (20) must be ACCEPTED.
+	//
+	// The guard lower bound is:  length < HeaderLength
+	// A mutant that changes < to <= would reject 20, failing this test.
+	It("accepts a frame whose length field is exactly HeaderLength (20)", func() {
+		// Build raw bytes: 4-byte ASCII "0020" + 16 filler bytes + NUL terminator.
+		raw := []byte(fmt.Sprintf("%04d", op.HeaderLength))
+		raw = append(raw, bytes.Repeat([]byte("Z"), op.HeaderLength-4)...)
+		raw = append(raw, 0x00)
+		fr := op.NewFrameReader(bytes.NewReader(raw))
+		frame, err := fr.ReadFrame()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(frame).To(HaveLen(op.HeaderLength))
 	})
 })
