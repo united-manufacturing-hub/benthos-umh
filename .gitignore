@@ -235,3 +235,6 @@ cmd/schema-export/schema-export
 .DS_Store
 
 .self-review/
+
+# git worktrees (VSDD isolated workspace)
+.worktrees/
