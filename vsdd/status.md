@@ -24,12 +24,14 @@ Branch: `feature/open-protocol-input`
     - [x] Task 4 — golden rev-1 0061 decode (PID-23 widths) — `13e341f`
     - [x] Tasks 5–9 — Benthos-native session (Connect/Read/Close, generation-bound idempotent ack, subscribe-confirm, read_timeout) — `1215104`, review fixes `4b62bb7` (opus code-quality review: Approved-with-nits; I1 reassembler-under-mu + I2 Close-vs-loss fixed)
     - [ ] Tasks 10–12 — input config + revision guard + 18-message fan-out batch + `open_protocol_*` metadata
-    - [ ] Task 13 — property tests (rapid)
-    - [ ] Task 14 — integration test + docs
-- [ ] Phase 3 — Adversarial Roast
-- [ ] Phase 4 — Feedback Loop
-- [ ] Phase 5 — Formal Hardening (mutation ≥ 95%)
-- [ ] Phase 6 — Convergence
+    - [x] Tasks 10–12 — input config + revision guard + 18-message fan-out batch + `open_protocol_*` metadata — `e208eee` (+ gofmt `9525cf3`); opus spec-review: compliant
+    - [x] Task 13 — property tests (rapid) + closed 2 coverage gaps — `e6c6bd7`
+    - [x] Task 14 — integration test (fan-out shape) + user docs — `6b8a13d`
+  - [x] **Phase 2 complete**: 82 specs + 2 property tests, race/gofmt/vet clean, whole module builds, license headers present
+- [x] **Phase 3 — Adversarial Roast** (complete 2026-06-02): Sarcasmotron 3 passes → CONVERGED (0B/0M); security/quality prong Approved-with-nits, all Important findings fixed
+- [x] **Phase 4 — Feedback Loop** (complete): 7 fix/test commits routed back through impl/tests; all race/gofmt/vet clean, module builds
+- [ ] Phase 5 — Formal Hardening (mutation testing ≥ 95% + static analysis) — NOT STARTED
+- [ ] Phase 6 — Convergence — NOT STARTED
 
 ## Key Decisions (locked)
 

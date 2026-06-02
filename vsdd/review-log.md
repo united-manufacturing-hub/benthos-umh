@@ -112,3 +112,43 @@ Drops the `reconnect.max_backoff` config knob. Spec Session contract + plan Task
 
 LOW divergences kept as-is (justified): `timestamp_ms` set by an input;
 integration `//go:build integration` tag (siblings gate by env-var only).
+
+## Phase 3 — Adversarial Roast (Sarcasmotron, fresh context, opus) — pass 1 — 2026-06-02
+
+Verdict: **3 blockers, 6 majors, 8 minors** (2 withdrawn by the adversary itself).
+Resolutions in Fix Batch 1 (`b3fec19`) + Fix Batch 2 (`db97a49`):
+
+| Sev | Finding | Disposition |
+|-----|---------|-------------|
+| BLOCKER | `makeAck` used `sync.Once` → latched even on FAILED 0062 write; spec requires "set sent only on successful write" (Edge #27) | **Real bug, fixed:** `sent bool` set only after successful `write`; failed write logs + retries. Internal TDD test failed-before/passed-after |
+| BLOCKER | `revision` config default `0`, spec mandates `1` | Fixed: `.Default(1)`, `.Examples(1)`, spec-accurate description |
+| BLOCKER (test) | No test for AckFunc(err!=nil)→no 0062, nor one-batch⇒one-0062 at ReadBatch boundary | Added internal `TestReadBatchOneBatchOneAck` + `TestReadBatchNoAckOnDownstreamFailure` |
+| MAJOR | Edge #21 warning never logged on downstream-delivery failure | Fixed: AckFunc warns + withholds 0062 on `e != nil` |
+| MAJOR | Stale-ack test passed via closed-conn write failure, not the generation guard | Addressed: internal `TestMakeAckSuppressesStaleGenerationOnWritableConn` (writable conn + advanced gen → zero writes) |
+| MAJOR | timestamp_ms test only coincidentally UTC; no non-UTC e2e | Added Europe/Berlin e2e test (timestamp_ms 2h earlier) |
+| MAJOR | Edge #14 (unparseable timestamp) untested | Added test: 18 msgs, no `timestamp_ms`, raw `open_protocol_timestamp` kept |
+| MAJOR | Reassembler Edge #5 / state-discarded invariant untested | Added: out-of-order error then fresh part-1 succeeds |
+| MINOR | maxAssembledBytes part-1 branch; framer length lower-bound; property #1 rev≤0; garbage-ts property trivial | All added/strengthened (Fix Batch 2 TEST 4–7) |
+| MINOR | dead `Decode` re-encodes revision-blind behavior | Removed `Decode` + its test |
+| MINOR (dismissed) | `dialTimeout` hardcoded 10s | Defensible; spec lists no dial_timeout field. Doc-only |
+| MINOR (dismissed) | generic_subscribe write-error aborts Connect | A write error = broken socket; failing Connect is correct. Spec "fire-and-forget" = no reply awaited, which holds |
+
+Fix Batches both race/gofmt/vet clean; full module builds. Re-running adversary (pass 2) for convergence.
+
+### Pass 2 (opus) — 0 blockers, 1 major, 2 minors; all prior fixes CONFIRMED
+- MAJOR: Edge #9 warning not logged for non-rev-1 0061 raw passthrough → fixed (`2d1fc69`).
+- MINOR: no concurrent-goroutine ack test → added (`2d1fc69`). MINOR: login revision not asserted on wire → added (`2d1fc69`).
+
+### Pass 3 (opus) — VERDICT: 0 blockers, 0 majors, 2 minors. **CONVERGED: yes**
+All 3 pass-2 fixes CONFIRMED. Remaining 2 minors: login read didn't skip an interposed keep-alive (fixed in `e88b6c7` as part of the ctx-aware handshake loop); property #4 is value-based not literal consumed-length (functionally kills the widthRest mutant — accepted).
+
+### Prong 2 — Security + code-quality review (full impl) — Approved-with-nits
+**No crafted input can panic any parser** (verified 10k random + adversarial inputs; all slicing bounds-checked). Findings, all fixed in `e88b6c7`:
+- Important: `Reassembler.inflight` had no entry-count cap (could pin ~640 MB via many distinct partial MIDs) → added `MaxInflightMIDs = 64`.
+- Important: `Connect` handshake loops ignored ctx (keep-alive flood could hold Connect) → login + subscribe loops now check `ctx.Err()`.
+- Minor: `atoiTrim` returned MaxInt64 on overflow → returns 0; malformed MID 0004 logging fixed; `BuildMessage` guards oversized frames.
+
+## Phases 3–4 CONVERGED — 2026-06-02
+- Adversarial roast: 3 passes (3B/9M/8m → 0B/1M/2m → 0B/0M/2m-trivial), CONVERGED.
+- Security/quality prong: Approved-with-nits, all Important findings resolved.
+- 7 fix/test commits (`b3fec19`, `db97a49`, `2d1fc69`, `e88b6c7` + the two test commits). All race/gofmt/vet clean; whole module builds.
