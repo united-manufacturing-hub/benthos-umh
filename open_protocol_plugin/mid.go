@@ -128,6 +128,13 @@ func atoiTrim(s string) int {
 	return v
 }
 
+// Bounds on multi-part reassembly to prevent unbounded memory growth from a
+// buggy or malicious controller.
+const (
+	maxParts          = 16
+	maxAssembledBytes = 64 * 1024
+)
+
 // Reassembler joins the parts of multi-part Open Protocol telegrams back into a
 // single Telegram. Open Protocol splits a telegram that exceeds the maximum
 // length into N parts carrying the same MID, with the header's "number of
@@ -160,10 +167,18 @@ func (rs *Reassembler) Push(t Telegram) (Telegram, bool, error) {
 	}
 
 	mid := t.Header.MID
+
+	if t.Header.TotalParts > maxParts {
+		return Telegram{}, false, fmt.Errorf("open protocol: MID %04d declares %d parts, exceeds max %d", mid, t.Header.TotalParts, maxParts)
+	}
+
 	p, ok := rs.inflight[mid]
 	if !ok {
 		if t.Header.PartNumber != 1 {
 			return Telegram{}, false, fmt.Errorf("open protocol: MID %04d multi-part started at part %d, expected 1", mid, t.Header.PartNumber)
+		}
+		if len(t.Data) > maxAssembledBytes {
+			return Telegram{}, false, fmt.Errorf("open protocol: MID %04d part 1 data (%d bytes) exceeds max assembled size %d", mid, len(t.Data), maxAssembledBytes)
 		}
 		rs.inflight[mid] = &partialTelegram{
 			total:   t.Header.TotalParts,
@@ -177,6 +192,11 @@ func (rs *Reassembler) Push(t Telegram) (Telegram, bool, error) {
 	if t.Header.PartNumber != p.nextIdx {
 		delete(rs.inflight, mid)
 		return Telegram{}, false, fmt.Errorf("open protocol: MID %04d out-of-order part %d, expected %d", mid, t.Header.PartNumber, p.nextIdx)
+	}
+
+	if len(p.buf)+len(t.Data) > maxAssembledBytes {
+		delete(rs.inflight, mid)
+		return Telegram{}, false, fmt.Errorf("open protocol: MID %04d assembled size would exceed max %d bytes", mid, maxAssembledBytes)
 	}
 
 	p.buf = append(p.buf, t.Data...)

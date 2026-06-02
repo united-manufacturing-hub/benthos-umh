@@ -209,6 +209,26 @@ var _ = Describe("MID parsing", func() {
 			_, _, err := rs.Push(p2)
 			Expect(err).To(HaveOccurred())
 		})
+
+		It("rejects a sequence exceeding maxParts", func() {
+			rs := op.NewReassembler()
+			// A header claiming 17 parts (> maxParts=16), part 1.
+			h := op.Header{MID: 9000, TotalParts: 17, PartNumber: 1}
+			_, ok, err := rs.Push(op.Telegram{Header: h, Data: []byte("x")})
+			Expect(ok).To(BeFalse())
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("rejects when assembled size would exceed maxAssembledBytes", func() {
+			rs := op.NewReassembler()
+			big := make([]byte, 40*1024) // 40 KiB per part
+			h1 := op.Header{MID: 9001, TotalParts: 3, PartNumber: 1}
+			_, _, err := rs.Push(op.Telegram{Header: h1, Data: big})
+			Expect(err).NotTo(HaveOccurred())
+			h2 := op.Header{MID: 9001, TotalParts: 3, PartNumber: 2}
+			_, _, err = rs.Push(op.Telegram{Header: h2, Data: big}) // 80 KiB > 64 KiB
+			Expect(err).To(HaveOccurred())
+		})
 	})
 
 	Describe("Decode dispatch", func() {
