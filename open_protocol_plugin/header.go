@@ -107,12 +107,20 @@ func ParseHeader(buf []byte) (Header, error) {
 // and the multi-part fields are left blank/zero, which is correct for all
 // client-initiated requests this plugin sends (login, subscribe, ack,
 // keep-alive, etc.). The no-ack flag is left unset (ack required).
+//
+// The data payload must not cause the total telegram length to exceed
+// maxFrameLength (9999 bytes, the largest value the 4-digit ASCII length field
+// can encode). Violating this constraint panics: BuildMessage is internal-only
+// and the plugin never constructs frames larger than a handful of bytes.
 func BuildMessage(mid, revision int, data []byte) []byte {
 	if revision <= 0 {
 		revision = 1
 	}
 
 	length := HeaderLength + len(data)
+	if length > maxFrameLength {
+		panic(fmt.Sprintf("open protocol: BuildMessage: telegram length %d exceeds max %d", length, maxFrameLength))
+	}
 
 	var b strings.Builder
 	b.Grow(length + 1)

@@ -106,7 +106,10 @@ func scanPIDFields(data []byte, fields []pidField) (map[string]string, error) {
 }
 
 func atoiTrim(s string) int {
-	v, _ := strconv.Atoi(strings.TrimSpace(s))
+	v, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		return 0
+	}
 	return v
 }
 
@@ -115,6 +118,10 @@ func atoiTrim(s string) int {
 const (
 	maxParts          = 16
 	maxAssembledBytes = 64 * 1024
+	// MaxInflightMIDs is the maximum number of concurrent multi-part reassembly
+	// sequences the Reassembler will track simultaneously. It is exported so
+	// tests can reference the exact limit without hard-coding the value.
+	MaxInflightMIDs = 64
 )
 
 // Reassembler joins the parts of multi-part Open Protocol telegrams back into a
@@ -161,6 +168,9 @@ func (rs *Reassembler) Push(t Telegram) (Telegram, bool, error) {
 		}
 		if len(t.Data) > maxAssembledBytes {
 			return Telegram{}, false, fmt.Errorf("open protocol: MID %04d part 1 data (%d bytes) exceeds max assembled size %d", mid, len(t.Data), maxAssembledBytes)
+		}
+		if len(rs.inflight) >= MaxInflightMIDs {
+			return Telegram{}, false, fmt.Errorf("open protocol: too many concurrent multi-part sequences (%d), refusing MID %04d", MaxInflightMIDs, mid)
 		}
 		rs.inflight[mid] = &partialTelegram{
 			total:   t.Header.TotalParts,

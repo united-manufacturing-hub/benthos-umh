@@ -25,6 +25,27 @@ import (
 	op "github.com/united-manufacturing-hub/benthos-umh/open_protocol_plugin"
 )
 
+// keepAliveFloodHandler sends a burst of MID 9999 keep-alives after accepting
+// the TCP connection, then never sends MID 0002 (login accept). This simulates
+// a buggy controller that floods keep-alives during the login window.
+func keepAliveFloodHandler(burstSize int) func(fc *fakeController, conn net.Conn) {
+	return func(fc *fakeController, conn net.Conn) {
+		defer conn.Close()
+		for i := 0; i < burstSize; i++ {
+			if err := sendFrame(conn, op.MIDKeepAlive, 1, nil); err != nil {
+				return
+			}
+		}
+		// Never send login ack — block until the connection is torn down.
+		buf := make([]byte, 1)
+		for {
+			if _, err := conn.Read(buf); err != nil {
+				return
+			}
+		}
+	}
+}
+
 func newTestSession(endpoint string, subs []string) *op.Session {
 	return op.NewSession(op.SessionConfig{
 		Endpoint:          endpoint,
@@ -271,6 +292,43 @@ var _ = Describe("Session FSM", func() {
 		h, ok := fc.firstReceivedHeader(op.MIDCommunicationStart)
 		Expect(ok).To(BeTrue(), "MIDCommunicationStart header not found")
 		Expect(h.Revision).To(Equal(1), "login telegram must carry Revision == 1 on the wire")
+	})
+
+	// FIX 2 — ctx cancellation during a keep-alive flood in the login window.
+	//
+	// A controller that sends many MID 9999 keep-alives before ever sending MID
+	// 0002 must not hold Connect open past ctx cancellation. Without the fix the
+	// login loop would iterate burstSize times × RequestTimeout before stopping.
+	It("returns promptly when ctx is cancelled during a login keep-alive flood", func() {
+		const burstSize = 20
+		// Use a request_timeout that would cause a noticeable hang if we iterated
+		// through all keep-alives without checking ctx (burstSize × 200ms = 4s).
+		fc, err := newFakeController(keepAliveFloodHandler(burstSize))
+		Expect(err).NotTo(HaveOccurred())
+		defer fc.close()
+
+		// session with a longer request_timeout to make the hang detectable.
+		s := op.NewSession(op.SessionConfig{
+			Endpoint:          fc.addr(),
+			Subscriptions:     []string{"last_tightening"},
+			Revision:          1,
+			KeepAliveInterval: 50 * time.Millisecond,
+			RequestTimeout:    200 * time.Millisecond,
+			ReadTimeout:       2 * time.Second,
+		}, nil)
+
+		// Cancel the context after a short delay — well before the flood would exhaust.
+		connectCtx, connectCancel := context.WithTimeout(ctx, 300*time.Millisecond)
+		defer connectCancel()
+
+		start := time.Now()
+		err = s.Connect(connectCtx)
+		elapsed := time.Since(start)
+
+		Expect(err).To(HaveOccurred(), "Connect must fail when ctx is cancelled")
+		// Must return well under the full flood duration (burstSize × RequestTimeout = 4s).
+		Expect(elapsed).To(BeNumerically("<", 2*time.Second),
+			"Connect must return promptly after ctx cancellation, not wait through all keep-alives")
 	})
 
 	It("returns a Read error when no telegram arrives within read_timeout", func() {

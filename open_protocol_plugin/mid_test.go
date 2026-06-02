@@ -287,6 +287,30 @@ var _ = Describe("MID parsing", func() {
 			_, _, err := rs.Push(op.Telegram{Header: h1, Data: big})
 			Expect(err).To(HaveOccurred(), "part-1 exceeding maxAssembledBytes should be rejected immediately")
 		})
+
+		// TEST 5 (FIX 1) — maxInflightMIDs cap on concurrent partial sequences.
+		//
+		// A buggy controller that starts a large number of distinct multi-part
+		// sequences without completing any of them must not exhaust memory. The
+		// Reassembler refuses to start a new sequence once the inflight map is full,
+		// while existing in-progress sequences are unaffected.
+		It("rejects a new sequence once maxInflightMIDs concurrent partials are tracked", func() {
+			rs := op.NewReassembler()
+			// Start part-1-of-2 for maxInflightMIDs distinct MIDs (8000, 8001, ...).
+			// All must succeed (ok=false, err=nil) since each is a new partial.
+			for i := 0; i < op.MaxInflightMIDs; i++ {
+				mid := 8000 + i
+				h := op.Header{MID: mid, TotalParts: 2, PartNumber: 1}
+				_, complete, err := rs.Push(op.Telegram{Header: h, Data: []byte("x")})
+				Expect(err).NotTo(HaveOccurred(), "part-1 for MID %d should be accepted (slot %d)", mid, i)
+				Expect(complete).To(BeFalse())
+			}
+			// One more distinct MID — the map is full, must be rejected.
+			overflowMID := 8000 + op.MaxInflightMIDs
+			h := op.Header{MID: overflowMID, TotalParts: 2, PartNumber: 1}
+			_, _, err := rs.Push(op.Telegram{Header: h, Data: []byte("x")})
+			Expect(err).To(HaveOccurred(), "starting a new sequence when inflight map is full should return an error")
+		})
 	})
 
 })

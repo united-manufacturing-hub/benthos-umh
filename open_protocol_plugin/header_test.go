@@ -125,5 +125,12 @@ var _ = Describe("Header codec", func() {
 			Expect(h.Length).To(Equal(20))
 			Expect(h.Revision).To(Equal(1))
 		})
+
+		// FIX 5 — BuildMessage panics when data would cause telegram length to exceed
+		// the 4-digit ASCII length field maximum (9999 bytes).
+		It("panics when data would make the telegram exceed maxFrameLength", func() {
+			// HeaderLength=20, so 9980 bytes of data → length 10000 > 9999.
+			Expect(func() { op.BuildMessage(1, 1, make([]byte, 9980)) }).To(Panic())
+		})
 	})
 })

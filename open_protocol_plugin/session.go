@@ -225,8 +225,11 @@ func (s *Session) Read(ctx context.Context) (Result, error) {
 		case MIDKeepAlive, MIDCommandAccepted:
 			continue
 		case MIDCommandError:
-			ce, _ := ParseCommandError(tel)
-			s.log.Warnf("open protocol: controller reported %v", ce)
+			if ce, perr := ParseCommandError(tel); perr != nil {
+				s.log.Warnf("open protocol: received malformed MID 0004: %v", perr)
+			} else {
+				s.log.Warnf("open protocol: controller reported %v", ce)
+			}
 			continue
 		}
 
@@ -303,31 +306,45 @@ func (s *Session) connectAndHandshake(ctx context.Context) (net.Conn, *FrameRead
 	}
 	fr := NewFrameReader(conn)
 
-	// Login (MID 0001) and await MID 0002 / 0004.
+	// Login (MID 0001) and await MID 0002 / 0004. Skip keep-alives and check ctx
+	// each iteration so a keep-alive flood doesn't hold Connect open past cancellation.
 	if err := s.write(conn, MIDCommunicationStart, s.cfg.Revision, nil); err != nil {
 		_ = conn.Close()
 		return nil, nil, nil, fmt.Errorf("sending login: %w", err)
 	}
-	tel, err := s.readWithTimeout(conn, fr, s.cfg.RequestTimeout)
-	if err != nil {
-		_ = conn.Close()
-		return nil, nil, nil, fmt.Errorf("awaiting login reply: %w", err)
-	}
-	switch tel.Header.MID {
-	case MIDCommunicationStartAck:
-		// accepted
-	case MIDCommandError:
-		ce, _ := ParseCommandError(tel)
-		_ = conn.Close()
-		return nil, nil, nil, ce
-	default:
-		_ = conn.Close()
-		return nil, nil, nil, fmt.Errorf("unexpected MID %04d during login", tel.Header.MID)
+	for {
+		if ctx.Err() != nil {
+			_ = conn.Close()
+			return nil, nil, nil, ctx.Err()
+		}
+		tel, err := s.readWithTimeout(conn, fr, s.cfg.RequestTimeout)
+		if err != nil {
+			_ = conn.Close()
+			return nil, nil, nil, fmt.Errorf("awaiting login reply: %w", err)
+		}
+		switch tel.Header.MID {
+		case MIDKeepAlive:
+			continue
+		case MIDCommunicationStartAck:
+			// accepted -> break out of the loop
+		case MIDCommandError:
+			ce, perr := ParseCommandError(tel)
+			_ = conn.Close()
+			if perr != nil {
+				return nil, nil, nil, fmt.Errorf("open protocol: malformed MID 0004 during login: %w", perr)
+			}
+			return nil, nil, nil, ce
+		default:
+			_ = conn.Close()
+			return nil, nil, nil, fmt.Errorf("unexpected MID %04d during login", tel.Header.MID)
+		}
+		break // login accepted
 	}
 
 	var pending []Telegram
 
-	// Subscribe + confirm each.
+	// Subscribe + confirm each. confirmSub closes over ctx to honour cancellation
+	// even during a keep-alive flood from the controller.
 	confirmSub := func(subMID int) error {
 		if err := s.write(conn, subMID, 1, nil); err != nil {
 			return fmt.Errorf("subscribing (MID %04d): %w", subMID, err)
@@ -340,11 +357,17 @@ func (s *Session) connectAndHandshake(ctx context.Context) (net.Conn, *FrameRead
 			}
 			switch rep.Header.MID {
 			case MIDKeepAlive:
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				continue
 			case MIDCommandAccepted:
 				return nil
 			case MIDCommandError:
-				ce, _ := ParseCommandError(rep)
+				ce, perr := ParseCommandError(rep)
+				if perr != nil {
+					return fmt.Errorf("open protocol: malformed MID 0004 during subscribe: %w", perr)
+				}
 				return ce
 			default:
 				// A pushed result during the window also confirms; keep it for Read.
