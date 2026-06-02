@@ -25,10 +25,12 @@ import (
 // and OK/NOK verdict.
 //
 // The data field uses the Open Protocol parameter-ID format: each value is
-// preceded by a 2-digit parameter id. Field widths follow the Atlas Copco
-// specification (revision 1) and were cross-checked against the reference
-// emulator. Torque values are transmitted as hundredths of the engineering
-// unit (Nm) and are scaled back to a float here; angles are whole degrees.
+// preceded by a 2-digit parameter id. Field widths follow the Atlas Copco Open
+// Protocol specification, revision 1 (verified against R2.16 Table 98 and
+// cross-checked against the Apache-licensed node-nutrunner-open-library and the
+// reference emulator). Torque values are transmitted as hundredths of the
+// engineering unit (Nm) and are scaled back to a float here; angles are whole
+// degrees.
 type LastTightening struct {
 	CellID         int     `json:"cell_id"`
 	ChannelID      int     `json:"channel_id"`
@@ -58,29 +60,31 @@ type LastTightening struct {
 // mid0061Fields is the ordered parameter-ID layout of a MID 0061 revision-1
 // data field. Widths are fixed by the specification.
 var mid0061Fields = []pidField{
-	{"01", 4},  // cell id
-	{"02", 2},  // channel id
-	{"03", 25}, // controller name
-	{"04", 25}, // VIN
-	{"05", 2},  // job id
-	{"06", 3},  // pset number
-	{"07", 4},  // batch size
-	{"08", 4},  // batch counter
-	{"09", 1},  // tightening status
-	{"10", 1},  // torque status
-	{"11", 1},  // angle status
-	{"12", 6},  // torque min (x100)
-	{"13", 6},  // torque max (x100)
-	{"14", 6},  // torque target (x100)
-	{"15", 6},  // torque actual (x100)
-	{"16", 5},  // angle min
-	{"17", 5},  // angle max
-	{"18", 5},  // angle target
-	{"19", 5},  // angle actual
-	{"20", 19}, // timestamp
-	{"21", 19}, // pset change timestamp
-	{"22", 1},  // batch status
-	{"23", 4},  // tightening id
+	{"01", 4},         // cell id
+	{"02", 2},         // channel id
+	{"03", 25},        // controller name
+	{"04", 25},        // VIN
+	{"05", 2},         // job id
+	{"06", 3},         // pset number
+	{"07", 4},         // batch size
+	{"08", 4},         // batch counter
+	{"09", 1},         // tightening status
+	{"10", 1},         // torque status
+	{"11", 1},         // angle status
+	{"12", 6},         // torque min (x100)
+	{"13", 6},         // torque max (x100)
+	{"14", 6},         // torque target (x100)
+	{"15", 6},         // torque actual (x100)
+	{"16", 5},         // angle min
+	{"17", 5},         // angle max
+	{"18", 5},         // angle target
+	{"19", 5},         // angle actual
+	{"20", 19},        // timestamp
+	{"21", 19},        // pset change timestamp
+	{"22", 1},         // batch status
+	{"23", widthRest}, // tightening id: 10 digits per spec (R2.16 Table 98), but
+	//                    some emulators send 4; as the final field it greedily
+	//                    consumes the remainder, handling both.
 }
 
 // ParseLastTightening decodes a MID 0061 telegram into a LastTightening.

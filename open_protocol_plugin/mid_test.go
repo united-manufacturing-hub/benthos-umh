@@ -108,6 +108,19 @@ var _ = Describe("MID parsing", func() {
 			Expect(lt.TighteningID).To(Equal(7))
 		})
 
+		It("parses a spec-compliant 10-digit tightening ID (R2.16 Table 98)", func() {
+			// Real hardware sends a 10-digit tightening ID; the emulator sends 4.
+			// The terminal field must accept both.
+			data := build0061Data(true)
+			data = data[:len(data)-len("0007")] + "4294967295" // replace 4-digit id with 10-digit
+			frame := op.BuildMessage(61, 1, []byte(data))
+			frame = frame[:len(frame)-1]
+			tel, _ := op.ParseTelegram(frame)
+			lt, err := op.ParseLastTightening(tel)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(lt.TighteningID).To(Equal(4294967295))
+		})
+
 		It("reports NOK when the tightening status is 0", func() {
 			data := build0061Data(false)
 			frame := op.BuildMessage(61, 1, []byte(data))

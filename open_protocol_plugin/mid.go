@@ -88,8 +88,14 @@ type pidField struct {
 	width int
 }
 
+// widthRest marks a pidField whose value extends to the end of the data field.
+// It is only valid for the final field in a layout (e.g. MID 0061's tightening
+// ID, whose width differs between spec-compliant hardware and some emulators).
+const widthRest = -1
+
 // scanPIDFields walks a parameter-ID-formatted data field, validating that the
 // expected parameter ids appear in order and extracting each fixed-width value.
+// A field with width widthRest consumes the remaining bytes.
 func scanPIDFields(data []byte, fields []pidField) (map[string]string, error) {
 	out := make(map[string]string, len(fields))
 	pos := 0
@@ -102,6 +108,12 @@ func scanPIDFields(data []byte, fields []pidField) (map[string]string, error) {
 			return nil, fmt.Errorf("open protocol: expected parameter %s, got %q at offset %d", f.id, gotID, pos)
 		}
 		pos += 2
+
+		if f.width == widthRest {
+			out[f.id] = string(data[pos:])
+			pos = len(data)
+			continue
+		}
 		if pos+f.width > len(data) {
 			return nil, fmt.Errorf("open protocol: truncated reading parameter %s", f.id)
 		}
