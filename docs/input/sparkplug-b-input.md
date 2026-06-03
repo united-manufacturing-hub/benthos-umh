@@ -57,7 +57,7 @@ input:
       urls: ["tcp://localhost:1883"]
     identity:
       group_id: "DeviceLevelTest"
-    # mode: "secondary_passive" is default - safest for brownfield deployments
+    # role: "secondary_passive" is default - safest for brownfield deployments
 
 pipeline:
   processors:
@@ -89,7 +89,9 @@ output:
   uns: {}
 ```
 
-This configuration safely reads all Sparkplug B messages and converts them to UMH-Core format. The default `secondary_passive` mode is read-only and won't interfere with existing Sparkplug infrastructure, making it safe to run multiple instances for load balancing and redundancy.
+This configuration reads Sparkplug B messages from the configured group and converts them to UMH-Core format. The default `secondary_passive` role is read-only and won't interfere with existing Sparkplug infrastructure, making it safe to run multiple instances for load balancing and redundancy.
+
+> `identity.group_id` is also the subscription filter. By default the plugin subscribes to `spBv1.0/<group_id>/#`, so the example above ingests only the `DeviceLevelTest` group. To listen to multiple groups, use `subscription.groups: ["GroupA", "GroupB"]`. To subscribe to every group on the broker, use the MQTT wildcard: `subscription.groups: ["+"]`. The subscribed topics are printed at startup (for example, `Operating as secondary_passive - subscribing to: [spBv1.0/DeviceLevelTest/#]`).
 
 **To publish data as Sparkplug B**: After processing in the UNS, use the [Sparkplug B Output plugin](../output/sparkplug-b-output.md) to convert UMH-Core data back to Sparkplug B format for external systems.
 
@@ -141,6 +143,7 @@ Here's how a Sparkplug B message maps to UMH-Core using the Modified Parris Meth
 ## Configuration Reference
 
 ### MQTT Section
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `mqtt.urls` | `[]string` | **required** | List of MQTT broker URLs |
@@ -153,45 +156,54 @@ Here's how a Sparkplug B message maps to UMH-Core using the Modified Parris Meth
 | `mqtt.clean_session` | `bool` | `true` | MQTT clean session flag |
 
 ### Identity Section
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `identity.group_id` | `string` | **required** | Sparkplug B Group ID |
-| `identity.edge_node_id` | `string` | `""` | Required only for `primary` mode (used as host_id for STATE topic) |
+| `identity.group_id` | `string` | **required** | Sparkplug B Group ID. Also acts as the default subscription filter (`spBv1.0/<group_id>/#`). Override via `subscription.groups`. |
+| `identity.edge_node_id` | `string` | `""` | Required for the `primary` role, where it is used as the Sparkplug v3.0 `host_id` in the STATE topic (`spBv1.0/STATE/<host_id>`). Optional for secondary roles. |
 
-### Mode Section
+### Role Section
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `mode` | `string` | `"secondary_passive"` | Operating mode for the Sparkplug B input plugin |
+| `role` | `string` | `"secondary_passive"` | Operating role for the Sparkplug B input plugin |
 
-**Available Modes:**
+**Available Roles:**
 - `"secondary_passive"` (default): Read-only consumer, no rebirth commands sent
 - `"secondary_active"`: Consumer that can request rebirths when needed
 - `"primary"`: Full Primary Host with STATE publishing and session management
+
+### Rebirth Configuration
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `request_birth_on_connect` | `bool` | `true` | Send REBIRTH when DATA arrives from a node with no prior BIRTH on this bridge. Typical after a bridge restart. Ignored under `secondary_passive`. Controls only the discovery path; sequence-gap and unresolved-aliases recovery always run for `secondary_active` and `primary`. |
+| `birth_request_throttle` | `duration` | `"1s"` | Minimum time between REBIRTH commands to the same node, shared across every rebirth reason. Collapses simultaneous discovery, sequence-gap, and unresolved-aliases signals into one broker command per window. Set to `0` to disable throttling. |
 
 ---
 
 ## Technical Details
 
-### Operating Modes Explained
+### Operating Roles Explained
 
-The Sparkplug B input plugin offers three operating modes that automatically configure all necessary settings. These modes provide clear choices for different deployment scenarios while eliminating the complexity of understanding Sparkplug B roles.
+The Sparkplug B input plugin offers three operating roles that automatically configure all necessary settings. These roles provide clear choices for different deployment scenarios while eliminating the complexity of understanding Sparkplug B roles.
 
-#### Mode Overview
+#### Role Overview
 
-| Mode | Role | Description | Safe for Brownfield |
+| Role | Name | Description | Safe for Brownfield |
 |------|------|-------------|---------------------|
 | `secondary_passive` | Secondary Host (Muted) | Read-only consumer, no rebirth commands | ✅ Yes (Default) |
 | `secondary_active` | Secondary Host (Unmuted) | Consumer that can request rebirths | ✅ Yes |
 | `primary` | Primary Host | Full host with STATE publishing | ⚠️ May conflict |
 
-#### Mode: `secondary_passive` (Default)
+#### Role: `secondary_passive` (Default)
 
 **What it does:**
 - Operates as a read-only Secondary Host
 - **Does NOT send rebirth commands** (fully passive)
 - Does NOT publish STATE messages
 - Safe to run multiple instances for scalability
-- Consumes all Sparkplug B messages without interfering
+- Consumes Sparkplug B messages from the configured group without interfering (set `subscription.groups: ["+"]` to consume every group)
 
 **When to use:**
 - ✅ **Default choice** - Safest option for any deployment
@@ -207,12 +219,12 @@ input:
       urls: ["tcp://localhost:1883"]
     identity:
       group_id: "FactoryA"
-    # mode: "secondary_passive" is the default
+    # role: "secondary_passive" is the default
 ```
 
-**Technical behavior:** Pure consumer mode with no command publishing capabilities.
+**Technical behavior:** Pure consumer role with no command publishing capabilities.
 
-#### Mode: `secondary_active`
+#### Role: `secondary_active`
 
 **What it does:**
 - Operates as an active Secondary Host
@@ -234,12 +246,12 @@ input:
       urls: ["tcp://localhost:1883"]
     identity:
       group_id: "FactoryA"
-    mode: "secondary_active"
+    role: "secondary_active"
 ```
 
 **Technical behavior:** Secondary Host with NCMD/DCMD publishing for rebirth requests.
 
-#### Mode: `primary`
+#### Role: `primary`
 
 **What it does:**
 - Operates as the Primary Host per Sparkplug B specification
@@ -261,9 +273,11 @@ input:
       urls: ["tcp://localhost:1883"]
     identity:
       group_id: "FactoryA"
-      edge_node_id: "UMH_Primary"  # Required for STATE topic
-    mode: "primary"
+      edge_node_id: "UMH_Primary"  # Used as the Sparkplug v3.0 host_id
+    role: "primary"
 ```
+
+> For the `primary` role, `identity.edge_node_id` is the Sparkplug v3.0 `host_id`. With the config above, the plugin publishes STATE messages on `spBv1.0/STATE/UMH_Primary`. The startup logs make this explicit: `Primary Host: using identity.edge_node_id='UMH_Primary' as Sparkplug v3.0 host_id for STATE topic spBv1.0/STATE/UMH_Primary`. The field is named `edge_node_id` for consistency with the secondary roles, but in `primary` mode it identifies the host.
 
 **Technical behavior:** Full Primary Host with STATE publishing and session management.
 
@@ -280,11 +294,13 @@ A cascading effect that occurs when multiple Secondary Hosts simultaneously requ
 5. Network and broker become saturated
 
 **Prevention:**
-- Use `secondary_passive` mode (default) in multi-consumer environments
+- Use `secondary_passive` role (default) in multi-consumer environments
 - Only use `secondary_active` when you're the sole consumer
 - Coordinate rebirth requests if multiple active consumers are necessary
 
-#### Choosing the Right Mode
+> **How throttling prevents rebirth storms.** This plugin rate-limits REBIRTH commands per node via `birth_request_throttle` (default `1s`). Without it, the alias-recovery path would loop until the next BIRTH arrives: every DATA in the round-trip window references the same uncached aliases and triggers another rebirth. Suppressed rebirths log at `info` when the throttle has been active longer than 100ms; same-dispatch co-fires (multiple reasons triggered by one DATA) log at `debug`. Throttling is an implementation choice, not Sparkplug B v3.0 behavior; the spec uses MAY for the Host's rebirth obligation and does not specify pacing. Set `birth_request_throttle: 0` to disable.
+
+#### Choosing the Right Role
 
 **Start with `secondary_passive` if:**
 - You have any existing Sparkplug B infrastructure
@@ -307,7 +323,7 @@ A cascading effect that occurs when multiple Secondary Hosts simultaneously requ
 
 ### Advanced Configuration Options
 
-For users who need fine-grained control beyond the simplified modes, additional configuration options are available:
+For users who need to override the default subscription behavior, `subscription.groups` lets you listen to multiple groups or to every group on the broker:
 
 ```yaml
 input:
@@ -316,20 +332,23 @@ input:
       urls: ["tcp://localhost:1883"]
     identity:
       group_id: "FactoryA"
-      edge_node_id: "CustomHost"  # Optional for secondary modes
-    mode: "secondary_passive"
+      edge_node_id: "CustomHost"  # Optional for secondary role
+    role: "secondary_passive"
 
-    # Advanced options (usually not needed)
+    # Override the default subscription filter
     subscription:
-      groups: ["GroupA", "GroupB"]  # Specific groups instead of all
+      groups: ["FactoryA", "FactoryB"]   # Listen to several groups
+      # groups: ["+"]                      # Or: subscribe to every group (MQTT wildcard)
 
     # Future options (planned):
     # include_data_contract_in_device_id: true  # Add data contract to device ID
 ```
 
-### STATE Topic Behavior (primary mode only)
+When `subscription.groups` is omitted or empty, the plugin filters to `identity.group_id` (`spBv1.0/<group_id>/#`). Set this field only when you need to listen to groups other than your identity, or to opt back into the all-groups behavior with `["+"]`.
 
-When using `primary` mode, the plugin publishes STATE messages according to Sparkplug B v3.0:
+### STATE Topic Behavior (primary role only)
+
+When using `primary` role, the plugin publishes STATE messages according to Sparkplug B v3.0:
 
 ```
 spBv1.0/STATE/<host_id>
@@ -343,13 +362,13 @@ spBv1.0/STATE/<host_id>
 
 #### Multiple Instance Support
 
-**`secondary_passive` mode (default)**:
+**`secondary_passive` role (default)**:
 ✅ **Safe for multiple instances** - No STATE conflicts, no rebirth storms, load balancing friendly
 
-**`secondary_active` mode**:
+**`secondary_active` role**:
 ✅ **Can run multiple instances** - But be aware of potential rebirth storms
 
-**`primary` mode**:
+**`primary` role**:
 ⚠️ **Single instance only** - Publishes STATE messages for host arbitration
 
 ### Metadata Enrichment
