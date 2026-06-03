@@ -38,6 +38,7 @@ COPY ./topic_browser_plugin ./topic_browser_plugin
 COPY ./classic_to_core_plugin ./classic_to_core_plugin
 COPY ./sparkplug_plugin ./sparkplug_plugin
 COPY ./stream_processor_plugin ./stream_processor_plugin
+COPY ./snowflake_put_plugin ./snowflake_put_plugin
 
 ENV CGO_ENABLED=0
 RUN go build \

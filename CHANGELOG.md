@@ -8,6 +8,10 @@
 - Sparkplug B input: field descriptions and the primary-role startup log now state that `identity.edge_node_id` is used as the Sparkplug v3.0-compatible `host_id` in the STATE topic (`spBv1.0/STATE/<host_id>`).
 - Sparkplug B input: bridges now request a rebirth when DATA references aliases the cache hasn't seen (typically after a bridge restart with no retained `NBIRTH`/`DBIRTH` on the broker). Previously tags surfaced as `…/_historian/alias_<n>` until something external triggered recovery. Related, `request_birth_on_connect` now defaults to `true`, so `secondary_active`/`primary` bridges also proactively rebirth newly seen nodes on connect; set it to `false` to keep the prior behavior (ignored under `secondary_passive`).
 
+### Improvements
+
+- New `snowflake_put` output: ports the [warpstreamlabs/bento Snowflake output](https://warpstreamlabs.github.io/bento/docs/components/outputs/snowflake_put/) into benthos-umh for writing batched messages to Snowflake stages with optional Snowpipe ingestion. Supports user/password and key-pair auth, all gosnowflake compression modes, and per-message stage/Snowpipe interpolation
+
 ## [0.12.5]
 
 ### Fixes

@@ -17,6 +17,8 @@ GINKGO_CMD=go run github.com/onsi/ginkgo/v2/ginkgo
 GINKGO_FLAGS=-r --output-interceptor-mode=none -trace -p --randomize-all --cover --coverprofile=cover.profile
 GINKGO_SERIAL_FLAGS=$(GINKGO_FLAGS) --procs=1
 
+GOTESTSUM_FLAGS=--format pkgname -- -race -coverprofile=cover.profile
+
 BENTHOS_BIN := tmp/bin/benthos
 LOG_LEVEL ?= INFO
 CONFIG ?= ./config/opcua-hex-test.yaml
@@ -133,6 +135,10 @@ fuzz-stream-processor:
 test-tag-processor:
 	@TEST_TAG_PROCESSOR=true \
 		$(GINKGO_CMD) $(GINKGO_FLAGS) ./tag_processor_plugin/...
+
+.PHONY: test-snowflake-put
+test-snowflake-put: $(GOTESTSUM)
+	@$(GOTESTSUM) $(GOTESTSUM_FLAGS) ./snowflake_put_plugin/...
 
 .PHONY: test-sparkplug
 test-sparkplug:

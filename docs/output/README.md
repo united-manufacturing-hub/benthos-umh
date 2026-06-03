@@ -10,6 +10,8 @@ This section covers Benthos output plugins for writing data to various industria
 
 - **[Sparkplug B Output](sparkplug-b-output.md)** - Publishes batched messages to an MQTT Broker with the protocol Sparkplug B. 
 
+- **[Snowflake PUT Output](snowflake-put.md)** - Writes batched messages to a Snowflake stage and optionally triggers Snowpipe ingestion. Ported from warpstreamlabs/bento.
+
 - **[More Output Plugins](https://docs.redpanda.com/redpanda-connect/components/outputs/about/)** - Additional built-in output plugins available in Benthos/Redpanda Connect for various destinations.
 
 ## Choosing the Right Output Plugin
