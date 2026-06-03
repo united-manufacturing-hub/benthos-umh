@@ -32,17 +32,19 @@ func generateVersionedFilename(version string) string {
 
 func main() {
 	version := flag.String("version", "", "Benthos-UMH version (required)")
-	// format flag accepts two output schema formats:
+	// format flag accepts three output schema formats:
 	// - "benthos": Raw Benthos plugin specification format (default)
 	//   Used by: Management Console UI for displaying plugin configuration forms
 	// - "json-schema": JSON Schema Draft-07 format for Monaco editor
 	//   Used by: Web-based config editors for syntax validation/autocomplete
-	format := flag.String("format", "benthos", "Output format: benthos or json-schema")
+	// - "mapping": read->write plugin pairing for write flows
+	//   Used by: Management Console to pair an input plugin with its output plugin
+	format := flag.String("format", "benthos", "Output format: benthos, json-schema or mapping")
 	flag.Parse()
 
 	if *version == "" {
 		fmt.Fprintf(os.Stderr, "Error: -version flag is required\n")
-		fmt.Fprintf(os.Stderr, "Usage: schema-export -version 0.11.6 [-format benthos|json-schema]\n")
+		fmt.Fprintf(os.Stderr, "Usage: schema-export -version 0.11.6 [-format benthos|json-schema|mapping]\n")
 		os.Exit(1)
 	}
 
@@ -56,7 +58,7 @@ func main() {
 	// Validate format flag
 	if err := validateFormat(*format); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		fmt.Fprintf(os.Stderr, "Usage: schema-export -version 0.11.6 [-format benthos|json-schema]\n")
+		fmt.Fprintf(os.Stderr, "Usage: schema-export -version 0.11.6 [-format benthos|json-schema|mapping]\n")
 		os.Exit(1)
 	}
 
