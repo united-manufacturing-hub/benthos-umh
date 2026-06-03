@@ -45,7 +45,7 @@ require (
 	github.com/redpanda-data/benthos/v4 v4.73.0
 	github.com/redpanda-data/connect/public/bundle/free/v4 v4.93.0
 	github.com/robinson/gos7 v0.0.0-20241205073040-7ea1d6fb9d20
-	github.com/snowflakedb/gosnowflake/v2 v2.0.2
+	github.com/snowflakedb/gosnowflake v1.19.0
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/redpanda v0.42.0
@@ -425,7 +425,6 @@ require (
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/skeema/knownhosts v1.3.2 // indirect
 	github.com/smira/go-statsd v1.3.4 // indirect
-	github.com/snowflakedb/gosnowflake v1.19.0 // indirect
 	github.com/sourcegraph/conc v0.3.0 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.6.0 // indirect

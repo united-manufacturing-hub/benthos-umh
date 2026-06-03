@@ -1487,8 +1487,6 @@ github.com/smira/go-statsd v1.3.4 h1:kBYWcLSGT+qC6JVbvfz48kX7mQys32fjDOPrfmsSx2c
 github.com/smira/go-statsd v1.3.4/go.mod h1:RjdsESPgDODtg1VpVVf9MJrEW2Hw0wtRNbmB1CAhu6A=
 github.com/snowflakedb/gosnowflake v1.19.0 h1:Oy/w5/hXiSJV09kgG9zpFZFjNRNvF5Cet7r6vzd87OQ=
 github.com/snowflakedb/gosnowflake v1.19.0/go.mod h1:7D4+cLepOWrerVsH+tevW3zdMJ5/WrEN7ZceAC6xBv0=
-github.com/snowflakedb/gosnowflake/v2 v2.0.2 h1:8UZo+v1T2Y9sgoPk3JYT3RatAUd9o6q6yjL40TyHluA=
-github.com/snowflakedb/gosnowflake/v2 v2.0.2/go.mod h1:c0hIqJ/dxgaMl7g1o8n4Ca3Mf5YCiiVx9igio/PNqC8=
 github.com/sourcegraph/conc v0.3.0 h1:OQTbbt6P72L20UqAkXXuLOj79LfEanQ+YQFNpLA9ySo=
 github.com/sourcegraph/conc v0.3.0/go.mod h1:Sdozi7LEKbFPqYX2/J+iBAM6HpqSLTASQIKqDmF7Mt0=
 github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72/go.mod h1:JwIasOWyU6f++ZhiEuf87xNszmSA2myDM2Kzu9HwQUA=
