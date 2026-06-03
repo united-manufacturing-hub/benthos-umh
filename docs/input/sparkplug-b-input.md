@@ -190,7 +190,7 @@ The Sparkplug B input plugin offers three operating roles that automatically con
 
 #### Role Overview
 
-| Role | Role | Description | Safe for Brownfield |
+| Role | Name | Description | Safe for Brownfield |
 |------|------|-------------|---------------------|
 | `secondary_passive` | Secondary Host (Muted) | Read-only consumer, no rebirth commands | ✅ Yes (Default) |
 | `secondary_active` | Secondary Host (Unmuted) | Consumer that can request rebirths | ✅ Yes |
