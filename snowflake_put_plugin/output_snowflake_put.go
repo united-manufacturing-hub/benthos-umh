@@ -445,7 +445,7 @@ func getPrivateKey(f fs.FS, path string, passphrase string) (*rsa.PrivateKey, er
 
 	if privateKeyBlock.Type == "ENCRYPTED PRIVATE KEY" {
 		if passphrase == "" {
-			return nil, errors.New("private key requires a passphrase, but private_key_passphrase was not supplied")
+			return nil, errors.New("private key requires a passphrase, but private_key_pass was not supplied")
 		}
 
 		var privateKey *rsa.PrivateKey
@@ -617,7 +617,7 @@ func newSnowflakeWriterFromConfig(conf *service.ParsedConfig, mgr *service.Resou
 	var uploadParallelThreads int
 	uploadParallelThreads, err = conf.FieldInt("upload_parallel_threads")
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse stage: %w", err)
+		return nil, fmt.Errorf("failed to parse upload_parallel_threads: %w", err)
 	}
 
 	compressionStr, err := conf.FieldString("compression")
@@ -851,7 +851,7 @@ func (s *snowflakeWriter) WriteBatch(ctx context.Context, batch service.MessageB
 			return fmt.Errorf("failed to get stage: %w", err)
 		}
 		if f.stage == "" {
-			return fmt.Errorf("stage cannot be empty: %w", err)
+			return errors.New("stage cannot be empty")
 		}
 
 		f.stagePath, err = s.path.TryString(msg)

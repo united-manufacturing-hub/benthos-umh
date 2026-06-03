@@ -273,7 +273,7 @@ snowpipe: '` + tc.snowpipe + `'
 			keyKind:           keyEncrypted,
 			stage:             "@test_stage",
 			compression:       "NONE",
-			errConfigContains: "failed to read private key: private key requires a passphrase, but private_key_passphrase was not supplied",
+			errConfigContains: "failed to read private key: private key requires a passphrase, but private_key_pass was not supplied",
 		},
 		{
 			name:         "executes snowflake query without compression",
