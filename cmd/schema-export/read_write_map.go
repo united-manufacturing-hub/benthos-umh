@@ -100,7 +100,7 @@ func buildMapping(env *service.Environment, overrides []pluginPair) []pluginPair
 }
 
 // pair pairs a plugin name with itself on each side it is registered for; unregistered sides stay empty.
-func pair(name string, inputs, outputs map[string]bool) pluginPair {
+func pair(name string, inputs map[string]bool, outputs map[string]bool) pluginPair {
 	p := pluginPair{IsUmhPlugin: umhPluginNames[name]}
 	if inputs[name] {
 		p.Read = name
