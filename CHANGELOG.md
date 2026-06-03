@@ -2,15 +2,18 @@
 
 ## [Unreleased]
 
+## [0.12.6]
+
 ### Fixes
 
-- Sparkplug B input: `identity.group_id` now filters the MQTT subscription by default. Previously an empty `subscription.groups` caused the plugin to subscribe to every Sparkplug group on the broker (`spBv1.0/+/#`) regardless of `identity.group_id`. To restore the old behavior, set `subscription.groups: ["+"]` explicitly.
-- Sparkplug B input: field descriptions and the primary-role startup log now state that `identity.edge_node_id` is used as the Sparkplug v3.0-compatible `host_id` in the STATE topic (`spBv1.0/STATE/<host_id>`).
-- Sparkplug B input: bridges now request a rebirth when DATA references aliases the cache hasn't seen (typically after a bridge restart with no retained `NBIRTH`/`DBIRTH` on the broker). Previously tags surfaced as `…/_historian/alias_<n>` until something external triggered recovery. Related, `request_birth_on_connect` now defaults to `true`, so `secondary_active`/`primary` bridges also proactively rebirth newly seen nodes on connect; set it to `false` to keep the prior behavior (ignored under `secondary_passive`).
+- Sparkplug B input: `identity.group_id` now filters the MQTT subscription by default. Previously an empty `subscription.groups` subscribed to every Sparkplug group on the broker (`spBv1.0/+/#`) regardless of `identity.group_id`. To restore the old behavior, set `subscription.groups: ["+"]` explicitly (ENG-4974)
+- Sparkplug B input: bridges now request a rebirth when DATA references aliases the cache hasn't seen (typically after a bridge restart with no retained `NBIRTH`/`DBIRTH` on the broker). Previously tags surfaced as `…/_historian/alias_<n>` until something external triggered recovery (ENG-5002)
 
 ### Improvements
 
-- New `snowflake_put` output: ports the [warpstreamlabs/bento Snowflake output](https://warpstreamlabs.github.io/bento/docs/components/outputs/snowflake_put/) into benthos-umh for writing batched messages to Snowflake stages with optional Snowpipe ingestion. Supports user/password and key-pair auth, all gosnowflake compression modes, and per-message stage/Snowpipe interpolation
+- Sparkplug B input: `request_birth_on_connect` now defaults to `true`, so `secondary_active`/`primary` bridges proactively rebirth newly seen nodes on connect. Set it to `false` to keep the prior behavior (ignored under `secondary_passive`) (ENG-5002)
+- Sparkplug B input: field descriptions and the primary-role startup log now clarify that `identity.edge_node_id` is the Sparkplug v3.0-compatible `host_id` in the STATE topic (`spBv1.0/STATE/<host_id>`) (ENG-4974)
+- New `snowflake_put` output: ports the [warpstreamlabs/bento Snowflake output](https://warpstreamlabs.github.io/bento/docs/components/outputs/snowflake_put/) into benthos-umh for writing batched messages to Snowflake stages with optional Snowpipe ingestion. Supports user/password and key-pair auth, all gosnowflake compression modes, and per-message stage/Snowpipe interpolation (ENG-5061)
 
 ## [0.12.5]
 
