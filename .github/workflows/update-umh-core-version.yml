@@ -120,8 +120,8 @@ jobs:
              "ManagementConsole/frontend/src/lib/schemas/benthos/v${VERSION_CLEAN}/ui.json"
           cp "schema.json" \
              "ManagementConsole/frontend/src/lib/schemas/benthos/v${VERSION_CLEAN}/monaco.json"
-          cp "input-output-mapping.json" \
-             "ManagementConsole/frontend/src/lib/schemas/benthos/v${VERSION_CLEAN}/input-output-mapping.json"
+          cp "read-write-mapping.json" \
+             "ManagementConsole/frontend/src/lib/schemas/benthos/v${VERSION_CLEAN}/read-write-mapping.json"
 
       - name: Update schema discovery test
         run: |
@@ -162,7 +162,7 @@ jobs:
             **Files added:**
             - `frontend/src/lib/schemas/benthos/${{ env.VERSION }}/ui.json` - UI schema for form generation
             - `frontend/src/lib/schemas/benthos/${{ env.VERSION }}/monaco.json` - JSON Schema for Monaco editor
-            - `frontend/src/lib/schemas/benthos/${{ env.VERSION }}/input-output-mapping.json` - input→output plugin mapping for write flows
+            - `frontend/src/lib/schemas/benthos/${{ env.VERSION }}/read-write-mapping.json` - read→write plugin mapping for write flows
 
             ## Related
             - benthos-umh release: https://github.com/united-manufacturing-hub/benthos-umh/releases/tag/${{ env.VERSION }}

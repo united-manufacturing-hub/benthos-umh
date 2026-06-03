@@ -61,18 +61,18 @@ func main() {
 	}
 
 	if *format == "mapping" {
-		mapping := buildMapping(service.GlobalEnvironment(), inputOutputOverrides)
+		mapping := buildMapping(service.GlobalEnvironment(), readWriteOverrides)
 		mappingData, err := json.MarshalIndent(mapping, "", "  ")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error marshaling mapping JSON: %v\n", err)
 			os.Exit(1)
 		}
-		err = os.WriteFile("input-output-mapping.json", mappingData, 0o644)
+		err = os.WriteFile("read-write-mapping.json", mappingData, 0o644)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing output: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("✅ Generated input→output mapping to input-output-mapping.json (%d pairs)\n", len(mapping))
+		fmt.Printf("✅ Generated read→write mapping to read-write-mapping.json (%d pairs)\n", len(mapping))
 		return
 	}
 
