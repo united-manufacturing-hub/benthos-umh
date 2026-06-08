@@ -604,7 +604,10 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		}
 
 		for i, result := range response.Results {
-			if !errors.Is(result.StatusCode, ua.StatusOK) {
+			// Treat only BAD severity as a subscription failure; GOOD variants
+			// (e.g. GoodClamped) and UNCERTAIN codes still indicate the monitored
+			// item was created and should not be dropped here.
+			if statusIsBad(result.StatusCode) {
 				failedNode := batch[i].NodeID.String()
 
 				// Trial-and-retry logic (Hardware-Validated on S7-1200 PLCs)

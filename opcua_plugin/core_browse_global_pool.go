@@ -744,7 +744,13 @@ func (gwp *GlobalWorkerPool) workerLoop(workerID uuid.UUID, controlChan chan str
 			// Filter by NodeClass - only send Variables to ResultChan
 			switch nodeDef.NodeClass {
 			case ua.NodeClassVariable:
-				// Variables: send to ResultChan (subscription list)
+				// Always send Variables to the subscription list. We intentionally do
+				// not skip Variables that have children: HierarchicalReferences include
+				// HasProperty/HasComponent, so a normal data-bearing Variable can have
+				// metadata children (e.g. EngineeringUnits, EURange) and still carry a
+				// real value. Bad or undecodable values (e.g. unregistered ExtensionObject
+				// UDTs) are filtered downstream in getBytesFromValue via statusIsBad and
+				// the ExtensionObject nil-Value check.
 				if gwp.logger != nil {
 					gwp.logger.Debugf("Adding Variable to subscription list: nodeID=%s path=%s browseName=%s",
 						nodeDef.NodeID.String(), nodeDef.Path, nodeDef.BrowseName)

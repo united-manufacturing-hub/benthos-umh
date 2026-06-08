@@ -18,32 +18,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strconv"
 
 	"github.com/gopcua/opcua/ua"
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
-// Context key for capability probe flag
-type contextKey string
-
-const capabilityProbeKey contextKey = "capability_probe"
-
-// WithCapabilityProbe returns a context marked for capability probe operations.
-// Capability probe reads are expected to fail on servers that don't support optional features.
-func WithCapabilityProbe(ctx context.Context) context.Context {
-	return context.WithValue(ctx, capabilityProbeKey, true)
-}
-
-// isCapabilityProbe checks if context is marked for capability probe operations.
-func isCapabilityProbe(ctx context.Context) bool {
-	if val := ctx.Value(capabilityProbeKey); val != nil {
-		if b, ok := val.(bool); ok {
-			return b
-		}
-	}
-	return false
+// statusIsBad reports whether a StatusCode has BAD severity per OPC UA Part 8.
+// The top 2 bits of the 32-bit code encode severity: 00=Good, 01=Uncertain, 10/11=Bad.
+// GOOD variants (e.g. GoodClamped, GoodLocalOverride) and UNCERTAIN codes carry usable
+// data and must not be dropped by callers checking value validity.
+func statusIsBad(code ua.StatusCode) bool {
+	return uint32(code)>>30 >= 2
 }
 
 // getBytesFromValue returns the bytes and the tag type for a given OPC UA DataValue and NodeDef.
@@ -54,8 +40,9 @@ func (g *OPCUAConnection) getBytesFromValue(dataValue *ua.DataValue, nodeDef Nod
 		return nil, ""
 	}
 
-	if !errors.Is(dataValue.Status, ua.StatusOK) {
-		g.Log.Warnf("Received bad status %v for node %s", dataValue.Status, nodeDef.NodeID.String())
+	if statusIsBad(dataValue.Status) {
+		g.Log.Warnf("Skipping node %s: bad status %v", nodeDef.NodeID.String(), dataValue.Status)
+		return nil, ""
 	}
 
 	b := make([]byte, 0)
@@ -105,6 +92,47 @@ func (g *OPCUAConnection) getBytesFromValue(dataValue *ua.DataValue, nodeDef Nod
 	case uint64:
 		b = append(b, []byte(strconv.FormatUint(v, 10))...)
 		tagType = "number"
+	case *ua.ExtensionObject:
+		if v == nil || v.Value == nil {
+			// Unregistered type — skip (binary data already discarded by gopcua).
+			// Note: a typed-nil *ua.ExtensionObject still matches this case, so guard v itself.
+			// TypeID / TypeID.NodeID can also be nil for unknown extension types.
+			typeIDStr := "<unknown>"
+			if v != nil && v.TypeID != nil && v.TypeID.NodeID != nil {
+				typeIDStr = v.TypeID.NodeID.String()
+			}
+			g.Log.Warnf("Skipping node %s: ExtensionObject type %s not decodable (custom UDT not registered)",
+				nodeDef.NodeID.String(), typeIDStr)
+			return nil, ""
+		}
+		// Type was registered and decoded — serialize the actual value
+		jsonBytes, err := json.Marshal(v.Value)
+		if err != nil {
+			g.Log.Errorf("Error marshaling ExtensionObject value for node %s: %v", nodeDef.NodeID.String(), err)
+			return nil, ""
+		}
+		b = append(b, jsonBytes...)
+		tagType = "string"
+	case []*ua.ExtensionObject:
+		// Filter: collect only decoded Extension Objects
+		var decoded []interface{}
+		for _, eo := range v {
+			if eo != nil && eo.Value != nil {
+				decoded = append(decoded, eo.Value)
+			}
+		}
+		if len(decoded) == 0 {
+			g.Log.Warnf("Skipping node %s: array of %d ExtensionObjects, none decodable (custom UDTs not registered)",
+				nodeDef.NodeID.String(), len(v))
+			return nil, ""
+		}
+		jsonBytes, err := json.Marshal(decoded)
+		if err != nil {
+			g.Log.Errorf("Error marshaling ExtensionObject array for node %s: %v", nodeDef.NodeID.String(), err)
+			return nil, ""
+		}
+		b = append(b, jsonBytes...)
+		tagType = "string"
 	default:
 		// Convert unknown types to JSON
 		jsonBytes, err := json.Marshal(v)
@@ -127,9 +155,15 @@ func (g *OPCUAConnection) getBytesFromValue(dataValue *ua.DataValue, nodeDef Nod
 // Read performs a synchronous read operation on the OPC UA server using the provided ReadRequest.
 //
 // This function sends a ReadRequest to the OPC UA server and handles the response. It manages
-// specific error conditions by closing the current session and signaling that the client is
-// no longer connected, prompting reconnection attempts if necessary. Successful reads return
-// the ReadResponse, while errors are appropriately logged and propagated.
+// specific session/transport error conditions by closing the current session and signaling that
+// the client is no longer connected, prompting reconnection attempts if necessary.
+//
+// NOTE: Read only returns a non-nil error for session/transport failures. Per-result problems
+// (e.g. StatusBadDataTypeIDUnknown on a single node, UNCERTAIN values, undecodable
+// ExtensionObjects) are NOT surfaced as errors here — they are carried on each
+// resp.Results[i].Status. Callers must iterate resp.Results and inspect DataValue.Status per
+// entry (see statusIsBad and getBytesFromValue for the canonical BAD-severity filter used in
+// this plugin). Failing to do so will silently propagate bad values downstream.
 func (g *OPCUAConnection) Read(ctx context.Context, req *ua.ReadRequest) (*ua.ReadResponse, error) {
 	resp, err := g.Client.Read(ctx, req)
 	if err != nil {
@@ -158,16 +192,6 @@ func (g *OPCUAConnection) Read(ctx context.Context, req *ua.ReadRequest) (*ua.Re
 
 		// return error and stop executing this function.
 		return nil, err
-	}
-
-	if !errors.Is(resp.Results[0].Status, ua.StatusOK) {
-		// Capability probes are expected to fail on servers without optional features
-		if isCapabilityProbe(ctx) {
-			g.Log.Debugf("Capability probe returned status: %v (expected for servers without this feature)", resp.Results[0].Status)
-		} else {
-			g.Log.Errorf("Status not OK: %v", resp.Results[0].Status)
-		}
-		return nil, fmt.Errorf("status not OK: %w", resp.Results[0].Status)
 	}
 
 	return resp, nil
