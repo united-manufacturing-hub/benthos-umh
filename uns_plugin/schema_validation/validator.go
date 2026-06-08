@@ -34,7 +34,7 @@ import (
 
 const (
 	cacheHitTTL  = 0                // Cache successful schema fetches forever (schemas are immutable)
-	cacheMissTTL = 10 * time.Minute // Cache misses for 10 minutes to retry sooner
+	cacheMissTTL = 10 * time.Second // Cache misses for 10 minutes to retry sooner
 	httpTimeout  = 30 * time.Second
 	maxCacheSize = 1000 // Maximum number of cache entries to prevent memory leaks
 )
