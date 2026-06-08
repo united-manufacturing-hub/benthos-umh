@@ -46,7 +46,7 @@ import (
 	"github.com/gofrs/uuid/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/redpanda-data/benthos/v4/public/service"
-	"github.com/snowflakedb/gosnowflake"
+	"github.com/snowflakedb/gosnowflake/v2"
 	"github.com/youmark/pkcs8"
 	"golang.org/x/crypto/ssh"
 )
