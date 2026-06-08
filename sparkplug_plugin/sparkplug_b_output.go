@@ -51,8 +51,8 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
 
-func init() {
-	outputSpec := service.NewConfigSpec().
+func sparkplugOutputConfigSpec() *service.ConfigSpec {
+	return service.NewConfigSpec().
 		Version("1.0.0").
 		Summary("Sparkplug B MQTT output acting as Edge Node").
 		Description(`The Sparkplug B output acts as an Edge Node, publishing data to Sparkplug MQTT topics
@@ -144,6 +144,10 @@ and then publishes DATA messages as Benthos messages flow through the pipeline.`
 				Default(true)).
 			Description("Processing behavior configuration").
 			Optional())
+}
+
+func init() {
+	outputSpec := sparkplugOutputConfigSpec()
 
 	err := service.RegisterOutput(
 		"sparkplug_b",
@@ -227,6 +231,9 @@ type sparkplugOutput struct {
 
 	// Added for type inference
 	typeConverter *TypeConverter
+
+	// Shared UMH-Core <-> Sparkplug conversion (same logic the input plugin uses)
+	formatConverter *FormatConverter
 }
 
 func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sparkplugOutput, error) {
@@ -418,6 +425,7 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 		sequenceWraps:     mgr.Metrics().NewCounter("sequence_wraps"),
 		publishErrors:     mgr.Metrics().NewCounter("publish_errors"),
 		typeConverter:     NewTypeConverter(),
+		formatConverter:   NewFormatConverter(),
 	}, nil
 }
 
@@ -1265,24 +1273,27 @@ func (s *sparkplugOutput) extractMessageData(msg *service.Message) (map[string]i
 				}
 			}
 
-			// If no configured metrics matched, try to generate metric name from virtual_path:tag_name
+			// If no configured metric matched, derive the metric the same way the
+			// input plugin does, via the shared FormatConverter: the value comes from
+			// the UMH-Core payload ("value"/"val"/"data"/"measurement") and the metric
+			// name is virtual_path:tag_name (or just tag_name when virtual_path is empty).
+			// parseUMHMessage requires location_path and a UMH-valid tag_name; when it
+			// cannot, the message yields no metric and is dropped downstream, so log the
+			// drop at warn (not debug) to keep a misconfigured pipeline observable.
 			if len(data) == 0 {
-				if virtualPath, hasVirtualPath := msg.MetaGet("virtual_path"); hasVirtualPath {
-					// convert virtual_path "." to ":"
-					virtualPath = strings.ReplaceAll(virtualPath, ".", ":")
-					// Generate metric name using virtual_path:tag_name format
-					metricName := virtualPath + ":" + tagName
-					s.logger.Debugf("extractMessageData: No matching configured metrics, generating metric name: %s", metricName)
-
-					// Extract value from the tag_name field in the payload
-					if value, err := s.extractValueFromPath(structured, tagName); err == nil {
-						data[metricName] = value
-						s.logger.Debugf("extractMessageData: Successfully extracted value for generated metric %s: %v", metricName, value)
-					} else {
-						s.logger.Debugf("extractMessageData: Failed to extract value for generated metric %s from path %s: %v", metricName, tagName, err)
-					}
-				} else {
-					s.logger.Debugf("extractMessageData: tag_name %s found but no virtual_path metadata for metric generation", tagName)
+				umh, err := s.formatConverter.parseUMHMessage(msg)
+				switch {
+				case err != nil:
+					s.logger.Warnf("sparkplug_b: dropping message for tag_name %q: cannot derive a metric (needs a valid location_path and tag_name): %v", tagName, err)
+				case !isScalarValue(umh.Value):
+					// parseUMHMessage falls back to the whole payload when no recognized
+					// value field is present; publishing that map/slice as a string metric
+					// would be garbage, so drop it instead.
+					s.logger.Warnf("sparkplug_b: dropping message for tag_name %q: payload has no scalar value field (value/val/data/measurement)", tagName)
+				default:
+					metricName := s.formatConverter.constructSparkplugMetricName(umh.TopicInfo)
+					data[metricName] = umh.Value
+					s.logger.Debugf("extractMessageData: generated metric %s = %v", metricName, umh.Value)
 				}
 			}
 		} else {
@@ -1308,6 +1319,18 @@ func (s *sparkplugOutput) extractMessageData(msg *service.Message) (map[string]i
 
 	s.logger.Debugf("extractMessageData: Extraction complete - extracted %d metrics: %+v", len(data), data)
 	return data, nil
+}
+
+// isScalarValue reports whether v is a primitive value that can be published as a
+// single Sparkplug metric. parseUMHMessage falls back to the entire payload (a map)
+// when no recognized value field exists; such a value must not be published.
+func isScalarValue(v interface{}) bool {
+	switch v.(type) {
+	case nil, map[string]interface{}, []interface{}:
+		return false
+	default:
+		return true
+	}
 }
 
 func (s *sparkplugOutput) extractValueFromPath(structured interface{}, path string) (interface{}, error) {
