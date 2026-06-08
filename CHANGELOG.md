@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixes
+
+- OPC-UA input now preserves string values exactly. Previously, a string tag whose value looked like a large number, such as a long marking or serial code like `83275631010238526`, was emitted as a number and rounded to something like `8.33e+16` (ENG-5011)
+
 ## [0.12.6]
 
 ### Fixes
