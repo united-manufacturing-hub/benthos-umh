@@ -17,10 +17,9 @@ package opcua_plugin
 import (
 	"encoding/json"
 
+	"github.com/gopcua/opcua/ua"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"github.com/gopcua/opcua/ua"
 )
 
 // ENG-5011: an OPC UA String value must be emitted as a valid JSON string so it
