@@ -21,13 +21,14 @@ import (
 
 // validateFormat validates the format flag value
 func validateFormat(format string) error {
-	if format == "" {
+	switch format {
+	case "benthos", "json-schema", "mapping":
+		return nil
+	case "":
 		return fmt.Errorf("format cannot be empty")
+	default:
+		return fmt.Errorf("invalid format: %s (must be 'benthos', 'json-schema', or 'mapping')", format)
 	}
-	if format != "benthos" && format != "json-schema" {
-		return fmt.Errorf("invalid format: %s (must be 'benthos' or 'json-schema')", format)
-	}
-	return nil
 }
 
 // mapBenthosBaseType converts a Benthos type string to JSON Schema type string.
