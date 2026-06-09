@@ -59,9 +59,8 @@ var readWriteOverrides = []pluginPair{
 
 // buildMapping derives the read->write pairing from all registered inputs and outputs, applies overrides, and returns it sorted by plugin name.
 func buildMapping(env *service.Environment, overrides []pluginPair) []pluginPair {
-	registeredInputs := make(map[string]bool)
-
 	// get non-deprecated inputs from redpanda-connect and benthos-umh
+	registeredInputs := make(map[string]bool)
 	env.WalkInputs(func(name string, view *service.ConfigView) {
 		if view.IsDeprecated() {
 			return
