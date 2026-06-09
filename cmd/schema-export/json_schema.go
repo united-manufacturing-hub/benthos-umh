@@ -17,6 +17,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"sort"
 )
 
 // validateFormat validates the format flag value
@@ -148,6 +149,7 @@ func convertFieldToJSONSchema(field FieldSpec) map[string]interface{} {
 				required = append(required, child.Name)
 			}
 		}
+		sort.Strings(required)
 		if len(required) > 0 {
 			items["required"] = required
 		}
@@ -171,6 +173,7 @@ func convertFieldToJSONSchema(field FieldSpec) map[string]interface{} {
 				required = append(required, child.Name)
 			}
 		}
+		sort.Strings(required)
 		if len(required) > 0 {
 			schema["required"] = required
 		}
@@ -195,6 +198,7 @@ func buildRequiredArray(fields map[string]FieldSpec) []string {
 			required = append(required, name)
 		}
 	}
+	sort.Strings(required)
 	return required
 }
 
