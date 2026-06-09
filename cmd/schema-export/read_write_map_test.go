@@ -27,31 +27,34 @@ var _ = Describe("buildMapping", func() {
 		It("returns pairs sorted by plugin name", func() {
 			pairs := buildMapping(env, nil)
 			for i := 1; i < len(pairs); i++ {
-				Expect(pairKey(pairs[i-1]) < pairKey(pairs[i])).To(BeTrue(),
-					"not sorted at %d: %q then %q", i, pairKey(pairs[i-1]), pairKey(pairs[i]))
+				Expect(pairs[i-1].Name < pairs[i].Name).To(BeTrue(),
+					"not sorted at %d: %q then %q", i, pairs[i-1].Name, pairs[i].Name)
 			}
 		})
 
-		It("derives read and write from the same plugin name", func() {
+		It("derives name, read and write from the same plugin name", func() {
 			pairs := buildMapping(env, nil)
 			for _, p := range pairs {
+				Expect(p.Name).NotTo(Equal(""), "pair must have a name")
 				Expect(p.Read != "" || p.Write != "").To(BeTrue(), "pair with neither read nor write")
-				if p.Read != "" && p.Write != "" {
-					Expect(p.Write).To(Equal(p.Read),
-						"derived write must equal read for %q", p.Read)
+				if p.Read != "" {
+					Expect(p.Read).To(Equal(p.Name))
+				}
+				if p.Write != "" {
+					Expect(p.Write).To(Equal(p.Name))
 				}
 			}
 		})
 
 		It("includes write-only plugins with empty read", func() {
 			pairs := buildMapping(env, nil)
-			byKey := make(map[string]pluginPair)
+			byName := make(map[string]pluginPair)
 			for _, p := range pairs {
-				byKey[pairKey(p)] = p
+				byName[p.Name] = p
 			}
-			Expect(byKey).To(HaveKey("drop"))
-			Expect(byKey["drop"].Read).To(Equal(""))
-			Expect(byKey["drop"].Write).To(Equal("drop"))
+			Expect(byName).To(HaveKey("drop"))
+			Expect(byName["drop"].Read).To(Equal(""))
+			Expect(byName["drop"].Write).To(Equal("drop"))
 		})
 
 		It("includes UMH inputs with their expected writes", func() {

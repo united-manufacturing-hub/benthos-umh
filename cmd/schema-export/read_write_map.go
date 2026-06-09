@@ -23,6 +23,7 @@ import (
 
 // pluginPair maps an input plugin to its corresponding write-flow output plugin.
 type pluginPair struct {
+	Name        string `json:"name"`
 	Read        string `json:"read"`
 	Write       string `json:"write"`
 	IsUmhPlugin bool   `json:"umh"`
@@ -32,21 +33,25 @@ type pluginPair struct {
 var readWriteOverrides = []pluginPair{
 	// stdin -> stdout
 	{
+		Name:  "stdin/stdout",
 		Read:  "stdin",
 		Write: "stdout",
 	},
 	// gcp_bigquery_select -> gcp_bigquery
 	{
+		Name:  "gcp_bigquery",
 		Read:  "gcp_bigquery_select",
 		Write: "gcp_bigquery",
 	},
 	// sql_select -> sql_insert
 	{
+		Name:  "sql",
 		Read:  "sql_select",
 		Write: "sql_insert",
 	},
 	// aws_dynamodb_cdc -> aws_dynamodb
 	{
+		Name:  "aws_dynamodb",
 		Read:  "aws_dynamodb_cdc",
 		Write: "aws_dynamodb",
 	},
@@ -93,7 +98,7 @@ func buildMapping(env *service.Environment, overrides []pluginPair) []pluginPair
 	}
 
 	sort.Slice(pairs, func(i, j int) bool {
-		return pairKey(pairs[i]) < pairKey(pairs[j])
+		return pairs[i].Name < pairs[j].Name
 	})
 
 	return pairs
@@ -101,7 +106,7 @@ func buildMapping(env *service.Environment, overrides []pluginPair) []pluginPair
 
 // pair pairs a plugin name with itself on each side it is registered for; unregistered sides stay empty.
 func pair(name string, inputs map[string]bool, outputs map[string]bool) pluginPair {
-	p := pluginPair{IsUmhPlugin: umhPluginNames[name]}
+	p := pluginPair{Name: name, IsUmhPlugin: umhPluginNames[name]}
 	if inputs[name] {
 		p.Read = name
 	}
@@ -123,12 +128,4 @@ func walkOverrides(overrides []pluginPair) map[string]bool {
 		}
 	}
 	return names
-}
-
-// pairKey is the plugin name a pair was derived from (read side wins).
-func pairKey(p pluginPair) string {
-	if p.Read != "" {
-		return p.Read
-	}
-	return p.Write
 }
