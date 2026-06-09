@@ -127,7 +127,7 @@ var _ = Describe("Sparkplug B output extractMessageData (auto-extract path)", fu
 // constructor here.
 var _ = Describe("Sparkplug B output construction", func() {
 	It("wires up the FormatConverter and extracts via the constructed instance", func() {
-		parsed, err := sparkplugOutputConfigSpec().ParseYAML(`
+		parsed, err := SparkplugConfigSpec.ParseYAML(`
 mqtt:
   urls: ["tcp://localhost:1883"]
 identity:

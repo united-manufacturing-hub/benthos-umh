@@ -51,11 +51,10 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
 
-func sparkplugOutputConfigSpec() *service.ConfigSpec {
-	return service.NewConfigSpec().
-		Version("1.0.0").
-		Summary("Sparkplug B MQTT output acting as Edge Node").
-		Description(`The Sparkplug B output acts as an Edge Node, publishing data to Sparkplug MQTT topics
+var SparkplugConfigSpec = service.NewConfigSpec().
+	Version("1.0.0").
+	Summary("Sparkplug B MQTT output acting as Edge Node").
+	Description(`The Sparkplug B output acts as an Edge Node, publishing data to Sparkplug MQTT topics
 with complete session lifecycle management. It handles BIRTH/DEATH certificates, maintains sequence
 numbers, manages alias mappings, and ensures full Sparkplug B compliance.
 
@@ -72,86 +71,83 @@ Key features:
 
 The output connects to an MQTT broker, publishes BIRTH certificates to announce available metrics,
 and then publishes DATA messages as Benthos messages flow through the pipeline.`).
-		// MQTT Transport Configuration
-		Field(service.NewObjectField("mqtt",
-			service.NewStringListField("urls").
-				Description("List of MQTT broker URLs to connect to").
-				Example([]string{"tcp://localhost:1883", "ssl://broker.hivemq.com:8883"}).
-				Default([]string{"tcp://localhost:1883"}),
-			service.NewStringField("client_id").
-				Description("MQTT client ID for this edge node").
-				Default("benthos-sparkplug-output"),
-			service.NewObjectField("credentials",
-				service.NewStringField("username").
-					Description("MQTT username for authentication").
-					Default("").
-					Optional(),
-				service.NewStringField("password").
-					Description("MQTT password for authentication").
-					Default("").
-					Secret().
-					Optional()).
-				Description("MQTT authentication credentials").
-				Optional(),
-			service.NewIntField("qos").
-				Description("QoS level for MQTT publishing (0, 1, or 2)").
-				Default(1),
-			service.NewDurationField("keep_alive").
-				Description("MQTT keep alive interval").
-				Default("60s"),
-			service.NewDurationField("connect_timeout").
-				Description("MQTT connection timeout").
-				Default("30s"),
-			service.NewBoolField("clean_session").
-				Description("MQTT clean session flag").
-				Default(true)).
-			Description("MQTT transport configuration")).
-		// Sparkplug Identity Configuration
-		Field(service.NewObjectField("identity",
-			service.NewStringField("group_id").
-				Description("Sparkplug Group ID (e.g., 'FactoryA')").
-				Example("FactoryA"),
-			service.NewStringField("edge_node_id").
-				Description("Edge Node ID within the group (e.g., 'Line3'). If empty, auto-generated from location_path metadata using Parris Method").
-				Example("Line3"),
-			service.NewStringField("device_id").
-				Description("Device ID under the edge node (optional, if not specified acts as node-level)").
+	// MQTT Transport Configuration
+	Field(service.NewObjectField("mqtt",
+		service.NewStringListField("urls").
+			Description("List of MQTT broker URLs to connect to").
+			Example([]string{"tcp://localhost:1883", "ssl://broker.hivemq.com:8883"}).
+			Default([]string{"tcp://localhost:1883"}),
+		service.NewStringField("client_id").
+			Description("MQTT client ID for this edge node").
+			Default("benthos-sparkplug-output"),
+		service.NewObjectField("credentials",
+			service.NewStringField("username").
+				Description("MQTT username for authentication").
 				Default("").
+				Optional(),
+			service.NewStringField("password").
+				Description("MQTT password for authentication").
+				Default("").
+				Secret().
 				Optional()).
-			Description("Sparkplug identity configuration")).
-
-		// Output-specific Configuration
-		Field(service.NewObjectListField("metrics",
-			service.NewStringField("name").
-				Description("Metric name as it will appear in BIRTH messages"),
-			service.NewIntField("alias").
-				Description("Numeric alias for this metric (1-65535)"),
-			service.NewStringField("type").
-				Description("Data type: int8, int16, int32, int64, uint8, uint16, uint32, uint64, float, double, boolean, string").
-				Default("double"),
-			service.NewStringField("value_from").
-				Description("JSONPath or field name in the message to extract value from").
-				Default("value")).
-			Description("Metric definitions for BIRTH messages and alias mapping").
+			Description("MQTT authentication credentials").
+			Optional(),
+		service.NewIntField("qos").
+			Description("QoS level for MQTT publishing (0, 1, or 2)").
+			Default(1),
+		service.NewDurationField("keep_alive").
+			Description("MQTT keep alive interval").
+			Default("60s"),
+		service.NewDurationField("connect_timeout").
+			Description("MQTT connection timeout").
+			Default("30s"),
+		service.NewBoolField("clean_session").
+			Description("MQTT clean session flag").
+			Default(true)).
+		Description("MQTT transport configuration")).
+	// Sparkplug Identity Configuration
+	Field(service.NewObjectField("identity",
+		service.NewStringField("group_id").
+			Description("Sparkplug Group ID (e.g., 'FactoryA')").
+			Example("FactoryA"),
+		service.NewStringField("edge_node_id").
+			Description("Edge Node ID within the group (e.g., 'Line3'). If empty, auto-generated from location_path metadata using Parris Method").
+			Example("Line3"),
+		service.NewStringField("device_id").
+			Description("Device ID under the edge node (optional, if not specified acts as node-level)").
+			Default("").
 			Optional()).
-		// Behavior Configuration
-		Field(service.NewObjectField("behavior",
-			service.NewBoolField("auto_extract_tag_name").
-				Description("Whether to automatically extract tag_name from message metadata").
-				Default(true),
-			service.NewBoolField("retain_last_values").
-				Description("Whether to retain last known values for BIRTH messages after reconnection").
-				Default(true)).
-			Description("Processing behavior configuration").
-			Optional())
-}
+		Description("Sparkplug identity configuration")).
+
+	// Output-specific Configuration
+	Field(service.NewObjectListField("metrics",
+		service.NewStringField("name").
+			Description("Metric name as it will appear in BIRTH messages"),
+		service.NewIntField("alias").
+			Description("Numeric alias for this metric (1-65535)"),
+		service.NewStringField("type").
+			Description("Data type: int8, int16, int32, int64, uint8, uint16, uint32, uint64, float, double, boolean, string").
+			Default("double"),
+		service.NewStringField("value_from").
+			Description("JSONPath or field name in the message to extract value from").
+			Default("value")).
+		Description("Metric definitions for BIRTH messages and alias mapping").
+		Optional()).
+	// Behavior Configuration
+	Field(service.NewObjectField("behavior",
+		service.NewBoolField("auto_extract_tag_name").
+			Description("Whether to automatically extract tag_name from message metadata").
+			Default(true),
+		service.NewBoolField("retain_last_values").
+			Description("Whether to retain last known values for BIRTH messages after reconnection").
+			Default(true)).
+		Description("Processing behavior configuration").
+		Optional())
 
 func init() {
-	outputSpec := sparkplugOutputConfigSpec()
-
 	err := service.RegisterOutput(
 		"sparkplug_b",
-		outputSpec,
+		SparkplugConfigSpec,
 		func(conf *service.ParsedConfig, mgr *service.Resources) (service.Output, int, error) {
 			output, err := newSparkplugOutput(conf, mgr)
 			if err != nil {
