@@ -179,16 +179,25 @@ func (mt MessageType) IsState() bool {
 	return mt == MessageTypeSTATE
 }
 
-// AliasCache manages metric name to alias mappings for Sparkplug B optimization.
+// aliasEntry is the per-alias metric definition remembered from a BIRTH
+// certificate. DATA messages carry only the alias; name and datatype must be
+// restored from here (ENG-5126: datatype is required to decode signed integer
+// wire values, which Sparkplug packs as two's-complement into unsigned fields).
+type aliasEntry struct {
+	name     string
+	datatype *uint32 // nil when the BIRTH metric omitted the datatype
+}
+
+// AliasCache manages metric alias → definition mappings for Sparkplug B optimization.
 type AliasCache struct {
-	cache map[string]map[uint64]string // deviceKey -> (alias -> metric name)
+	cache map[string]map[uint64]aliasEntry // deviceKey -> (alias -> metric definition)
 	mu    sync.RWMutex
 }
 
 // NewAliasCache creates a new thread-safe alias cache.
 func NewAliasCache() *AliasCache {
 	return &AliasCache{
-		cache: make(map[string]map[uint64]string),
+		cache: make(map[string]map[uint64]aliasEntry),
 	}
 }
 
@@ -208,7 +217,7 @@ func (ac *AliasCache) CacheAliases(deviceKey string, metrics []*sparkplugb.Paylo
 
 	aliasMap, exists := ac.cache[deviceKey]
 	if !exists {
-		aliasMap = make(map[uint64]string)
+		aliasMap = make(map[uint64]aliasEntry)
 		ac.cache[deviceKey] = aliasMap
 	}
 
@@ -219,7 +228,12 @@ func (ac *AliasCache) CacheAliases(deviceKey string, metrics []*sparkplugb.Paylo
 		}
 		// Store alias mapping if both alias and name are present
 		if metric.Alias != nil && *metric.Alias != 0 && metric.Name != nil && *metric.Name != "" {
-			aliasMap[*metric.Alias] = *metric.Name
+			entry := aliasEntry{name: *metric.Name}
+			if metric.Datatype != nil {
+				dt := *metric.Datatype
+				entry.datatype = &dt
+			}
+			aliasMap[*metric.Alias] = entry
 			count++
 		}
 	}
@@ -247,7 +261,7 @@ func (ac *AliasCache) ResolveAliases(deviceKey string, metrics []*sparkplugb.Pay
 	}
 
 	// Create a copy of the alias map to avoid holding the lock during metric updates
-	aliasMapCopy := make(map[uint64]string, len(aliasMap))
+	aliasMapCopy := make(map[uint64]aliasEntry, len(aliasMap))
 	for k, v := range aliasMap {
 		aliasMapCopy[k] = v
 	}
@@ -260,8 +274,15 @@ func (ac *AliasCache) ResolveAliases(deviceKey string, metrics []*sparkplugb.Pay
 		}
 		// If metric has an alias but no name, try to resolve it
 		if metric.Alias != nil && *metric.Alias != 0 && (metric.Name == nil || *metric.Name == "") {
-			if name, found := aliasMapCopy[*metric.Alias]; found {
+			if entry, found := aliasMapCopy[*metric.Alias]; found {
+				name := entry.name
 				metric.Name = &name
+				// Restore the datatype from the BIRTH certificate unless the
+				// DATA metric carries its own (publisher-sent wins).
+				if metric.Datatype == nil && entry.datatype != nil {
+					dt := *entry.datatype
+					metric.Datatype = &dt
+				}
 				count++
 			}
 		}
@@ -274,7 +295,7 @@ func (ac *AliasCache) ResolveAliases(deviceKey string, metrics []*sparkplugb.Pay
 func (ac *AliasCache) Clear() {
 	ac.mu.Lock()
 	defer ac.mu.Unlock()
-	ac.cache = make(map[string]map[uint64]string)
+	ac.cache = make(map[string]map[uint64]aliasEntry)
 }
 
 // SpbDeviceKey creates a unified device key for Sparkplug B

@@ -89,7 +89,6 @@ func NewSparkplugInputForTestingWithRole(role Role) *SparkplugInputTestWrapper {
 		},
 		logger:                  logger,
 		nodeStates:              make(map[string]*nodeState),
-		legacyAliasCache:        make(map[string]map[uint64]string),
 		birthRequested:          make(map[string]time.Time),
 		aliasCache:              NewAliasCache(),
 		topicParser:             NewTopicParser(),
