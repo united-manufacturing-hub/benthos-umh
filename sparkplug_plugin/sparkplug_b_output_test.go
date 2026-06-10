@@ -118,6 +118,27 @@ var _ = Describe("Sparkplug B output extractMessageData (auto-extract path)", fu
 		Expect(data).To(BeEmpty())
 	})
 
+	It("does not fan a tag-scoped message out across other configured metrics", func() {
+		// ENG-5087 follow-up: a tag_processor message carries a single tag, and its
+		// identity comes from meta.tag_name. The static-metric sweep must not also
+		// publish other configured metrics that happen to share the same value_from
+		// (here both default to "value"), or one tag would emit several metrics.
+		out.metrics = []MetricConfig{
+			{Name: "temperature", Alias: 1, ValueFrom: "value"},
+			{Name: "pressure", Alias: 2, ValueFrom: "value"},
+		}
+
+		data, err := out.extractMessageData(newMsg(`{"value": 42}`, map[string]string{
+			"location_path": "enterprise.site.area.line",
+			"tag_name":      "temperature",
+		}))
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(data).To(HaveLen(1))
+		Expect(data["temperature"]).To(Equal(json.Number("42")))
+		Expect(data).NotTo(HaveKey("pressure"))
+	})
+
 	It("drops a payload with no scalar value field instead of publishing the whole map", func() {
 		// No value/val/data/measurement field and no field named after the tag ->
 		// parseUMHMessage falls back to the whole payload map; the output must NOT

@@ -1251,8 +1251,15 @@ func (s *sparkplugOutput) extractMessageData(msg *service.Message) (map[string]i
 		"autoExtractTagName: %t, configured metrics: %d, structured payload: %+v",
 		s.autoExtractTagName, len(s.metrics), structured)
 
+	// A tag-scoped message (tag_processor flow: tag_name in metadata) represents
+	// exactly one tag; its metric identity comes from the metadata. Once it is
+	// handled here, the static-metric sweep below must be skipped so the single
+	// value does not fan out across every configured metric sharing its value_from.
+	handledViaTagName := false
+
 	if s.autoExtractTagName {
 		if tagName, exists := msg.MetaGet("tag_name"); exists {
+			handledViaTagName = true
 			s.logger.Debugf("extractMessageData: Found tag_name metadata: %s", tagName)
 
 			// Try to match with configured metrics first
@@ -1263,8 +1270,13 @@ func (s *sparkplugOutput) extractMessageData(msg *service.Message) (map[string]i
 					s.logger.Debugf("extractMessageData: Matched tag_name %s with configured metric, extracting from path: %s", tagName, metricConfig.ValueFrom)
 					value, err := s.extractValueFromPath(structured, metricConfig.ValueFrom)
 					if err != nil {
-						s.logger.Debugf("Failed to extract value for metric %s: %v", tagName, err)
-						continue
+						// Matched a configured metric by name but value_from is absent
+						// from the payload. The message is dropped (we do NOT fall
+						// through to auto-derive, which would republish it under a
+						// different name); warn so the misconfiguration is observable,
+						// consistent with the other drop paths below.
+						s.logger.Warnf("sparkplug_b: dropping message for tag_name %q: configured metric value_from %q not found in payload: %v", tagName, metricConfig.ValueFrom, err)
+						break
 					}
 					data[tagName] = value
 					break
@@ -1305,20 +1317,24 @@ func (s *sparkplugOutput) extractMessageData(msg *service.Message) (map[string]i
 		}
 	}
 
-	// Process only static configured metrics (from config file)
-	// Dynamic metrics are handled above via tag_name metadata extraction
-	for _, metricConfig := range s.metrics {
-		if _, exists := data[metricConfig.Name]; exists {
-			continue // Already extracted via tag_name metadata
-		}
+	// Process static configured metrics (from config file) only for messages that
+	// were NOT tag-scoped. A tag-scoped message carries a single tag and was fully
+	// handled above; sweeping the configured metrics here would publish unrelated
+	// metrics from the same payload (e.g. every metric whose value_from is "value").
+	if !handledViaTagName {
+		for _, metricConfig := range s.metrics {
+			if _, exists := data[metricConfig.Name]; exists {
+				continue // Already extracted via tag_name metadata
+			}
 
-		s.logger.Debugf("extractMessageData: Processing static configured metric %s with value_from: %s", metricConfig.Name, metricConfig.ValueFrom)
-		value, err := s.extractValueFromPath(structured, metricConfig.ValueFrom)
-		if err != nil {
-			s.logger.Debugf("Failed to extract value for static metric %s: %v", metricConfig.Name, err)
-			continue
+			s.logger.Debugf("extractMessageData: Processing static configured metric %s with value_from: %s", metricConfig.Name, metricConfig.ValueFrom)
+			value, err := s.extractValueFromPath(structured, metricConfig.ValueFrom)
+			if err != nil {
+				s.logger.Debugf("Failed to extract value for static metric %s: %v", metricConfig.Name, err)
+				continue
+			}
+			data[metricConfig.Name] = value
 		}
-		data[metricConfig.Name] = value
 	}
 
 	s.logger.Debugf("extractMessageData: Extraction complete - extracted %d metrics: %+v", len(data), data)
