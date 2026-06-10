@@ -51,11 +51,10 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
 
-func init() {
-	outputSpec := service.NewConfigSpec().
-		Version("1.0.0").
-		Summary("Sparkplug B MQTT output acting as Edge Node").
-		Description(`The Sparkplug B output acts as an Edge Node, publishing data to Sparkplug MQTT topics
+var SparkplugConfigSpec = service.NewConfigSpec().
+	Version("1.0.0").
+	Summary("Sparkplug B MQTT output acting as Edge Node").
+	Description(`The Sparkplug B output acts as an Edge Node, publishing data to Sparkplug MQTT topics
 with complete session lifecycle management. It handles BIRTH/DEATH certificates, maintains sequence
 numbers, manages alias mappings, and ensures full Sparkplug B compliance.
 
@@ -72,82 +71,83 @@ Key features:
 
 The output connects to an MQTT broker, publishes BIRTH certificates to announce available metrics,
 and then publishes DATA messages as Benthos messages flow through the pipeline.`).
-		// MQTT Transport Configuration
-		Field(service.NewObjectField("mqtt",
-			service.NewStringListField("urls").
-				Description("List of MQTT broker URLs to connect to").
-				Example([]string{"tcp://localhost:1883", "ssl://broker.hivemq.com:8883"}).
-				Default([]string{"tcp://localhost:1883"}),
-			service.NewStringField("client_id").
-				Description("MQTT client ID for this edge node").
-				Default("benthos-sparkplug-output"),
-			service.NewObjectField("credentials",
-				service.NewStringField("username").
-					Description("MQTT username for authentication").
-					Default("").
-					Optional(),
-				service.NewStringField("password").
-					Description("MQTT password for authentication").
-					Default("").
-					Secret().
-					Optional()).
-				Description("MQTT authentication credentials").
-				Optional(),
-			service.NewIntField("qos").
-				Description("QoS level for MQTT publishing (0, 1, or 2)").
-				Default(1),
-			service.NewDurationField("keep_alive").
-				Description("MQTT keep alive interval").
-				Default("60s"),
-			service.NewDurationField("connect_timeout").
-				Description("MQTT connection timeout").
-				Default("30s"),
-			service.NewBoolField("clean_session").
-				Description("MQTT clean session flag").
-				Default(true)).
-			Description("MQTT transport configuration")).
-		// Sparkplug Identity Configuration
-		Field(service.NewObjectField("identity",
-			service.NewStringField("group_id").
-				Description("Sparkplug Group ID (e.g., 'FactoryA')").
-				Example("FactoryA"),
-			service.NewStringField("edge_node_id").
-				Description("Edge Node ID within the group (e.g., 'Line3'). If empty, auto-generated from location_path metadata using Parris Method").
-				Example("Line3"),
-			service.NewStringField("device_id").
-				Description("Device ID under the edge node (optional, if not specified acts as node-level)").
+	// MQTT Transport Configuration
+	Field(service.NewObjectField("mqtt",
+		service.NewStringListField("urls").
+			Description("List of MQTT broker URLs to connect to").
+			Example([]string{"tcp://localhost:1883", "ssl://broker.hivemq.com:8883"}).
+			Default([]string{"tcp://localhost:1883"}),
+		service.NewStringField("client_id").
+			Description("MQTT client ID for this edge node").
+			Default("benthos-sparkplug-output"),
+		service.NewObjectField("credentials",
+			service.NewStringField("username").
+				Description("MQTT username for authentication").
 				Default("").
+				Optional(),
+			service.NewStringField("password").
+				Description("MQTT password for authentication").
+				Default("").
+				Secret().
 				Optional()).
-			Description("Sparkplug identity configuration")).
-
-		// Output-specific Configuration
-		Field(service.NewObjectListField("metrics",
-			service.NewStringField("name").
-				Description("Metric name as it will appear in BIRTH messages"),
-			service.NewIntField("alias").
-				Description("Numeric alias for this metric (1-65535)"),
-			service.NewStringField("type").
-				Description("Data type: int8, int16, int32, int64, uint8, uint16, uint32, uint64, float, double, boolean, string").
-				Default("double"),
-			service.NewStringField("value_from").
-				Description("JSONPath or field name in the message to extract value from").
-				Default("value")).
-			Description("Metric definitions for BIRTH messages and alias mapping").
+			Description("MQTT authentication credentials").
+			Optional(),
+		service.NewIntField("qos").
+			Description("QoS level for MQTT publishing (0, 1, or 2)").
+			Default(1),
+		service.NewDurationField("keep_alive").
+			Description("MQTT keep alive interval").
+			Default("60s"),
+		service.NewDurationField("connect_timeout").
+			Description("MQTT connection timeout").
+			Default("30s"),
+		service.NewBoolField("clean_session").
+			Description("MQTT clean session flag").
+			Default(true)).
+		Description("MQTT transport configuration")).
+	// Sparkplug Identity Configuration
+	Field(service.NewObjectField("identity",
+		service.NewStringField("group_id").
+			Description("Sparkplug Group ID (e.g., 'FactoryA')").
+			Example("FactoryA"),
+		service.NewStringField("edge_node_id").
+			Description("Edge Node ID within the group (e.g., 'Line3'). If empty, auto-generated from location_path metadata using Parris Method").
+			Example("Line3"),
+		service.NewStringField("device_id").
+			Description("Device ID under the edge node (optional, if not specified acts as node-level)").
+			Default("").
 			Optional()).
-		// Behavior Configuration
-		Field(service.NewObjectField("behavior",
-			service.NewBoolField("auto_extract_tag_name").
-				Description("Whether to automatically extract tag_name from message metadata").
-				Default(true),
-			service.NewBoolField("retain_last_values").
-				Description("Whether to retain last known values for BIRTH messages after reconnection").
-				Default(true)).
-			Description("Processing behavior configuration").
-			Optional())
+		Description("Sparkplug identity configuration")).
 
+	// Output-specific Configuration
+	Field(service.NewObjectListField("metrics",
+		service.NewStringField("name").
+			Description("Metric name as it will appear in BIRTH messages"),
+		service.NewIntField("alias").
+			Description("Numeric alias for this metric (1-65535)"),
+		service.NewStringField("type").
+			Description("Data type: int8, int16, int32, int64, uint8, uint16, uint32, uint64, float, double, boolean, string").
+			Default("double"),
+		service.NewStringField("value_from").
+			Description("Top-level field name in the message to extract value from").
+			Default("value")).
+		Description("Metric definitions for BIRTH messages and alias mapping").
+		Optional()).
+	// Behavior Configuration
+	Field(service.NewObjectField("behavior",
+		service.NewBoolField("auto_extract_tag_name").
+			Description("Whether to automatically extract tag_name from message metadata").
+			Default(true),
+		service.NewBoolField("retain_last_values").
+			Description("Whether to retain last known values for BIRTH messages after reconnection").
+			Default(true)).
+		Description("Processing behavior configuration").
+		Optional())
+
+func init() {
 	err := service.RegisterOutput(
 		"sparkplug_b",
-		outputSpec,
+		SparkplugConfigSpec,
 		func(conf *service.ParsedConfig, mgr *service.Resources) (service.Output, int, error) {
 			output, err := newSparkplugOutput(conf, mgr)
 			if err != nil {
@@ -227,6 +227,9 @@ type sparkplugOutput struct {
 
 	// Added for type inference
 	typeConverter *TypeConverter
+
+	// Shared UMH-Core <-> Sparkplug conversion (same logic the input plugin uses)
+	formatConverter *FormatConverter
 }
 
 func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sparkplugOutput, error) {
@@ -418,6 +421,7 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 		sequenceWraps:     mgr.Metrics().NewCounter("sequence_wraps"),
 		publishErrors:     mgr.Metrics().NewCounter("publish_errors"),
 		typeConverter:     NewTypeConverter(),
+		formatConverter:   NewFormatConverter(),
 	}, nil
 }
 
@@ -1247,42 +1251,65 @@ func (s *sparkplugOutput) extractMessageData(msg *service.Message) (map[string]i
 		"autoExtractTagName: %t, configured metrics: %d, structured payload: %+v",
 		s.autoExtractTagName, len(s.metrics), structured)
 
+	// A tag-scoped message (tag_processor flow: tag_name in metadata) represents
+	// exactly one tag; its metric identity comes from the metadata. Once it is
+	// handled here, the static-metric sweep below must be skipped so the single
+	// value does not fan out across every configured metric sharing its value_from.
+	handledViaTagName := false
+
 	if s.autoExtractTagName {
 		if tagName, exists := msg.MetaGet("tag_name"); exists {
+			handledViaTagName = true
 			s.logger.Debugf("extractMessageData: Found tag_name metadata: %s", tagName)
 
 			// Try to match with configured metrics first
+			matchedConfiguredMetric := false
 			for _, metricConfig := range s.metrics {
 				if metricConfig.Name == tagName {
+					matchedConfiguredMetric = true
 					s.logger.Debugf("extractMessageData: Matched tag_name %s with configured metric, extracting from path: %s", tagName, metricConfig.ValueFrom)
 					value, err := s.extractValueFromPath(structured, metricConfig.ValueFrom)
 					if err != nil {
-						s.logger.Debugf("Failed to extract value for metric %s: %v", tagName, err)
-						continue
+						// Matched a configured metric by name but value_from is absent
+						// from the payload. The message is dropped (we do NOT fall
+						// through to auto-derive, which would republish it under a
+						// different name); warn so the misconfiguration is observable,
+						// consistent with the other drop paths below.
+						s.logger.Warnf("sparkplug_b: dropping message for tag_name %q: configured metric value_from %q not found in payload: %v", tagName, metricConfig.ValueFrom, err)
+						break
 					}
 					data[tagName] = value
 					break
 				}
 			}
 
-			// If no configured metrics matched, try to generate metric name from virtual_path:tag_name
-			if len(data) == 0 {
-				if virtualPath, hasVirtualPath := msg.MetaGet("virtual_path"); hasVirtualPath {
-					// convert virtual_path "." to ":"
-					virtualPath = strings.ReplaceAll(virtualPath, ".", ":")
-					// Generate metric name using virtual_path:tag_name format
-					metricName := virtualPath + ":" + tagName
-					s.logger.Debugf("extractMessageData: No matching configured metrics, generating metric name: %s", metricName)
-
-					// Extract value from the tag_name field in the payload
-					if value, err := s.extractValueFromPath(structured, tagName); err == nil {
-						data[metricName] = value
-						s.logger.Debugf("extractMessageData: Successfully extracted value for generated metric %s: %v", metricName, value)
-					} else {
-						s.logger.Debugf("extractMessageData: Failed to extract value for generated metric %s from path %s: %v", metricName, tagName, err)
-					}
-				} else {
-					s.logger.Debugf("extractMessageData: tag_name %s found but no virtual_path metadata for metric generation", tagName)
+			// Only auto-derive when no configured metric matched by name. A metric
+			// that matched but failed value_from extraction must NOT fall through to
+			// the dynamic UMH path: that would republish it under a different metric
+			// name/alias, masking the misconfiguration and breaking the configured
+			// Sparkplug contract.
+			//
+			// Derive the metric the same way the input plugin does, via the shared
+			// FormatConverter: the value comes from the UMH-Core payload
+			// ("value"/"val"/"data"/"measurement") and the metric name is
+			// virtual_path:tag_name (or just tag_name when virtual_path is empty).
+			// parseUMHMessage requires location_path and a UMH-valid tag_name; when it
+			// cannot, the message yields no metric and is dropped downstream, so log the
+			// drop at warn (not debug) to keep a misconfigured pipeline observable.
+			if !matchedConfiguredMetric && len(data) == 0 {
+				umh, err := s.formatConverter.parseUMHMessage(msg)
+				switch {
+				case err != nil:
+					s.logger.Warnf("sparkplug_b: dropping message for tag_name %q: cannot derive a metric (needs a valid location_path and tag_name): %v", tagName, err)
+				case !isScalarValue(umh.Value):
+					// parseUMHMessage falls back to the whole payload when no recognized
+					// value field is present; publishing that map/slice as a string metric
+					// would be garbage, so drop it instead.
+					s.logger.Warnf("sparkplug_b: dropping message for tag_name %q: payload has no scalar value field (value/val/data/measurement)", tagName)
+				default:
+					metricName := s.formatConverter.constructSparkplugMetricName(umh.TopicInfo)
+					data[metricName] = umh.Value
+					s.logger.Debugf("extractMessageData: generated metric %s = %v", metricName, umh.Value)
 				}
 			}
 		} else {
@@ -1290,24 +1317,40 @@ func (s *sparkplugOutput) extractMessageData(msg *service.Message) (map[string]i
 		}
 	}
 
-	// Process only static configured metrics (from config file)
-	// Dynamic metrics are handled above via tag_name metadata extraction
-	for _, metricConfig := range s.metrics {
-		if _, exists := data[metricConfig.Name]; exists {
-			continue // Already extracted via tag_name metadata
-		}
+	// Process static configured metrics (from config file) only for messages that
+	// were NOT tag-scoped. A tag-scoped message carries a single tag and was fully
+	// handled above; sweeping the configured metrics here would publish unrelated
+	// metrics from the same payload (e.g. every metric whose value_from is "value").
+	if !handledViaTagName {
+		for _, metricConfig := range s.metrics {
+			if _, exists := data[metricConfig.Name]; exists {
+				continue // Already extracted via tag_name metadata
+			}
 
-		s.logger.Debugf("extractMessageData: Processing static configured metric %s with value_from: %s", metricConfig.Name, metricConfig.ValueFrom)
-		value, err := s.extractValueFromPath(structured, metricConfig.ValueFrom)
-		if err != nil {
-			s.logger.Debugf("Failed to extract value for static metric %s: %v", metricConfig.Name, err)
-			continue
+			s.logger.Debugf("extractMessageData: Processing static configured metric %s with value_from: %s", metricConfig.Name, metricConfig.ValueFrom)
+			value, err := s.extractValueFromPath(structured, metricConfig.ValueFrom)
+			if err != nil {
+				s.logger.Debugf("Failed to extract value for static metric %s: %v", metricConfig.Name, err)
+				continue
+			}
+			data[metricConfig.Name] = value
 		}
-		data[metricConfig.Name] = value
 	}
 
 	s.logger.Debugf("extractMessageData: Extraction complete - extracted %d metrics: %+v", len(data), data)
 	return data, nil
+}
+
+// isScalarValue reports whether v is a primitive value that can be published as a
+// single Sparkplug metric. parseUMHMessage falls back to the entire payload (a map)
+// when no recognized value field exists; such a value must not be published.
+func isScalarValue(v interface{}) bool {
+	switch v.(type) {
+	case nil, map[string]interface{}, []interface{}:
+		return false
+	default:
+		return true
+	}
 }
 
 func (s *sparkplugOutput) extractValueFromPath(structured interface{}, path string) (interface{}, error) {
