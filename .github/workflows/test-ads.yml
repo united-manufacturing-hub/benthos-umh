@@ -35,11 +35,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Install Ginkgo
-        run: go install github.com/onsi/ginkgo/v2/ginkgo
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.28.3
       - name: Test
         env:
           TEST_ADS_UNITTEST: true
@@ -55,19 +55,20 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Install Ginkgo
-        run: go install github.com/onsi/ginkgo/v2/ginkgo
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.28.3
       - name: Install Tcping
         run: go install github.com/cloverstd/tcping@v0.1.1
 
       - name: Check ADS TC3 port availability
         id: check_ads_tc3
+        env:
+          TARGET_IP: ${{ secrets.TEST_ADS_TC3_TARGET_IP }}
         run: |
           set +x
-          TARGET_IP="${{ secrets.TEST_ADS_TC3_TARGET_IP }}"
           if [ -z "$TARGET_IP" ]; then
             echo "available=false" >> "$GITHUB_OUTPUT"
             echo "TEST_ADS_TC3_TARGET_IP secret not configured"
@@ -104,19 +105,20 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Install Ginkgo
-        run: go install github.com/onsi/ginkgo/v2/ginkgo
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.28.3
       - name: Install Tcping
         run: go install github.com/cloverstd/tcping@v0.1.1
 
       - name: Check ADS TC2 port availability
         id: check_ads_tc2
+        env:
+          TARGET_IP: ${{ secrets.TEST_ADS_TC2_TARGET_IP }}
         run: |
           set +x
-          TARGET_IP="${{ secrets.TEST_ADS_TC2_TARGET_IP }}"
           if [ -z "$TARGET_IP" ]; then
             echo "available=false" >> "$GITHUB_OUTPUT"
             echo "TEST_ADS_TC2_TARGET_IP secret not configured"
