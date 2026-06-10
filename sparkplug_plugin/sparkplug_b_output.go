@@ -129,7 +129,7 @@ and then publishes DATA messages as Benthos messages flow through the pipeline.`
 			Description("Data type: int8, int16, int32, int64, uint8, uint16, uint32, uint64, float, double, boolean, string").
 			Default("double"),
 		service.NewStringField("value_from").
-			Description("JSONPath or field name in the message to extract value from").
+			Description("Top-level field name in the message to extract value from").
 			Default("value")).
 		Description("Metric definitions for BIRTH messages and alias mapping").
 		Optional()).
@@ -1256,8 +1256,10 @@ func (s *sparkplugOutput) extractMessageData(msg *service.Message) (map[string]i
 			s.logger.Debugf("extractMessageData: Found tag_name metadata: %s", tagName)
 
 			// Try to match with configured metrics first
+			matchedConfiguredMetric := false
 			for _, metricConfig := range s.metrics {
 				if metricConfig.Name == tagName {
+					matchedConfiguredMetric = true
 					s.logger.Debugf("extractMessageData: Matched tag_name %s with configured metric, extracting from path: %s", tagName, metricConfig.ValueFrom)
 					value, err := s.extractValueFromPath(structured, metricConfig.ValueFrom)
 					if err != nil {
@@ -1269,14 +1271,20 @@ func (s *sparkplugOutput) extractMessageData(msg *service.Message) (map[string]i
 				}
 			}
 
-			// If no configured metric matched, derive the metric the same way the
-			// input plugin does, via the shared FormatConverter: the value comes from
-			// the UMH-Core payload ("value"/"val"/"data"/"measurement") and the metric
-			// name is virtual_path:tag_name (or just tag_name when virtual_path is empty).
+			// Only auto-derive when no configured metric matched by name. A metric
+			// that matched but failed value_from extraction must NOT fall through to
+			// the dynamic UMH path: that would republish it under a different metric
+			// name/alias, masking the misconfiguration and breaking the configured
+			// Sparkplug contract.
+			//
+			// Derive the metric the same way the input plugin does, via the shared
+			// FormatConverter: the value comes from the UMH-Core payload
+			// ("value"/"val"/"data"/"measurement") and the metric name is
+			// virtual_path:tag_name (or just tag_name when virtual_path is empty).
 			// parseUMHMessage requires location_path and a UMH-valid tag_name; when it
 			// cannot, the message yields no metric and is dropped downstream, so log the
 			// drop at warn (not debug) to keep a misconfigured pipeline observable.
-			if len(data) == 0 {
+			if !matchedConfiguredMetric && len(data) == 0 {
 				umh, err := s.formatConverter.parseUMHMessage(msg)
 				switch {
 				case err != nil:

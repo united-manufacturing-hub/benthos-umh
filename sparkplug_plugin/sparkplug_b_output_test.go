@@ -97,6 +97,27 @@ var _ = Describe("Sparkplug B output extractMessageData (auto-extract path)", fu
 		Expect(data["temperature"]).To(Equal(json.Number("7")))
 	})
 
+	It("does not auto-derive when a configured metric matched by name but value_from failed", func() {
+		// ENG-5087 follow-up: a configured metric whose name matches tag_name but
+		// whose value_from cannot be extracted must NOT fall through to the dynamic
+		// UMH path. Doing so would republish the message under a derived metric name
+		// (here "modbus:temperature"), masking the value_from misconfiguration and
+		// breaking the configured Sparkplug name/alias contract.
+		out.metrics = []MetricConfig{
+			{Name: "temperature", Alias: 5, ValueFrom: "raw"}, // "raw" is absent from the payload
+		}
+
+		data, err := out.extractMessageData(newMsg(`{"value": 42}`, map[string]string{
+			"location_path": "enterprise.site.area.line",
+			"tag_name":      "temperature",
+			"virtual_path":  "modbus",
+		}))
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(data).NotTo(HaveKey("modbus:temperature")) // would be the masked, auto-derived name
+		Expect(data).To(BeEmpty())
+	})
+
 	It("drops a payload with no scalar value field instead of publishing the whole map", func() {
 		// No value/val/data/measurement field and no field named after the tag ->
 		// parseUMHMessage falls back to the whole payload map; the output must NOT

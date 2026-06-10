@@ -6,6 +6,7 @@
 
 - Sparkplug B output: a standard `tag_processor → sparkplug_b` flow now publishes its tags. Previously the output looked for the value under a payload field named after the tag, found nothing in the UMH-Core `{value, …}` payload, and dropped every message — leaving only an empty `NBIRTH` on the broker (ENG-5087)
 - Sparkplug B output: `virtual_path` is now optional. When it is not set the metric name is just `tag_name`, instead of the message being dropped (ENG-5087)
+- Sparkplug B output: a tag that matches a configured `metrics` entry by name but whose `value_from` field is missing is now dropped, instead of being silently republished under a different auto-derived metric name and alias — a broken `value_from` no longer masquerades as a working dynamic metric (ENG-5087)
 
 ## [0.12.6]
 
