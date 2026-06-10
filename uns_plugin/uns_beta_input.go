@@ -189,7 +189,35 @@ func (i *unsBetaInput) Connect(context.Context) error {
 }
 
 func (i *unsBetaInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
-	return i.inner.ReadBatch(ctx)
+	batch, ack, err := i.inner.ReadBatch(ctx)
+	if err != nil {
+		// BatchInput does not guarantee batch == nil on error; an
+		// error-accompanied batch is not delivered downstream, so the aliases
+		// are not set on it.
+		return batch, ack, err
+	}
+	for _, msg := range batch {
+		// Trust boundary: kafka_key is trusted as the record key here, but a
+		// producer header literally named "kafka_key" shadows it (the
+		// delegated input applies headers after the native fields), so the
+		// aliases would stamp the spoofed value. Hardening is deferred
+		// pending the umh_topics parse-gate decision.
+		if key, found := msg.MetaGet("kafka_key"); found && key != "" {
+			// Only alias a non-empty key: a keyless record would otherwise
+			// carry a present-but-empty umh_topic that the uns output rejects
+			// per-message, and with auto_replay_nacks the batch redelivers
+			// forever. Keyless messages still flow through in this rung; full
+			// drop semantics land with the umh_topics filter (R4).
+			msg.MetaSetMut("umh_topic", key)
+			msg.MetaSetMut("kafka_msg_key", key)
+		}
+		// The delegated input stores the original kgo header slice under
+		// __rpcn_kafka_headers; left in place it round-trips into downstream
+		// Kafka headers and compounds per hop through the uns output, so it
+		// is stripped here.
+		msg.MetaDelete("__rpcn_kafka_headers")
+	}
+	return batch, ack, nil
 }
 
 func (i *unsBetaInput) Close(ctx context.Context) error {

@@ -27,6 +27,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/twmb/franz-go/pkg/kgo"
 )
 
 // runUnsBetaStream starts a StreamBuilder pipeline: uns_beta input -> consumerFn.
@@ -104,6 +105,203 @@ uns_beta:
 			g.Expect(ok).To(BeTrue(), "no offset committed yet")
 			g.Expect(off).To(Equal(int64(1)))
 		}).WithTimeout(15 * time.Second).WithPolling(100 * time.Millisecond).Should(Succeed())
+	})
+})
+
+// Every emitted message carries umh_topic and kafka_msg_key as aliases of the
+// kafka_key metadata, alongside the metadata the delegated redpanda input sets
+// natively (kafka_key, kafka_topic, kafka_timestamp_ms, headers). kafka_key
+// normally holds the record key, so the aliases override any umh_topic header
+// that passed through from the producer; a producer header literally named
+// "kafka_key", however, shadows the record key before the aliases are stamped
+// (the documented gap pinned below). For non-UMH producers that send no
+// headers the aliases are the only source of umh_topic. (ENG-5094)
+var _ = Describe("uns_beta metadata contract", Label("uns_beta"), func() {
+	It("aliases each message's own record key and passes the native redpanda metadata through", func() {
+		addr := startBroker(GinkgoT())
+		const group = "uns-beta-meta"
+		const key1 = "umh.v1.acme.k1"
+		const key2 = "umh.v1.acme.k2"
+		// Two records with distinct keys pin per-message aliasing: a regression
+		// that stamps the first record's key onto every message in a fetch
+		// batch would reroute data to the wrong UNS topic without any error.
+		produce(GinkgoT(), addr,
+			&kgo.Record{
+				Key:   []byte(key1),
+				Value: []byte(`{"v":1}`),
+				// Multi-byte header values read back as plain strings.
+				// Single-byte and empty header values are not asserted here.
+				// The umh_topic header pins that the alias overrides a
+				// divergent producer-supplied value.
+				Headers: []kgo.RecordHeader{
+					{Key: "h-multi", Value: []byte("hello")},
+					{Key: "umh_topic", Value: []byte("umh.v1.evil.divergent")},
+				},
+			},
+			&kgo.Record{Key: []byte(key2), Value: []byte(`{"v":2}`)},
+		)
+
+		var mu sync.Mutex
+		seen := map[string]map[string]string{} // payload -> metadata snapshot
+		stop := runUnsBetaStream(GinkgoT(), `
+uns_beta:
+  broker_address: "`+addr+`"
+  consumer_group: "`+group+`"
+`, func(_ context.Context, b service.MessageBatch) error {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, msg := range b {
+				bs, _ := msg.AsBytes()
+				m := map[string]string{}
+				for _, k := range []string{"umh_topic", "kafka_msg_key", "kafka_key", "kafka_topic", "kafka_timestamp_ms", "h-multi"} {
+					v, _ := msg.MetaGet(k)
+					m[k] = v
+				}
+				if _, ok := msg.MetaGet("__rpcn_kafka_headers"); ok {
+					m["__rpcn_kafka_headers"] = "present"
+				}
+				seen[string(bs)] = m
+			}
+			return nil
+		})
+		defer stop()
+
+		Eventually(func() int {
+			mu.Lock()
+			defer mu.Unlock()
+			return len(seen)
+		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
+			Should(Equal(2), "both messages must arrive through uns_beta")
+
+		mu.Lock()
+		m1, ok1 := seen[`{"v":1}`]
+		m2, ok2 := seen[`{"v":2}`]
+		mu.Unlock()
+		Expect(ok1).To(BeTrue())
+		Expect(ok2).To(BeTrue())
+
+		Expect(m1["umh_topic"]).To(Equal(key1), "umh_topic must alias the record's own key, overriding the divergent umh_topic header")
+		Expect(m1["kafka_msg_key"]).To(Equal(key1), "kafka_msg_key must alias the record's own key")
+		Expect(m1["kafka_key"]).To(Equal(key1), "kafka_key must still equal the record key after aliasing")
+		Expect(m1["kafka_topic"]).To(Equal("umh.messages"))
+		Expect(m1["kafka_timestamp_ms"]).To(MatchRegexp(`^\d+$`), "kafka_timestamp_ms must be a numeric string")
+		Expect(m1["h-multi"]).To(Equal("hello"), "record headers must pass through as metadata")
+		// The delegated input's raw kgo header slice must not leak downstream:
+		// the uns output copies metadata into Kafka headers, so a surviving
+		// __rpcn_kafka_headers would compound per hop.
+		Expect(m1).NotTo(HaveKey("__rpcn_kafka_headers"), "__rpcn_kafka_headers must be stripped before delivery")
+
+		Expect(m2["umh_topic"]).To(Equal(key2), "umh_topic must alias the record's own key")
+		Expect(m2["kafka_msg_key"]).To(Equal(key2), "kafka_msg_key must alias the record's own key")
+	})
+
+	It("sets no aliases on a keyless record", func() {
+		addr := startBroker(GinkgoT())
+		const group = "uns-beta-keyless"
+		const keyedKey = "umh.v1.acme.keyed"
+		// A keyless record must not get a present-but-empty umh_topic: the uns
+		// output rejects empty topics per-message, and with auto_replay_nacks
+		// the batch would redeliver forever. The keyless message itself still
+		// flows to the consumer in this rung; dropping it entirely lands with
+		// the umh_topics filter (R4), so only alias presence/absence is
+		// asserted here.
+		produce(GinkgoT(), addr,
+			rec(keyedKey, `{"v":1}`),
+			&kgo.Record{Value: []byte(`{"v":2}`)}, // nil key
+		)
+
+		type aliasPresence struct {
+			umhTopic      string
+			umhTopicOK    bool
+			kafkaMsgKey   string
+			kafkaMsgKeyOK bool
+		}
+		var mu sync.Mutex
+		seen := map[string]aliasPresence{} // payload -> alias presence snapshot
+		stop := runUnsBetaStream(GinkgoT(), `
+uns_beta:
+  broker_address: "`+addr+`"
+  consumer_group: "`+group+`"
+`, func(_ context.Context, b service.MessageBatch) error {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, msg := range b {
+				bs, _ := msg.AsBytes()
+				var p aliasPresence
+				p.umhTopic, p.umhTopicOK = msg.MetaGet("umh_topic")
+				p.kafkaMsgKey, p.kafkaMsgKeyOK = msg.MetaGet("kafka_msg_key")
+				seen[string(bs)] = p
+			}
+			return nil
+		})
+		defer stop()
+
+		Eventually(func() int {
+			mu.Lock()
+			defer mu.Unlock()
+			return len(seen)
+		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
+			Should(Equal(2), "both messages must arrive through uns_beta")
+
+		mu.Lock()
+		keyed, okKeyed := seen[`{"v":1}`]
+		keyless, okKeyless := seen[`{"v":2}`]
+		mu.Unlock()
+		Expect(okKeyed).To(BeTrue())
+		Expect(okKeyless).To(BeTrue())
+
+		Expect(keyed.umhTopicOK).To(BeTrue())
+		Expect(keyed.umhTopic).To(Equal(keyedKey), "keyed record must still be aliased")
+		Expect(keyless.umhTopicOK).To(BeFalse(), "keyless record must not carry umh_topic at all (absent, not empty-present)")
+		Expect(keyless.kafkaMsgKeyOK).To(BeFalse(), "keyless record must not carry kafka_msg_key at all (absent, not empty-present)")
+	})
+
+	// Documented known gap, pinned as current behavior (not aspiration): the
+	// delegated redpanda input applies record headers AFTER its native fields,
+	// so a producer header literally named "kafka_key" overwrites the real
+	// record key in metadata before ReadBatch stamps the aliases. Rejecting
+	// such spoofed keys is hardening deferred pending the umh_topics
+	// parse-gate decision; if this test starts failing, that decision has
+	// been implemented and this pin should be replaced with the new contract.
+	It("stamps a spoofed kafka_key header over the real record key (documented gap)", func() {
+		addr := startBroker(GinkgoT())
+		const group = "uns-beta-spoof"
+		produce(GinkgoT(), addr, &kgo.Record{
+			Key:   []byte("umh.v1.acme.real"),
+			Value: []byte(`{"v":1}`),
+			Headers: []kgo.RecordHeader{
+				{Key: "kafka_key", Value: []byte("umh.v1.spoofed")},
+			},
+		})
+
+		var mu sync.Mutex
+		var umhTopics []string
+		stop := runUnsBetaStream(GinkgoT(), `
+uns_beta:
+  broker_address: "`+addr+`"
+  consumer_group: "`+group+`"
+`, func(_ context.Context, b service.MessageBatch) error {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, msg := range b {
+				v, _ := msg.MetaGet("umh_topic")
+				umhTopics = append(umhTopics, v)
+			}
+			return nil
+		})
+		defer stop()
+
+		Eventually(func() int {
+			mu.Lock()
+			defer mu.Unlock()
+			return len(umhTopics)
+		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
+			Should(BeNumerically(">=", 1), "message never arrived through uns_beta")
+
+		mu.Lock()
+		got := umhTopics[0]
+		mu.Unlock()
+		Expect(got).To(Equal("umh.v1.spoofed"), "the kafka_key header shadows the record key (documented gap)")
 	})
 })
 
