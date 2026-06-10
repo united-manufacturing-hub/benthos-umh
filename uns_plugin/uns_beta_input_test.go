@@ -15,6 +15,7 @@
 package uns_plugin
 
 import (
+	"regexp"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -172,5 +173,120 @@ var _ = Describe("uns_beta config validation", Label("uns_beta"), func() {
 		Entry("kafka_topic of exactly '.'",
 			"broker_address: \"localhost:9092\"\nconsumer_group: \"g\"\nkafka_topic: \".\"",
 			"kafka_topic must be a legal Kafka topic name (letters, digits, '.', '_', '-'; max 249 chars)"),
+		// An explicit empty list overrides the [".*"] default, and a regex
+		// joined from zero patterns is the empty pattern, which matches
+		// EVERYTHING — a silent filter bypass when the user plausibly meant
+		// match-nothing.
+		Entry("explicit empty umh_topics",
+			"broker_address: \"localhost:9092\"\nconsumer_group: \"g\"\numh_topics: []",
+			"umh_topics must not be empty"),
 	)
+
+	It("rejects an invalid umh_topics pattern through the production constructor", func() {
+		parsed, err := unsBetaConfigSpec().ParseYAML(`
+broker_address: "localhost:9092"
+consumer_group: "g"
+umh_topics:
+  - "["
+`, nil)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = newUnsBetaInput(parsed, nil)
+		Expect(err).To(HaveOccurred(), "an invalid pattern must error, never panic or silently pass-all")
+		Expect(err.Error()).To(ContainSubstring("invalid umh_topics pattern at index 0"))
+	})
+
+	// Forces the join arm in newBetaKeyFilter ("compiling combined umh_topics
+	// pattern"): reachable only when every pattern compiles individually but
+	// the combined alternation exceeds RE2's program-size limit ("expression
+	// too large") — the per-pattern loop cannot catch it, so a "[" style
+	// invalid pattern never reaches it. The sizes are empirical for the Go
+	// regexp parser: (?:<literal>){1000} costs ~len(literal)*1000 size units,
+	// a single pattern with a 2000-char literal compiles alone (the limit
+	// sits near a 3300-char literal), and two of them joined blow past it.
+	It("rejects umh_topics whose combined alternation exceeds the regex size limit", func() {
+		p1 := "(?:" + strings.Repeat("a", 2000) + "){1000}"
+		p2 := "(?:" + strings.Repeat("b", 2000) + "){1000}"
+		// Self-documentation: each pattern must pass the per-pattern compile
+		// loop on its own, or this spec is not exercising the join arm.
+		_, err := regexp.Compile(p1)
+		Expect(err).NotTo(HaveOccurred(), "p1 must compile individually")
+		_, err = regexp.Compile(p2)
+		Expect(err).NotTo(HaveOccurred(), "p2 must compile individually")
+
+		parsed, err := unsBetaConfigSpec().ParseYAML(`
+broker_address: "localhost:9092"
+consumer_group: "g"
+umh_topics:
+  - "`+p1+`"
+  - "`+p2+`"
+`, nil)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = newUnsBetaInput(parsed, nil)
+		Expect(err).To(HaveOccurred(), "the oversized combined alternation must surface as a config error, never panic or silently pass-all")
+		Expect(err.Error()).To(ContainSubstring("compiling combined umh_topics pattern"))
+	})
+})
+
+// The umh_topics key filter: patterns are combined into one alternation —
+// (?:p1)|(?:p2), the same join NewMessageProcessor uses for the legacy uns
+// input — and matched against each record's Kafka key. Keyless contract: an
+// empty key never matches, regardless of patterns.
+var _ = Describe("uns_beta umh_topics key filter construction", Label("uns_beta"), func() {
+	It("compiles multiple patterns and matches a key against any of them", func() {
+		f, err := newBetaKeyFilter([]string{`^umh\.v1\.acme\..+$`, `^umh\.v1\.umh\..+$`})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(f.matches("umh.v1.acme.berlin.temp")).To(BeTrue(), "first pattern must match")
+		Expect(f.matches("umh.v1.umh.cologne.temp")).To(BeTrue(), "second pattern must match")
+		Expect(f.matches("umh.v1.other.x")).To(BeFalse(), "a key matching no pattern must be rejected")
+	})
+
+	It("never matches an empty key, even against a match-everything pattern", func() {
+		f, err := newBetaKeyFilter([]string{".*"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(f.matches("anything")).To(BeTrue())
+		// `.*` matches "" as a regex; the filter must override that (why: see
+		// the betaKeyFilter.matches doc, ENG-5094).
+		Expect(f.matches("")).To(BeFalse(), "an empty key must never match, regardless of patterns")
+	})
+
+	It("errors on an invalid pattern instead of panicking or passing-all", func() {
+		_, err := newBetaKeyFilter([]string{"["})
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("invalid umh_topics pattern at index 0"))
+	})
+
+	It("errors on an empty pattern list", func() {
+		_, err := newBetaKeyFilter(nil)
+		Expect(err).To(MatchError("umh_topics must not be empty"))
+	})
+
+	// An empty element compiles individually, wraps to (?:), and the
+	// alternation then matches every key — a stray `- ""` or trailing `-` in
+	// YAML would silently disable a selective filter.
+	It("errors on an empty or whitespace-only pattern element", func() {
+		_, err := newBetaKeyFilter([]string{`^umh\.v1\.acme\..+$`, ""})
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("umh_topics pattern at index 1 must not be empty"))
+
+		_, err = newBetaKeyFilter([]string{"  "})
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("umh_topics pattern at index 0 must not be empty"))
+	})
+
+	// Pins the [".*"] default: an omitted umh_topics must parse to exactly
+	// one match-everything pattern, so unfiltered configs (the capstone and
+	// metadata-contract specs among them) keep their keyed traffic flowing.
+	It("defaults an omitted umh_topics to a single match-everything pattern", func() {
+		conf, err := unsBetaConfigSpec().ParseYAML(`
+broker_address: "localhost:9092"
+consumer_group: "g"
+`, nil)
+		Expect(err).NotTo(HaveOccurred())
+		patterns, err := conf.FieldStringList("umh_topics")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(patterns).To(Equal([]string{".*"}))
+		f, err := newBetaKeyFilter(patterns)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(f.matches("any.key.at.all")).To(BeTrue(), "the default must deliver every keyed record")
+	})
 })

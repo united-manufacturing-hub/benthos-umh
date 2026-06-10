@@ -42,7 +42,65 @@ func unsBetaConfigSpec() *service.ConfigSpec {
 			Description("The Kafka topic to consume.").
 			Default(defaultInputKafkaTopic).
 			Advanced().
-			Examples(defaultInputKafkaTopic))
+			Examples(defaultInputKafkaTopic)).
+		Field(service.NewStringListField("umh_topics").
+			Description("List of RE2 regex patterns matched against each record's Kafka key (the umh_topic). Only records whose key matches at least one pattern are delivered; records with an empty or absent key never match any pattern. Patterns are unanchored; use ^...$ to match the full key. Defaults to a single match-everything pattern.").
+			Default([]any{".*"}).
+			Advanced().
+			Examples(
+				[]any{".*"},
+				[]any{`^umh\.v1\.acme\.berlin\..+$`, `^umh\.v1\.acme\.munich\..+$`}))
+}
+
+// betaKeyFilter is the compiled umh_topics filter: the configured patterns
+// combined into one alternation, matched against each record's Kafka key.
+type betaKeyFilter struct {
+	re *regexp.Regexp
+}
+
+// newBetaKeyFilter compiles the umh_topics patterns into a single combined
+// regex, (?:p1)|(?:p2)|... — the same join NewMessageProcessor uses for the
+// legacy uns input. An empty pattern list is rejected: a regex joined from
+// zero patterns is the empty pattern, which matches EVERYTHING — a silent
+// filter bypass when the user plausibly meant match-nothing.
+func newBetaKeyFilter(patterns []string) (*betaKeyFilter, error) {
+	if len(patterns) == 0 {
+		return nil, errors.New("umh_topics must not be empty")
+	}
+	wrapped := make([]string, len(patterns))
+	for i, pattern := range patterns {
+		// An empty element compiles fine on its own but wraps to (?:), which
+		// matches every key — the same silent filter bypass as the empty
+		// list, smuggled in by a stray `- ""` or trailing `-` in YAML.
+		if strings.TrimSpace(pattern) == "" {
+			return nil, fmt.Errorf("umh_topics pattern at index %d must not be empty or whitespace-only (an empty pattern matches every key)", i)
+		}
+		// Validate each pattern individually so the error names the culprit
+		// instead of pointing at the combined alternation.
+		if _, err := regexp.Compile(pattern); err != nil {
+			return nil, fmt.Errorf("invalid umh_topics pattern at index %d: %s - %w", i, pattern, err)
+		}
+		wrapped[i] = fmt.Sprintf("(?:%s)", pattern)
+	}
+	// The join can fail even though every pattern compiled individually:
+	// RE2's program-size limit is cumulative across the alternation
+	// ("expression too large"), so surface it as a config error — the legacy
+	// uns input handles the identical join the same way (uns_input_processor.go).
+	re, err := regexp.Compile(strings.Join(wrapped, "|"))
+	if err != nil {
+		return nil, fmt.Errorf("compiling combined umh_topics pattern: %w", err)
+	}
+	return &betaKeyFilter{re: re}, nil
+}
+
+// matches reports whether a record with the given Kafka key is delivered.
+// An empty/absent key NEVER matches, regardless of patterns (`.*` matches
+// ""): a keyless record delivered downstream hits a guaranteed uns-output
+// rejection → NACK → infinite redelivery wedge (ENG-5094). This is a
+// deliberate behavior change from the legacy uns input, which DELIVERED
+// keyless records under its default ".*" pattern (ParseFromBenthos).
+func (f *betaKeyFilter) matches(key string) bool {
+	return key != "" && f.re.MatchString(key)
 }
 
 // legalKafkaTopicName is Kafka's own topic-name rule (kafka.common.Topic):
@@ -160,6 +218,17 @@ func newUnsBetaInput(conf *service.ParsedConfig, _ *service.Resources) (service.
 		return nil, err
 	}
 
+	// Build the filter before the inner input so a bad umh_topics fails fast
+	// without leaving an unclosed OwnedInput behind.
+	patterns, err := conf.FieldStringList("umh_topics")
+	if err != nil {
+		return nil, err
+	}
+	keyFilter, err := newBetaKeyFilter(patterns)
+	if err != nil {
+		return nil, err
+	}
+
 	// ParseYAML(innerYAML, nil) builds the inner redpanda input on a fresh
 	// internal manager whose logger and metrics are noops; the public API has
 	// no hook to hand it the outer Resources, so the inner input's own logs
@@ -173,13 +242,18 @@ func newUnsBetaInput(conf *service.ParsedConfig, _ *service.Resources) (service.
 	if err != nil {
 		return nil, err
 	}
-	return &unsBetaInput{inner: inner}, nil
+
+	return &unsBetaInput{inner: inner, keyFilter: keyFilter}, nil
 }
 
 // unsBetaInput adapts *service.OwnedInput (which manages its own connectivity)
-// to the service.BatchInput interface.
+// to the service.BatchInput interface, filtering records by the umh_topics key
+// regex.
 type unsBetaInput struct {
 	inner *service.OwnedInput
+	// keyFilter is the compiled umh_topics filter; always non-nil (the field
+	// defaults to [".*"], which delivers every keyed record).
+	keyFilter *betaKeyFilter
 }
 
 // Connect is a no-op: the delegated OwnedInput connects lazily on first
@@ -192,32 +266,48 @@ func (i *unsBetaInput) ReadBatch(ctx context.Context) (service.MessageBatch, ser
 	batch, ack, err := i.inner.ReadBatch(ctx)
 	if err != nil {
 		// BatchInput does not guarantee batch == nil on error; an
-		// error-accompanied batch is not delivered downstream, so the aliases
-		// are not set on it.
+		// error-accompanied batch is not delivered downstream, so the
+		// aliases are not set on it.
 		return batch, ack, err
 	}
+	// umh_topics filter: keep only records whose Kafka key matches a
+	// configured pattern; a keyless record never matches (see
+	// betaKeyFilter.matches). Dropped records stay covered by the shared
+	// delegated ack: a batch with at least one kept record commits past
+	// the dropped offsets when the kept subset is acked. An ALL-filtered
+	// batch is returned empty with its ack as-is; advancing the commit for
+	// that case is the next rung (spec P8).
+	//
+	// Trust boundary: kafka_key is trusted as the record key here, but a
+	// producer header literally named "kafka_key" shadows it (the
+	// delegated input applies headers after the native fields). The
+	// shadowed value controls BOTH the drop/deliver decision and the
+	// aliases: a spoofed header can drop (and commit past) a legitimately
+	// keyed record, or deliver a keyless one. Detecting the spoof IS
+	// possible at this layer — the delegated input preserves the original
+	// kgo header slice under __rpcn_kafka_headers (deleted below) — but
+	// recovering the shadowed real key is not, so hardening is deferred to
+	// a dedicated follow-up ticket. The uns output strips kafka_-prefixed
+	// metadata before producing, so the shadowing header cannot arise from
+	// uns-output hops.
+	kept := make(service.MessageBatch, 0, len(batch))
 	for _, msg := range batch {
-		// Trust boundary: kafka_key is trusted as the record key here, but a
-		// producer header literally named "kafka_key" shadows it (the
-		// delegated input applies headers after the native fields), so the
-		// aliases would stamp the spoofed value. Hardening is deferred
-		// pending the umh_topics parse-gate decision.
-		if key, found := msg.MetaGet("kafka_key"); found && key != "" {
-			// Only alias a non-empty key: a keyless record would otherwise
-			// carry a present-but-empty umh_topic that the uns output rejects
-			// per-message, and with auto_replay_nacks the batch redelivers
-			// forever. Keyless messages still flow through in this rung; full
-			// drop semantics land with the umh_topics filter (R4).
-			msg.MetaSetMut("umh_topic", key)
-			msg.MetaSetMut("kafka_msg_key", key)
+		key, _ := msg.MetaGet("kafka_key")
+		if !i.keyFilter.matches(key) {
+			continue
 		}
+		// The filter guarantees a non-empty matching key here, so the
+		// aliases are stamped unconditionally.
+		msg.MetaSetMut("umh_topic", key)
+		msg.MetaSetMut("kafka_msg_key", key)
 		// The delegated input stores the original kgo header slice under
-		// __rpcn_kafka_headers; left in place it round-trips into downstream
-		// Kafka headers and compounds per hop through the uns output, so it
-		// is stripped here.
+		// __rpcn_kafka_headers; left in place it round-trips into
+		// downstream Kafka headers and compounds per hop through the uns
+		// output, so it is stripped here.
 		msg.MetaDelete("__rpcn_kafka_headers")
+		kept = append(kept, msg)
 	}
-	return batch, ack, nil
+	return kept, ack, nil
 }
 
 func (i *unsBetaInput) Close(ctx context.Context) error {

@@ -113,9 +113,10 @@ uns_beta:
 // natively (kafka_key, kafka_topic, kafka_timestamp_ms, headers). kafka_key
 // normally holds the record key, so the aliases override any umh_topic header
 // that passed through from the producer; a producer header literally named
-// "kafka_key", however, shadows the record key before the aliases are stamped
-// (the documented gap pinned below). For non-UMH producers that send no
-// headers the aliases are the only source of umh_topic. (ENG-5094)
+// "kafka_key", however, shadows the record key before the umh_topics filter
+// runs and before the aliases are stamped (the documented gap pinned below).
+// For non-UMH producers that send no headers the aliases are the only source
+// of umh_topic. (ENG-5094)
 var _ = Describe("uns_beta metadata contract", Label("uns_beta"), func() {
 	It("aliases each message's own record key and passes the native redpanda metadata through", func() {
 		addr := startBroker(GinkgoT())
@@ -195,74 +196,17 @@ uns_beta:
 		Expect(m2["kafka_msg_key"]).To(Equal(key2), "kafka_msg_key must alias the record's own key")
 	})
 
-	It("sets no aliases on a keyless record", func() {
-		addr := startBroker(GinkgoT())
-		const group = "uns-beta-keyless"
-		const keyedKey = "umh.v1.acme.keyed"
-		// A keyless record must not get a present-but-empty umh_topic: the uns
-		// output rejects empty topics per-message, and with auto_replay_nacks
-		// the batch would redeliver forever. The keyless message itself still
-		// flows to the consumer in this rung; dropping it entirely lands with
-		// the umh_topics filter (R4), so only alias presence/absence is
-		// asserted here.
-		produce(GinkgoT(), addr,
-			rec(keyedKey, `{"v":1}`),
-			&kgo.Record{Value: []byte(`{"v":2}`)}, // nil key
-		)
-
-		type aliasPresence struct {
-			umhTopic      string
-			umhTopicOK    bool
-			kafkaMsgKey   string
-			kafkaMsgKeyOK bool
-		}
-		var mu sync.Mutex
-		seen := map[string]aliasPresence{} // payload -> alias presence snapshot
-		stop := runUnsBetaStream(GinkgoT(), `
-uns_beta:
-  broker_address: "`+addr+`"
-  consumer_group: "`+group+`"
-`, func(_ context.Context, b service.MessageBatch) error {
-			mu.Lock()
-			defer mu.Unlock()
-			for _, msg := range b {
-				bs, _ := msg.AsBytes()
-				var p aliasPresence
-				p.umhTopic, p.umhTopicOK = msg.MetaGet("umh_topic")
-				p.kafkaMsgKey, p.kafkaMsgKeyOK = msg.MetaGet("kafka_msg_key")
-				seen[string(bs)] = p
-			}
-			return nil
-		})
-		defer stop()
-
-		Eventually(func() int {
-			mu.Lock()
-			defer mu.Unlock()
-			return len(seen)
-		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
-			Should(Equal(2), "both messages must arrive through uns_beta")
-
-		mu.Lock()
-		keyed, okKeyed := seen[`{"v":1}`]
-		keyless, okKeyless := seen[`{"v":2}`]
-		mu.Unlock()
-		Expect(okKeyed).To(BeTrue())
-		Expect(okKeyless).To(BeTrue())
-
-		Expect(keyed.umhTopicOK).To(BeTrue())
-		Expect(keyed.umhTopic).To(Equal(keyedKey), "keyed record must still be aliased")
-		Expect(keyless.umhTopicOK).To(BeFalse(), "keyless record must not carry umh_topic at all (absent, not empty-present)")
-		Expect(keyless.kafkaMsgKeyOK).To(BeFalse(), "keyless record must not carry kafka_msg_key at all (absent, not empty-present)")
-	})
-
 	// Documented known gap, pinned as current behavior (not aspiration): the
 	// delegated redpanda input applies record headers AFTER its native fields,
 	// so a producer header literally named "kafka_key" overwrites the real
-	// record key in metadata before ReadBatch stamps the aliases. Rejecting
-	// such spoofed keys is hardening deferred pending the umh_topics
-	// parse-gate decision; if this test starts failing, that decision has
-	// been implemented and this pin should be replaced with the new contract.
+	// record key in metadata before the umh_topics filter runs and before
+	// ReadBatch stamps the aliases. The shadowed value therefore controls the
+	// drop/deliver decision as well as the aliases. The deferral contract
+	// (detection is possible at this layer, recovery of the shadowed key is
+	// not) lives on the trust-boundary comment in ReadBatch
+	// (uns_beta_input.go). If this test starts failing, the deferred
+	// hardening has been implemented and this pin should be replaced with
+	// the new contract.
 	It("stamps a spoofed kafka_key header over the real record key (documented gap)", func() {
 		addr := startBroker(GinkgoT())
 		const group = "uns-beta-spoof"
@@ -302,6 +246,185 @@ uns_beta:
 		got := umhTopics[0]
 		mu.Unlock()
 		Expect(got).To(Equal("umh.v1.spoofed"), "the kafka_key header shadows the record key (documented gap)")
+	})
+
+	// The data-loss direction of the same documented gap: the shadowed value
+	// controls the DROP decision too. Under a selective umh_topics filter, a
+	// record whose REAL key matches the filter but whose "kafka_key" header
+	// does not is dropped — and the shared delegated ack then commits past it,
+	// so the legitimately keyed record is gone for good (the spoof pin above
+	// only covers the benign direction: a delivered record carrying the
+	// spoofed alias). The matching ride-along record shares the single produce
+	// call so the consumer-visible batch is — overwhelmingly likely under
+	// kfake — never all-filtered: the all-filtered path is the next rung
+	// (spec P8) and must not be entered here. If this test starts failing,
+	// the deferred hardening has been implemented and this pin should be
+	// replaced with the new contract.
+	It("drops and commits past a matching record whose spoofed kafka_key header fails the filter (documented gap)", func() {
+		addr := startBroker(GinkgoT())
+		const group = "uns-beta-spoof-dataloss"
+		produce(GinkgoT(), addr,
+			&kgo.Record{
+				// offset 0: the real key matches the filter, but the spoofed
+				// header — applied AFTER the native fields by the delegated
+				// input — does not, so the filter drops the record.
+				Key:   []byte("umh.v1.acme.real"),
+				Value: []byte(`{"v":"spoofed"}`),
+				Headers: []kgo.RecordHeader{
+					{Key: "kafka_key", Value: []byte("umh.v1.evil.spoofed")},
+				},
+			},
+			// offset 1: the ride-along, plainly keyed and matching.
+			rec("umh.v1.acme.ride", `{"v":"ride"}`),
+		)
+
+		var mu sync.Mutex
+		var got []string
+		stop := runUnsBetaStream(GinkgoT(), `
+uns_beta:
+  broker_address: "`+addr+`"
+  consumer_group: "`+group+`"
+  umh_topics:
+    - "umh\\.v1\\.acme\\..+"
+`, func(_ context.Context, b service.MessageBatch) error {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, m := range b {
+				bs, _ := m.AsBytes()
+				got = append(got, string(bs))
+			}
+			return nil
+		})
+		defer stop()
+
+		// The committed offset reaching 2 proves the shared delegated ack
+		// resolved past BOTH records, the dropped spoofed one included — the
+		// data loss this pin documents. By then any leaked spoofed delivery
+		// has already happened, so the exclusion assertion below is checked
+		// at a meaningful time. 15s timeout: the inner redpanda input commits
+		// on the 5s commit_period tick pinned in renderRedpandaFragment.
+		Eventually(func(g Gomega) {
+			off, ok, err := committedOffsetE(addr, group)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(ok).To(BeTrue(), "no offset committed yet")
+			g.Expect(off).To(Equal(int64(2)), "committed offset must advance past the dropped spoofed record and the ride-along")
+		}).WithTimeout(15 * time.Second).WithPolling(100 * time.Millisecond).Should(Succeed())
+
+		mu.Lock()
+		defer mu.Unlock()
+		Expect(got).To(ConsistOf(`{"v":"ride"}`),
+			"the spoofed record must never be delivered: its kafka_key header shadows the matching real key in the filter decision (documented gap)")
+	})
+})
+
+// The umh_topics key-regex filter: only records whose Kafka key matches one
+// of the configured patterns reach the pipeline; a record with an
+// empty/absent key never matches, regardless of patterns (why: see the
+// betaKeyFilter.matches doc). The delegated ack covers the whole poll, so a
+// batch mixing kept and dropped records must still commit past the dropped
+// offsets once the kept subset is acked. (ENG-5094)
+var _ = Describe("uns_beta umh_topics key filter", Label("uns_beta"), func() {
+	It("delivers only matching keys, drops keyless records, and commits past the dropped offsets", func() {
+		addr := startBroker(GinkgoT())
+		const group = "uns-beta-keyfilter"
+		// All three records go in ONE produce call so they share a fetch and —
+		// overwhelmingly likely under kfake — one delegated batch; the public
+		// surface cannot deterministically force a single batch. The matching
+		// record rides alongside so the kept subset is never empty: an
+		// all-filtered batch would be returned empty without its ack
+		// resolving, and self-acking that case is the next rung (spec P8).
+		produce(GinkgoT(), addr,
+			rec("umh.v1.acme.berlin.temp", `{"v":"berlin"}`), // offset 0: matches
+			rec("umh.v1.acme.munich.temp", `{"v":"munich"}`), // offset 1: dropped, key does not match
+			&kgo.Record{Value: []byte(`{"v":"keyless"}`)},    // offset 2: dropped, keyless never matches
+		)
+
+		var mu sync.Mutex
+		var got []string
+		stop := runUnsBetaStream(GinkgoT(), `
+uns_beta:
+  broker_address: "`+addr+`"
+  consumer_group: "`+group+`"
+  umh_topics:
+    - "umh\\.v1\\.acme\\.berlin\\..+"
+`, func(_ context.Context, b service.MessageBatch) error {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, m := range b {
+				bs, _ := m.AsBytes()
+				got = append(got, string(bs))
+			}
+			return nil
+		})
+		defer stop()
+
+		// The committed offset reaching 3 proves the shared delegated ack
+		// resolved for the whole poll, dropped records included — and by then
+		// any leaked Munich/keyless delivery has already happened, so the
+		// exclusion assertion below is checked at a meaningful time. The inner
+		// redpanda input commits on the 5s commit_period tick pinned in
+		// renderRedpandaFragment, so Gomega's 1s default timeout would flake.
+		Eventually(func(g Gomega) {
+			off, ok, err := committedOffsetE(addr, group)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(ok).To(BeTrue(), "no offset committed yet")
+			g.Expect(off).To(Equal(int64(3)), "committed offset must advance past the dropped Munich and keyless records")
+		}).WithTimeout(15 * time.Second).WithPolling(100 * time.Millisecond).Should(Succeed())
+
+		mu.Lock()
+		defer mu.Unlock()
+		Expect(got).To(ConsistOf(`{"v":"berlin"}`),
+			"only the Berlin-keyed record may reach the consumer: Munich fails the umh_topics regex and a keyless record never matches any pattern")
+	})
+
+	// The keyless contract holds even when umh_topics is OMITTED: the default
+	// is [".*"], and `.*` matches "" as a regex — this pins that the
+	// never-match rule overrides even the match-everything default (rationale
+	// and the legacy behavior change: betaKeyFilter.matches doc).
+	It("drops a keyless record under the default match-everything filter and still commits past it", func() {
+		addr := startBroker(GinkgoT())
+		const group = "uns-beta-keyless"
+		// One produce call: the keyed record rides alongside so the delegated
+		// batch is — overwhelmingly likely under kfake — never all-filtered
+		// (the all-filtered case is the next rung, spec P8).
+		produce(GinkgoT(), addr,
+			rec("umh.v1.acme.keyed", `{"v":1}`),   // offset 0: keyed, delivered
+			&kgo.Record{Value: []byte(`{"v":2}`)}, // offset 1: keyless, dropped
+		)
+
+		var mu sync.Mutex
+		var got []string
+		stop := runUnsBetaStream(GinkgoT(), `
+uns_beta:
+  broker_address: "`+addr+`"
+  consumer_group: "`+group+`"
+`, func(_ context.Context, b service.MessageBatch) error {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, m := range b {
+				bs, _ := m.AsBytes()
+				got = append(got, string(bs))
+			}
+			return nil
+		})
+		defer stop()
+
+		// Offset 2 proves the shared delegated ack covered the dropped keyless
+		// record — and by then any leaked keyless delivery has already
+		// happened, so the exclusion check below is checked at a meaningful
+		// time. 15s timeout: the inner redpanda input commits on the 5s
+		// commit_period tick pinned in renderRedpandaFragment.
+		Eventually(func(g Gomega) {
+			off, ok, err := committedOffsetE(addr, group)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(ok).To(BeTrue(), "no offset committed yet")
+			g.Expect(off).To(Equal(int64(2)), "committed offset must advance past the dropped keyless record")
+		}).WithTimeout(15 * time.Second).WithPolling(100 * time.Millisecond).Should(Succeed())
+
+		mu.Lock()
+		defer mu.Unlock()
+		Expect(got).To(ConsistOf(`{"v":1}`),
+			"the keyless record must never reach the consumer, even though the default `.*` pattern matches the empty string")
 	})
 })
 
