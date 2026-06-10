@@ -44,9 +44,19 @@ import (
 
 const reproTopic = "umh.messages"
 
+// testingT is the minimal failure surface the kfake helpers need, satisfied by
+// both *testing.T (this file's plain tests) and ginkgo.GinkgoT() (the uns_beta
+// Ginkgo specs that share these helpers).
+type testingT interface {
+	Helper()
+	Fatal(args ...any)
+	Fatalf(format string, args ...any)
+	Cleanup(func())
+}
+
 // startBroker spins up an in-memory franz-go cluster with reproTopic
 // pre-created as a single-partition topic, and returns its bootstrap address.
-func startBroker(t *testing.T) string {
+func startBroker(t testingT) string {
 	t.Helper()
 	cluster, err := kfake.NewCluster(kfake.SeedTopics(1, reproTopic))
 	if err != nil {
@@ -62,7 +72,7 @@ func startBroker(t *testing.T) string {
 
 // produce writes records to reproTopic (partition 0) synchronously, so offsets
 // are assigned in call order: the first record produced is offset 0, etc.
-func produce(t *testing.T, addr string, records ...*kgo.Record) {
+func produce(t testingT, addr string, records ...*kgo.Record) {
 	t.Helper()
 	cl, err := kgo.NewClient(kgo.SeedBrokers(addr))
 	if err != nil {
@@ -82,11 +92,22 @@ func produce(t *testing.T, addr string, records ...*kgo.Record) {
 // committedOffset reads the offset committed for the given consumer group on
 // reproTopic/partition 0. The returned bool is false when the group has no
 // committed offset at all.
-func committedOffset(t *testing.T, addr, group string) (int64, bool) {
+func committedOffset(t testingT, addr, group string) (int64, bool) {
 	t.Helper()
+	off, ok, err := committedOffsetE(addr, group)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	return off, ok
+}
+
+// committedOffsetE is the error-returning variant of committedOffset, for
+// callers off the test goroutine where Fatalf is illegal (e.g. assertions
+// inside a stream consumer callback).
+func committedOffsetE(addr, group string) (int64, bool, error) {
 	cl, err := kgo.NewClient(kgo.SeedBrokers(addr))
 	if err != nil {
-		t.Fatalf("admin client: %v", err)
+		return 0, false, fmt.Errorf("admin client: %w", err)
 	}
 	defer cl.Close()
 	adm := kadm.NewClient(cl)
@@ -94,13 +115,13 @@ func committedOffset(t *testing.T, addr, group string) (int64, bool) {
 	defer cancel()
 	resps, err := adm.FetchOffsets(ctx, group)
 	if err != nil {
-		t.Fatalf("fetch offsets: %v", err)
+		return 0, false, fmt.Errorf("fetch offsets: %w", err)
 	}
 	o, ok := resps.Lookup(reproTopic, 0)
 	if !ok || o.At < 0 {
-		return 0, false
+		return 0, false, nil
 	}
-	return o.At, true
+	return o.At, true, nil
 }
 
 func rec(key, val string) *kgo.Record {
@@ -374,5 +395,3 @@ func drainGroupOnce(t *testing.T, addr, group string) int {
 	}
 	return count
 }
-
-var _ = fmt.Sprintf // keep fmt imported for ad-hoc debugging
