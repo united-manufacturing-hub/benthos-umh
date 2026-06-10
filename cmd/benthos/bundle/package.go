@@ -15,7 +15,7 @@
 package bundle
 
 import (
-	_ "github.com/RuneRoven/benthosADS"
+	_ "github.com/united-manufacturing-hub/benthos-umh/beckhoff_ads_plugin"
 	_ "github.com/RuneRoven/benthosAlarm"
 	_ "github.com/RuneRoven/benthosSMTP"
 	// Fix for ENG-752
