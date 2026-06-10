@@ -152,6 +152,15 @@ func validateIP(s string) error {
 	return nil
 }
 
+// parseSymbolDuration parses a per-symbol timing override.
+// Bare integers are treated as milliseconds for backward compatibility; otherwise time.ParseDuration is used.
+func parseSymbolDuration(raw string) (time.Duration, error) {
+	if v, err := strconv.Atoi(raw); err == nil {
+		return time.Duration(v) * time.Millisecond, nil
+	}
+	return time.ParseDuration(raw)
+}
+
 // validateAMSNetID checks that s is a valid AMS NetID (6 dot-separated octets, each 0–255).
 func validateAMSNetID(s string) error {
 	parts := strings.Split(s, ".")
@@ -196,24 +205,24 @@ func CreateSymbolList(s []string, defaultCycleTime time.Duration, defaultMaxDela
 			for _, opt := range strings.Split(parts[1], ":") {
 				if kv := strings.SplitN(opt, "=", 2); len(kv) == 2 {
 					// Keyed option — overrides by name, does not consume positional slot
-					if v, err := strconv.Atoi(kv[1]); err == nil {
+					if d, err := parseSymbolDuration(kv[1]); err == nil {
 						switch kv[0] {
 						case "maxDelay":
-							plcSym.MaxDelay = time.Duration(v) * time.Millisecond
+							plcSym.MaxDelay = d
 						case "cycleTime":
-							plcSym.CycleTime = time.Duration(v) * time.Millisecond
+							plcSym.CycleTime = d
 						}
 					}
 				} else {
 					// Positional option — always advances slot index.
 					// Empty string reserves the slot (keeps default), non-empty sets value.
 					if opt != "" {
-						if v, err := strconv.Atoi(opt); err == nil {
+						if d, err := parseSymbolDuration(opt); err == nil {
 							switch positionalIdx {
 							case 0:
-								plcSym.MaxDelay = time.Duration(v) * time.Millisecond
+								plcSym.MaxDelay = d
 							case 1:
-								plcSym.CycleTime = time.Duration(v) * time.Millisecond
+								plcSym.CycleTime = d
 							}
 						}
 					}
@@ -250,7 +259,7 @@ type AdsCommInput struct {
 	dataSizes        map[string]uint32   // configured symbol name → PLC reported byte length (STRING=Nbytes, primitives=2/4/8 etc)
 	symbolNames      map[string]string   // strings.ToLower(configured name) → configured name (TC2 returns uppercase)
 	NotificationChan chan *adsLib.Update // notification channel for PLC data
-	TransmissionMode adsLib.TransMode // Notification transmission mode
+	TransmissionMode adsLib.TransMode    // Notification transmission mode
 
 	// Shutdown signal - closed to signal goroutines to stop.
 	// Used instead of closing NotificationChan to avoid send-on-closed-channel panics
@@ -283,21 +292,20 @@ var adsConf = service.NewConfigSpec().
 	Field(service.NewStringField("username").Description("PLC username for automatic route registration. Both username and password must be set to activate. Requires UDP 48899.").Default("").Advanced().Examples("Administrator")).
 	Field(service.NewStringField("password").Description("PLC password for automatic route registration.").Default("").Advanced().Examples("1")).
 	// ---- Read mode ----
-	Field(service.NewStringEnumField("readType", "notification", "interval").Description("Read type. notification = PLC pushes on change; interval = plugin polls at intervalTime.").Default("notification").Advanced()).
-	Field(service.NewStringEnumField("transmissionMode", "serverOnChange", "serverCycle", "serverOnChange2", "serverCycle2").Description("Notification transmission mode (notification readType only). serverOnChange2/serverCycle2 auto-fall back on older PLCs.").Default("serverOnChange").Advanced()).
+	Field(service.NewStringEnumField("readType", "notification", "interval").Description("Read type. notification = PLC pushes on change; interval = plugin polls at intervalTime.").Default("notification").Advanced().Examples("notification", "interval")).
+	Field(service.NewStringEnumField("transmissionMode", "serverOnChange", "serverCycle", "serverOnChange2", "serverCycle2").Description("Notification transmission mode (notification readType only). serverOnChange2/serverCycle2 auto-fall back on older PLCs.").Default("serverOnChange").Advanced().Examples("serverOnChange", "serverCycle", "serverOnChange2", "serverCycle2")).
 	Field(service.NewDurationField("cycleTime").Description("How often the PLC checks the symbol for changes and delivers notifications. Lower = more responsive but more PLC CPU.").Default("100ms").Advanced().Examples("100ms", "10ms", "500ms", "1s")).
 	Field(service.NewDurationField("maxDelay").Description("Maximum time the PLC batches notifications before sending. All changes are delivered; this controls delivery latency vs network efficiency.").Default("100ms").Advanced().Examples("100ms", "0s", "500ms")).
 	Field(service.NewDurationField("intervalTime").Description("Poll interval for readType interval.").Default("1s").Advanced().Examples("1s", "500ms")).
 	// ---- Advanced ----
 	Field(service.NewDurationField("requestTimeout").Description("Timeout for individual ADS requests.").Default("5s").Advanced().Examples("5s", "10s")).
-	Field(service.NewStringEnumField("logLevel", "disabled", "error", "warn", "info", "debug", "trace").Description("go-ads library log level. error (default) surfaces transport and ADS errors. debug/trace add verbose ADS wire details.").Default("error").Advanced()).
+	Field(service.NewStringEnumField("logLevel", "disabled", "error", "warn", "info", "debug", "trace").Description("go-ads library log level. error (default) surfaces transport and ADS errors. debug/trace add verbose ADS wire details.").Default("error").Advanced().Examples("disabled", "error", "warn", "info", "debug", "trace")).
 	// ---- Symbols (list — placed last for readability in YAML) ----
 	Field(service.NewStringListField("symbols").Description("Symbols to read. Format: 'name', 'name:maxDelayMs:cycleTimeMs', or 'name:maxDelay=100ms:cycleTime=100ms'. " +
 		"Examples: 'GVL.counter', 'GVL.trigger:0s:10ms', '.globalVar:maxDelay=0s:cycleTime=50ms'"))
 
 // NewAdsCommInput creates a new ADS input plugin from parsed Benthos configuration.
 func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
-
 	logLevel, err := conf.FieldString("logLevel")
 	if err != nil {
 		return nil, err
@@ -317,10 +325,10 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 		return nil, err
 	}
 
-	if err := validateIP(targetIP); err != nil {
+	if err = validateIP(targetIP); err != nil {
 		return nil, fmt.Errorf("targetIP: %w", err)
 	}
-	if err := validateAMSNetID(targetAMS); err != nil {
+	if err = validateAMSNetID(targetAMS); err != nil {
 		return nil, fmt.Errorf("targetAMS: %w", err)
 	}
 
@@ -333,6 +341,9 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 	if err != nil {
 		return nil, err
 	}
+	if runtimePort < 0 || runtimePort > 65535 {
+		return nil, fmt.Errorf("runtimePort %d out of range 0–65535", runtimePort)
+	}
 
 	hostAMS, err := conf.FieldString("hostAMS")
 	if err != nil {
@@ -340,7 +351,7 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 	}
 
 	if hostAMS != "auto" && hostAMS != "" {
-		if err := validateAMSNetID(hostAMS); err != nil {
+		if err = validateAMSNetID(hostAMS); err != nil {
 			return nil, fmt.Errorf("hostAMS: %w", err)
 		}
 	}
@@ -348,6 +359,9 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 	hostPort, err := conf.FieldInt("hostPort")
 	if err != nil {
 		return nil, err
+	}
+	if hostPort < 0 || hostPort > 65535 {
+		return nil, fmt.Errorf("hostPort %d out of range 0–65535", hostPort)
 	}
 
 	readType, err := conf.FieldString("readType")
@@ -442,7 +456,6 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 	}
 
 	return service.AutoRetryNacksBatched(m), nil
-
 }
 
 func init() {
@@ -565,7 +578,6 @@ func (g *AdsCommInput) Connect(ctx context.Context) error {
 		g.symbolNames[strings.ToLower(sym.Name)] = sym.Name
 	}
 
-
 	if g.ReadType == "notification" {
 		// Build notification configs for batch add
 		configs := make([]adsLib.NotificationConfig, len(g.Symbols))
@@ -639,14 +651,25 @@ func (g *AdsCommInput) Connect(ctx context.Context) error {
 // ReadBatch satisfies the service.BatchInput interface.
 // Full implementation (ReadBatchPull, ReadBatchNotification) is in a follow-up PR.
 func (g *AdsCommInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
-	return nil, nil, service.ErrNotConnected
+	select {
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	default:
+		return nil, nil, service.ErrNotConnected
+	}
 }
+
+// Close shuts down the ADS connection. ctx is required by the service.BatchInput interface;
+// go-ads does not support context cancellation on close, so it is not forwarded.
+//
+//nolint:revive
 func (g *AdsCommInput) Close(ctx context.Context) error {
 	g.Log.Infof("Close called")
 	// Signal shutdown to ReadBatchNotification before closing the handler,
 	// so it stops waiting for notifications.
 	if g.done != nil {
 		close(g.done)
+		g.done = nil
 	}
 	if g.Handler != nil {
 		g.Log.Infof("Closing down, cleaning up PLC handles")
