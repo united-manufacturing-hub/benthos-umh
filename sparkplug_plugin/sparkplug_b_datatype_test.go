@@ -14,7 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// ENG-5126: Sparkplug B metric datatype must survive from BIRTH to DATA.
+// Sparkplug B metric datatype must survive from BIRTH to DATA.
 //
 // Per the Sparkplug B spec, NBIRTH/DBIRTH carries alias + name + datatype while
 // NDATA/DDATA carries only alias + value; the host is required to remember the
@@ -36,7 +36,7 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin/sparkplugb"
 )
 
-var _ = Describe("Datatype persistence across BIRTH and DATA (ENG-5126)", func() {
+var _ = Describe("Datatype persistence across BIRTH and DATA", func() {
 	Describe("AliasCache", func() {
 		var cache *sparkplugplugin.AliasCache
 
