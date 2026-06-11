@@ -37,7 +37,6 @@ import (
 )
 
 var _ = Describe("Datatype persistence across BIRTH and DATA (ENG-5126)", func() {
-
 	Describe("AliasCache", func() {
 		var cache *sparkplugplugin.AliasCache
 
@@ -191,7 +190,8 @@ var _ = Describe("Datatype persistence across BIRTH and DATA (ENG-5126)", func()
 			}
 		}
 
-		DescribeTable("decodes signed integer wire values using the BIRTH datatype",
+		DescribeTable(
+			"decodes signed integer wire values using the BIRTH datatype",
 			func(datatype uint32, wire interface{}, expected float64) {
 				birthMetric := &sparkplugb.Payload_Metric{
 					Name:     stringPtr("temp"),
