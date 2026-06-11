@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+---
 changesDir: .changelog
 unreleasedDir: unreleased
 headerPath: header.tpl.md
@@ -23,13 +24,17 @@ changeFormat: '- {{.Body}}'
 body:
   block: true
 kinds:
-  - label: Breaking Changes
+  - key: breaking
+    label: Breaking Changes
     auto: major
-  - label: New Features
+  - key: new
+    label: New
     auto: minor
-  - label: Improvements
+  - key: improvements
+    label: Improvements
     auto: minor
-  - label: Fixes
+  - key: fixes
+    label: Fixes
     auto: patch
 newlines:
   afterChangelogHeader: 1
