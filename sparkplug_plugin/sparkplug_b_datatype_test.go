@@ -132,7 +132,7 @@ var _ = Describe("Datatype persistence across BIRTH and DATA", func() {
 		// runNDATA pushes an NBIRTH (full defs) then an NDATA (alias-only) through
 		// the same processing path processSparkplugMessage uses and returns the
 		// split messages produced for the NDATA.
-		runNDATA := func(birthMetric *sparkplugb.Payload_Metric, dataMetric *sparkplugb.Payload_Metric) (string, map[string]interface{}) {
+		runNDATA := func(birthMetric *sparkplugb.Payload_Metric, dataMetric *sparkplugb.Payload_Metric) (string, map[string]any) {
 			birthPayload := birth(birthMetric)
 			wrapper.ProcessBirthMessage(sparkplugplugin.MessageTypeNBIRTH, birthPayload, topicInfo)
 
@@ -146,7 +146,7 @@ var _ = Describe("Datatype persistence across BIRTH and DATA", func() {
 
 			raw, err := msg.AsBytes()
 			Expect(err).NotTo(HaveOccurred())
-			var body map[string]interface{}
+			var body map[string]any
 			Expect(json.Unmarshal(raw, &body)).To(Succeed())
 
 			return datatypeMeta, body
@@ -178,8 +178,8 @@ var _ = Describe("Datatype persistence across BIRTH and DATA", func() {
 
 		// setWireValue assigns an int_value/long_value oneof to a metric. The oneof
 		// interface type is unexported in the generated code, so entries pass the
-		// exported wrapper structs as interface{}.
-		setWireValue := func(m *sparkplugb.Payload_Metric, wire interface{}) {
+		// exported wrapper structs as any.
+		setWireValue := func(m *sparkplugb.Payload_Metric, wire any) {
 			switch v := wire.(type) {
 			case *sparkplugb.Payload_Metric_IntValue:
 				m.Value = v
@@ -192,7 +192,7 @@ var _ = Describe("Datatype persistence across BIRTH and DATA", func() {
 
 		DescribeTable(
 			"decodes signed integer wire values using the BIRTH datatype",
-			func(datatype uint32, wire interface{}, expected float64) {
+			func(datatype uint32, wire any, expected float64) {
 				birthMetric := &sparkplugb.Payload_Metric{
 					Name:     stringPtr("temp"),
 					Alias:    uint64Ptr(1),
@@ -238,7 +238,7 @@ var _ = Describe("Datatype persistence across BIRTH and DATA", func() {
 
 			raw, err := batch[0].AsBytes()
 			Expect(err).NotTo(HaveOccurred())
-			var body map[string]interface{}
+			var body map[string]any
 			Expect(json.Unmarshal(raw, &body)).To(Succeed())
 
 			Expect(body["value"]).To(BeNumerically("==", float64(-7)))
@@ -260,6 +260,42 @@ var _ = Describe("Datatype persistence across BIRTH and DATA", func() {
 
 			Expect(datatypeMeta).To(Equal("Float"))
 			Expect(body["value"]).To(BeNumerically("==", 3.5))
+		})
+
+		// DDATA shares processDataMessage/resolveAliases/extractMetricValue with
+		// NDATA, so the BIRTH-datatype fix applies to device metrics too; this
+		// spec locks that in through the device-level path (aliases are cached
+		// per device from DBIRTH).
+		It("sets spb_datatype and decodes signed values on DDATA from the DBIRTH definition", func() {
+			deviceTopicInfo := &sparkplugplugin.TopicInfo{Group: "Factory", EdgeNode: "Line1", Device: "Device1"}
+
+			birthPayload := birth(&sparkplugb.Payload_Metric{
+				Name:     stringPtr("temp"),
+				Alias:    uint64Ptr(1),
+				Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt32),
+				Value:    &sparkplugb.Payload_Metric_IntValue{IntValue: wireInt32(-7)},
+			})
+			wrapper.ProcessBirthMessage(sparkplugplugin.MessageTypeDBIRTH, birthPayload, deviceTopicInfo)
+
+			dataPayload := data(1, &sparkplugb.Payload_Metric{
+				Alias: uint64Ptr(1),
+				Value: &sparkplugb.Payload_Metric_IntValue{IntValue: wireInt32(-12)},
+			})
+			wrapper.ProcessDataMessage(sparkplugplugin.MessageTypeDDATA, dataPayload, deviceTopicInfo)
+			batch := wrapper.CreateSplitMessages(dataPayload, sparkplugplugin.MessageTypeDDATA, deviceTopicInfo, "spBv1.0/Factory/DDATA/Line1/Device1")
+			Expect(batch).To(HaveLen(1))
+
+			msg := batch[0]
+			datatypeMeta, _ := msg.MetaGet("spb_datatype")
+			Expect(datatypeMeta).To(Equal("Int32"),
+				"spb_datatype must be present on DDATA, sourced from the DBIRTH certificate")
+
+			raw, err := msg.AsBytes()
+			Expect(err).NotTo(HaveOccurred())
+			var body map[string]any
+			Expect(json.Unmarshal(raw, &body)).To(Succeed())
+			Expect(body["name"]).To(Equal("temp"))
+			Expect(body["value"]).To(BeNumerically("==", float64(-12)))
 		})
 	})
 })

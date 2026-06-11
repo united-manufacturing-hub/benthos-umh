@@ -1615,7 +1615,7 @@ func (s *sparkplugInput) extractMetricValueRaw(metric *sparkplugb.Payload_Metric
 // metric datatype. Sparkplug B packs signed integers (Int8/Int16/Int32) as
 // two's-complement into int_value (ENG-5126); without a signed datatype the raw
 // uint32 is returned unchanged (UInt8/UInt16/UInt32, or datatype unknown).
-func decodeIntValue(datatype *uint32, raw uint32) interface{} {
+func decodeIntValue(datatype *uint32, raw uint32) any {
 	if datatype == nil {
 		return raw
 	}
@@ -1634,7 +1634,7 @@ func decodeIntValue(datatype *uint32, raw uint32) interface{} {
 // decodeLongValue reinterprets the unsigned long_value wire field according to
 // the metric datatype: Int64 is two's-complement (ENG-5126); UInt64 and
 // DateTime pass through unchanged.
-func decodeLongValue(datatype *uint32, raw uint64) interface{} {
+func decodeLongValue(datatype *uint32, raw uint64) any {
 	if datatype != nil && *datatype == SparkplugDataTypeInt64 {
 		return int64(raw)
 	}
