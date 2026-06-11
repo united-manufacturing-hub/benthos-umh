@@ -75,6 +75,8 @@ The plugin provides metadata for each message, that can be used to create a topi
 | `opcua_attr_datatype`    | The DataType attribute of the Node as a string                                                                                                       |
 | `opcua_attr_statuscode`  | The OPC UA quality/status code for the data value (e.g., "Good", "BadNodeIdUnknown"). Indicates the reliability of the value.                       |
 
+**Note:** String values are delivered exactly as the server sends them. However, `tag_processor` auto-detection converts numeric-looking strings (e.g., serial codes) back to lossy numbers. To keep them as strings, set `msg.meta.datatype = "string"` for those tags in the processing section.
+
 Taking as example the following OPC-UA structure:
 
 ```

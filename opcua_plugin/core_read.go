@@ -103,7 +103,8 @@ func (g *OPCUAConnection) getBytesFromValue(dataValue *ua.DataValue, nodeDef Nod
 		b = append(b, []byte(strconv.FormatUint(v, 10))...)
 		tagType = "number"
 	default:
-		// Convert unknown and string types to JSON
+		// Strings must be JSON-quoted too: downstream parses the body as JSON, and raw
+		// bytes would turn numeric-looking strings into lossy numbers.
 		jsonBytes, err := json.Marshal(v)
 		if err != nil {
 			g.Log.Errorf("Error marshaling to JSON: %v", err)
