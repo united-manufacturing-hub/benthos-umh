@@ -27,6 +27,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
+	// Registers benthos core components (incl. the "none" tracer that
+	// StreamBuilder.Build defaults to). The production binary gets these via
+	// its full component bundle; this minimal test package only blank-imports
+	// the kafka components, so the StreamBuilder build needs pure here.
+	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
