@@ -15,6 +15,20 @@
 // uns_beta input (ENG-5094): a thin adapter that delegates to the official
 // redpanda Connect input via OwnedInput so that NACKed batches are never
 // committed away.
+//
+// uns_beta is two registered pieces:
+//   - "uns_beta" — a benthos template (MustRegisterTemplateYAML) exposing the
+//     lean 4-field user surface (broker_address, consumer_group, kafka_topic,
+//     umh_topics) and synthesizing the nested redpanda config in its mapping.
+//   - "uns_beta_reader" — this Go core input (internal/Deprecated). Its spec
+//     declares an `input:` field that the FRAMEWORK parses on the real manager,
+//     so the inner redpanda input's logs, metrics and kafka_lag route through
+//     the outer stream's logger/metrics registry instead of the noop manager
+//     that the old ParseYAML(nil) construction built them on.
+//
+// The template hands the reader the SAME normalized scalars (seed_brokers,
+// consumer_group, kafka_topic) it baked into the nested redpanda block, so the
+// reader's validation runs on provably the value redpanda receives.
 
 package uns_plugin
 
@@ -23,7 +37,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -32,24 +45,34 @@ import (
 	_ "github.com/redpanda-data/connect/v4/public/components/kafka"
 )
 
-func unsBetaConfigSpec() *service.ConfigSpec {
+// unsBetaReaderConfigSpec is the spec for the internal "uns_beta_reader" core
+// input. It is Deprecated() and undocumented so the Management Console steers
+// users to the "uns_beta" template instead of this raw nested-input surface.
+//
+// Five fields: the framework-parsed `input` (the synthesized redpanda input),
+// `umh_topics`, and the three normalized scalars the template also baked into
+// the nested redpanda config — seed_brokers/consumer_group/kafka_topic. The
+// scalars are validation-only: the constructor rejects the same values the
+// template rendered into the redpanda block, so a bad value fails at config
+// build with the user-facing error rather than silently inside the inner input.
+func unsBetaReaderConfigSpec() *service.ConfigSpec {
 	return service.NewConfigSpec().
-		Field(service.NewStringField("broker_address").
-			Description("Kafka broker address to connect to. This can be a single address or multiple addresses separated by commas. For example: \"localhost:9092\" or \"broker1:9092,broker2:9092\".")).
-		Field(service.NewStringField("consumer_group").
-			Description("Consumer group used when consuming the configured Kafka topic.")).
-		Field(service.NewStringField("kafka_topic").
-			Description("The Kafka topic to consume.").
-			Default(defaultInputKafkaTopic).
-			Advanced().
-			Examples(defaultInputKafkaTopic)).
+		Deprecated().
+		Field(service.NewInputField("input")).
 		Field(service.NewStringListField("umh_topics").
 			Description("List of RE2 regex patterns matched against each record's Kafka key (the umh_topic). Only records whose key matches at least one pattern are delivered; records with an empty or absent key never match any pattern. Patterns are unanchored; use ^...$ to match the full key. Defaults to a single match-everything pattern.").
 			Default([]any{".*"}).
 			Advanced().
 			Examples(
 				[]any{".*"},
-				[]any{`^umh\.v1\.acme\.berlin\..+$`, `^umh\.v1\.acme\.munich\..+$`}))
+				[]any{`^umh\.v1\.acme\.berlin\..+$`, `^umh\.v1\.acme\.munich\..+$`})).
+		// The template-supplied normalized scalars. They mirror the values the
+		// template rendered into the nested redpanda block (single computation,
+		// referenced twice), so validating them here validates the value
+		// redpanda actually receives.
+		Field(service.NewStringListField("seed_brokers").Default([]any{})).
+		Field(service.NewStringField("consumer_group").Default("")).
+		Field(service.NewStringField("kafka_topic").Default(""))
 }
 
 // betaKeyFilter is the compiled umh_topics filter: the configured patterns
@@ -105,117 +128,64 @@ func (f *betaKeyFilter) matches(key string) bool {
 
 // legalKafkaTopicName is Kafka's own topic-name rule (kafka.common.Topic):
 // 1-249 chars from [a-zA-Z0-9._-]. The reserved names "." and ".." match the
-// pattern and are rejected separately in buildInnerYAML.
+// pattern and are rejected separately in newUnsBetaReader.
 var legalKafkaTopicName = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,249}$`)
 
-// splitBrokerAddress splits a comma-separated broker list, trimming whitespace
-// and dropping empty entries (e.g. from a trailing comma).
-func splitBrokerAddress(brokerAddress string) []string {
-	var brokers []string
-	for _, b := range strings.Split(brokerAddress, ",") {
-		if b = strings.TrimSpace(b); b != "" {
-			brokers = append(brokers, b)
-		}
+func init() {
+	if err := service.RegisterBatchInput("uns_beta_reader", unsBetaReaderConfigSpec(), newUnsBetaReader); err != nil {
+		panic(err)
 	}
-	return brokers
+	service.MustRegisterTemplateYAML(unsBetaTemplate)
 }
 
-// renderRedpandaFragment renders the nested redpanda-input YAML that uns_beta
-// delegates to. The fetch limits are rendered from the OOM-tuned defaultFetch*
-// constants in uns_input_config.go; the byte sizes render as plain digit
-// strings (SI bytes) so the redpanda byte-size parser cannot reinterpret the
-// unit.
-func renderRedpandaFragment(brokers []string, topic, consumerGroup string) string {
-	quoted := make([]string, len(brokers))
-	for i, b := range brokers {
-		quoted[i] = fmt.Sprintf("%q", b)
-	}
-	// start_offset and commit_period match redpanda's current defaults; pinned
-	// deliberately so an upstream default change cannot alter uns_beta's
-	// first-connect behavior or commit cadence. auto_replay_nacks also matches
-	// the upstream default, but it is pinned for a stronger reason: it IS the
-	// ENG-5094 NACK-replay guarantee — never prune it even if it stays
-	// identical to the default.
-	return fmt.Sprintf(`
-input:
-  redpanda:
-    seed_brokers: [%s]
-    topics: [%q]
-    consumer_group: %q
-    start_offset: earliest
-    commit_period: "5s"
-    fetch_max_bytes: %q
-    fetch_max_partition_bytes: %q
-    fetch_min_bytes: %q
-    fetch_max_wait: %q
-    conn_idle_timeout: %q
-    auto_replay_nacks: true
-`, strings.Join(quoted, ", "), topic, consumerGroup,
-		strconv.Itoa(defaultFetchMaxBytes),
-		strconv.Itoa(defaultFetchMaxPartitionBytes),
-		strconv.Itoa(defaultFetchMinBytes),
-		defaultFetchMaxWaitTime.String(),
-		defaultConnIdleTimeout.String())
-}
-
-// buildInnerYAML reads and validates the uns_beta fields off the parsed config
-// and renders the redpanda fragment newUnsBetaInput delegates to. Validation
-// fails fast here because failures inside the inner OwnedInput land in a noop
-// logger and would otherwise be invisible.
-func buildInnerYAML(conf *service.ParsedConfig) (string, error) {
-	brokerAddress, err := conf.FieldString("broker_address")
+// newUnsBetaReader builds the reader from the framework-parsed config. The
+// template renders the normalized scalars into both the nested redpanda block
+// and these top-level fields, so the reject logic here runs on the exact value
+// the inner redpanda input received. Errors here reach the user because the
+// framework — not a noop-logger manager — built the input.
+func newUnsBetaReader(conf *service.ParsedConfig, _ *service.Resources) (service.BatchInput, error) {
+	// Validate the template-normalized scalars with today's exact reject logic
+	// (and exact error strings). seed_brokers arrives already split/trimmed by
+	// the template's $brokers bloblang, so Go only checks the resulting length.
+	seedBrokers, err := conf.FieldStringList("seed_brokers")
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	// Split before validating: a separators-only value like " , " is non-empty
-	// as a raw string but yields zero brokers, which would render
-	// seed_brokers: [].
-	brokers := splitBrokerAddress(brokerAddress)
-	if len(brokers) == 0 {
-		return "", errors.New("broker_address must contain at least one broker")
+	if len(seedBrokers) == 0 {
+		// A separators-only broker_address yields zero brokers after the
+		// template's split/trim/drop-empty; an empty seed_brokers falls back to
+		// the global redpanda block, so reject it here.
+		return nil, errors.New("broker_address must contain at least one broker")
 	}
+
 	consumerGroup, err := conf.FieldString("consumer_group")
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	if consumerGroup = strings.TrimSpace(consumerGroup); consumerGroup == "" {
-		// An empty group parses fine downstream but silently disables offset
-		// commits (full-topic replay on every restart), so fail here.
-		return "", errors.New("consumer_group must not be empty")
+	if consumerGroup == "" {
+		// An empty group silently disables offset commits (full-topic replay on
+		// every restart) AND suppresses kafka_lag (it only registers when the
+		// group is non-empty), so fail here.
+		return nil, errors.New("consumer_group must not be empty")
 	}
+
 	kafkaTopic, err := conf.FieldString("kafka_topic")
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	if kafkaTopic = strings.TrimSpace(kafkaTopic); kafkaTopic == "" {
-		// An explicit empty value overrides the Benthos default (defaults
-		// apply only when the field is absent) and would render topics: [""],
-		// a silently dead input.
-		return "", errors.New("kafka_topic must not be empty")
+	if kafkaTopic == "" {
+		// An explicit empty value (or a whitespace-only one the template
+		// trimmed to "") would render topics: [""], a silently dead input.
+		return nil, errors.New("kafka_topic must not be empty")
 	}
 	if !legalKafkaTopicName.MatchString(kafkaTopic) || kafkaTopic == "." || kafkaTopic == ".." {
 		// Kafka only accepts topic names matching [a-zA-Z0-9._-]{1,249}, minus
-		// the reserved "." and "..". An illegal name fails late and silently:
-		// ':' switches the inner redpanda input into explicit topic:partition
-		// mode (rejected only via a field lint the nested ParseYAML path never
-		// runs), and every other illegal name is rejected by the broker after
-		// connect, inside the noop-logger inner input. Whitelist here, where
-		// the error reaches the user.
-		return "", errors.New("kafka_topic must be a legal Kafka topic name (letters, digits, '.', '_', '-'; max 249 chars)")
-	}
-	return renderRedpandaFragment(brokers, kafkaTopic, consumerGroup), nil
-}
-
-func init() {
-	if err := service.RegisterBatchInput("uns_beta", unsBetaConfigSpec(), newUnsBetaInput); err != nil {
-		panic(err)
-	}
-}
-
-func newUnsBetaInput(conf *service.ParsedConfig, _ *service.Resources) (service.BatchInput, error) {
-	innerYAML, err := buildInnerYAML(conf)
-	if err != nil {
-		return nil, err
+		// the reserved "." and "..". The whitelist regex matches "." and "..",
+		// so the reserved-name reject must stay explicit. ':' would switch the
+		// inner redpanda input into explicit topic:partition mode; every other
+		// illegal name is rejected by the broker after connect. Whitelist here,
+		// where the error reaches the user.
+		return nil, errors.New("kafka_topic must be a legal Kafka topic name (letters, digits, '.', '_', '-'; max 249 chars)")
 	}
 
 	// Build the filter before the inner input so a bad umh_topics fails fast
@@ -229,16 +199,9 @@ func newUnsBetaInput(conf *service.ParsedConfig, _ *service.Resources) (service.
 		return nil, err
 	}
 
-	// ParseYAML(innerYAML, nil) builds the inner redpanda input on a fresh
-	// internal manager whose logger and metrics are noops; the public API has
-	// no hook to hand it the outer Resources, so the inner input's own logs
-	// and metrics are dropped.
-	innerSpec := service.NewConfigSpec().Field(service.NewInputField("input"))
-	parsed, err := innerSpec.ParseYAML(innerYAML, nil)
-	if err != nil {
-		return nil, err
-	}
-	inner, err := parsed.FieldInput("input")
+	// The framework parsed the `input:` field on the REAL manager, so this
+	// OwnedInput's logs, metrics and kafka_lag route through the outer stream.
+	inner, err := conf.FieldInput("input")
 	if err != nil {
 		return nil, err
 	}

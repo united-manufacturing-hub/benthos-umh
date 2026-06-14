@@ -15,52 +15,98 @@
 package uns_plugin
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"gopkg.in/yaml.v3"
+	"github.com/redpanda-data/benthos/v4/public/service"
+
+	// The "pure" components register the "none" tracer that StreamBuilder.Build
+	// defaults to; the render test below builds a (never-run) stream.
+	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
 )
 
-// parseRedpandaFragment unmarshals a rendered fragment and returns its
-// input.redpanda mapping.
-func parseRedpandaFragment(frag string) map[string]any {
+// renderUnsBetaReader expands a `uns_beta: {…}` config through the registered
+// template and returns the rendered uns_beta_reader config as a map. It does
+// this without the production registry: it clones the global environment,
+// swaps in a capturing uns_beta_reader that records its parsed config (via
+// FieldAny) and aborts construction, then builds a StreamBuilder so the
+// framework renders the template's mapping with the real bloblang env. The
+// capture aborts with a sentinel error, so Build/Run failing with that sentinel
+// is the success path. Both the nested redpanda block and the top-level reader
+// scalars are read off this map — NOT off the *OwnedInput (opaque) or the
+// reader struct (holds only inner+keyFilter).
+func renderUnsBetaReader(unsBetaYAML string) map[string]any {
 	GinkgoHelper()
-	var doc map[string]any
-	Expect(yaml.Unmarshal([]byte(frag), &doc)).To(Succeed(), "fragment is not valid YAML:\n%s", frag)
-	input, ok := doc["input"].(map[string]any)
-	Expect(ok).To(BeTrue(), "fragment has no input mapping:\n%s", frag)
+	const sentinel = "render-capture-abort"
+	env := service.NewEnvironment().Without("uns_beta_reader")
+	var captured map[string]any
+	err := env.RegisterBatchInput("uns_beta_reader", unsBetaReaderConfigSpec(),
+		func(conf *service.ParsedConfig, _ *service.Resources) (service.BatchInput, error) {
+			v, e := conf.FieldAny()
+			Expect(e).NotTo(HaveOccurred())
+			m, ok := v.(map[string]any)
+			Expect(ok).To(BeTrue(), "rendered reader config is not a map: %T", v)
+			captured = m
+			return nil, errors.New(sentinel)
+		})
+	Expect(err).NotTo(HaveOccurred())
+
+	sb := env.NewStreamBuilder()
+	Expect(sb.AddInputYAML(unsBetaYAML)).To(Succeed())
+	Expect(sb.AddConsumerFunc(func(context.Context, *service.Message) error { return nil })).To(Succeed())
+	stream, err := sb.Build()
+	Expect(err).NotTo(HaveOccurred())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // never actually consume; capture fires at input construction
+	_ = stream.Run(ctx)
+
+	Expect(captured).NotTo(BeNil(), "uns_beta_reader was never constructed — the template did not render")
+	return captured
+}
+
+// redpandaOf returns the nested input.redpanda map from a rendered reader config.
+func redpandaOf(reader map[string]any) map[string]any {
+	GinkgoHelper()
+	input, ok := reader["input"].(map[string]any)
+	Expect(ok).To(BeTrue(), "reader has no input mapping: %#v", reader)
 	rp, ok := input["redpanda"].(map[string]any)
-	Expect(ok).To(BeTrue(), "fragment has no input.redpanda mapping:\n%s", frag)
+	Expect(ok).To(BeTrue(), "reader.input has no redpanda mapping: %#v", input)
 	return rp
 }
 
-// buildInnerYAML is the same function newUnsBetaInput calls in production;
-// these specs check the rendered fragment, with the OOM-tuned fetch limits
-// from uns_input_config.go pinned as literals.
-var _ = Describe("uns_beta fragment rendering", Label("uns_beta"), func() {
-	It("renders the configured fields into the redpanda fragment", func() {
-		conf, err := unsBetaConfigSpec().ParseYAML(`
-broker_address: "broker1:9092, broker2:9092,"
-consumer_group: "grp"
-kafka_topic: "custom.messages"
-`, nil)
-		Expect(err).NotTo(HaveOccurred())
-		frag, err := buildInnerYAML(conf)
-		Expect(err).NotTo(HaveOccurred())
-		rp := parseRedpandaFragment(frag)
+// The "uns_beta" template synthesizes the nested redpanda config from the lean
+// 4-field user surface. These specs expand the template and assert the rendered
+// config: the OOM-tuned fetch limits (as STRINGS, the upstream string-field
+// contract), the ENG-5094 pins, the normalize-once-reference-twice parity, and
+// the trim/clean normalization that moved out of the old Go splitBrokerAddress.
+var _ = Describe("uns_beta template rendering", Label("uns_beta"), func() {
+	It("renders the configured fields and pins into the redpanda block", func() {
+		reader := renderUnsBetaReader(`
+uns_beta:
+  broker_address: "broker1:9092, broker2:9092,"
+  consumer_group: "grp"
+  kafka_topic: "custom.messages"
+`)
+		rp := redpandaOf(reader)
 
-		// csv split + TrimSpace + empty-entry drop: the trailing comma must not
-		// produce an empty seed_brokers element.
+		// csv split + trim + empty-entry drop (was splitBrokerAddress): the
+		// trailing comma must not produce an empty seed_brokers element.
 		Expect(rp["seed_brokers"]).To(Equal([]any{"broker1:9092", "broker2:9092"}))
 		Expect(rp["topics"]).To(Equal([]any{"custom.messages"}))
 		Expect(rp["consumer_group"]).To(Equal("grp"))
 		Expect(rp["start_offset"]).To(Equal("earliest"))
 
 		// Literal pins of the OOM-tuned defaultFetch* constants in
-		// uns_input_config.go ("Reduced from 100MB to prevent OOM kills"): an
-		// accidental retune fails here; a deliberate one must edit these values.
+		// uns_input_config.go ("Reduced from 100MB to prevent OOM kills"),
+		// emitted AS STRINGS (upstream NewStringField/NewDurationField): a bare
+		// int would fail/coerce. An accidental retune fails here; a deliberate
+		// one must edit the template literals.
 		for field, want := range map[string]string{
 			"fetch_max_bytes":           "10000000",
 			"fetch_max_partition_bytes": "10000000",
@@ -69,128 +115,161 @@ kafka_topic: "custom.messages"
 			"commit_period":             "5s",
 			"conn_idle_timeout":         "15m0s",
 		} {
+			Expect(rp[field]).To(BeAssignableToTypeOf(""), "field %s must render as a YAML string", field)
 			Expect(rp[field]).To(Equal(want), "field %s", field)
 		}
 		Expect(rp["auto_replay_nacks"]).To(Equal(true))
-
-		// The same parsed config must construct through the production entry point.
-		_, err = newUnsBetaInput(conf, nil)
-		Expect(err).NotTo(HaveOccurred())
 	})
 
-	// Pin, not a regression catch: buildInnerYAML validates the TRIMMED values
-	// and must also feed the trimmed values into the fragment. A mutant that
-	// validates strings.TrimSpace(v) without reassigning v would pass every
-	// validation spec yet render padded values; this spec kills it.
-	It("feeds the trimmed consumer_group and kafka_topic into the fragment", func() {
-		conf, err := unsBetaConfigSpec().ParseYAML(`
-broker_address: "localhost:9092"
-consumer_group: " g "
-kafka_topic: " custom.messages "
-`, nil)
-		Expect(err).NotTo(HaveOccurred())
-		frag, err := buildInnerYAML(conf)
-		Expect(err).NotTo(HaveOccurred())
-		rp := parseRedpandaFragment(frag)
+	// Parity: each normalized scalar is computed once and referenced twice (top
+	// level + nested redpanda). Read both off the rendered map and assert byte
+	// equality. Honest scope: both operands derive from the same $-var, so this
+	// guards a FUTURE mapping edit that breaks the single-computation
+	// convention — a regression guard, not a proof of present correctness.
+	It("renders each normalized scalar identically at the top level and in the redpanda block", func() {
+		reader := renderUnsBetaReader(`
+uns_beta:
+  broker_address: "broker1:9092, broker2:9092,"
+  consumer_group: "grp"
+  kafka_topic: "custom.messages"
+`)
+		rp := redpandaOf(reader)
+		Expect(reader["consumer_group"]).To(Equal(rp["consumer_group"]))
+		Expect(reader["seed_brokers"]).To(Equal(rp["seed_brokers"]))
+		topics, ok := rp["topics"].([]any)
+		Expect(ok).To(BeTrue())
+		Expect(topics).NotTo(BeEmpty())
+		Expect(reader["kafka_topic"]).To(Equal(topics[0]))
+	})
+
+	// Normalization pins — these three cases moved here from the validation
+	// DescribeTable (they exercise the template's trim/clean, which is no longer
+	// in the reader). A mutant that skips trimming would render padded values
+	// and fail here.
+	It("trims whitespace-padded consumer_group and kafka_topic before rendering", func() {
+		reader := renderUnsBetaReader(`
+uns_beta:
+  broker_address: "localhost:9092"
+  consumer_group: " g "
+  kafka_topic: " custom.messages "
+`)
+		rp := redpandaOf(reader)
 		Expect(rp["consumer_group"]).To(Equal("g"))
 		Expect(rp["topics"]).To(Equal([]any{"custom.messages"}))
+		// And the top-level reader scalars carry the same trimmed values.
+		Expect(reader["consumer_group"]).To(Equal("g"))
+		Expect(reader["kafka_topic"]).To(Equal("custom.messages"))
 	})
 
+	It("splits, trims, and drops empty entries from a multi-broker address", func() {
+		reader := renderUnsBetaReader(`
+uns_beta:
+  broker_address: "b1:9092, b2:9092,"
+  consumer_group: "g"
+`)
+		rp := redpandaOf(reader)
+		Expect(rp["seed_brokers"]).To(Equal([]any{"b1:9092", "b2:9092"}))
+		Expect(reader["seed_brokers"]).To(Equal([]any{"b1:9092", "b2:9092"}))
+	})
+
+	// Template default: an omitted kafka_topic falls back to umh.messages,
+	// exactly as the Go .Default() the legacy spec used (open question #3).
 	It("falls back to the default topic when kafka_topic is omitted", func() {
-		conf, err := unsBetaConfigSpec().ParseYAML(`
-broker_address: "localhost:9092"
-consumer_group: "g"
-`, nil)
-		Expect(err).NotTo(HaveOccurred())
-		frag, err := buildInnerYAML(conf)
-		Expect(err).NotTo(HaveOccurred())
-		rp := parseRedpandaFragment(frag)
+		reader := renderUnsBetaReader(`
+uns_beta:
+  broker_address: "localhost:9092"
+  consumer_group: "g"
+`)
+		rp := redpandaOf(reader)
 		Expect(rp["topics"]).To(Equal([]any{defaultInputKafkaTopic}))
 	})
 })
 
-var _ = Describe("uns_beta config validation", Label("uns_beta"), func() {
-	// Each entry parses through unsBetaConfigSpec and constructs through
-	// newUnsBetaInput, the production entry point, so the guard under test is
-	// the one production hits. Failures inside the inner OwnedInput land in a
-	// noop logger and would otherwise be invisible.
-	DescribeTable("newUnsBetaInput rejects the config",
-		func(yamlBody, wantErr string) {
-			parsed, err := unsBetaConfigSpec().ParseYAML(yamlBody, nil)
+// validReaderBody builds a minimal valid uns_beta_reader body: a redpanda
+// `input:` block (so FieldInput succeeds and the constructor reaches scalar
+// validation) plus the normalized scalars under test. These are DIRECT
+// uns_beta_reader-constructor unit tests — NOT driven through the template or
+// StreamBuilder, which would wrap the Go error in *componentErr and surface it
+// only at Run(), making exact MatchError impossible. The reader validates
+// ALREADY-normalized scalars (the template normalizes), so each case feeds the
+// post-normalization value directly (e.g. seed_brokers: [] for the empty case).
+func validReaderBody(scalars string) string {
+	return `
+input:
+  redpanda:
+    seed_brokers: ["localhost:9092"]
+    topics: ["umh.messages"]
+    consumer_group: "g"
+` + scalars
+}
+
+var _ = Describe("uns_beta_reader config validation", Label("uns_beta"), func() {
+	// Each entry parses a body against uns_beta_reader's OWN spec and constructs
+	// through newUnsBetaReader, asserting the BARE error (no framework wrapping).
+	DescribeTable("newUnsBetaReader rejects the normalized scalars",
+		func(scalars, wantErr string) {
+			parsed, err := unsBetaReaderConfigSpec().ParseYAML(validReaderBody(scalars), nil)
 			Expect(err).NotTo(HaveOccurred())
-			_, err = newUnsBetaInput(parsed, nil)
+			_, err = newUnsBetaReader(parsed, nil)
 			Expect(err).To(MatchError(wantErr))
 		},
-		Entry("empty broker_address",
-			"broker_address: \"\"\nconsumer_group: \"g\"",
+		// An empty seed_brokers (a separators-only broker_address normalizes to
+		// this) falls back to the global redpanda block — reject it.
+		Entry("empty seed_brokers",
+			"seed_brokers: []\nconsumer_group: \"g\"\nkafka_topic: \"umh.messages\"",
 			"broker_address must contain at least one broker"),
-		// Splitting must happen before validation: " , " is non-empty as a raw
-		// string but yields zero brokers, which would render seed_brokers: []
-		// and fail invisibly inside the noop-logger inner input.
-		Entry("separators-only broker_address",
-			"broker_address: \" , \"\nconsumer_group: \"g\"",
-			"broker_address must contain at least one broker"),
-		// An empty group silently disables offset commits (full-topic replay
-		// on every restart) — the ENG-5094 failure class.
+		// An empty group silently disables offset commits (full-topic replay on
+		// every restart) AND suppresses kafka_lag — the ENG-5094 failure class.
 		Entry("empty consumer_group",
-			"broker_address: \"localhost:9092\"\nconsumer_group: \"\"",
+			"seed_brokers: [\"localhost:9092\"]\nconsumer_group: \"\"\nkafka_topic: \"umh.messages\"",
 			"consumer_group must not be empty"),
-		Entry("whitespace-only consumer_group",
-			"broker_address: \"localhost:9092\"\nconsumer_group: \"  \"",
-			"consumer_group must not be empty"),
-		// An explicit empty kafka_topic overrides the Benthos default
-		// (defaults apply only when the field is absent) and would render
-		// topics: [""], a silently dead input.
-		Entry("explicit empty kafka_topic",
-			"broker_address: \"localhost:9092\"\nconsumer_group: \"g\"\nkafka_topic: \"\"",
+		// An empty kafka_topic (explicit or whitespace-only trimmed to "") would
+		// render topics: [""], a silently dead input.
+		Entry("empty kafka_topic",
+			"seed_brokers: [\"localhost:9092\"]\nconsumer_group: \"g\"\nkafka_topic: \"\"",
 			"kafka_topic must not be empty"),
-		Entry("whitespace-only kafka_topic",
-			"broker_address: \"localhost:9092\"\nconsumer_group: \"g\"\nkafka_topic: \"  \"",
-			"kafka_topic must not be empty"),
-		// ':' would switch the inner redpanda input into explicit
-		// topic:partition mode, which it rejects in combination with a
-		// consumer group — but only via a field lint that the nested
-		// ParseYAML path never runs. The legal-name whitelist subsumes it.
+		// ':' switches the inner redpanda input into explicit topic:partition
+		// mode; the legal-name whitelist subsumes it.
 		Entry("kafka_topic with partition syntax",
-			"broker_address: \"localhost:9092\"\nconsumer_group: \"g\"\nkafka_topic: \"umh.messages:0\"",
+			"seed_brokers: [\"localhost:9092\"]\nconsumer_group: \"g\"\nkafka_topic: \"umh.messages:0\"",
 			"kafka_topic must be a legal Kafka topic name (letters, digits, '.', '_', '-'; max 249 chars)"),
 		Entry("kafka_topic with comma",
-			"broker_address: \"localhost:9092\"\nconsumer_group: \"g\"\nkafka_topic: \"a,b\"",
+			"seed_brokers: [\"localhost:9092\"]\nconsumer_group: \"g\"\nkafka_topic: \"a,b\"",
 			"kafka_topic must be a legal Kafka topic name (letters, digits, '.', '_', '-'; max 249 chars)"),
-		// Kafka itself rejects names outside [a-zA-Z0-9._-], longer than 249
-		// chars, or equal to "." / ".." — but only after the input has already
-		// connected, inside the noop-logger inner input where the rejection is
-		// invisible.
 		Entry("kafka_topic with a space",
-			"broker_address: \"localhost:9092\"\nconsumer_group: \"g\"\nkafka_topic: \"umh messages\"",
+			"seed_brokers: [\"localhost:9092\"]\nconsumer_group: \"g\"\nkafka_topic: \"umh messages\"",
 			"kafka_topic must be a legal Kafka topic name (letters, digits, '.', '_', '-'; max 249 chars)"),
 		Entry("kafka_topic with '#'",
-			"broker_address: \"localhost:9092\"\nconsumer_group: \"g\"\nkafka_topic: \"umh#messages\"",
+			"seed_brokers: [\"localhost:9092\"]\nconsumer_group: \"g\"\nkafka_topic: \"umh#messages\"",
 			"kafka_topic must be a legal Kafka topic name (letters, digits, '.', '_', '-'; max 249 chars)"),
 		Entry("kafka_topic of 250 chars",
-			"broker_address: \"localhost:9092\"\nconsumer_group: \"g\"\nkafka_topic: \""+strings.Repeat("a", 250)+"\"",
+			"seed_brokers: [\"localhost:9092\"]\nconsumer_group: \"g\"\nkafka_topic: \""+strings.Repeat("a", 250)+"\"",
 			"kafka_topic must be a legal Kafka topic name (letters, digits, '.', '_', '-'; max 249 chars)"),
+		// The whitelist regex matches "." and "..", so the reserved-name reject
+		// must stay explicit.
 		Entry("kafka_topic of exactly '.'",
-			"broker_address: \"localhost:9092\"\nconsumer_group: \"g\"\nkafka_topic: \".\"",
+			"seed_brokers: [\"localhost:9092\"]\nconsumer_group: \"g\"\nkafka_topic: \".\"",
 			"kafka_topic must be a legal Kafka topic name (letters, digits, '.', '_', '-'; max 249 chars)"),
-		// An explicit empty list overrides the [".*"] default, and a regex
-		// joined from zero patterns is the empty pattern, which matches
-		// EVERYTHING — a silent filter bypass when the user plausibly meant
-		// match-nothing.
+		Entry("kafka_topic of exactly '..'",
+			"seed_brokers: [\"localhost:9092\"]\nconsumer_group: \"g\"\nkafka_topic: \"..\"",
+			"kafka_topic must be a legal Kafka topic name (letters, digits, '.', '_', '-'; max 249 chars)"),
+		// An explicit empty list overrides the [".*"] default; a regex joined
+		// from zero patterns matches EVERYTHING — a silent filter bypass.
 		Entry("explicit empty umh_topics",
-			"broker_address: \"localhost:9092\"\nconsumer_group: \"g\"\numh_topics: []",
+			"seed_brokers: [\"localhost:9092\"]\nconsumer_group: \"g\"\nkafka_topic: \"umh.messages\"\numh_topics: []",
 			"umh_topics must not be empty"),
 	)
 
-	It("rejects an invalid umh_topics pattern through the production constructor", func() {
-		parsed, err := unsBetaConfigSpec().ParseYAML(`
-broker_address: "localhost:9092"
+	It("rejects an invalid umh_topics pattern through the constructor", func() {
+		parsed, err := unsBetaReaderConfigSpec().ParseYAML(validReaderBody(`
+seed_brokers: ["localhost:9092"]
 consumer_group: "g"
+kafka_topic: "umh.messages"
 umh_topics:
   - "["
-`, nil)
+`), nil)
 		Expect(err).NotTo(HaveOccurred())
-		_, err = newUnsBetaInput(parsed, nil)
+		_, err = newUnsBetaReader(parsed, nil)
 		Expect(err).To(HaveOccurred(), "an invalid pattern must error, never panic or silently pass-all")
 		Expect(err.Error()).To(ContainSubstring("invalid umh_topics pattern at index 0"))
 	})
@@ -213,15 +292,16 @@ umh_topics:
 		_, err = regexp.Compile(p2)
 		Expect(err).NotTo(HaveOccurred(), "p2 must compile individually")
 
-		parsed, err := unsBetaConfigSpec().ParseYAML(`
-broker_address: "localhost:9092"
+		parsed, err := unsBetaReaderConfigSpec().ParseYAML(validReaderBody(fmt.Sprintf(`
+seed_brokers: ["localhost:9092"]
 consumer_group: "g"
+kafka_topic: "umh.messages"
 umh_topics:
-  - "`+p1+`"
-  - "`+p2+`"
-`, nil)
+  - "%s"
+  - "%s"
+`, p1, p2)), nil)
 		Expect(err).NotTo(HaveOccurred())
-		_, err = newUnsBetaInput(parsed, nil)
+		_, err = newUnsBetaReader(parsed, nil)
 		Expect(err).To(HaveOccurred(), "the oversized combined alternation must surface as a config error, never panic or silently pass-all")
 		Expect(err.Error()).To(ContainSubstring("compiling combined umh_topics pattern"))
 	})
@@ -277,10 +357,11 @@ var _ = Describe("uns_beta umh_topics key filter construction", Label("uns_beta"
 	// one match-everything pattern, so unfiltered configs (the capstone and
 	// metadata-contract specs among them) keep their keyed traffic flowing.
 	It("defaults an omitted umh_topics to a single match-everything pattern", func() {
-		conf, err := unsBetaConfigSpec().ParseYAML(`
-broker_address: "localhost:9092"
+		conf, err := unsBetaReaderConfigSpec().ParseYAML(validReaderBody(`
+seed_brokers: ["localhost:9092"]
 consumer_group: "g"
-`, nil)
+kafka_topic: "umh.messages"
+`), nil)
 		Expect(err).NotTo(HaveOccurred())
 		patterns, err := conf.FieldStringList("umh_topics")
 		Expect(err).NotTo(HaveOccurred())

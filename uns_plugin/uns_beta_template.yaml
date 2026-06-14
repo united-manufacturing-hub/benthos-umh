@@ -1,0 +1,96 @@
+# Copyright 2025 UMH Systems GmbH
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: uns_beta
+type: input
+status: experimental
+summary: Consumes messages from the UMH platform's Kafka messaging system, redelivering NACKed batches instead of committing past them (ENG-5094).
+description: |
+  uns_beta delegates to the official redpanda Connect input via a UMH core
+  input (uns_beta_reader) so that NACKed batches are never committed away. It
+  pins auto_replay_nacks: true (the ENG-5094 NACK-replay guarantee) and the
+  OOM-tuned fetch limits, and filters delivered records by the umh_topics key
+  regex.
+
+  This template owns the lean 4-field user surface; it synthesizes the nested
+  redpanda config (the values mirrored in BOTH the nested redpanda block and the
+  top-level uns_beta_reader fields, so they cannot diverge) and hands the
+  normalized scalars to uns_beta_reader for validation.
+
+fields:
+  - name: broker_address
+    description: 'Kafka broker address to connect to. A single address or multiple addresses separated by commas. For example: "localhost:9092" or "broker1:9092,broker2:9092".'
+    type: string
+
+  - name: consumer_group
+    description: Consumer group used when consuming the configured Kafka topic.
+    type: string
+
+  - name: kafka_topic
+    description: The Kafka topic to consume.
+    type: string
+    default: umh.messages
+    advanced: true
+
+  - name: umh_topics
+    description: List of RE2 regex patterns matched against each record's Kafka key (the umh_topic). Only records whose key matches at least one pattern are delivered; records with an empty or absent key never match any pattern. Patterns are unanchored; use ^...$ to match the full key. Defaults to a single match-everything pattern.
+    type: string
+    kind: list
+    default: [".*"]
+    advanced: true
+
+mapping: |
+  #!blobl
+  # Normalize each value exactly ONCE, then reference it in both the nested
+  # redpanda block and the top-level uns_beta_reader fields so the value Go
+  # validates is provably the value redpanda receives (they cannot diverge).
+  #
+  # $brokers reproduces the old splitBrokerAddress: comma-split, trim each, drop
+  # empties (a trailing comma must not produce an empty seed_brokers element).
+  # redpanda's own comma-expansion does NOT trim or drop, so the template must.
+  let brokers = this.broker_address.split(",").map_each(b -> b.trim()).filter(b -> b != "")
+  let group = this.consumer_group.trim()
+  let topic = this.kafka_topic.trim()
+
+  root.uns_beta_reader.input.redpanda.seed_brokers = $brokers
+  root.uns_beta_reader.input.redpanda.topics = [ $topic ]
+  root.uns_beta_reader.input.redpanda.consumer_group = $group
+  # start_offset and commit_period match redpanda's current defaults; pinned
+  # deliberately so an upstream default change cannot alter uns_beta's
+  # first-connect behavior or commit cadence.
+  root.uns_beta_reader.input.redpanda.start_offset = "earliest"
+  root.uns_beta_reader.input.redpanda.commit_period = "5s"
+  # OOM-tuned fetch limits — mirror the defaultFetch* constants in
+  # uns_input_config.go ("Reduced from 100MB to prevent OOM kills"). These are
+  # upstream STRING fields (NewStringField/NewDurationField, parsed via
+  # BytesFromStrFieldAsInt32), so they MUST be quoted string literals here — a
+  # bare YAML int fails/coerces against a string field. Templates cannot
+  # reference the Go constants, so they are literals; the render test re-pins all
+  # six AS STRINGS so any drift from uns_input_config.go fails loudly.
+  root.uns_beta_reader.input.redpanda.fetch_max_bytes = "10000000"
+  root.uns_beta_reader.input.redpanda.fetch_max_partition_bytes = "10000000"
+  root.uns_beta_reader.input.redpanda.fetch_min_bytes = "1000000"
+  root.uns_beta_reader.input.redpanda.fetch_max_wait = "1s"
+  root.uns_beta_reader.input.redpanda.conn_idle_timeout = "15m0s"
+  # auto_replay_nacks also matches the upstream default, but it is pinned for a
+  # stronger reason: it IS the ENG-5094 NACK-replay guarantee — never drop it
+  # even if it stays identical to the default.
+  root.uns_beta_reader.input.redpanda.auto_replay_nacks = true
+
+  # The same normalized scalars as top-level reader fields (validation-only) and
+  # the umh_topics passthrough.
+  root.uns_beta_reader.umh_topics = this.umh_topics
+  root.uns_beta_reader.seed_brokers = $brokers
+  root.uns_beta_reader.consumer_group = $group
+  root.uns_beta_reader.kafka_topic = $topic
