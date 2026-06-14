@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -102,18 +103,23 @@ uns_beta:
 		Expect(rp["consumer_group"]).To(Equal("grp"))
 		Expect(rp["start_offset"]).To(Equal("earliest"))
 
-		// Literal pins of the OOM-tuned defaultFetch* constants in
-		// uns_input_config.go ("Reduced from 100MB to prevent OOM kills"),
-		// emitted AS STRINGS (upstream NewStringField/NewDurationField): a bare
-		// int would fail/coerce. An accidental retune fails here; a deliberate
-		// one must edit the template literals.
+		// The five OOM-tuned fetch/conn values are re-derived here from the
+		// defaultFetch* constants in uns_input_config.go (the ones documented
+		// "Reduced from 100MB to prevent OOM kills"), so retuning any constant
+		// fails this test until the template literal is updated to match —
+		// keeping the uns_beta template and the legacy uns path on the same OOM
+		// tuning during the deprecation window. They are emitted AS STRINGS
+		// (upstream NewStringField/NewDurationField): a bare int would
+		// fail/coerce. commit_period and start_offset are independent pins of
+		// redpanda's own defaults, not UMH constants, so commit_period stays the
+		// literal "5s".
 		for field, want := range map[string]string{
-			"fetch_max_bytes":           "10000000",
-			"fetch_max_partition_bytes": "10000000",
-			"fetch_min_bytes":           "1000000",
-			"fetch_max_wait":            "1s",
+			"fetch_max_bytes":           strconv.FormatFloat(defaultFetchMaxBytes, 'f', -1, 64),
+			"fetch_max_partition_bytes": strconv.FormatFloat(defaultFetchMaxPartitionBytes, 'f', -1, 64),
+			"fetch_min_bytes":           strconv.FormatFloat(defaultFetchMinBytes, 'f', -1, 64),
+			"fetch_max_wait":            defaultFetchMaxWaitTime.String(),
 			"commit_period":             "5s",
-			"conn_idle_timeout":         "15m0s",
+			"conn_idle_timeout":         defaultConnIdleTimeout.String(),
 		} {
 			Expect(rp[field]).To(BeAssignableToTypeOf(""), "field %s must render as a YAML string", field)
 			Expect(rp[field]).To(Equal(want), "field %s", field)
@@ -123,9 +129,11 @@ uns_beta:
 
 	// Parity: each normalized scalar is computed once and referenced twice (top
 	// level + nested redpanda). Read both off the rendered map and assert byte
-	// equality. Honest scope: both operands derive from the same $-var, so this
-	// guards a FUTURE mapping edit that breaks the single-computation
-	// convention — a regression guard, not a proof of present correctness.
+	// equality. Honest scope: both operands derive from the same $-var, so the
+	// cross-equality alone only guards a FUTURE mapping edit that breaks the
+	// single-computation convention. The assertions below also pin concrete
+	// values on BOTH sides, so an edit that re-normalizes only one side (leaving
+	// the cross-equality intact but changing the value) still fails.
 	It("renders each normalized scalar identically at the top level and in the redpanda block", func() {
 		reader := renderUnsBetaReader(`
 uns_beta:
@@ -135,11 +143,16 @@ uns_beta:
 `)
 		rp := redpandaOf(reader)
 		Expect(reader["consumer_group"]).To(Equal(rp["consumer_group"]))
+		Expect(rp["consumer_group"]).To(Equal("grp"))
+		Expect(reader["consumer_group"]).To(Equal("grp"))
 		Expect(reader["seed_brokers"]).To(Equal(rp["seed_brokers"]))
+		Expect(rp["seed_brokers"]).To(Equal([]any{"broker1:9092", "broker2:9092"}))
+		Expect(reader["seed_brokers"]).To(Equal([]any{"broker1:9092", "broker2:9092"}))
 		topics, ok := rp["topics"].([]any)
 		Expect(ok).To(BeTrue())
 		Expect(topics).NotTo(BeEmpty())
 		Expect(reader["kafka_topic"]).To(Equal(topics[0]))
+		Expect(reader["kafka_topic"]).To(Equal("custom.messages"))
 	})
 
 	// Normalization pins — these three cases moved here from the validation

@@ -26,9 +26,14 @@
 //     the outer stream's logger/metrics registry instead of the noop manager
 //     that the old ParseYAML(nil) construction built them on.
 //
-// The template hands the reader the SAME normalized scalars (seed_brokers,
-// consumer_group, kafka_topic) it baked into the nested redpanda block, so the
-// reader's validation runs on provably the value redpanda receives.
+// For template-produced configs the normalized scalars (seed_brokers,
+// consumer_group, kafka_topic) are computed once and written to both the nested
+// redpanda block and these top-level reader fields, so they match by
+// construction of the template. uns_beta_reader itself is a Deprecated raw
+// surface and validates only the top-level copy; the inner redpanda config is
+// an opaque OwnedInput with no accessor, so this equality is a template
+// convention guarded by the render/parity tests, not a Go guarantee. A
+// hand-authored uns_beta_reader could set the two independently.
 
 package uns_plugin
 
@@ -66,10 +71,13 @@ func unsBetaReaderConfigSpec() *service.ConfigSpec {
 			Examples(
 				[]any{".*"},
 				[]any{`^umh\.v1\.acme\.berlin\..+$`, `^umh\.v1\.acme\.munich\..+$`})).
-		// The template-supplied normalized scalars. They mirror the values the
-		// template rendered into the nested redpanda block (single computation,
-		// referenced twice), so validating them here validates the value
-		// redpanda actually receives.
+		// The template-supplied normalized scalars. For template-produced
+		// configs the template computes each once and writes it to both the
+		// nested redpanda block and these fields, so validating the top-level
+		// copy here covers the value redpanda receives. That equality is a
+		// template convention (the inner redpanda config is an opaque
+		// OwnedInput with no accessor, so Go cannot enforce it); the
+		// render/parity tests guard it.
 		Field(service.NewStringListField("seed_brokers").Default([]any{})).
 		Field(service.NewStringField("consumer_group").Default("")).
 		Field(service.NewStringField("kafka_topic").Default(""))
@@ -253,6 +261,12 @@ func (i *unsBetaInput) ReadBatch(ctx context.Context) (service.MessageBatch, ser
 	// a dedicated follow-up ticket. The uns output strips kafka_-prefixed
 	// metadata before producing, so the shadowing header cannot arise from
 	// uns-output hops.
+	// Mutating these messages after the inner ReadBatch returned is safe with
+	// auto_replay_nacks: the inner input hands back a readOnly shallow copy
+	// (autoRetryInputBatched.ReadBatch returns batch.Copy()), so MetaSetMut and
+	// MetaDelete clone the metadata map before writing and never touch the
+	// snapshot the retry list replays on NACK. Only store immutable values here
+	// (key is a string) — a stored mutable value would be shared with that copy.
 	kept := make(service.MessageBatch, 0, len(batch))
 	for _, msg := range batch {
 		key, _ := msg.MetaGet("kafka_key")

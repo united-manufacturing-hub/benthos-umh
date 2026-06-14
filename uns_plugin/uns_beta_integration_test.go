@@ -98,11 +98,12 @@ uns_beta:
 		Expect(first).To(Equal(`{"v":1}`))
 
 		// Stop the stream, then verify the ack actually committed the offset. A
-		// mis-wired ack path (or a consumer_group dropped from the innerYAML
-		// redpanda config built in newUnsBetaInput) would deliver fine here but
+		// mis-wired ack path (or a consumer_group dropped from the redpanda
+		// config built by newUnsBetaReader) would deliver fine here but
 		// replay the full topic on every restart in production. The inner
 		// redpanda input commits on the 5s commit_period tick pinned in
-		// renderRedpandaFragment, so Gomega's 1s default timeout would flake.
+		// the uns_beta template (uns_beta_template.yaml), so Gomega's 1s default
+		// timeout would flake.
 		stop()
 		Eventually(func(g Gomega) {
 			off, ok, err := committedOffsetE(addr, group)
@@ -307,7 +308,8 @@ uns_beta:
 		// data loss this pin documents. By then any leaked spoofed delivery
 		// has already happened, so the exclusion assertion below is checked
 		// at a meaningful time. 15s timeout: the inner redpanda input commits
-		// on the 5s commit_period tick pinned in renderRedpandaFragment.
+		// on the 5s commit_period tick pinned in the uns_beta template
+		// (uns_beta_template.yaml).
 		Eventually(func(g Gomega) {
 			off, ok, err := committedOffsetE(addr, group)
 			g.Expect(err).NotTo(HaveOccurred())
@@ -367,8 +369,9 @@ uns_beta:
 		// resolved for the whole poll, dropped records included — and by then
 		// any leaked Munich/keyless delivery has already happened, so the
 		// exclusion assertion below is checked at a meaningful time. The inner
-		// redpanda input commits on the 5s commit_period tick pinned in
-		// renderRedpandaFragment, so Gomega's 1s default timeout would flake.
+		// redpanda input commits on the 5s commit_period tick pinned in the
+		// uns_beta template (uns_beta_template.yaml), so Gomega's 1s default
+		// timeout would flake.
 		Eventually(func(g Gomega) {
 			off, ok, err := committedOffsetE(addr, group)
 			g.Expect(err).NotTo(HaveOccurred())
@@ -418,7 +421,8 @@ uns_beta:
 		// record — and by then any leaked keyless delivery has already
 		// happened, so the exclusion check below is checked at a meaningful
 		// time. 15s timeout: the inner redpanda input commits on the 5s
-		// commit_period tick pinned in renderRedpandaFragment.
+		// commit_period tick pinned in the uns_beta template
+		// (uns_beta_template.yaml).
 		Eventually(func(g Gomega) {
 			off, ok, err := committedOffsetE(addr, group)
 			g.Expect(err).NotTo(HaveOccurred())
@@ -430,6 +434,165 @@ uns_beta:
 		defer mu.Unlock()
 		Expect(got).To(ConsistOf(`{"v":1}`),
 			"the keyless record must never reach the consumer, even though the default `.*` pattern matches the empty string")
+	})
+})
+
+// capturingMetricsExporter is a service.MetricsExporter that records the NAME
+// of every metric the framework asks it to create into a mutex-guarded set,
+// returning no-op metric instances (mirroring benthos's own mockMetricsExporter
+// in public/service/metrics_test.go). It lets a test assert that a specific
+// metric NAME reached the OUTER stream's metrics registry.
+type capturingMetricsExporter struct {
+	mu    sync.Mutex
+	names map[string]bool
+}
+
+func (c *capturingMetricsExporter) record(name string) {
+	c.mu.Lock()
+	c.names[name] = true
+	c.mu.Unlock()
+}
+
+// registered reports whether a metric of the given name was ever created on
+// this exporter.
+func (c *capturingMetricsExporter) registered(name string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.names[name]
+}
+
+func (c *capturingMetricsExporter) NewCounterCtor(name string, _ ...string) service.MetricsExporterCounterCtor {
+	c.record(name)
+	return func(_ ...string) service.MetricsExporterCounter { return noopMetric{} }
+}
+
+func (c *capturingMetricsExporter) NewTimerCtor(name string, _ ...string) service.MetricsExporterTimerCtor {
+	c.record(name)
+	return func(_ ...string) service.MetricsExporterTimer { return noopMetric{} }
+}
+
+func (c *capturingMetricsExporter) NewGaugeCtor(name string, _ ...string) service.MetricsExporterGaugeCtor {
+	c.record(name)
+	return func(_ ...string) service.MetricsExporterGauge { return noopMetric{} }
+}
+
+func (c *capturingMetricsExporter) Close(context.Context) error { return nil }
+
+// noopMetric satisfies the counter/timer/gauge metric interfaces; the test only
+// cares that the metric was CREATED (its name recorded), not its value.
+type noopMetric struct{}
+
+func (noopMetric) Incr(int64)          {}
+func (noopMetric) IncrFloat64(float64) {}
+func (noopMetric) Timing(int64)        {}
+func (noopMetric) Set(int64)           {}
+func (noopMetric) SetFloat64(float64)  {}
+
+// captureExporterName is the metrics-exporter plugin name the test selects via
+// SetMetricsYAML. RegisterMetricsExporter is process-global and errors if the
+// same name is registered twice, so registration is guarded by a sync.Once and
+// the ctor always hands back the same package-level capturer instance — robust
+// to Ginkgo's randomized/parallel spec ordering.
+const captureExporterName = "uns_beta_test_capture"
+
+var (
+	captureExporter     = &capturingMetricsExporter{names: map[string]bool{}}
+	captureExporterOnce sync.Once
+)
+
+func registerCaptureExporter() {
+	captureExporterOnce.Do(func() {
+		err := service.RegisterMetricsExporter(
+			captureExporterName,
+			service.NewConfigSpec(),
+			func(*service.ParsedConfig, *service.Logger) (service.MetricsExporter, error) {
+				return captureExporter, nil
+			},
+		)
+		if err != nil {
+			panic(err)
+		}
+	})
+}
+
+// This is the observability regression guard for the uns_beta restructure
+// (commit a2993e6f). The restructure replaced the inner redpanda input's
+// construction from ParseYAML(innerYAML, nil) — which built it on a NOOP
+// manager whose logs/metrics/kafka_lag were silently discarded — with a
+// service.NewInputField("input"), so the FRAMEWORK builds the inner input on
+// the REAL outer manager and routes its metrics through the outer stream's
+// registry. ZERO behavioral tests prove this: a regression reintroducing a
+// detached/noop inner manager would keep every other spec in this file green
+// while silently dropping the inner input's observability.
+//
+// This spec closes that gap as a TRUE behavioral guard. It attaches a capturing
+// metrics exporter to the OUTER StreamBuilder, runs uns_beta against the kfake
+// broker, and asserts the inner redpanda input's own `redpanda_lag` gauge
+// (registered by franz_reader_ordered.go only when consumer_group != "", on the
+// poll goroutine that starts during Connect) reaches that outer-attached
+// exporter. Under the pre-restructure noop-manager construction the inner
+// input's metrics would land on a discarded registry and `redpanda_lag` would
+// never reach the capturer, so this assertion would fail.
+var _ = Describe("uns_beta inner-input metrics routing", Label("uns_beta"), func() {
+	It("routes the inner redpanda input's redpanda_lag gauge through the outer stream's metrics registry", func() {
+		registerCaptureExporter()
+
+		addr := startBroker(GinkgoT())
+		const group = "uns-beta-metrics-routing"
+		produce(GinkgoT(), addr, rec("umh.v1.acme.berlin.temp", `{"v":1}`))
+
+		sb := service.NewStreamBuilder()
+		Expect(sb.AddInputYAML(`
+uns_beta:
+  broker_address: "` + addr + `"
+  consumer_group: "` + group + `"
+`)).To(Succeed())
+		// Select the capturing exporter. The metrics-section YAML keys the
+		// exporter by its registered plugin name (see benthos's own
+		// TestMetricsPlugin in public/service/metrics_test.go); an empty config
+		// body suffices since the spec has no fields.
+		Expect(sb.SetMetricsYAML(captureExporterName + ": {}")).To(Succeed())
+
+		var mu sync.Mutex
+		var got int
+		Expect(sb.AddBatchConsumerFunc(func(_ context.Context, b service.MessageBatch) error {
+			mu.Lock()
+			got += len(b)
+			mu.Unlock()
+			return nil // ack so the inner input keeps polling/connected
+		})).To(Succeed())
+
+		stream, err := sb.Build()
+		Expect(err).NotTo(HaveOccurred())
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		var runErr error // written before close(done), read after <-done
+		go func() { defer close(done); runErr = stream.Run(ctx) }()
+		defer func() {
+			cancel()
+			<-done
+			if runErr != nil && !errors.Is(runErr, context.Canceled) {
+				Fail("stream run: " + runErr.Error())
+			}
+		}()
+
+		// Connect + read at least one record so the inner input's poll
+		// goroutine (which registers redpanda_lag) is running.
+		Eventually(func() int {
+			mu.Lock()
+			defer mu.Unlock()
+			return got
+		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
+			Should(BeNumerically(">=", 1), "message never arrived through uns_beta")
+
+		// The routing assertion: redpanda_lag — a metric created ONLY by the
+		// inner redpanda input — must have been created on the outer-attached
+		// capturer. It registers on the poll goroutine started during Connect.
+		Eventually(func() bool {
+			return captureExporter.registered("redpanda_lag")
+		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
+			Should(BeTrue(), "the inner redpanda input's redpanda_lag gauge never reached the outer stream's metrics registry — the inner input is being built on a detached/noop manager (the pre-restructure construction)")
 	})
 })
 

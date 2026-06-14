@@ -24,9 +24,10 @@ description: |
   regex.
 
   This template owns the lean 4-field user surface; it synthesizes the nested
-  redpanda config (the values mirrored in BOTH the nested redpanda block and the
-  top-level uns_beta_reader fields, so they cannot diverge) and hands the
-  normalized scalars to uns_beta_reader for validation.
+  redpanda config. Each normalized scalar is computed once and written to both
+  the nested redpanda block and the top-level uns_beta_reader fields, so for
+  template-produced configs they match by construction; uns_beta_reader then
+  validates the top-level copy.
 
 fields:
   - name: broker_address
@@ -53,8 +54,11 @@ fields:
 mapping: |
   #!blobl
   # Normalize each value exactly ONCE, then reference it in both the nested
-  # redpanda block and the top-level uns_beta_reader fields so the value Go
-  # validates is provably the value redpanda receives (they cannot diverge).
+  # redpanda block and the top-level uns_beta_reader fields. For configs this
+  # template produces, the two copies match by construction (single
+  # computation), so the value Go validates is the value redpanda receives. The
+  # reader is a Deprecated raw surface that validates only the top-level copy;
+  # the render/parity tests guard the equality, Go does not.
   #
   # $brokers reproduces the old splitBrokerAddress: comma-split, trim each, drop
   # empties (a trailing comma must not produce an empty seed_brokers element).
@@ -75,9 +79,11 @@ mapping: |
   # uns_input_config.go ("Reduced from 100MB to prevent OOM kills"). These are
   # upstream STRING fields (NewStringField/NewDurationField, parsed via
   # BytesFromStrFieldAsInt32), so they MUST be quoted string literals here — a
-  # bare YAML int fails/coerces against a string field. Templates cannot
-  # reference the Go constants, so they are literals; the render test re-pins all
-  # six AS STRINGS so any drift from uns_input_config.go fails loudly.
+  # bare YAML int fails/coerces against a string field. This is bloblang YAML,
+  # so these literals cannot reference the Go constants directly; instead the
+  # render test (uns_beta_input_test.go) re-derives the same five fetch/conn
+  # values FROM the constants and asserts equality. That test, not the template,
+  # is what makes a constant retune fail loudly.
   root.uns_beta_reader.input.redpanda.fetch_max_bytes = "10000000"
   root.uns_beta_reader.input.redpanda.fetch_max_partition_bytes = "10000000"
   root.uns_beta_reader.input.redpanda.fetch_min_bytes = "1000000"
