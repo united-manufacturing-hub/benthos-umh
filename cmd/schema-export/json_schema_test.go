@@ -15,9 +15,30 @@
 package main
 
 import (
+	"encoding/json"
+	"strings"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
+
+var _ = Describe("validateFormat", func() {
+	DescribeTable("accepts valid formats and rejects others",
+		func(format string, expectErr bool) {
+			err := validateFormat(format)
+			if expectErr {
+				Expect(err).To(HaveOccurred())
+			} else {
+				Expect(err).NotTo(HaveOccurred())
+			}
+		},
+		Entry("benthos", "benthos", false),
+		Entry("json-schema", "json-schema", false),
+		Entry("mapping", "mapping", false),
+		Entry("empty", "", true),
+		Entry("garbage", "nope", true),
+	)
+})
 
 var _ = Describe("JSON Schema Generator", func() {
 	Context("when validating format flag", func() {
@@ -120,8 +141,9 @@ var _ = Describe("JSON Schema Generator", func() {
 			Expect(result["description"]).To(Equal("Modbus workarounds"))
 
 			// Properties should be at top level for non-array objects
-			properties, ok := result["properties"].(map[string]interface{})
-			Expect(ok).To(BeTrue(), "properties should exist at top level")
+			om, ok := result["properties"].(*orderedMap)
+			Expect(ok).To(BeTrue(), "properties should be an orderedMap")
+			properties := om.asMap()
 			Expect(properties).To(HaveKey("pauseAfterConnect"))
 			Expect(properties).To(HaveKey("oneRequestPerField"))
 		})
@@ -155,8 +177,9 @@ var _ = Describe("JSON Schema Generator", func() {
 			Expect(items["type"]).To(Equal("object"))
 
 			// Properties should be inside items
-			itemProperties, ok := items["properties"].(map[string]interface{})
-			Expect(ok).To(BeTrue(), "items should have properties")
+			itemOM, ok := items["properties"].(*orderedMap)
+			Expect(ok).To(BeTrue(), "items should have properties as orderedMap")
+			itemProperties := itemOM.asMap()
 			Expect(itemProperties).To(HaveKey("name"))
 			Expect(itemProperties).To(HaveKey("register"))
 			Expect(itemProperties).To(HaveKey("address"))
@@ -247,13 +270,13 @@ var _ = Describe("JSON Schema Generator", func() {
 			Expect(result["additionalProperties"]).To(BeFalse())
 
 			// First level nested object (connection) must have additionalProperties: false
-			properties := result["properties"].(map[string]interface{})
+			properties := result["properties"].(*orderedMap).asMap()
 			connection := properties["connection"].(map[string]interface{})
 			Expect(connection).To(HaveKey("additionalProperties"))
 			Expect(connection["additionalProperties"]).To(BeFalse())
 
 			// Second level nested object (security) must have additionalProperties: false
-			connectionProps := connection["properties"].(map[string]interface{})
+			connectionProps := connection["properties"].(*orderedMap).asMap()
 			security := connectionProps["security"].(map[string]interface{})
 			Expect(security).To(HaveKey("additionalProperties"))
 			Expect(security["additionalProperties"]).To(BeFalse())
@@ -368,8 +391,9 @@ var _ = Describe("JSON Schema Generator", func() {
 			Expect(result["type"]).To(Equal("object"))
 			Expect(result["description"]).To(Equal("This input plugin enables Benthos to read data directly from Modbus devices."))
 
-			properties, ok := result["properties"].(map[string]interface{})
+			propertiesOM, ok := result["properties"].(*orderedMap)
 			Expect(ok).To(BeTrue())
+			properties := propertiesOM.asMap()
 
 			// controller: simple string field
 			controller, ok := properties["controller"].(map[string]interface{})
@@ -393,8 +417,7 @@ var _ = Describe("JSON Schema Generator", func() {
 			addressItems, ok := addresses["items"].(map[string]interface{})
 			Expect(ok).To(BeTrue())
 			Expect(addressItems["type"]).To(Equal("object"))
-			addressItemProps, ok := addressItems["properties"].(map[string]interface{})
-			Expect(ok).To(BeTrue(), "items should have properties for object arrays")
+			addressItemProps := addressItems["properties"].(*orderedMap).asMap()
 			Expect(addressItemProps).To(HaveKey("name"))
 			Expect(addressItemProps).To(HaveKey("register"))
 			Expect(addressItemProps).To(HaveKey("address"))
@@ -404,8 +427,7 @@ var _ = Describe("JSON Schema Generator", func() {
 			Expect(ok).To(BeTrue())
 			Expect(workarounds["type"]).To(Equal("object"))
 			Expect(workarounds["x-advanced"]).To(BeTrue())
-			workaroundProps, ok := workarounds["properties"].(map[string]interface{})
-			Expect(ok).To(BeTrue())
+			workaroundProps := workarounds["properties"].(*orderedMap).asMap()
 			Expect(workaroundProps).To(HaveKey("pauseAfterConnect"))
 			Expect(workaroundProps).To(HaveKey("oneRequestPerField"))
 
@@ -413,6 +435,52 @@ var _ = Describe("JSON Schema Generator", func() {
 			required, ok := result["required"].([]string)
 			Expect(ok).To(BeTrue())
 			Expect(required).To(ContainElement("controller"))
+		})
+	})
+
+	Context("field order preservation in JSON output", func() {
+		It("should emit properties in FieldOrder, not alphabetical order", func() {
+			// Fields intentionally in non-alphabetical order: z_field, a_field, m_field
+			plugin := PluginSpec{
+				Name: "order-test",
+				Type: "input",
+				Config: map[string]FieldSpec{
+					"z_field": {Name: "z_field", Type: "string"},
+					"a_field": {Name: "a_field", Type: "string"},
+					"m_field": {Name: "m_field", Type: "string"},
+				},
+				FieldOrder: []string{"z_field", "a_field", "m_field"},
+			}
+
+			result := convertPluginToJSONSchema(plugin)
+			om := result["properties"].(*orderedMap)
+
+			// Keys must be in insertion (FieldOrder) order, not sorted
+			Expect(om.keys).To(Equal([]string{"z_field", "a_field", "m_field"}))
+		})
+
+		It("should emit properties in FieldOrder order in marshaled JSON", func() {
+			plugin := PluginSpec{
+				Name: "order-test",
+				Type: "input",
+				Config: map[string]FieldSpec{
+					"z_field": {Name: "z_field", Type: "string"},
+					"a_field": {Name: "a_field", Type: "string"},
+					"m_field": {Name: "m_field", Type: "string"},
+				},
+				FieldOrder: []string{"z_field", "a_field", "m_field"},
+			}
+
+			result := convertPluginToJSONSchema(plugin)
+			jsonBytes, err := json.Marshal(result["properties"])
+			Expect(err).NotTo(HaveOccurred())
+			jsonStr := string(jsonBytes)
+
+			zPos := strings.Index(jsonStr, `"z_field"`)
+			aPos := strings.Index(jsonStr, `"a_field"`)
+			mPos := strings.Index(jsonStr, `"m_field"`)
+			Expect(zPos).To(BeNumerically("<", aPos), "z_field must appear before a_field in JSON")
+			Expect(aPos).To(BeNumerically("<", mPos), "a_field must appear before m_field in JSON")
 		})
 	})
 })

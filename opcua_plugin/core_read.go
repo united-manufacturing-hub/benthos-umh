@@ -69,9 +69,6 @@ func (g *OPCUAConnection) getBytesFromValue(dataValue *ua.DataValue, nodeDef Nod
 	case float64:
 		b = append(b, []byte(strconv.FormatFloat(v, 'f', -1, 64))...)
 		tagType = "number"
-	case string:
-		b = append(b, []byte(v)...)
-		tagType = "string"
 	case bool:
 		b = append(b, []byte(strconv.FormatBool(v))...)
 		tagType = "bool"
@@ -106,7 +103,8 @@ func (g *OPCUAConnection) getBytesFromValue(dataValue *ua.DataValue, nodeDef Nod
 		b = append(b, []byte(strconv.FormatUint(v, 10))...)
 		tagType = "number"
 	default:
-		// Convert unknown types to JSON
+		// Strings must be JSON-quoted too: downstream parses the body as JSON, and raw
+		// bytes would turn numeric-looking strings into lossy numbers.
 		jsonBytes, err := json.Marshal(v)
 		if err != nil {
 			g.Log.Errorf("Error marshaling to JSON: %v", err)

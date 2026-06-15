@@ -44,6 +44,7 @@ header:
     - ".gitpod.yml"
     - "tests/*"
     - "proto/*"
+    - ".changelog/**"
     - "**/LICENSE"
     - "**/NOTICE"
     - "**/NOTICES"

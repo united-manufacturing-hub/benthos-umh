@@ -39,6 +39,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -57,6 +58,33 @@ const (
 
 // CompressionType represents the compression used for the payloads sent to Snowflake.
 type CompressionType string
+
+// snowflakeStageRe allows Snowflake stage identifiers including @ and % sigils
+// (e.g. @myStage, @%table, @~).
+var snowflakeStageRe = regexp.MustCompile(`^[A-Za-z0-9_./%=@+-]+$`)
+
+// snowflakePathRe allows alphanumerics plus safe path characters.
+var snowflakePathRe = regexp.MustCompile(`^[A-Za-z0-9_.\-/]*$`)
+
+func validateSnowflakeStage(value string) error {
+	if !snowflakeStageRe.MatchString(value) {
+		return fmt.Errorf("stage contains invalid characters: %q", value)
+	}
+	return nil
+}
+
+func validateSnowflakePath(field string, value string) error {
+	if !snowflakePathRe.MatchString(value) {
+		return fmt.Errorf("%s contains invalid characters: %q", field, value)
+	}
+	if strings.Contains(value, "..") {
+		return fmt.Errorf("%s must not contain path traversal: %q", field, value)
+	}
+	if strings.HasPrefix(value, "/") || strings.HasSuffix(value, "/") {
+		return fmt.Errorf("%s must not have a leading or trailing slash: %q", field, value)
+	}
+	return nil
+}
 
 const (
 	// CompressionTypeNone No compression.
@@ -853,10 +881,16 @@ func (s *snowflakeWriter) WriteBatch(ctx context.Context, batch service.MessageB
 		if f.stage == "" {
 			return errors.New("stage cannot be empty")
 		}
+		if err = validateSnowflakeStage(f.stage); err != nil {
+			return err
+		}
 
 		f.stagePath, err = s.path.TryString(msg)
 		if err != nil {
 			return fmt.Errorf("failed to get stage path: %w", err)
+		}
+		if err = validateSnowflakePath("stage path", f.stagePath); err != nil {
+			return err
 		}
 
 		f.requestID, err = s.requestID.TryString(msg)
@@ -868,10 +902,16 @@ func (s *snowflakeWriter) WriteBatch(ctx context.Context, batch service.MessageB
 		if err != nil {
 			return fmt.Errorf("failed to get file: %w", err)
 		}
+		if err = validateSnowflakePath("file name", f.fileName); err != nil {
+			return err
+		}
 
 		f.fileExtension, err = s.fileExtension.TryString(msg)
 		if err != nil {
 			return fmt.Errorf("failed to get file extension: %w", err)
+		}
+		if err = validateSnowflakePath("file extension", f.fileExtension); err != nil {
+			return err
 		}
 		if f.fileExtension == "" {
 			f.fileExtension = s.defaultStageFileExtension

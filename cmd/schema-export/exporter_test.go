@@ -16,6 +16,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -58,7 +59,7 @@ var _ = Describe("extractFields", func() {
 				},
 			}
 
-			fields := extractFields(configObj)
+			fields, _ := extractFields(configObj)
 
 			Expect(fields).To(HaveLen(1))
 			Expect(fields["controller"].Name).To(Equal("controller"))
@@ -90,7 +91,7 @@ var _ = Describe("extractFields", func() {
 				},
 			}
 
-			fields := extractFields(configObj)
+			fields, _ := extractFields(configObj)
 
 			Expect(fields).To(HaveLen(1))
 			Expect(fields["slaveIDs"].Name).To(Equal("slaveIDs"))
@@ -134,7 +135,7 @@ var _ = Describe("extractFields", func() {
 				},
 			}
 
-			fields := extractFields(configObj)
+			fields, _ := extractFields(configObj)
 
 			Expect(fields).To(HaveLen(1))
 			Expect(fields["addresses"].Name).To(Equal("addresses"))
@@ -171,7 +172,7 @@ var _ = Describe("extractFields", func() {
 				},
 			}
 
-			fields := extractFields(configObj)
+			fields, _ := extractFields(configObj)
 
 			Expect(fields["required_field"].Required).To(BeTrue())
 			Expect(fields["optional_field"].Required).To(BeFalse())
@@ -200,7 +201,7 @@ var _ = Describe("extractFields", func() {
 				},
 			}
 
-			fields := extractFields(configObj)
+			fields, _ := extractFields(configObj)
 
 			// Field with default should NOT be required (Benthos won't fail if omitted)
 			Expect(fields["field_with_default"].Required).To(BeFalse())
@@ -231,7 +232,7 @@ var _ = Describe("extractFields", func() {
 				},
 			}
 
-			fields := extractFields(configObj)
+			fields, _ := extractFields(configObj)
 
 			Expect(fields["basic_field"].Advanced).To(BeFalse())
 			Expect(fields["basic_field"].Deprecated).To(BeFalse())
@@ -256,7 +257,7 @@ var _ = Describe("extractFields", func() {
 				},
 			}
 
-			fields := extractFields(configObj)
+			fields, _ := extractFields(configObj)
 
 			Expect(fields["example_field"].Examples).To(HaveLen(2))
 			Expect(fields["example_field"].Examples[0]).To(Equal("example1"))
@@ -278,12 +279,87 @@ var _ = Describe("extractFields", func() {
 				},
 			}
 
-			fields := extractFields(configObj)
+			fields, _ := extractFields(configObj)
 
 			Expect(fields["option_field"].Options).To(HaveLen(3))
 			Expect(fields["option_field"].Options[0]).To(Equal("option1"))
 			Expect(fields["option_field"].Options[1]).To(Equal("option2"))
 			Expect(fields["option_field"].Options[2]).To(Equal("option3"))
+		})
+	})
+
+	Context("when preserving field declaration order", func() {
+		It("should return field names in children array order, not alphabetical", func() {
+			// Children deliberately in non-alphabetical order: z, a, m
+			configObj := map[string]interface{}{
+				"children": []interface{}{
+					map[string]interface{}{
+						"name":        "z_field",
+						"type":        "string",
+						"kind":        "scalar",
+						"description": "Z field",
+						"is_optional": false,
+						"is_advanced": false,
+					},
+					map[string]interface{}{
+						"name":        "a_field",
+						"type":        "string",
+						"kind":        "scalar",
+						"description": "A field",
+						"is_optional": false,
+						"is_advanced": false,
+					},
+					map[string]interface{}{
+						"name":        "m_field",
+						"type":        "string",
+						"kind":        "scalar",
+						"description": "M field",
+						"is_optional": false,
+						"is_advanced": false,
+					},
+				},
+			}
+
+			_, order := extractFields(configObj)
+
+			Expect(order).To(Equal([]string{"z_field", "a_field", "m_field"}),
+				"FieldOrder must preserve children array order, not sort alphabetically")
+		})
+
+		It("should skip empty-name fields and not include them in order", func() {
+			configObj := map[string]interface{}{
+				"children": []interface{}{
+					map[string]interface{}{
+						"name":        "first",
+						"type":        "string",
+						"kind":        "scalar",
+						"description": "First",
+						"is_optional": false,
+						"is_advanced": false,
+					},
+					map[string]interface{}{
+						"name":        "",
+						"type":        "string",
+						"kind":        "scalar",
+						"description": "Unnamed — should be skipped",
+						"is_optional": false,
+						"is_advanced": false,
+					},
+					map[string]interface{}{
+						"name":        "third",
+						"type":        "string",
+						"kind":        "scalar",
+						"description": "Third",
+						"is_optional": false,
+						"is_advanced": false,
+					},
+				},
+			}
+
+			fields, order := extractFields(configObj)
+
+			Expect(fields).To(HaveLen(2))
+			Expect(order).To(Equal([]string{"first", "third"}))
 		})
 	})
 })
@@ -404,6 +480,43 @@ var _ = Describe("generateSchemas", func() {
 			Expect(result.Metadata.BenthosVersion).NotTo(BeEmpty())
 			Expect(result.Metadata.BenthosUMHVersion).NotTo(BeEmpty())
 		})
+
+		It("should populate FieldOrder with same keys as Config", func() {
+			result, err := generateSchemas()
+			Expect(err).NotTo(HaveOccurred())
+
+			for name, plugin := range result.Inputs {
+				Expect(plugin.FieldOrder).To(HaveLen(len(plugin.Config)),
+					"input %s: FieldOrder length must match Config length", name)
+				for _, key := range plugin.FieldOrder {
+					Expect(plugin.Config).To(HaveKey(key),
+						"input %s: FieldOrder key %q not found in Config", name, key)
+				}
+			}
+		})
+
+		It("should preserve non-alphabetical field order for modbus plugin", func() {
+			result, err := generateSchemas()
+			Expect(err).NotTo(HaveOccurred())
+
+			modbus, ok := result.Inputs["modbus"]
+			Expect(ok).To(BeTrue(), "modbus plugin must exist")
+			Expect(modbus.FieldOrder).NotTo(BeEmpty(), "modbus FieldOrder must be populated")
+
+			// FieldOrder must NOT be sorted alphabetically — if it were, this would be a bug.
+			// Verify that FieldOrder differs from its sorted version for at least this plugin.
+			sorted := make([]string, len(modbus.FieldOrder))
+			copy(sorted, modbus.FieldOrder)
+			for i := 0; i < len(sorted)-1; i++ {
+				for j := i + 1; j < len(sorted); j++ {
+					if sorted[i] > sorted[j] {
+						sorted[i], sorted[j] = sorted[j], sorted[i]
+					}
+				}
+			}
+			Expect(modbus.FieldOrder).NotTo(Equal(sorted),
+				"modbus FieldOrder must not be alphabetically sorted — it should reflect Go struct order")
+		})
 	})
 })
 
@@ -480,6 +593,30 @@ var _ = Describe("JSON Output Contract", func() {
 			// Verify nested config fields work correctly
 			config := modbus["config"].(map[string]interface{})
 			Expect(config).ToNot(BeEmpty(), "Plugin should have config fields")
+		})
+
+		It("should preserve FieldOrder in benthos-format JSON output", func() {
+			plugin := PluginSpec{
+				Name:   "order-test",
+				Type:   "input",
+				Source: "benthos-umh",
+				Config: map[string]FieldSpec{
+					"z_field": {Name: "z_field", Type: "string"},
+					"a_field": {Name: "a_field", Type: "string"},
+					"m_field": {Name: "m_field", Type: "string"},
+				},
+				FieldOrder: []string{"z_field", "a_field", "m_field"},
+			}
+
+			jsonBytes, err := json.Marshal(plugin)
+			Expect(err).NotTo(HaveOccurred())
+			jsonStr := string(jsonBytes)
+
+			zPos := strings.Index(jsonStr, `"z_field"`)
+			aPos := strings.Index(jsonStr, `"a_field"`)
+			mPos := strings.Index(jsonStr, `"m_field"`)
+			Expect(zPos).To(BeNumerically("<", aPos), "z_field must appear before a_field in benthos JSON")
+			Expect(aPos).To(BeNumerically("<", mPos), "a_field must appear before m_field in benthos JSON")
 		})
 	})
 })

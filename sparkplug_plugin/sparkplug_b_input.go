@@ -170,9 +170,7 @@ type sparkplugInput struct {
 	typeConverter     *TypeConverter
 	mqttClientBuilder *MQTTClientBuilder
 
-	// Legacy alias cache for backward compatibility during transition
-	legacyAliasCache map[string]map[uint64]string // deviceKey -> (alias -> metric name)
-	stateMu          sync.RWMutex
+	stateMu sync.RWMutex
 
 	// Per-node REBIRTH throttle. Shared across every reason sendRebirthRequest
 	// dispatches (discovery, sequence gap, unresolved aliases) so concurrent
@@ -418,7 +416,6 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 		messages:                make(chan mqttMessage, 1000),
 		done:                    make(chan struct{}),
 		nodeStates:              make(map[string]*nodeState),
-		legacyAliasCache:        make(map[string]map[uint64]string),
 		birthRequested:          make(map[string]time.Time), // Per-node REBIRTH throttle
 		aliasCache:              NewAliasCache(),
 		topicParser:             NewTopicParser(),
@@ -1196,9 +1193,9 @@ func (s *sparkplugInput) extractMetricValue(metric *sparkplugb.Payload_Metric) [
 	} else if value := metric.GetValue(); value != nil {
 		switch v := value.(type) {
 		case *sparkplugb.Payload_Metric_IntValue:
-			result["value"] = v.IntValue
+			result["value"] = decodeIntValue(metric.Datatype, v.IntValue)
 		case *sparkplugb.Payload_Metric_LongValue:
-			result["value"] = v.LongValue
+			result["value"] = decodeLongValue(metric.Datatype, v.LongValue)
 		case *sparkplugb.Payload_Metric_FloatValue:
 			result["value"] = v.FloatValue
 		case *sparkplugb.Payload_Metric_DoubleValue:
@@ -1595,9 +1592,9 @@ func (s *sparkplugInput) extractMetricValueRaw(metric *sparkplugb.Payload_Metric
 	if value := metric.GetValue(); value != nil {
 		switch v := value.(type) {
 		case *sparkplugb.Payload_Metric_IntValue:
-			return v.IntValue
+			return decodeIntValue(metric.Datatype, v.IntValue)
 		case *sparkplugb.Payload_Metric_LongValue:
-			return v.LongValue
+			return decodeLongValue(metric.Datatype, v.LongValue)
 		case *sparkplugb.Payload_Metric_FloatValue:
 			return v.FloatValue
 		case *sparkplugb.Payload_Metric_DoubleValue:
@@ -1612,6 +1609,36 @@ func (s *sparkplugInput) extractMetricValueRaw(metric *sparkplugb.Payload_Metric
 	}
 
 	return nil
+}
+
+// decodeIntValue reinterprets the unsigned int_value wire field according to the
+// metric datatype. Sparkplug B packs signed integers (Int8/Int16/Int32) as
+// two's-complement into int_value (ENG-5126); without a signed datatype the raw
+// uint32 is returned unchanged (UInt8/UInt16/UInt32, or datatype unknown).
+func decodeIntValue(datatype *uint32, raw uint32) any {
+	if datatype == nil {
+		return raw
+	}
+	switch *datatype {
+	case SparkplugDataTypeInt8:
+		return int8(uint8(raw))
+	case SparkplugDataTypeInt16:
+		return int16(uint16(raw))
+	case SparkplugDataTypeInt32:
+		return int32(raw)
+	default:
+		return raw
+	}
+}
+
+// decodeLongValue reinterprets the unsigned long_value wire field according to
+// the metric datatype: Int64 is two's-complement (ENG-5126); UInt64 and
+// DateTime pass through unchanged.
+func decodeLongValue(datatype *uint32, raw uint64) any {
+	if datatype != nil && *datatype == SparkplugDataTypeInt64 {
+		return int64(raw)
+	}
+	return raw
 }
 
 // convertSparkplugDataTypeToString converts Sparkplug data type ID to format converter expected string

@@ -269,6 +269,7 @@ The processor uses the following metadata fields:
 **Optional Fields:**
 
 - `virtual_path`: Logical, non-physical grouping path in dot notation (e.g., "axis.x.position")
+- `datatype`: Forces the output value type (`"string"`, `"number"`, or `"bool"`) instead of auto-detection. Set to `"string"` to keep numeric-looking strings (e.g., serial codes) from being converted to lossy numbers
 
 **Generated Fields:**
 

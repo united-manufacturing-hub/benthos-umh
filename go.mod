@@ -40,10 +40,10 @@ require (
 	github.com/gopcua/opcua v0.8.0
 	github.com/grid-x/modbus v0.0.0-20260527064858-ef3bed576432
 	github.com/hashicorp/golang-lru/v2 v2.0.7
-	github.com/kaptinlin/jsonschema v0.7.14
+	github.com/kaptinlin/jsonschema v0.7.15
 	github.com/prometheus/client_golang v1.23.2
 	github.com/redpanda-data/benthos/v4 v4.73.0
-	github.com/redpanda-data/connect/public/bundle/free/v4 v4.93.0
+	github.com/redpanda-data/connect/public/bundle/free/v4 v4.94.1
 	github.com/robinson/gos7 v0.0.0-20241205073040-7ea1d6fb9d20
 	github.com/snowflakedb/gosnowflake v1.19.0
 	github.com/stretchr/testify v1.11.1
@@ -53,7 +53,7 @@ require (
 	github.com/twmb/franz-go/pkg/kadm v1.18.0
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78
 	golang.org/x/crypto v0.52.0
-	golang.org/x/sys v0.45.0
+	golang.org/x/sys v0.46.0
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af
 	k8s.io/apimachinery v0.36.1
 )
@@ -245,7 +245,7 @@ require (
 	github.com/go-git/go-billy/v5 v5.9.0 // indirect
 	github.com/go-git/go-git/v5 v5.19.1 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
-	github.com/go-json-experiment/json v0.0.0-20260505212615-e40f80bf6836 // indirect
+	github.com/go-json-experiment/json v0.0.0-20260520185125-572e7c383686 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-mysql-org/go-mysql v1.14.0 // indirect
@@ -310,8 +310,8 @@ require (
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/jzelinskie/stringz v0.0.3 // indirect
-	github.com/kaptinlin/go-i18n v0.4.8 // indirect
-	github.com/kaptinlin/jsonpointer v0.4.23 // indirect
+	github.com/kaptinlin/go-i18n v0.4.9 // indirect
+	github.com/kaptinlin/jsonpointer v0.4.25 // indirect
 	github.com/kaptinlin/messageformat-go v0.6.4 // indirect
 	github.com/kevinburke/ssh_config v1.6.0 // indirect
 	github.com/klauspost/asmfmt v1.3.2 // indirect
@@ -407,7 +407,7 @@ require (
 	github.com/redpanda-data/common-go/authz v0.2.1-0.20260319205134-242ab3c168b8 // indirect
 	github.com/redpanda-data/common-go/license v0.0.0-20260318014216-2bbd72bde0a0 // indirect
 	github.com/redpanda-data/common-go/redpanda-otel-exporter v0.4.0 // indirect
-	github.com/redpanda-data/connect/v4 v4.93.0 // indirect
+	github.com/redpanda-data/connect/v4 v4.94.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rickb777/period v1.0.27 // indirect
 	github.com/rickb777/plural v1.4.10 // indirect
@@ -437,7 +437,7 @@ require (
 	github.com/tklauser/numcpus v0.11.0 // indirect
 	github.com/tmc/langchaingo v0.1.14 // indirect
 	github.com/trinodb/trino-go-client v0.333.0 // indirect
-	github.com/twmb/avro v1.7.2 // indirect
+	github.com/twmb/avro v1.7.3-0.20260513193503-1e5c2a3fc070 // indirect
 	github.com/twmb/franz-go/pkg/kmsg v1.13.1 // indirect
 	github.com/twmb/franz-go/pkg/sr v1.7.0 // indirect
 	github.com/twmb/go-cache v1.3.0 // indirect
@@ -492,7 +492,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
 	golang.org/x/mod v0.35.0 // indirect
-	golang.org/x/net v0.54.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260409153401-be6f6cb8b1fa // indirect

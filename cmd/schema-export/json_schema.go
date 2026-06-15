@@ -15,19 +15,69 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 )
+
+// orderedMap serializes its keys in insertion order, preserving Go struct field declaration order.
+// Use set() to add entries; MarshalJSON emits them in the order they were inserted.
+type orderedMap struct {
+	keys []string
+	m    map[string]interface{}
+}
+
+func newOrderedMap() *orderedMap {
+	return &orderedMap{m: make(map[string]interface{})}
+}
+
+func (o *orderedMap) set(key string, val interface{}) {
+	if _, exists := o.m[key]; !exists {
+		o.keys = append(o.keys, key)
+	}
+	o.m[key] = val
+}
+
+// asMap returns the underlying map for use in tests and non-order-sensitive lookups.
+func (o *orderedMap) asMap() map[string]interface{} {
+	return o.m
+}
+
+func (o *orderedMap) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for i, key := range o.keys {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		keyBytes, err := json.Marshal(key)
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(keyBytes)
+		buf.WriteByte(':')
+		valBytes, err := json.Marshal(o.m[key])
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(valBytes)
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
+}
 
 // validateFormat validates the format flag value
 func validateFormat(format string) error {
-	if format == "" {
+	switch format {
+	case "benthos", "json-schema", "mapping":
+		return nil
+	case "":
 		return fmt.Errorf("format cannot be empty")
+	default:
+		return fmt.Errorf("invalid format: %s (must be 'benthos', 'json-schema', or 'mapping')", format)
 	}
-	if format != "benthos" && format != "json-schema" {
-		return fmt.Errorf("invalid format: %s (must be 'benthos' or 'json-schema')", format)
-	}
-	return nil
 }
 
 // mapBenthosBaseType converts a Benthos type string to JSON Schema type string.
@@ -127,9 +177,9 @@ func convertFieldToJSONSchema(field FieldSpec) map[string]interface{} {
 	// Handle object arrays with children (e.g., modbus addresses: type="object", kind="array")
 	// Properties go INSIDE items, not at top level
 	if field.Kind == "array" && field.Type == "object" && len(field.Children) > 0 {
-		properties := make(map[string]interface{})
+		properties := newOrderedMap()
 		for _, child := range field.Children {
-			properties[child.Name] = convertFieldToJSONSchema(child)
+			properties.set(child.Name, convertFieldToJSONSchema(child))
 		}
 
 		// Get the items map and add properties to it
@@ -147,6 +197,7 @@ func convertFieldToJSONSchema(field FieldSpec) map[string]interface{} {
 				required = append(required, child.Name)
 			}
 		}
+		sort.Strings(required)
 		if len(required) > 0 {
 			items["required"] = required
 		}
@@ -157,9 +208,9 @@ func convertFieldToJSONSchema(field FieldSpec) map[string]interface{} {
 
 	// Handle nested object fields (non-array, non-map objects with children)
 	if field.Type == "object" && field.Kind != "array" && field.Kind != "map" && len(field.Children) > 0 {
-		properties := make(map[string]interface{})
+		properties := newOrderedMap()
 		for _, child := range field.Children {
-			properties[child.Name] = convertFieldToJSONSchema(child)
+			properties.set(child.Name, convertFieldToJSONSchema(child))
 		}
 		schema["properties"] = properties
 
@@ -170,6 +221,7 @@ func convertFieldToJSONSchema(field FieldSpec) map[string]interface{} {
 				required = append(required, child.Name)
 			}
 		}
+		sort.Strings(required)
 		if len(required) > 0 {
 			schema["required"] = required
 		}
@@ -194,6 +246,7 @@ func buildRequiredArray(fields map[string]FieldSpec) []string {
 			required = append(required, name)
 		}
 	}
+	sort.Strings(required)
 	return required
 }
 
@@ -244,13 +297,15 @@ func convertPluginToJSONSchema(plugin PluginSpec) map[string]interface{} {
 		schema["description"] = plugin.Summary
 	}
 
-	// Convert config fields to properties
-	properties := make(map[string]interface{})
-	for name, field := range plugin.Config {
-		properties[name] = convertFieldToJSONSchema(field)
+	// Convert config fields to properties, preserving Go struct declaration order via FieldOrder.
+	properties := newOrderedMap()
+	for _, name := range plugin.FieldOrder {
+		if field, ok := plugin.Config[name]; ok {
+			properties.set(name, convertFieldToJSONSchema(field))
+		}
 	}
 
-	if len(properties) > 0 {
+	if len(properties.keys) > 0 {
 		schema["properties"] = properties
 	}
 
