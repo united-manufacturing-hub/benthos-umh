@@ -39,6 +39,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -57,6 +58,16 @@ const (
 
 // CompressionType represents the compression used for the payloads sent to Snowflake.
 type CompressionType string
+
+// validateSnowflakePathSegment matches valid Snowflake stage path segments:
+// alphanumerics, underscores, hyphens, and dots only.
+func validateSnowflakePathSegment(field string, value string) error {
+	snowflakePathSegmentRe := regexp.MustCompile(`^[A-Za-z0-9_./%=@+-]+$`)
+	if !snowflakePathSegmentRe.MatchString(value) {
+		return fmt.Errorf("%s contains invalid characters: %q", field, value)
+	}
+	return nil
+}
 
 const (
 	// CompressionTypeNone No compression.
@@ -853,10 +864,16 @@ func (s *snowflakeWriter) WriteBatch(ctx context.Context, batch service.MessageB
 		if f.stage == "" {
 			return errors.New("stage cannot be empty")
 		}
+		if err = validateSnowflakePathSegment("stage", f.stage); err != nil {
+			return err
+		}
 
 		f.stagePath, err = s.path.TryString(msg)
 		if err != nil {
 			return fmt.Errorf("failed to get stage path: %w", err)
+		}
+		if err = validateSnowflakePathSegment("stage path", f.stagePath); err != nil {
+			return err
 		}
 
 		f.requestID, err = s.requestID.TryString(msg)
@@ -868,10 +885,16 @@ func (s *snowflakeWriter) WriteBatch(ctx context.Context, batch service.MessageB
 		if err != nil {
 			return fmt.Errorf("failed to get file: %w", err)
 		}
+		if err = validateSnowflakePathSegment("file name", f.fileName); err != nil {
+			return err
+		}
 
 		f.fileExtension, err = s.fileExtension.TryString(msg)
 		if err != nil {
 			return fmt.Errorf("failed to get file extension: %w", err)
+		}
+		if err = validateSnowflakePathSegment("file extension", f.fileExtension); err != nil {
+			return err
 		}
 		if f.fileExtension == "" {
 			f.fileExtension = s.defaultStageFileExtension
