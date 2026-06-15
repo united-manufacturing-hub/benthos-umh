@@ -104,19 +104,22 @@ func extractPluginSpec(name string, pluginType string, config *service.ConfigVie
 
 	// Extract fields recursively from config object
 	if configObj, ok := rawSpec["config"].(map[string]interface{}); ok {
-		spec.Config = extractFields(configObj)
+		spec.Config, spec.FieldOrder = extractFields(configObj)
 	}
 
 	return spec, nil
 }
 
-// extractFields converts Benthos internal field format to our FieldSpec format
-func extractFields(configObj map[string]interface{}) map[string]FieldSpec {
+// extractFields converts Benthos internal field format to our FieldSpec format.
+// Returns both the fields map and an ordered slice of field names matching the
+// children array order (which reflects Go struct declaration order).
+func extractFields(configObj map[string]interface{}) (map[string]FieldSpec, []string) {
 	fields := make(map[string]FieldSpec)
+	var order []string
 
 	children, ok := configObj["children"].([]interface{})
 	if !ok {
-		return fields
+		return fields, order
 	}
 
 	for _, child := range children {
@@ -170,9 +173,10 @@ func extractFields(configObj map[string]interface{}) map[string]FieldSpec {
 		}
 
 		fields[field.Name] = field
+		order = append(order, field.Name)
 	}
 
-	return fields
+	return fields, order
 }
 
 // extractFieldsArray converts an array of field definitions to FieldSpec slice
