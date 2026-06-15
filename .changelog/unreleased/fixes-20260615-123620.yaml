@@ -1,3 +1,0 @@
-kind: fixes
-body: 'Sparkplug B input: metric datatypes now survive from BIRTH to DATA. Per spec, `NDATA`/`DDATA` carries only alias + value while the BIRTH certificate defines name and datatype — but the input cached only the name, so DATA messages lost their `spb_datatype` metadata and signed integers decoded as their unsigned two''s-complement wire value (an `Int32` of `-12` surfaced as `4294967284`). The alias cache now restores the datatype alongside the name, and `Int8`/`Int16`/`Int32`/`Int64` wire values are reinterpreted as signed (ENG-5126)'
-time: 2026-06-15T12:36:20.000000+02:00
