@@ -1,0 +1,3 @@
+kind: fixes
+body: OPC-UA input now preserves string values exactly; previously, numeric-looking strings like serial codes were emitted as numbers and lost precision. For tags processed by `tag_processor`, also set `msg.meta.datatype = "string"` so auto-detection does not convert them back (ENG-5011)
+time: 2026-06-15T12:36:15.692153+02:00
