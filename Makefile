@@ -192,6 +192,22 @@ endif
 	./tmp/schema-export -version $(VERSION) -format json-schema
 	./tmp/schema-export -version $(VERSION) -format mapping
 
+.PHONY: changelog
+changelog: $(CHANGIE)
+	$(CHANGIE) new
+
+.PHONY: changelog-merge
+changelog-merge: $(CHANGIE)
+ifndef VERSION
+	$(error VERSION is required. Usage: make changelog-merge VERSION=v0.13.0)
+endif
+	$(CHANGIE) batch $(VERSION) --force
+	$(CHANGIE) merge
+
+.PHONY: changelog-diff
+changelog-diff: $(CHANGIE)
+	@$(CHANGIE) diff 1 | tail -n +2
+
 .PHONY: serve-pprof
 serve-pprof:
 	@export PATH="$(TOOLS_BIN_DIR)/graphviz:$$PATH" && \
