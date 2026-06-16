@@ -16,6 +16,12 @@ package cache
 
 import "context"
 
+// Stats reports the current size of a Cache.
+type Stats struct {
+	Keys      int64
+	DiskBytes int64
+}
+
 // Cache is used as the caching interface for nodered_js.
 type Cache interface {
 	// Set stores value under key, overwriting any existing entry.
@@ -24,6 +30,8 @@ type Cache interface {
 	Get(ctx context.Context, key string) (any, bool)
 	// Delete removes the entry for key. No-op when key does not exist.
 	Delete(ctx context.Context, key string) error
+	// Stats reports the current key count and on-disk size.
+	Stats(ctx context.Context) (Stats, error)
 	// Close releases any resources held by the store.
 	Close() error
 }
