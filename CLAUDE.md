@@ -518,6 +518,26 @@ make setup-test-deps  # Install test dependencies
 make serve-pprof      # Run profiling server
 ```
 
+## Changelog
+
+This repo manages its changelog with [changie](https://changie.dev). Do **not** edit `CHANGELOG.md` by hand; it is regenerated from per-PR fragments in `.changelog/unreleased/` and conflicts otherwise.
+
+Add an entry to your PR:
+```bash
+make changelog        # prompts for kind + body, writes a fragment
+```
+Or non-interactively:
+```bash
+./.tools/changie new --kind fixes --body "OPC UA browse no longer stalls on large address spaces (ENG-1234)"
+```
+
+- **Kinds:** `breaking`, `new`, `improvements`, `fixes`. Sections render New, Improvements, Fixes (Breaking Changes first when present).
+- **Issue reference:** append the uppercase Linear id in parentheses at the end of the line, e.g. `(ENG-1234)`. This is benthos-umh-only; it gets stripped when entries propagate to the umh-core changelog.
+- **Entry wording:** user-visible change in product language, no "Added"/"Fixed" lead-ins, no marketing language.
+- **Release:** a staging→main PR titled with a bare semver (`v0.13.0`) triggers the Changelog workflow, which batches fragments into `.changelog/<version>.md` and regenerates `CHANGELOG.md`.
+
+Commit the fragment from `.changelog/unreleased/` as part of your PR.
+
 ## Testing Approach
 
 - **Unit Tests**: Per-plugin using Ginkgo v2
