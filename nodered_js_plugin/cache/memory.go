@@ -100,6 +100,12 @@ func (m *MemoryStore) Delete(_ context.Context, key string) error {
 	return nil
 }
 
+func (m *MemoryStore) Stats(_ context.Context) (Stats, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return Stats{Keys: int64(len(m.items))}, nil
+}
+
 // Close stops the janitor and releases resources.
 func (m *MemoryStore) Close() error {
 	m.closeOnce.Do(func() {

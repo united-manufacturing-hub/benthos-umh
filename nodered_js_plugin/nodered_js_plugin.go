@@ -26,12 +26,16 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dop251/goja"
 	"github.com/redpanda-data/benthos/v4/public/service"
 
 	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin/cache"
 )
+
+// cacheStatsInterval controls how often the cache metrics are sampled.
+const cacheStatsInterval = 30 * time.Second
 
 // NodeREDJSProcessor defines the processor that wraps the JavaScript processor.
 type NodeREDJSProcessor struct {
@@ -45,6 +49,10 @@ type NodeREDJSProcessor struct {
 	messagesDropped   *service.MetricCounter
 	vmPoolHits        *service.MetricCounter
 	vmPoolMisses      *service.MetricCounter
+	cacheKeys         *service.MetricGauge
+	cacheDiskBytes    *service.MetricGauge
+	metricsCancel     context.CancelFunc
+	metricsWG         sync.WaitGroup
 }
 
 // NewNodeREDJSProcessor creates a new NodeREDJSProcessor instance.
@@ -66,7 +74,14 @@ func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service
 		messagesDropped:   metrics.NewCounter("messages_dropped"),
 		vmPoolHits:        metrics.NewCounter("vm_pool_hits"),
 		vmPoolMisses:      metrics.NewCounter("vm_pool_misses"),
+		cacheKeys:         metrics.NewGauge("cache_keys"),
+		cacheDiskBytes:    metrics.NewGauge("cache_disk_bytes"),
 	}
+
+	metricsCtx, cancel := context.WithCancel(context.Background())
+	processor.metricsCancel = cancel
+	processor.metricsWG.Add(1)
+	go processor.getCacheMetrics(metricsCtx)
 
 	return processor, nil
 }
@@ -509,7 +524,37 @@ Message content: %v`,
 
 // Close gracefully shuts down the processor.
 func (u *NodeREDJSProcessor) Close(_ context.Context) error {
+	if u.metricsCancel != nil {
+		u.metricsCancel()
+	}
+	u.metricsWG.Wait()
 	return u.cache.Close()
+}
+
+// getCacheMetrics periodically samples the cache and updates the gauges. It
+// exits when ctx is canceled by Close.
+func (u *NodeREDJSProcessor) getCacheMetrics(ctx context.Context) {
+	defer u.metricsWG.Done()
+
+	ticker := time.NewTicker(cacheStatsInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			stats, err := u.cache.Stats(ctx)
+			if err != nil {
+				if ctx.Err() == nil {
+					u.logger.Warnf("cache.stats failed: %v", err)
+				}
+				continue
+			}
+			u.cacheKeys.Set(stats.Keys)
+			u.cacheDiskBytes.Set(stats.DiskBytes)
+		}
+	}
 }
 
 // NodeREDJSConfigSpec defines the configuration options for the nodered_js processor.
