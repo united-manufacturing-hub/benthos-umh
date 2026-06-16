@@ -567,12 +567,15 @@ if (msg.payload.value <= 100 && alarmed) {
 return msg;`)).
 	Field(service.NewObjectField("cache",
 		service.NewStringField("backend").
-			Description("Cache backend. 'memory' is in-process and lost on restart. 'bbolt' persists to a file on disk.").
+			Description("Cache backend. 'memory' is in-process and lost on restart. 'persistent' writes to a file on disk and survives restarts.").
 			Default("memory").
-			Examples("memory", "bbolt"),
+			Examples("memory", "persistent"),
 		service.NewStringField("path").
-			Description("File path for disk-backed backends (e.g. bbolt). Relative paths resolve against the working directory. Leading '~' expands to the home directory.").
+			Description("File path for the 'persistent' backend. Relative paths resolve against the working directory. Leading '~' expands to the home directory.").
 			Default("./cache.db"),
+		service.NewDurationField("ttl").
+			Description("Time-to-live for cached entries. After this duration without an overwrite, the entry is removed. Set to 0 to disable expiration.").
+			Default("1h"),
 	).
 		Description("Cache configuration for state across messages.").
 		Advanced())
@@ -593,17 +596,22 @@ func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (
 		return nil, fmt.Errorf("parse cache.path: %w", err)
 	}
 
+	ttl, err := conf.FieldDuration("cache", "ttl")
+	if err != nil {
+		return nil, fmt.Errorf("parse cache.ttl: %w", err)
+	}
+
 	var store cache.Cache
 	switch backend {
 	case "memory":
-		store = cache.NewMemoryStore(0)
-	case "bbolt":
-		store, err = cache.NewBboltStore(path, 0)
+		store = cache.NewMemoryStore(ttl)
+	case "persistent":
+		store, err = cache.NewBboltStore(path, ttl)
 		if err != nil {
-			return nil, fmt.Errorf("open bbolt cache: %w", err)
+			return nil, fmt.Errorf("open persistent cache: %w", err)
 		}
 	default:
-		return nil, fmt.Errorf("unsupported cache.backend %q (want 'memory' or 'bbolt')", backend)
+		return nil, fmt.Errorf("unsupported cache.backend %q (want 'memory' or 'persistent')", backend)
 	}
 
 	wrappedCode := fmt.Sprintf(`
