@@ -154,6 +154,32 @@ func (s *BboltStore) Get(ctx context.Context, key string) (any, bool) {
 	return item.Value, true
 }
 
+func (s *BboltStore) Stats(ctx context.Context) (Stats, error) {
+	err := ctx.Err()
+	if err != nil {
+		return Stats{}, err
+	}
+
+	var stats Stats
+	err = s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bboltBucket)
+		if b == nil {
+			return nil
+		}
+		stats.Keys = int64(b.Stats().KeyN)
+		return nil
+	})
+	if err != nil {
+		return stats, err
+	}
+
+	fi, err := os.Stat(s.db.Path())
+	if err == nil {
+		stats.DiskBytes = fi.Size()
+	}
+	return stats, nil
+}
+
 func (s *BboltStore) Delete(ctx context.Context, key string) error {
 	err := ctx.Err()
 	if err != nil {
