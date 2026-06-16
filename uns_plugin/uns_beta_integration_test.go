@@ -20,6 +20,7 @@ package uns_plugin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -262,10 +263,11 @@ uns_beta:
 	// only covers the benign direction: a delivered record carrying the
 	// spoofed alias). The matching ride-along record shares the single produce
 	// call so the consumer-visible batch is — overwhelmingly likely under
-	// kfake — never all-filtered: the all-filtered path is the next rung
-	// (spec P8) and must not be entered here. If this test starts failing,
-	// the deferred hardening has been implemented and this pin should be
-	// replaced with the new contract.
+	// kfake — never all-filtered, keeping this pin on the mixed-batch path
+	// (the all-filtered self-ack — advancing the offset past an entirely
+	// non-matching poll — is covered by its own spec). If this
+	// test starts failing, the deferred hardening has been implemented and this
+	// pin should be replaced with the new contract.
 	It("drops and commits past a matching record whose spoofed kafka_key header fails the filter (documented gap)", func() {
 		addr := startBroker(GinkgoT())
 		const group = "uns-beta-spoof-dataloss"
@@ -337,9 +339,10 @@ var _ = Describe("uns_beta umh_topics key filter", Label("uns_beta"), func() {
 		// All three records go in ONE produce call so they share a fetch and —
 		// overwhelmingly likely under kfake — one delegated batch; the public
 		// surface cannot deterministically force a single batch. The matching
-		// record rides alongside so the kept subset is never empty: an
-		// all-filtered batch would be returned empty without its ack
-		// resolving, and self-acking that case is the next rung (spec P8).
+		// record rides alongside so the kept subset is never empty, keeping
+		// this spec on the mixed-batch path; the all-filtered case (where
+		// ReadBatch self-acks the empty batch so the offset still advances) has
+		// its own spec.
 		produce(GinkgoT(), addr,
 			rec("umh.v1.acme.berlin.temp", `{"v":"berlin"}`), // offset 0: matches
 			rec("umh.v1.acme.munich.temp", `{"v":"munich"}`), // offset 1: dropped, key does not match
@@ -394,7 +397,8 @@ uns_beta:
 		const group = "uns-beta-keyless"
 		// One produce call: the keyed record rides alongside so the delegated
 		// batch is — overwhelmingly likely under kfake — never all-filtered
-		// (the all-filtered case is the next rung, spec P8).
+		// (the all-filtered case, where ReadBatch self-acks the empty batch so
+		// the offset still advances, has its own spec).
 		produce(GinkgoT(), addr,
 			rec("umh.v1.acme.keyed", `{"v":1}`),   // offset 0: keyed, delivered
 			&kgo.Record{Value: []byte(`{"v":2}`)}, // offset 1: keyless, dropped
@@ -434,6 +438,202 @@ uns_beta:
 		defer mu.Unlock()
 		Expect(got).To(ConsistOf(`{"v":1}`),
 			"the keyless record must never reach the consumer, even though the default `.*` pattern matches the empty string")
+	})
+})
+
+// An all-filtered poll — every record in the fetch fails the umh_topics filter
+// — must still advance the committed offset. Benthos's AsyncReader
+// discards an empty MessageBatch WITHOUT calling its AckFunc, so the delegated
+// redpanda input's checkpoint never resolves and the partition wedges: at high
+// selectivity nearly every fetch is all-filtered, so a selective consumer hangs
+// at offset 0 forever. uns_beta must self-ack the delegated transaction on an
+// all-filtered poll so the commit advances even though the consumer never sees a
+// message. (ENG-5094 / ENG-5105)
+var _ = Describe("uns_beta all-filtered poll commit", Label("uns_beta"), func() {
+	It("self-acks an all-filtered poll so the committed offset advances while the consumer receives nothing", func() {
+		addr := startBroker(GinkgoT())
+		const group = "uns-beta-all-filtered"
+		// Three records, none of whose keys match the select-1 filter below: this
+		// is the all-filtered poll. The consumer never sees a message, yet the
+		// offset must still advance to 3 — otherwise the partition wedges.
+		produce(GinkgoT(), addr,
+			rec("umh.v1.acme.berlin.temp", `{"v":0}`),
+			rec("umh.v1.acme.munich.temp", `{"v":1}`),
+			rec("umh.v1.acme.hamburg.temp", `{"v":2}`))
+
+		var mu sync.Mutex
+		var got []string
+		stop := runUnsBetaStream(GinkgoT(), `
+uns_beta:
+  broker_address: "`+addr+`"
+  consumer_group: "`+group+`"
+  umh_topics:
+    - "^only-this$"
+`, func(_ context.Context, b service.MessageBatch) error {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, m := range b {
+				bs, _ := m.AsBytes()
+				got = append(got, string(bs))
+			}
+			return nil
+		})
+		defer stop()
+
+		// End-to-end effect check: the committed offset advances past all three
+		// non-matching records even though no message ever reaches the consumer.
+		// The self-ack MECHANISM itself is pinned by the broker-free unit specs
+		// (uns_beta_input_test.go asserts inner.acked); this spec confirms the
+		// observable end-to-end result. The inner redpanda input commits on the
+		// 5s commit_period tick pinned in the uns_beta template, so the 15s
+		// timeout is required.
+		Eventually(func(g Gomega) {
+			off, ok, err := committedOffsetE(addr, group)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(ok).To(BeTrue(), "no offset committed yet — the all-filtered poll wedged the partition")
+			g.Expect(off).To(Equal(int64(3)), "committed offset must advance past all three non-matching records")
+		}).WithTimeout(15 * time.Second).WithPolling(100 * time.Millisecond).Should(Succeed())
+
+		mu.Lock()
+		defer mu.Unlock()
+		Expect(got).To(BeEmpty(), "no record matches ^only-this$, so the consumer must receive nothing")
+	})
+
+	// A production-shaped selective consumer: thousands of distinct keys, only
+	// one of which matches the filter. At this selectivity nearly every fetch is
+	// all-filtered, so before the self-ack landed the stream wedged at offset 0
+	// (zero delivered) — this is the real ENG-5105 use case the self-ack
+	// unblocks. The acceptance gate: the stream DRAINS (committed offset reaches
+	// the high-water mark) and the one matching record is delivered.
+	It("drains a high-cardinality selective stream to completion, delivering only the matching record", func() {
+		addr := startBroker(GinkgoT())
+		const group = "uns-beta-selective-drain"
+		const total = 2000
+		const matchAt = 1234 // the single matching record's offset
+
+		records := make([]*kgo.Record, total)
+		for i := 0; i < total; i++ {
+			if i == matchAt {
+				records[i] = rec("umh.v1.match.only", `{"v":"match"}`)
+				continue
+			}
+			records[i] = rec(fmt.Sprintf("umh.v1.nomatch.k%d", i), `{"v":"drop"}`)
+		}
+		produce(GinkgoT(), addr, records...)
+
+		var mu sync.Mutex
+		var got []string
+		stop := runUnsBetaStream(GinkgoT(), `
+uns_beta:
+  broker_address: "`+addr+`"
+  consumer_group: "`+group+`"
+  umh_topics:
+    - "^umh\\.v1\\.match\\..+$"
+`, func(_ context.Context, b service.MessageBatch) error {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, m := range b {
+				bs, _ := m.AsBytes()
+				got = append(got, string(bs))
+			}
+			return nil
+		})
+		defer stop()
+
+		// The committed offset reaches the high-water mark (total): the stream
+		// drained instead of wedging at the first all-filtered fetch. Draining
+		// 2000 self-acks then waiting for a 5s commit tick (commit_period is
+		// hardcoded in the template and cannot be shortened from test config) can
+		// eat most of a 15s budget on a slow kfake startup, so this single spec
+		// gets a 30s timeout to keep it off the merge-queue flake list.
+		Eventually(func(g Gomega) {
+			off, ok, err := committedOffsetE(addr, group)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(ok).To(BeTrue(), "no offset committed yet — the selective stream wedged")
+			g.Expect(off).To(Equal(int64(total)), "committed offset must reach the high-water mark, draining all non-matching records")
+		}).WithTimeout(30 * time.Second).WithPolling(100 * time.Millisecond).Should(Succeed())
+
+		mu.Lock()
+		defer mu.Unlock()
+		Expect(got).To(ConsistOf(`{"v":"match"}`), "only the single matching record may reach the consumer")
+	})
+})
+
+// The filter × ack-forward × NACK-redelivery interaction that the mixed-batch
+// ack spec and the unfiltered capstone each cover only half of. A mixed
+// delegated poll (one matching + one non-matching record) whose KEPT record the
+// consumer NACKs: auto_replay_nacks (on the INNER redpanda input, pre-filter)
+// must redeliver the full original poll, uns_beta re-applies the drop, and the
+// offset must NOT commit past the NACKed kept record.
+//
+// The load-bearing check is the trailing positive one: the offset advances past
+// both records ONLY after the kept record finally succeeds. A synchronous
+// in-callback "nothing committed yet" assertion was deliberately NOT added: the
+// inner redpanda input uses AutoCommitMarks + a 5s commit tick, so an ack only
+// sets an in-memory mark and the broker-visible offset cannot move until the
+// tick fires — a broker OffsetFetch from inside the callback would read "not
+// committed" whether the ack was pending OR fired prematurely, so it cannot
+// distinguish correct from buggy. The premature-ack ordering is pinned instead
+// by the broker-free self-ack unit specs (uns_beta_input_test.go).
+var _ = Describe("uns_beta mixed-batch NACK redelivery", Label("uns_beta"), func() {
+	It("redelivers the NACKed kept record without committing past it and re-drops the filtered one", func() {
+		addr := startBroker(GinkgoT())
+		const group = "uns-beta-mixed-nack"
+		// One produce call: matching (offset 0) + non-matching (offset 1) share
+		// one fetch, overwhelmingly likely one delegated batch under kfake.
+		produce(GinkgoT(), addr,
+			rec("umh.v1.acme.keep", `{"v":"keep"}`), // offset 0: matches, the kept record
+			rec("umh.v1.evil.drop", `{"v":"drop"}`), // offset 1: dropped by the filter
+		)
+
+		var mu sync.Mutex
+		deliveries := map[string]int{} // payload -> delivery count
+		const failuresWanted = 2
+
+		stop := runUnsBetaStream(GinkgoT(), `
+uns_beta:
+  broker_address: "`+addr+`"
+  consumer_group: "`+group+`"
+  umh_topics:
+    - "^umh\\.v1\\.acme\\..+$"
+`, func(_ context.Context, b service.MessageBatch) error {
+			defer GinkgoRecover()
+			mu.Lock()
+			defer mu.Unlock()
+			// Only the matching record survives the filter; the dropped one is
+			// re-dropped by uns_beta on every replay (it never reaches here).
+			Expect(b).To(HaveLen(1), "only the kept record may reach the consumer")
+			bs, _ := b[0].AsBytes()
+			Expect(string(bs)).To(Equal(`{"v":"keep"}`), "the filtered record must never be delivered, even on replay")
+			deliveries[string(bs)]++
+
+			if deliveries[`{"v":"keep"}`] <= failuresWanted {
+				return errors.New("simulated output failure")
+			}
+			return nil
+		})
+		defer stop()
+
+		// P1/P2: the kept record is redelivered until it succeeds — no loss.
+		Eventually(func() int {
+			mu.Lock()
+			defer mu.Unlock()
+			return deliveries[`{"v":"keep"}`]
+		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
+			Should(BeNumerically(">=", failuresWanted+1), "the NACKed kept record was never redelivered to success")
+
+		// Only after success does the offset commit past BOTH records (the kept
+		// one succeeded; the filtered one rode the same delegated ack).
+		Eventually(func(g Gomega) {
+			off, ok, err := committedOffsetE(addr, group)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(ok).To(BeTrue(), "offset never committed after the kept record succeeded")
+			g.Expect(off).To(Equal(int64(2)), "the offset commits past both records only after the kept record succeeds")
+		}).WithTimeout(15 * time.Second).WithPolling(100 * time.Millisecond).Should(Succeed())
+
+		mu.Lock()
+		defer mu.Unlock()
+		Expect(deliveries[`{"v":"drop"}`]).To(BeZero(), "the filtered record must never be delivered, on first poll or replay")
 	})
 })
 

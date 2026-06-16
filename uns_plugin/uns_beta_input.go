@@ -217,11 +217,21 @@ func newUnsBetaReader(conf *service.ParsedConfig, _ *service.Resources) (service
 	return &unsBetaInput{inner: inner, keyFilter: keyFilter}, nil
 }
 
-// unsBetaInput adapts *service.OwnedInput (which manages its own connectivity)
+// innerInput is the part of *service.OwnedInput that unsBetaInput drives: a
+// batch read and a close. Typing the field as an interface (rather than the
+// concrete *service.OwnedInput) lets the unit tests substitute a fake that
+// scripts ReadBatch return sequences, so the self-ack loop can be exercised
+// deterministically without a broker. *service.OwnedInput satisfies it.
+type innerInput interface {
+	ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error)
+	Close(ctx context.Context) error
+}
+
+// unsBetaInput adapts the delegated input (which manages its own connectivity)
 // to the service.BatchInput interface, filtering records by the umh_topics key
 // regex.
 type unsBetaInput struct {
-	inner *service.OwnedInput
+	inner innerInput
 	// keyFilter is the compiled umh_topics filter; always non-nil (the field
 	// defaults to [".*"], which delivers every keyed record).
 	keyFilter *betaKeyFilter
@@ -234,57 +244,78 @@ func (i *unsBetaInput) Connect(context.Context) error {
 }
 
 func (i *unsBetaInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
-	batch, ack, err := i.inner.ReadBatch(ctx)
-	if err != nil {
-		// BatchInput does not guarantee batch == nil on error; an
-		// error-accompanied batch is not delivered downstream, so the
-		// aliases are not set on it.
-		return batch, ack, err
-	}
-	// umh_topics filter: keep only records whose Kafka key matches a
-	// configured pattern; a keyless record never matches (see
-	// betaKeyFilter.matches). Dropped records stay covered by the shared
-	// delegated ack: a batch with at least one kept record commits past
-	// the dropped offsets when the kept subset is acked. An ALL-filtered
-	// batch is returned empty with its ack as-is; advancing the commit for
-	// that case is the next rung (spec P8).
-	//
-	// Trust boundary: kafka_key is trusted as the record key here, but a
-	// producer header literally named "kafka_key" shadows it (the
-	// delegated input applies headers after the native fields). The
-	// shadowed value controls BOTH the drop/deliver decision and the
-	// aliases: a spoofed header can drop (and commit past) a legitimately
-	// keyed record, or deliver a keyless one. Detecting the spoof IS
-	// possible at this layer — the delegated input preserves the original
-	// kgo header slice under __rpcn_kafka_headers (deleted below) — but
-	// recovering the shadowed real key is not, so hardening is deferred to
-	// a dedicated follow-up ticket. The uns output strips kafka_-prefixed
-	// metadata before producing, so the shadowing header cannot arise from
-	// uns-output hops.
-	// Mutating these messages after the inner ReadBatch returned is safe with
-	// auto_replay_nacks: the inner input hands back a readOnly shallow copy
-	// (autoRetryInputBatched.ReadBatch returns batch.Copy()), so MetaSetMut and
-	// MetaDelete clone the metadata map before writing and never touch the
-	// snapshot the retry list replays on NACK. Only store immutable values here
-	// (key is a string) — a stored mutable value would be shared with that copy.
-	kept := make(service.MessageBatch, 0, len(batch))
-	for _, msg := range batch {
-		key, _ := msg.MetaGet("kafka_key")
-		if !i.keyFilter.matches(key) {
-			continue
+	for {
+		batch, ack, err := i.inner.ReadBatch(ctx)
+		if err != nil {
+			// BatchInput does not guarantee batch == nil on error; an
+			// error-accompanied batch is not delivered downstream, so the
+			// aliases are not set on it. The ack is nil on the error path —
+			// never touch it.
+			return batch, ack, err
 		}
-		// The filter guarantees a non-empty matching key here, so the
-		// aliases are stamped unconditionally.
-		msg.MetaSetMut("umh_topic", key)
-		msg.MetaSetMut("kafka_msg_key", key)
-		// The delegated input stores the original kgo header slice under
-		// __rpcn_kafka_headers; left in place it round-trips into
-		// downstream Kafka headers and compounds per hop through the uns
-		// output, so it is stripped here.
-		msg.MetaDelete("__rpcn_kafka_headers")
-		kept = append(kept, msg)
+		// umh_topics filter: keep only records whose Kafka key matches a
+		// configured pattern; a keyless record never matches (see
+		// betaKeyFilter.matches). Dropped records stay covered by the shared
+		// delegated ack: a batch with at least one kept record commits past
+		// the dropped offsets when the kept subset is acked.
+		//
+		// Trust boundary: kafka_key is trusted as the record key here, but a
+		// producer header literally named "kafka_key" shadows it (the
+		// delegated input applies headers after the native fields). The
+		// shadowed value controls BOTH the drop/deliver decision and the
+		// aliases: a spoofed header can drop (and commit past) a legitimately
+		// keyed record, or deliver a keyless one. Detecting the spoof IS
+		// possible at this layer — the delegated input preserves the original
+		// kgo header slice under __rpcn_kafka_headers (deleted below) — but
+		// recovering the shadowed real key is not, so hardening is deferred to
+		// ENG-5125. The uns output strips kafka_-prefixed
+		// metadata before producing, so the shadowing header cannot arise from
+		// uns-output hops.
+		// Mutating these messages after the inner ReadBatch returned is safe with
+		// auto_replay_nacks: the inner input hands back a readOnly shallow copy
+		// (autoRetryInputBatched.ReadBatch returns batch.Copy()), so MetaSetMut and
+		// MetaDelete clone the metadata map before writing and never touch the
+		// snapshot the retry list replays on NACK. Only store immutable values here
+		// (key is a string) — a stored mutable value would be shared with that copy.
+		kept := make(service.MessageBatch, 0, len(batch))
+		for _, msg := range batch {
+			key, _ := msg.MetaGet("kafka_key")
+			if !i.keyFilter.matches(key) {
+				continue
+			}
+			// The filter guarantees a non-empty matching key here, so the
+			// aliases are stamped unconditionally.
+			msg.MetaSetMut("umh_topic", key)
+			msg.MetaSetMut("kafka_msg_key", key)
+			// The delegated input stores the original kgo header slice under
+			// __rpcn_kafka_headers; left in place it round-trips into
+			// downstream Kafka headers and compounds per hop through the uns
+			// output, so it is stripped here.
+			msg.MetaDelete("__rpcn_kafka_headers")
+			kept = append(kept, msg)
+		}
+		if len(kept) > 0 {
+			return kept, ack, nil
+		}
+		// All-filtered poll: every record failed the umh_topics filter, so the
+		// kept batch is empty. Benthos's AsyncReader discards an empty batch
+		// without calling its AckFunc, so the delegated redpanda checkpoint
+		// would never resolve and the partition would wedge at the un-acked
+		// offset (ENG-5094 / ENG-5105). Self-ack the delegated transaction so
+		// the commit advances past the non-matching records, then read the next
+		// poll — the consumer never sees these records.
+		if ackErr := ack(ctx, nil); ackErr != nil {
+			// A failed empty-ack is a commit failure: return it — the caller
+			// must see commit failures.
+			return nil, nil, ackErr
+		}
+		// Check ctx.Err() before re-polling — a cancelled context would
+		// otherwise spin the loop indefinitely against a delegated input that
+		// keeps returning all-filtered polls.
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
 	}
-	return kept, ack, nil
 }
 
 func (i *unsBetaInput) Close(ctx context.Context) error {

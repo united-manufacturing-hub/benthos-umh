@@ -384,3 +384,144 @@ kafka_topic: "umh.messages"
 		Expect(f.matches("any.key.at.all")).To(BeTrue(), "the default must deliver every keyed record")
 	})
 })
+
+// scriptedStep is one programmed return of the fake inner's ReadBatch.
+type scriptedStep struct {
+	batch service.MessageBatch
+	err   error
+	// ackErr is the error the step's AckFunc returns when ReadBatch's self-ack
+	// (or the consumer) calls it; nil means the ack succeeds.
+	ackErr error
+}
+
+// scriptedInner is a fake innerInput that returns a programmed sequence of
+// (batch, ack, err) tuples, recording the index of every step whose ack was
+// invoked. It lets the self-ack loop be exercised without a broker: an
+// all-filtered batch is one whose records carry no matching kafka_key.
+type scriptedInner struct {
+	steps   []scriptedStep
+	pos     int
+	acked   []int // indexes of steps whose ack was called, in call order
+	overran bool  // set when ReadBatch is called past the end of the script
+}
+
+func (s *scriptedInner) ReadBatch(_ context.Context) (service.MessageBatch, service.AckFunc, error) {
+	// Record an overrun as a sentinel and return an error rather than calling
+	// Expect here: this fake's ReadBatch is exactly what a future
+	// cancellation/concurrency spec drives from a background goroutine, where a
+	// Gomega Expect would panic OFF the spec goroutine and Ginkgo would report
+	// an unattributed panic that masks the real assertion. The spec body asserts
+	// s.overran == false after the call instead.
+	if s.pos >= len(s.steps) {
+		s.overran = true
+		return nil, nil, errors.New("scriptedInner ReadBatch called past the end of its script")
+	}
+	step := s.steps[s.pos]
+	idx := s.pos
+	s.pos++
+	if step.err != nil {
+		// On the error path the AckFunc is nil — ReadBatch must never touch it.
+		return nil, nil, step.err
+	}
+	ack := func(context.Context, error) error {
+		s.acked = append(s.acked, idx)
+		return step.ackErr
+	}
+	return step.batch, ack, nil
+}
+
+func (s *scriptedInner) Close(context.Context) error { return nil }
+
+// keyedBatch builds a one-record batch whose kafka_key is set, so the filter's
+// keep/drop decision is deterministic.
+func keyedBatch(key string) service.MessageBatch {
+	m := service.NewMessage([]byte(`{"v":1}`))
+	m.MetaSetMut("kafka_key", key)
+	return service.MessageBatch{m}
+}
+
+// The self-ack loop: when a delegated poll is entirely filtered out, ReadBatch
+// must ack that empty batch itself (so the committed offset advances) and read
+// the next poll — without surfacing an empty batch to the consumer. These
+// broker-free specs script the inner reader directly to pin the loop's exact
+// behavior: consecutive all-filtered polls, a surfaced self-ack error, and
+// cancellation during the re-poll.
+var _ = Describe("uns_beta all-filtered self-ack loop", Label("uns_beta"), func() {
+	var filter *betaKeyFilter
+	BeforeEach(func() {
+		var err error
+		filter, err = newBetaKeyFilter([]string{`^keep\..+$`})
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("self-acks consecutive all-filtered polls before returning the deliverable batch", func() {
+		// Two consecutive all-filtered polls (the routine production shape under
+		// a selective filter, and the restart-surviving wedge a single-retry
+		// mutant would reintroduce) then a deliverable one.
+		inner := &scriptedInner{steps: []scriptedStep{
+			{batch: keyedBatch("drop.0")},
+			{batch: keyedBatch("drop.1")},
+			{batch: keyedBatch("keep.2")},
+		}}
+		i := &unsBetaInput{inner: inner, keyFilter: filter}
+
+		kept, ack, err := i.ReadBatch(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ack).NotTo(BeNil())
+		Expect(kept).To(HaveLen(1))
+		// Both all-filtered polls were self-acked, in order, before the
+		// deliverable batch returned. The deliverable batch's own ack is the
+		// one handed back to the caller and is NOT auto-fired here. This spec
+		// pins the ack ORDERING only; the alias-stamping path is covered by the
+		// metadata-contract specs (uns_beta_integration_test.go).
+		Expect(inner.acked).To(Equal([]int{0, 1}))
+		Expect(inner.overran).To(BeFalse(), "ReadBatch must stop at the deliverable batch, not read past the script")
+	})
+
+	It("returns the delegated error unchanged and never touches the nil ack", func() {
+		sentinel := errors.New("delegated read failed")
+		inner := &scriptedInner{steps: []scriptedStep{{err: sentinel}}}
+		i := &unsBetaInput{inner: inner, keyFilter: filter}
+
+		kept, ack, err := i.ReadBatch(context.Background())
+		Expect(err).To(MatchError(sentinel))
+		Expect(kept).To(BeNil())
+		Expect(ack).To(BeNil())
+		Expect(inner.overran).To(BeFalse())
+	})
+
+	It("surfaces a failed self-ack rather than swallowing it (a commit failure)", func() {
+		ackErr := errors.New("commit failed")
+		inner := &scriptedInner{steps: []scriptedStep{{batch: keyedBatch("drop.0"), ackErr: ackErr}}}
+		i := &unsBetaInput{inner: inner, keyFilter: filter}
+
+		kept, ack, err := i.ReadBatch(context.Background())
+		Expect(err).To(MatchError(ackErr))
+		Expect(kept).To(BeNil())
+		Expect(ack).To(BeNil())
+		Expect(inner.acked).To(Equal([]int{0}), "the self-ack must have been attempted")
+		Expect(inner.overran).To(BeFalse())
+	})
+
+	It("returns ctx.Err() after self-acking when the context is cancelled during the re-poll", func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		inner := &scriptedInner{steps: []scriptedStep{{batch: keyedBatch("drop.0")}}}
+		i := &unsBetaInput{inner: inner, keyFilter: filter}
+		// Cancelled before the call: the first poll is all-filtered, so the loop
+		// self-acks it, then honors cancellation before re-polling. The scripted
+		// inner ignores its context (its ReadBatch never returns ctx.Err()), so
+		// this pins the LOOP's own ordering — self-ack then ctx.Err() check —
+		// independent of inner behavior. In production the real redpanda inner
+		// returns ctx.Err() from its own ReadBatch, so a pre-cancelled context
+		// usually exits via the error path instead; this spec covers the loop's
+		// post-self-ack guard, not the production exit point.
+		cancel()
+
+		kept, ack, err := i.ReadBatch(ctx)
+		Expect(err).To(MatchError(context.Canceled))
+		Expect(kept).To(BeNil())
+		Expect(ack).To(BeNil())
+		Expect(inner.acked).To(Equal([]int{0}), "the all-filtered poll was acked before honoring cancellation")
+		Expect(inner.overran).To(BeFalse())
+	})
+})
