@@ -84,6 +84,10 @@ update-benthos:
 test: setup-test-deps
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./...
 
+.PHONY: test-schema-export
+test-schema-export: $(GOTESTSUM)
+	@$(GOTESTSUM) $(GOTESTSUM_FLAGS) ./cmd/schema-export/...
+
 .PHONY: test-eip
 test-eip:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./eip_plugin/...

@@ -103,11 +103,25 @@ func extractPluginSpec(name string, pluginType string, config *service.ConfigVie
 	}
 
 	// Extract fields recursively from config object
-	if configObj, ok := rawSpec["config"].(map[string]interface{}); ok {
+	configObj, ok := rawSpec["config"].(map[string]any)
+	if ok {
 		spec.Config, spec.FieldOrder = extractFields(configObj)
+		if len(spec.Config) == 0 {
+			spec.RootType, spec.RootKind = inlineRootType(configObj)
+		}
 	}
 
 	return spec, nil
+}
+
+// inlineRootType returns the config's own type/kind when it's a single inline value
+// rather than an object (e.g. bloblang, whose config is a mapping string). Empty otherwise.
+func inlineRootType(configObj map[string]any) (string, string) {
+	t := getString(configObj, "type")
+	if t == "" || t == "object" {
+		return "", ""
+	}
+	return t, getString(configObj, "kind")
 }
 
 // extractFields converts Benthos internal field format to our FieldSpec format.

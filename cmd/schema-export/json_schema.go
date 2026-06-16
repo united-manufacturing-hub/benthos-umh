@@ -285,9 +285,11 @@ func generateJSONSchema(plugins *SchemaOutput, version string) (map[string]inter
 }
 
 // convertPluginToJSONSchema converts a PluginSpec to a JSON Schema definition
-func convertPluginToJSONSchema(plugin PluginSpec) map[string]interface{} {
-	schema := map[string]interface{}{
-		"type": "object",
+func convertPluginToJSONSchema(plugin PluginSpec) map[string]any {
+	// Plugins only inline values (e.g. bloblang) are typed string instead of object.
+	schema := map[string]any{"type": "object"}
+	if plugin.RootType != "" {
+		schema = benthosTypeToJSONSchemaType(plugin.RootType, plugin.RootKind)
 	}
 
 	// Add description
@@ -295,6 +297,10 @@ func convertPluginToJSONSchema(plugin PluginSpec) map[string]interface{} {
 		schema["description"] = plugin.Description
 	} else if plugin.Summary != "" {
 		schema["description"] = plugin.Summary
+	}
+
+	if schema["type"] != "object" {
+		return schema
 	}
 
 	// Convert config fields to properties, preserving Go struct declaration order via FieldOrder.
