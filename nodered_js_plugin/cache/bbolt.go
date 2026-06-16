@@ -46,7 +46,6 @@ var _ Cache = (*BboltStore)(nil)
 
 // NewBboltStore opens (or creates) a bbolt file at path and returns a Cache
 // backed by it. defaultExpiration of 0 disables expiration entirely.
-// A leading "~" in path is expanded to the user's home directory.
 func NewBboltStore(path string, defaultExpiration time.Duration) (*BboltStore, error) {
 	if path == "" {
 		return nil, fmt.Errorf("cache: bbolt path must not be empty")
@@ -60,7 +59,7 @@ func NewBboltStore(path string, defaultExpiration time.Duration) (*BboltStore, e
 		path = filepath.Join(home, path[1:])
 	}
 
-	db, err := bolt.Open(path, 0600, &bolt.Options{
+	db, err := bolt.Open(path, 0o600, &bolt.Options{
 		Timeout: 5 * time.Second,
 	})
 	if err != nil {
