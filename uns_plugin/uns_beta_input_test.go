@@ -394,7 +394,7 @@ type scriptedStep struct {
 	ackErr error
 }
 
-// scriptedInner is a fake innerInput that returns a programmed sequence of
+// scriptedInner is a fake readBatcher that returns a programmed sequence of
 // (batch, ack, err) tuples, recording the index of every step whose ack was
 // invoked. It lets the self-ack loop be exercised without a broker: an
 // all-filtered batch is one whose records carry no matching kafka_key.
@@ -440,6 +440,109 @@ func keyedBatch(key string) service.MessageBatch {
 	return service.MessageBatch{m}
 }
 
+// ackRecordingInner is a fake readBatcher that hands back one deliverable batch
+// and a delegated AckFunc that records the error it is invoked with — so a spec
+// can assert the AckFunc uns_beta returns to the consumer is the delegated one,
+// forwarded unchanged (no wrap, no swallow). Uses the constructor
+// newUnsBetaInputFor and the readBatcher interface.
+type ackRecordingInner struct {
+	batch        service.MessageBatch
+	gotAckCalled bool
+	gotAckErr    error
+}
+
+func (a *ackRecordingInner) ReadBatch(context.Context) (service.MessageBatch, service.AckFunc, error) {
+	ack := func(_ context.Context, err error) error {
+		a.gotAckCalled = true
+		a.gotAckErr = err
+		return nil
+	}
+	return a.batch, ack, nil
+}
+
+func (a *ackRecordingInner) Close(context.Context) error { return nil }
+
+// ACK PASS-THROUGH PIN (ENG-5094/ENG-5105): a deliverable poll's ack
+// is the delegated input's own AckFunc, forwarded to the consumer UNCHANGED.
+// ReadBatch returns kept, ack, nil (unwrapped); this pins that behavior so a
+// future wrap/swallow of the ack outcome breaks the test. Broker-free unit pin.
+var _ = Describe("uns_beta ack pass-through", Label("uns_beta"), func() {
+	var _ readBatcher = (*ackRecordingInner)(nil) // compile-time check: ackRecordingInner satisfies readBatcher
+
+	It("forwards the delegated input's ack outcome unchanged", func() {
+		filter, err := newBetaKeyFilter([]string{`^keep\..+$`})
+		Expect(err).NotTo(HaveOccurred())
+		inner := &ackRecordingInner{batch: keyedBatch("keep.0")}
+		// Route through newUnsBetaInputFor so no nil-keyFilter instance is built.
+		i := newUnsBetaInputFor(inner, filter)
+
+		kept, ack, err := i.ReadBatch(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(kept).To(HaveLen(1))
+		Expect(ack).NotTo(BeNil())
+
+		// Invoking the returned AckFunc with a sentinel error must call the
+		// delegated ack with EXACTLY that error — not nil, not a wrapped copy.
+		sentinel := errors.New("downstream nacked")
+		Expect(ack(context.Background(), sentinel)).To(Succeed())
+		Expect(inner.gotAckCalled).To(BeTrue(), "the returned ack must delegate to the inner ack")
+		Expect(inner.gotAckErr).To(MatchError(sentinel), "the ack error must pass through unchanged")
+
+		// And nil passes through as nil (a successful commit).
+		inner.gotAckCalled = false
+		inner.gotAckErr = errors.New("stale")
+		Expect(ack(context.Background(), nil)).To(Succeed())
+		Expect(inner.gotAckCalled).To(BeTrue())
+		Expect(inner.gotAckErr).To(BeNil(), "a nil ack outcome must pass through as nil")
+	})
+})
+
+// filterAndAlias is the pure filter+alias+strip step extracted from the
+// ReadBatch loop. These broker-free specs exercise it directly: the
+// kept-record alias stamping (umh_topic, kafka_msg_key),
+// the __rpcn_kafka_headers strip, and the drop of keyless / non-matching
+// records. The metadata-contract specs (uns_beta_integration_test.go) pin the
+// same contract end to end through a broker; these pin it at the unit boundary
+// so a mutation that drops an alias or the strip is caught without a broker.
+var _ = Describe("uns_beta filterAndAlias", Label("uns_beta"), func() {
+	var filter *betaKeyFilter
+	BeforeEach(func() {
+		var err error
+		filter, err = newBetaKeyFilter([]string{`^keep\..+$`})
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("stamps the aliases on a kept record and strips __rpcn_kafka_headers", func() {
+		m := service.NewMessage([]byte(`{"v":1}`))
+		m.MetaSetMut("kafka_key", "keep.0")
+		m.MetaSetMut("__rpcn_kafka_headers", "raw-kgo-slice")
+
+		kept := filterAndAlias(service.MessageBatch{m}, filter)
+
+		Expect(kept).To(HaveLen(1))
+		topic, _ := kept[0].MetaGet("umh_topic")
+		Expect(topic).To(Equal("keep.0"), "umh_topic must alias the record's kafka_key")
+		msgKey, _ := kept[0].MetaGet("kafka_msg_key")
+		Expect(msgKey).To(Equal("keep.0"), "kafka_msg_key must alias the record's kafka_key")
+		_, hasHeaders := kept[0].MetaGet("__rpcn_kafka_headers")
+		Expect(hasHeaders).To(BeFalse(), "__rpcn_kafka_headers must be stripped so it cannot compound per hop")
+	})
+
+	It("drops non-matching and keyless records, keeping only matches", func() {
+		match := service.NewMessage([]byte(`{"v":1}`))
+		match.MetaSetMut("kafka_key", "keep.match")
+		nonMatch := service.NewMessage([]byte(`{"v":2}`))
+		nonMatch.MetaSetMut("kafka_key", "drop.other")
+		keyless := service.NewMessage([]byte(`{"v":3}`)) // no kafka_key set
+
+		kept := filterAndAlias(service.MessageBatch{match, nonMatch, keyless}, filter)
+
+		Expect(kept).To(HaveLen(1), "only the matching record survives")
+		topic, _ := kept[0].MetaGet("umh_topic")
+		Expect(topic).To(Equal("keep.match"))
+	})
+})
+
 // The self-ack loop: when a delegated poll is entirely filtered out, ReadBatch
 // must ack that empty batch itself (so the committed offset advances) and read
 // the next poll — without surfacing an empty batch to the consumer. These
@@ -463,7 +566,7 @@ var _ = Describe("uns_beta all-filtered self-ack loop", Label("uns_beta"), func(
 			{batch: keyedBatch("drop.1")},
 			{batch: keyedBatch("keep.2")},
 		}}
-		i := &unsBetaInput{inner: inner, keyFilter: filter}
+		i := newUnsBetaInputFor(inner, filter)
 
 		kept, ack, err := i.ReadBatch(context.Background())
 		Expect(err).NotTo(HaveOccurred())
@@ -481,7 +584,7 @@ var _ = Describe("uns_beta all-filtered self-ack loop", Label("uns_beta"), func(
 	It("returns the delegated error unchanged and never touches the nil ack", func() {
 		sentinel := errors.New("delegated read failed")
 		inner := &scriptedInner{steps: []scriptedStep{{err: sentinel}}}
-		i := &unsBetaInput{inner: inner, keyFilter: filter}
+		i := newUnsBetaInputFor(inner, filter)
 
 		kept, ack, err := i.ReadBatch(context.Background())
 		Expect(err).To(MatchError(sentinel))
@@ -493,7 +596,7 @@ var _ = Describe("uns_beta all-filtered self-ack loop", Label("uns_beta"), func(
 	It("surfaces a failed self-ack rather than swallowing it (a commit failure)", func() {
 		ackErr := errors.New("commit failed")
 		inner := &scriptedInner{steps: []scriptedStep{{batch: keyedBatch("drop.0"), ackErr: ackErr}}}
-		i := &unsBetaInput{inner: inner, keyFilter: filter}
+		i := newUnsBetaInputFor(inner, filter)
 
 		kept, ack, err := i.ReadBatch(context.Background())
 		Expect(err).To(MatchError(ackErr))
@@ -506,7 +609,7 @@ var _ = Describe("uns_beta all-filtered self-ack loop", Label("uns_beta"), func(
 	It("returns ctx.Err() after self-acking when the context is cancelled during the re-poll", func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		inner := &scriptedInner{steps: []scriptedStep{{batch: keyedBatch("drop.0")}}}
-		i := &unsBetaInput{inner: inner, keyFilter: filter}
+		i := newUnsBetaInputFor(inner, filter)
 		// Cancelled before the call: the first poll is all-filtered, so the loop
 		// self-acks it, then honors cancellation before re-polling. The scripted
 		// inner ignores its context (its ReadBatch never returns ctx.Err()), so

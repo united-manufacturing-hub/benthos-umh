@@ -614,7 +614,7 @@ uns_beta:
 		})
 		defer stop()
 
-		// P1/P2: the kept record is redelivered until it succeeds — no loss.
+		// Redelivery: the kept record is retried until it succeeds — no loss.
 		Eventually(func() int {
 			mu.Lock()
 			defer mu.Unlock()
