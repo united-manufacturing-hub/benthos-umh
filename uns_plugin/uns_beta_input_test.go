@@ -16,6 +16,7 @@ package uns_plugin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -626,5 +627,80 @@ var _ = Describe("uns_beta all-filtered self-ack loop", Label("uns_beta"), func(
 		Expect(ack).To(BeNil())
 		Expect(inner.acked).To(Equal([]int{0}), "the all-filtered poll was acked before honoring cancellation")
 		Expect(inner.overran).To(BeFalse())
+	})
+})
+
+// deprecatedFlags renders the LEGACY `uns` input's config spec to the same JSON
+// view the schema-export consumes (ConfigView.FormatJSON → config.children[]),
+// and returns each top-level field's `is_deprecated` flag keyed by field name.
+// This reads the STRUCTURED flag benthos emits for `.Deprecated()`, not the
+// field description — it is the exact path cmd/schema-export/exporter.go uses
+// (extractFields → getBool(fieldMap, "is_deprecated")), so a pass here means
+// the schema export and the Management Console see the field as deprecated.
+func deprecatedFlags(spec *service.ConfigSpec) map[string]bool {
+	GinkgoHelper()
+	// Register the spec into a throwaway environment so we can obtain a
+	// *service.ConfigView for it (the same handle WalkInputs hands schema-export).
+	env := service.NewEnvironment()
+	const name = "uns_deprecation_probe"
+	Expect(env.RegisterBatchInput(name, spec,
+		func(*service.ParsedConfig, *service.Resources) (service.BatchInput, error) {
+			return nil, errors.New("never constructed")
+		})).To(Succeed())
+
+	var jsonData []byte
+	env.WalkInputs(func(n string, view *service.ConfigView) {
+		if n != name {
+			return
+		}
+		b, err := view.FormatJSON()
+		Expect(err).NotTo(HaveOccurred())
+		jsonData = b
+	})
+	Expect(jsonData).NotTo(BeNil(), "probe input %q was not registered/walked", name)
+
+	var raw map[string]any
+	Expect(json.Unmarshal(jsonData, &raw)).To(Succeed())
+	cfg, ok := raw["config"].(map[string]any)
+	Expect(ok).To(BeTrue(), "spec JSON has no config object: %s", jsonData)
+	children, ok := cfg["children"].([]any)
+	Expect(ok).To(BeTrue(), "spec config has no children: %#v", cfg)
+
+	flags := map[string]bool{}
+	for _, c := range children {
+		fm, ok := c.(map[string]any)
+		if !ok {
+			continue
+		}
+		fieldName, _ := fm["name"].(string)
+		if fieldName == "" {
+			continue
+		}
+		dep, _ := fm["is_deprecated"].(bool)
+		flags[fieldName] = dep
+	}
+	return flags
+}
+
+var _ = Describe("legacy uns input config deprecation markers (R9)", func() {
+	// The new uns_beta surface uses umh_topics (the list form) exclusively and
+	// always stores headers as strings, so the three fields below are legacy-only
+	// and must carry the structured Deprecated flag the schema-export exports.
+	It("marks umh_topic, topic, and metadata_format as deprecated", func() {
+		flags := deprecatedFlags(RegisterConfigSpec())
+
+		for _, f := range []string{"umh_topic", "topic", "metadata_format"} {
+			present, ok := flags[f]
+			Expect(ok).To(BeTrue(), "field %q not found in uns config spec", f)
+			Expect(present).To(BeTrue(), "field %q must carry the .Deprecated() flag (is_deprecated)", f)
+		}
+	})
+
+	It("does NOT mark the preferred umh_topics field as deprecated", func() {
+		flags := deprecatedFlags(RegisterConfigSpec())
+
+		present, ok := flags["umh_topics"]
+		Expect(ok).To(BeTrue(), "field \"umh_topics\" not found in uns config spec")
+		Expect(present).To(BeFalse(), "umh_topics is the preferred field and must NOT be deprecated")
 	})
 })

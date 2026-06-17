@@ -99,7 +99,7 @@ func ParseFromBenthos(conf *service.ParsedConfig, logger *service.Logger) (UnsIn
 		}
 		allTopics = append(allTopics, topic)
 		if logger != nil {
-			logger.Warnf("'topic' field is deprecated. Please use 'umh_topic' or 'umh_topics' instead.")
+			logger.Warnf("'topic' field is deprecated. Please use 'umh_topics' instead.")
 		}
 	}
 
@@ -184,7 +184,10 @@ func RegisterConfigSpec() *service.ConfigSpec {
 	By default, the plugin connects to the Kafka broker at localhost:9092 with the consumer group id specified in the plugin config. The consumer group id is usually derived from the UMH workloads like protocol converter names.
 		`).
 		Field(service.NewStringField("umh_topic").
+			Deprecated().
 			Description(`
+	Deprecated: use umh_topics; not available on uns_beta.
+
 	Key used to filter the messages. The value set for the 'umh_topic' field will be used to compare against the message key in kafka. The 'umh_topic' field allows regular expressions which should be compatible with RE2 regex engine.
 
 	The topic should follow the UMH naming convention: umh.v1.enterprise.site.area.tag
@@ -208,8 +211,11 @@ func RegisterConfigSpec() *service.ConfigSpec {
 			Example([]string{"umh.v1.acme.berlin.assembly.temperature", "umh.v1.acme.munich.packaging.pressure"}).
 			Example([]string{`umh\.v1\.acme\.berlin\..+`, `umh\.v1\.acme\.munich\..+`})).
 		Field(service.NewStringField("topic").
+			Deprecated().
 			Description(`
-	[DEPRECATED] Use 'umh_topic' or 'umh_topics' instead. Key used to filter the messages for backwards compatibility.
+	Deprecated: use umh_topics; not available on uns_beta.
+
+	Use 'umh_topic' or 'umh_topics' instead. Key used to filter the messages for backwards compatibility.
 		`).
 			Example("umh.v1.acme.berlin.assembly.temperature").
 			Example(`umh\.v1\..+`).
@@ -236,7 +242,10 @@ In most UMH deployments, the default value is sufficient as Kafka runs on the sa
 			Example("uns_consumer_group").
 			Default(defaultConsumerGroup)).
 		Field(service.NewStringField("metadata_format").
-			Description(`Controls how Kafka headers are stored in Benthos metadata.
+			Deprecated().
+			Description(`Deprecated: uns_beta always stores headers as strings, so this field has no effect there; it controls legacy header typing only.
+
+Controls how Kafka headers are stored in Benthos metadata.
 - "string": Convert headers to strings (recommended, fixes byte array issue)
 - "bytes": Keep headers as byte arrays (legacy behavior for backward compatibility)
 
