@@ -559,6 +559,61 @@ uns_beta:
 	})
 })
 
+// A fresh consumer group must read from the EARLIEST offset: records produced
+// BEFORE the consumer ever started must still be delivered. The template pins
+// start_offset = "earliest" (uns_beta_template.yaml); the config-value half is
+// pinned by Describe("uns_beta template rendering") in uns_beta_input_test.go
+// (asserts start_offset == "earliest"), this spec pins the observable BEHAVIOR.
+// A "latest" start would
+// position a never-committed group at the high-water mark, so a record produced
+// before the group connected would be skipped — the arrival assertion below
+// would time out. (ENG-5094 / spec P5)
+var _ = Describe("uns_beta start-from-earliest", Label("uns_beta"), func() {
+	It("delivers records produced before a fresh consumer group started", func() {
+		addr := startBroker(GinkgoT())
+		// A never-committed group name (unique suffix) so there is no committed
+		// offset to resume from — start_offset alone decides where it begins.
+		group := fmt.Sprintf("uns-beta-earliest-%d", time.Now().UnixNano())
+
+		// Produce BOTH records FIRST, before any consumer exists. Their keys
+		// match the umh_topics filter so they are delivered, not dropped.
+		produce(GinkgoT(), addr,
+			rec("umh.v1.enterprise.siteA._raw.temp", `{"v":"A"}`),
+			rec("umh.v1.enterprise.siteB._raw.temp", `{"v":"B"}`))
+
+		var mu sync.Mutex
+		var got []string
+		// THEN start the stream with the fresh group.
+		stop := runUnsBetaStream(GinkgoT(), `
+uns_beta:
+  broker_address: "`+addr+`"
+  consumer_group: "`+group+`"
+  umh_topics:
+    - "^umh\\.v1\\."
+`, func(_ context.Context, b service.MessageBatch) error {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, m := range b {
+				bs, _ := m.AsBytes()
+				got = append(got, string(bs))
+			}
+			return nil
+		})
+		defer stop()
+
+		// Both pre-existing records must arrive. A fresh "latest" group would
+		// never see them (it would position past them at connect), so this
+		// arrival assertion is what distinguishes earliest from latest.
+		Eventually(func() []string {
+			mu.Lock()
+			defer mu.Unlock()
+			return append([]string(nil), got...)
+		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
+			Should(ContainElements(`{"v":"A"}`, `{"v":"B"}`),
+				"both records produced before the fresh consumer group started must be delivered (start_offset = earliest)")
+	})
+})
+
 // The filter × ack-forward × NACK-redelivery interaction that the mixed-batch
 // ack spec and the unfiltered capstone each cover only half of. A mixed
 // delegated poll (one matching + one non-matching record) whose KEPT record the
