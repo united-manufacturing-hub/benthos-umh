@@ -203,6 +203,92 @@ uns_beta:
 		Expect(m2["kafka_msg_key"]).To(Equal(key2), "kafka_msg_key must alias the record's own key")
 	})
 
+	// Read-safe header typing is provided by the delegated redpanda input,
+	// not by uns_beta. Connect v4.94.1's AddHeaders (franz_headers.go) stores
+	// every header value uniformly: nil -> nil, empty -> "", else
+	// string(h.Value). A single-byte header therefore reads back as its string
+	// ("x"), with no normalization in uns_beta.
+	//
+	// This pins that upstream contract and guards against a future connect
+	// regression that reintroduces the older v4.78 behavior: that version had
+	// an extra len==1 branch storing the single byte as a rune/int32, which
+	// benthos MetaGet then rendered as the decimal of the byte ("x" -> "120").
+	// If connect regresses, the single-byte assertion below goes red and
+	// uns_beta would need its own normalization to stay read-safe.
+	//
+	// The native int fields (kafka_timestamp_ms, kafka_partition) and the
+	// string aliases are checked to pin that the upstream contract leaves them
+	// as their decimal strings. (ENG-5094 / ENG-5105)
+	It("reads single-byte, empty, and multi-byte headers back as strings without corrupting native int fields", func() {
+		addr := startBroker(GinkgoT())
+		const group = "uns-beta-header-typing"
+		const key = "umh.v1.acme.headertyping"
+		produce(GinkgoT(), addr,
+			&kgo.Record{
+				Key:   []byte(key),
+				Value: []byte(`{"v":1}`),
+				Headers: []kgo.RecordHeader{
+					{Key: "h-multi", Value: []byte("hello")},
+					{Key: "h-single", Value: []byte{'x'}},
+					{Key: "h-empty", Value: []byte{}},
+				},
+			},
+		)
+
+		var mu sync.Mutex
+		var snap map[string]string // metadata snapshot of the delivered message
+		stop := runUnsBetaStream(GinkgoT(), `
+uns_beta:
+  broker_address: "`+addr+`"
+  consumer_group: "`+group+`"
+`, func(_ context.Context, b service.MessageBatch) error {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, msg := range b {
+				m := map[string]string{}
+				for _, k := range []string{"h-multi", "h-single", "h-empty", "umh_topic", "kafka_msg_key", "kafka_timestamp_ms", "kafka_partition"} {
+					v, has := msg.MetaGet(k)
+					if has {
+						m[k] = v
+					}
+				}
+				snap = m
+			}
+			return nil
+		})
+		defer stop()
+
+		Eventually(func() map[string]string {
+			mu.Lock()
+			defer mu.Unlock()
+			return snap
+		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
+			ShouldNot(BeNil(), "the headered message never arrived through uns_beta")
+
+		mu.Lock()
+		m := snap
+		mu.Unlock()
+
+		// Read-safe header typing: connect v4.94.1 stores the single-byte header
+		// as the string "x", so MetaGet returns "x" and not the decimal of its
+		// byte ("120"). A regression to v4.78's rune branch would flip h-single.
+		Expect(m["h-multi"]).To(Equal("hello"), "multi-byte header must read back as its string")
+		Expect(m["h-single"]).To(Equal("x"), "single-byte header must read back as its string, not the decimal of its byte")
+		Expect(m).To(HaveKey("h-empty"), "empty header must still appear in metadata")
+		Expect(m["h-empty"]).To(Equal(""), "empty header must read back as the empty string")
+
+		// Native-field guard: the upstream contract leaves the native int
+		// metadata as decimal strings. Pin that they are not coerced via
+		// string(rune) into control characters.
+		Expect(m["kafka_timestamp_ms"]).To(MatchRegexp(`^\d+$`), "kafka_timestamp_ms must stay a decimal string")
+		Expect(m).To(HaveKey("kafka_partition"))
+		Expect(m["kafka_partition"]).To(Equal("0"), "kafka_partition must stay its decimal string, not a control character")
+
+		// Alias semantics unchanged: the aliases still equal the record key.
+		Expect(m["umh_topic"]).To(Equal(key), "umh_topic alias must equal the record key")
+		Expect(m["kafka_msg_key"]).To(Equal(key), "kafka_msg_key alias must equal the record key")
+	})
+
 	// Documented known gap, pinned as current behavior (not aspiration): the
 	// delegated redpanda input applies record headers AFTER its native fields,
 	// so a producer header literally named "kafka_key" overwrites the real
