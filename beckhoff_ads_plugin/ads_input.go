@@ -266,6 +266,8 @@ type AdsCommInput struct {
 	// from the go-ads library's notification goroutines.
 	done chan struct{}
 
+	LoadSymbols bool // download full symbol+datatype table on connect; required for struct/array symbols
+
 	// Route registration settings
 	Username string // PLC route registration username; route registered when both Username and Password are set
 	Password string
@@ -300,6 +302,7 @@ var adsConf = service.NewConfigSpec().
 	// ---- Advanced ----
 	Field(service.NewDurationField("requestTimeout").Description("Timeout for individual ADS requests.").Default("5s").Advanced().Examples("5s", "10s")).
 	Field(service.NewStringEnumField("logLevel", "disabled", "error", "warn", "info", "debug", "trace").Description("go-ads library log level. error (default) surfaces transport and ADS errors. debug/trace add verbose ADS wire details.").Default("error").Advanced().Examples("disabled", "error", "warn", "info", "debug", "trace")).
+	Field(service.NewBoolField("loadSymbols").Description("Download the full symbol and datatype table from the PLC on connect. Required for struct and array symbols. May cause brief real-time jitter on the PLC during initial connection; use with care on large programs.").Default(false).Advanced()).
 	// ---- Symbols (list — placed last for readability in YAML) ----
 	Field(service.NewStringListField("symbols").Description("Symbols to read. Format: 'name', 'name:maxDelayMs:cycleTimeMs', or 'name:maxDelay=100ms:cycleTime=100ms'. " +
 		"Examples: 'GVL.counter', 'GVL.trigger:0s:10ms', '.globalVar:maxDelay=0s:cycleTime=50ms'"))
@@ -426,6 +429,11 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 		return nil, err
 	}
 
+	loadSymbols, err := conf.FieldBool("loadSymbols")
+	if err != nil {
+		return nil, err
+	}
+
 	// Derive hostAMS from hostIP when set to "auto"
 	if hostAMS == "auto" && hostIP != "" {
 		hostAMS = hostIP + ".1.1"
@@ -449,6 +457,7 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 		NotificationChan: make(chan *adsLib.Update, 256),
 		done:             make(chan struct{}),
 		TransmissionMode: transmissionMode,
+		LoadSymbols:      loadSymbols,
 		Username:         username,
 		Password:         password,
 		HostIP:           hostIP,
@@ -578,6 +587,15 @@ func (g *AdsCommInput) Connect(ctx context.Context) error {
 		g.symbolNames[strings.ToLower(sym.Name)] = sym.Name
 	}
 
+	if g.LoadSymbols {
+		g.Log.Infof("Loading symbol and datatype table from PLC (loadSymbols=true)")
+		if err = g.Handler.LoadSymbols(ctx); err != nil {
+			g.Log.Errorf("LoadSymbols failed: %v", err)
+			return err
+		}
+		g.Log.Infof("Symbol table loaded")
+	}
+
 	if g.ReadType == "notification" {
 		// Build notification configs for batch add
 		configs := make([]adsLib.NotificationConfig, len(g.Symbols))
@@ -616,6 +634,19 @@ func (g *AdsCommInput) Connect(ctx context.Context) error {
 			return fmt.Errorf("no symbols registered for notifications (%d symbols all failed to resolve)", len(configs))
 		}
 		g.Log.Infof("Registered %d/%d notification symbols", registered, len(configs))
+
+		// Populate metadata cache from go-ads symbol cache (no extra round-trips).
+		// Without this, makeNotificationMessage reads from empty maps → null metadata.
+		for _, sym := range g.Symbols {
+			key := strings.ToLower(sym.Name)
+			if view, viewErr := g.Handler.GetSymbol(ctx, sym.Name); viewErr == nil {
+				g.dataTypes[key] = view.DataType
+				g.dataSizes[key] = view.Length
+				if bt := view.BaseTypeName(); bt != "" {
+					g.baseTypes[key] = bt
+				}
+			}
+		}
 
 		// Wait for initial sample from each registered symbol. TwinCAT sends an
 		// immediate sample on subscribe for all modes except NoTransmission, so
