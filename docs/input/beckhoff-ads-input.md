@@ -317,6 +317,7 @@ input:
 | **username** | No | `""` | Username for automatic UDP route registration on the PLC. Both `username` and `password` must be set to activate registration. Requires UDP port 48899 to be reachable (see [Route Registration](#route-registration)) |
 | **password** | No | `""` | Password for automatic UDP route registration on the PLC |
 | **hostIP** | No | `""` | IP address the PLC associates with the route. Required in Docker bridge networking (set to Docker host's IP). When `hostAMS` is `auto`, the AMS NetID is also derived from this. Auto-detected from outbound connection if empty (only correct with `host_network` or macvlan) |
+| **loadSymbols** | No | `false` | Download the full symbol and datatype table from the PLC on connect. Required for subscribing to whole struct or array symbols. May cause brief real-time jitter on the PLC during initial connection; use with care on large programs. See [Struct and Array Symbols](#struct-and-array-symbols) |
 
 ### Symbols Format
 
@@ -350,6 +351,70 @@ Symbols are specified as `name[:opt1[:opt2...]]`. Options are either positional 
 **TwinCAT 3** uses GVL-prefixed symbols: `GVL_ProcessData.nCounter`, `MAIN.MyVariable`
 
 **TwinCAT 2** uses a flat namespace with dot prefix: `.nCounter`, `.myVariable`. Symbol names are case-insensitive — the PLC accepts any casing, and the plugin always preserves the casing you configured (TC3 returns original casing; TC2 returns uppercase, which the plugin maps back to your configured casing).
+
+## Struct and Array Symbols
+
+Two approaches for reading structured PLC data:
+
+### Option A — Dot-notation (recommended, no extra config)
+
+Subscribe to individual primitive members using their full dot-path. No `loadSymbols` needed.
+
+```yaml
+symbols:
+  - "MAIN.MachineStatus.Motor1.fSpeed"
+  - "MAIN.MachineStatus.Motor1.bRunning"
+  - "MAIN.MachineStatus.Pressure.fValue"
+```
+
+- Each symbol fires independently on change
+- Returns primitive values (`REAL`, `BOOL`, `INT`, etc.)
+- Works with `readType: notification` and `readType: interval`
+- Scales to large structs without downloading the symbol table
+
+### Option B — Whole struct subscription (requires `loadSymbols: true`)
+
+Subscribe to the struct symbol directly. The plugin downloads the full symbol and datatype table from the PLC on connect, enabling recursive JSON decode.
+
+```yaml
+input:
+  beckhoff_ads:
+    targetIP: "192.168.1.10"
+    targetAMS: "5.1.2.3.1.1"
+    loadSymbols: true
+    symbols:
+      - "MAIN.MachineStatus"
+```
+
+Output per notification:
+
+```json
+{
+  "Motor1": {
+    "fSpeed": 1450.5,
+    "bRunning": true
+  },
+  "Pressure": {
+    "fValue": 3.2
+  },
+  "sMachineName": "Line1"
+}
+```
+
+- Single subscription covers all nested fields
+- Fires one message per struct change (whole struct value)
+- `loadSymbols: true` adds a one-time symbol table download on connect — may cause brief real-time jitter on the PLC
+- Use when you want the full struct as a JSON object rather than per-field messages
+
+### Comparison
+
+| | Option A (dot-notation) | Option B (whole struct) |
+|---|---|---|
+| `loadSymbols` required | No | Yes |
+| Output per change | One primitive per field | Whole struct as JSON |
+| Symbol table download | No | Yes (on connect) |
+| PLC jitter risk | None | Brief on connect |
+| Granularity | Per-field | Per-struct |
 
 ## Transmission Modes
 
