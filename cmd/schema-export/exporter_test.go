@@ -35,6 +35,13 @@ var _ = Describe("detectSource", func() {
 		Entry("sparkplug_b", "sparkplug_b", "benthos-umh"),
 		Entry("tag_processor", "tag_processor", "benthos-umh"),
 		Entry("uns", "uns", "benthos-umh"),
+		// uns_beta is template-registered (RegisterTemplateYAML), so its name is
+		// not a string literal the generator scans from the Register call — it
+		// comes from the template YAML's name: field. Guard both the template and
+		// its backing reader so a regen that drops uns_beta from umhPluginNames
+		// (re-classifying it as upstream and breaking MC autocomplete) fails here.
+		Entry("uns_beta", "uns_beta", "benthos-umh"),
+		Entry("uns_beta_reader", "uns_beta_reader", "benthos-umh"),
 		// Upstream Benthos plugins
 		Entry("kafka", "kafka", "upstream"),
 		Entry("http_client", "http_client", "upstream"),

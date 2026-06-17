@@ -15,22 +15,55 @@
 package uns_plugin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/twmb/franz-go/pkg/kgo"
 
 	// The "pure" components register the "none" tracer that StreamBuilder.Build
 	// defaults to; the render test below builds a (never-run) stream.
 	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
 )
+
+// capturingLogger is a *service.Logger backed by a slog handler that records
+// every log line into a mutex-guarded buffer, so a broker-free spec can assert
+// that a specific message (e.g. the kafka_key-spoof Warn) was emitted.
+type capturingLogger struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func newCapturingLogger() (*service.Logger, *capturingLogger) {
+	c := &capturingLogger{}
+	h := slog.NewTextHandler(&lockedWriter{c: c}, &slog.HandlerOptions{Level: slog.LevelDebug})
+	return service.NewLoggerFromSlog(slog.New(h)), c
+}
+
+func (c *capturingLogger) contents() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.buf.String()
+}
+
+// lockedWriter serializes writes into the capturingLogger's buffer.
+type lockedWriter struct{ c *capturingLogger }
+
+func (w *lockedWriter) Write(p []byte) (int, error) {
+	w.c.mu.Lock()
+	defer w.c.mu.Unlock()
+	return w.c.buf.Write(p)
+}
 
 // renderUnsBetaReader expands a `uns_beta: {…}` config through the registered
 // template and returns the rendered uns_beta_reader config as a map. It does
@@ -404,6 +437,9 @@ type scriptedInner struct {
 	pos     int
 	acked   []int // indexes of steps whose ack was called, in call order
 	overran bool  // set when ReadBatch is called past the end of the script
+	// connTest is the result Connect's probe sees; nil means not-supported (the
+	// neutral default for the broker-free self-ack/filter specs).
+	connTest service.ConnectionTestResults
 }
 
 func (s *scriptedInner) ReadBatch(_ context.Context) (service.MessageBatch, service.AckFunc, error) {
@@ -429,6 +465,17 @@ func (s *scriptedInner) ReadBatch(_ context.Context) (service.MessageBatch, serv
 		return step.ackErr
 	}
 	return step.batch, ack, nil
+}
+
+// ConnectionTest satisfies the readBatcher interface's connectivity probe. It
+// returns the scripted result if one is set, else not-supported (the neutral
+// default for the broker-free ReadBatch specs): a stray Connect call then falls
+// through to the lazy connect-on-read path.
+func (s *scriptedInner) ConnectionTest(context.Context) service.ConnectionTestResults {
+	if s.connTest != nil {
+		return s.connTest
+	}
+	return service.ConnectionTestNotSupported().AsList()
 }
 
 func (s *scriptedInner) Close(context.Context) error { return nil }
@@ -459,6 +506,10 @@ func (a *ackRecordingInner) ReadBatch(context.Context) (service.MessageBatch, se
 		return nil
 	}
 	return a.batch, ack, nil
+}
+
+func (a *ackRecordingInner) ConnectionTest(context.Context) service.ConnectionTestResults {
+	return service.ConnectionTestNotSupported().AsList()
 }
 
 func (a *ackRecordingInner) Close(context.Context) error { return nil }
@@ -498,35 +549,37 @@ var _ = Describe("uns_beta ack pass-through", Label("uns_beta"), func() {
 	})
 })
 
-// filterAndAlias is the pure filter+alias+strip step extracted from the
-// ReadBatch loop. These broker-free specs exercise it directly: the
-// kept-record alias stamping (umh_topic, kafka_msg_key),
-// the __rpcn_kafka_headers strip, and the drop of keyless / non-matching
-// records. The metadata-contract specs (uns_beta_integration_test.go) pin the
-// same contract end to end through a broker; these pin it at the unit boundary
-// so a mutation that drops an alias or the strip is caught without a broker.
+// filterAndAlias is the filter+alias+strip+classify step of the ReadBatch loop.
+// These broker-free specs exercise it directly: the kept-record alias stamping
+// (umh_topic, kafka_msg_key), the rpcnKafkaHeadersKey strip, and the drop of
+// keyless / non-matching records. The metadata-contract specs
+// (uns_beta_integration_test.go) pin the same contract end to end through a
+// broker; these pin it at the unit boundary so a mutation that drops an alias or
+// the strip is caught without a broker. filterAndAlias is now a method on
+// *unsBetaInput (it also returns the per-class dropTally), so the specs route
+// through newUnsBetaInputFor.
 var _ = Describe("uns_beta filterAndAlias", Label("uns_beta"), func() {
-	var filter *betaKeyFilter
+	var input *unsBetaInput
 	BeforeEach(func() {
-		var err error
-		filter, err = newBetaKeyFilter([]string{`^keep\..+$`})
+		filter, err := newBetaKeyFilter([]string{`^keep\..+$`})
 		Expect(err).NotTo(HaveOccurred())
+		input = newUnsBetaInputFor(nil, filter)
 	})
 
-	It("stamps the aliases on a kept record and strips __rpcn_kafka_headers", func() {
+	It("stamps the aliases on a kept record and strips "+rpcnKafkaHeadersKey, func() {
 		m := service.NewMessage([]byte(`{"v":1}`))
 		m.MetaSetMut("kafka_key", "keep.0")
-		m.MetaSetMut("__rpcn_kafka_headers", "raw-kgo-slice")
+		m.MetaSetMut(rpcnKafkaHeadersKey, "raw-kgo-slice")
 
-		kept := filterAndAlias(service.MessageBatch{m}, filter)
+		kept, _ := input.filterAndAlias(service.MessageBatch{m})
 
 		Expect(kept).To(HaveLen(1))
 		topic, _ := kept[0].MetaGet("umh_topic")
 		Expect(topic).To(Equal("keep.0"), "umh_topic must alias the record's kafka_key")
 		msgKey, _ := kept[0].MetaGet("kafka_msg_key")
 		Expect(msgKey).To(Equal("keep.0"), "kafka_msg_key must alias the record's kafka_key")
-		_, hasHeaders := kept[0].MetaGet("__rpcn_kafka_headers")
-		Expect(hasHeaders).To(BeFalse(), "__rpcn_kafka_headers must be stripped so it cannot compound per hop")
+		_, hasHeaders := kept[0].MetaGet(rpcnKafkaHeadersKey)
+		Expect(hasHeaders).To(BeFalse(), rpcnKafkaHeadersKey+" must be stripped so it cannot compound per hop")
 	})
 
 	It("drops non-matching and keyless records, keeping only matches", func() {
@@ -536,7 +589,7 @@ var _ = Describe("uns_beta filterAndAlias", Label("uns_beta"), func() {
 		nonMatch.MetaSetMut("kafka_key", "drop.other")
 		keyless := service.NewMessage([]byte(`{"v":3}`)) // no kafka_key set
 
-		kept := filterAndAlias(service.MessageBatch{match, nonMatch, keyless}, filter)
+		kept, _ := input.filterAndAlias(service.MessageBatch{match, nonMatch, keyless})
 
 		Expect(kept).To(HaveLen(1), "only the matching record survives")
 		topic, _ := kept[0].MetaGet("umh_topic")
@@ -627,6 +680,199 @@ var _ = Describe("uns_beta all-filtered self-ack loop", Label("uns_beta"), func(
 		Expect(ack).To(BeNil())
 		Expect(inner.acked).To(Equal([]int{0}), "the all-filtered poll was acked before honoring cancellation")
 		Expect(inner.overran).To(BeFalse())
+	})
+})
+
+// Connect probes connectivity via the delegated input's ConnectionTest under a
+// connectProbeTimeout-bounded context (kgo.Ping walks the seed brokers serially,
+// so the local timeout caps the probe regardless of broker count) so an
+// unreachable broker fails fast instead of starting a stream that delivers
+// nothing. These broker-free specs script the probe result to pin the Connect
+// decision deterministically: a failed test propagates, a not-supported test is
+// treated as success (falls back to lazy connect-on-read), and a successful test
+// returns nil. The connectProbeTimeout bound itself is exercised end-to-end
+// against a real closed port in uns_beta_integration_test.go. (ENG-5094 / ENG-5105)
+var _ = Describe("uns_beta Connect connectivity probe", Label("uns_beta"), func() {
+	It("surfaces a failed connection test as a Connect error", func() {
+		probeErr := errors.New("dial tcp 127.0.0.1:1: connect: connection refused")
+		inner := &scriptedInner{connTest: service.ConnectionTestFailed(probeErr).AsList()}
+		i := newUnsBetaInputFor(inner, nil)
+
+		Expect(i.Connect(context.Background())).To(MatchError(probeErr),
+			"Connect must return the unreachable-broker failure instead of starting a stream that delivers nothing")
+	})
+
+	It("returns nil when the delegated input does not support a connection test", func() {
+		inner := &scriptedInner{connTest: service.ConnectionTestNotSupported().AsList()}
+		i := newUnsBetaInputFor(inner, nil)
+
+		Expect(i.Connect(context.Background())).To(Succeed(),
+			"a delegated input that cannot self-test must fall back to lazy connect-on-read, not a hard failure")
+	})
+
+	It("returns nil when the connection test succeeds", func() {
+		inner := &scriptedInner{connTest: service.ConnectionTestSucceeded().AsList()}
+		i := newUnsBetaInputFor(inner, nil)
+
+		Expect(i.Connect(context.Background())).To(Succeed())
+	})
+})
+
+// The per-record drop classification is mutually exclusive and spoof-first: a
+// dropped record carrying a raw "kafka_key" producer header counts as spoofed,
+// a dropped record with an empty/absent key counts as keyless, and any other
+// dropped record (a real keyed record that matched no pattern) counts as
+// filtered. These broker-free specs drive filterAndAlias directly and assert the
+// returned dropTally, pinning the classification ORDER without a broker (the
+// counter increments themselves are pinned end-to-end against a broker in
+// uns_beta_integration_test.go). The spoof-first order is the load-bearing fix:
+// a spoofed kafka_key:"" header overwrites the native key in post-header
+// metadata, so a spoofed record looks keyless via MetaGet — classifying from the
+// raw header slice first keeps it counted as spoofed. (ENG-5094 / ENG-5105)
+var _ = Describe("uns_beta drop classification", Label("uns_beta"), func() {
+	var input *unsBetaInput
+	BeforeEach(func() {
+		// A selective filter so the keyed-but-non-matching record is a real
+		// filtered drop, not a match.
+		filter, err := newBetaKeyFilter([]string{`^umh\.v1\.keep\..+$`})
+		Expect(err).NotTo(HaveOccurred())
+		input = newUnsBetaInputFor(nil, filter)
+	})
+
+	It("classifies a spoofed-header drop as spoofed even when the post-header key is empty", func() {
+		// The spoof header shadows the native key: the delegated input applies
+		// headers after the native fields, so MetaGet("kafka_key") returns the
+		// header's empty value and the record looks keyless. Classifying from the
+		// raw rpcnKafkaHeadersKey slice first keeps it spoofed, not keyless.
+		spoofed := service.NewMessage([]byte(`{"v":1}`))
+		spoofed.MetaSetMut("kafka_key", "") // post-header shadowed value (empty)
+		spoofed.MetaSetMut(rpcnKafkaHeadersKey, []kgo.RecordHeader{
+			{Key: "kafka_key", Value: []byte("")},
+		})
+
+		kept, tally := input.filterAndAlias(service.MessageBatch{spoofed})
+
+		Expect(kept).To(BeEmpty())
+		Expect(tally.spoofed).To(Equal(1), "a raw kafka_key header must classify the drop as spoofed")
+		Expect(tally.keyless).To(Equal(0), "a spoofed record must NOT be counted as keyless")
+		Expect(tally.filtered).To(Equal(0))
+	})
+
+	It("classifies an empty-key drop with no spoof header as keyless", func() {
+		keyless := service.NewMessage([]byte(`{"v":1}`)) // no kafka_key, no headers
+
+		kept, tally := input.filterAndAlias(service.MessageBatch{keyless})
+
+		Expect(kept).To(BeEmpty())
+		Expect(tally.keyless).To(Equal(1))
+		Expect(tally.spoofed).To(Equal(0))
+		Expect(tally.filtered).To(Equal(0))
+	})
+
+	It("classifies a real keyed non-matching drop as filtered", func() {
+		nonMatch := service.NewMessage([]byte(`{"v":1}`))
+		nonMatch.MetaSetMut("kafka_key", "umh.v1.other.topic") // real key, no pattern match
+
+		kept, tally := input.filterAndAlias(service.MessageBatch{nonMatch})
+
+		Expect(kept).To(BeEmpty())
+		Expect(tally.filtered).To(Equal(1))
+		Expect(tally.keyless).To(Equal(0))
+		Expect(tally.spoofed).To(Equal(0))
+	})
+
+	It("counts each class independently across a mixed drop batch and counts kept records nowhere", func() {
+		match := service.NewMessage([]byte(`{"v":1}`))
+		match.MetaSetMut("kafka_key", "umh.v1.keep.a") // delivered, counted nowhere
+		filtered := service.NewMessage([]byte(`{"v":2}`))
+		filtered.MetaSetMut("kafka_key", "umh.v1.drop.b")
+		keyless := service.NewMessage([]byte(`{"v":3}`)) // empty key
+		spoofed := service.NewMessage([]byte(`{"v":4}`))
+		spoofed.MetaSetMut("kafka_key", "")
+		spoofed.MetaSetMut(rpcnKafkaHeadersKey, []kgo.RecordHeader{{Key: "kafka_key", Value: []byte("x")}})
+
+		kept, tally := input.filterAndAlias(service.MessageBatch{match, filtered, keyless, spoofed})
+
+		Expect(kept).To(HaveLen(1), "only the matching record is delivered")
+		Expect(tally.filtered).To(Equal(1))
+		Expect(tally.keyless).To(Equal(1))
+		Expect(tally.spoofed).To(Equal(1))
+	})
+})
+
+// A present-but-wrong-type value under rpcnKafkaHeadersKey means the
+// connect-internal header contract changed, which silently disables spoof
+// classification. uns_beta keeps a one-shot Warn for that (it signals an upstream
+// connect-contract break, NOT a per-record loss). These broker-free specs drive
+// ReadBatch with a scripted inner and assert the Warn fires at most once.
+// (ENG-5094 / ENG-5105)
+var _ = Describe("uns_beta wrong-type header guard", Label("uns_beta"), func() {
+	var filter *betaKeyFilter
+	BeforeEach(func() {
+		var err error
+		// A selective filter so the wrong-type records are DROPPED (the
+		// classification path that consults the raw header slice runs only on
+		// dropped records); the keep.* record on the third poll is delivered.
+		filter, err = newBetaKeyFilter([]string{`^umh\.v1\.keep\..+$`})
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("warns once when the rpcn-headers metadata holds an unexpected type", func() {
+		logger, cap := newCapturingLogger()
+		// A DROPPED record whose rpcnKafkaHeadersKey value is present but NOT a
+		// []kgo.RecordHeader — the connect-internal contract changed. The
+		// classification reads the raw slice and surfaces the wrong type once.
+		// Two such polls confirm the Warn is one-shot. A matching keyed record on
+		// the third lets ReadBatch return.
+		wrongType1 := service.NewMessage([]byte(`{"v":1}`))
+		wrongType1.MetaSetMut("kafka_key", "umh.v1.drop.a")
+		wrongType1.MetaSetMut(rpcnKafkaHeadersKey, "not-a-header-slice")
+		wrongType2 := service.NewMessage([]byte(`{"v":2}`))
+		wrongType2.MetaSetMut("kafka_key", "umh.v1.drop.b")
+		wrongType2.MetaSetMut(rpcnKafkaHeadersKey, 42)
+		inner := &scriptedInner{steps: []scriptedStep{
+			{batch: service.MessageBatch{wrongType1}},
+			{batch: service.MessageBatch{wrongType2}},
+			{batch: keyedBatch("umh.v1.keep.keep")},
+		}}
+		i := newUnsBetaInputFor(inner, filter, withLogger(logger))
+
+		// One ReadBatch call drains both all-filtered wrong-type polls (self-acked
+		// and looped internally) and returns the deliverable keep.* batch. Both
+		// wrong-type records are classified along the way, so the one-shot guard
+		// has seen both yet must have fired exactly once.
+		kept, _, err := i.ReadBatch(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(kept).To(HaveLen(1), "the matching keep.* record on the third poll must be delivered")
+
+		out := cap.contents()
+		Expect(out).To(ContainSubstring("unexpected type"), "a present-but-wrong-type rpcn-headers value must be flagged")
+		Expect(strings.Count(out, "unexpected type")).To(Equal(1), "the wrong-type Warn must be rate-limited to once per input")
+	})
+})
+
+// MC autocomplete shows the `uns_beta` TEMPLATE's summary. This reads the
+// summary off the same schema view the Management Console consumes — the
+// registered `uns_beta` input's FormatJSON `summary` (WalkInputs surfaces the
+// template as a walkable input) — so a future edit that drifts the summary fails
+// loudly. (ENG-5105)
+var _ = Describe("uns_beta template summary", Label("uns_beta"), func() {
+	It("matches the summary MC autocomplete shows", func() {
+		var summary string
+		found := false
+		service.GlobalEnvironment().WalkInputs(func(n string, view *service.ConfigView) {
+			if n != "uns_beta" {
+				return
+			}
+			b, err := view.FormatJSON()
+			Expect(err).NotTo(HaveOccurred())
+			var raw map[string]any
+			Expect(json.Unmarshal(b, &raw)).To(Succeed())
+			summary, _ = raw["summary"].(string)
+			found = true
+		})
+		Expect(found).To(BeTrue(), "uns_beta template was not registered as a walkable input")
+		Expect(summary).To(Equal("Preview of the reliable UNS input; will replace `uns`."))
 	})
 })
 

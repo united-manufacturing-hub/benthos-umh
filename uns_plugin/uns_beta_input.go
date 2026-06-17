@@ -41,14 +41,25 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/twmb/franz-go/pkg/kgo"
 
 	// Registers the official "redpanda" input that uns_beta delegates to.
 	_ "github.com/redpanda-data/connect/v4/public/components/kafka"
 )
+
+// discardLogger is the default logger newUnsBetaInputFor installs when no
+// manager logger is supplied (the unit-test construction path). It drops every
+// line, so ReadBatch/Connect can call i.log unconditionally without a nil-guard
+// and no caller can build an instance that panics on a nil logger — the same
+// always-non-nil discipline matchEverythingFilter gives keyFilter.
+var discardLogger = service.NewLoggerFromSlog(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 // unsBetaReaderConfigSpec is the spec for the internal "uns_beta_reader" core
 // input. It is Deprecated() and undocumented so the Management Console steers
@@ -139,6 +150,17 @@ func (f *betaKeyFilter) matches(key string) bool {
 // pattern and are rejected separately in newUnsBetaReader.
 var legalKafkaTopicName = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,249}$`)
 
+// rpcnKafkaHeadersKey is the metadata key under which the delegated redpanda
+// input stashes the original kgo header slice ([]kgo.RecordHeader, set via
+// MetaSetMut). It is a connect-INTERNAL header name (redpanda Connect's
+// franz_headers.go), not a public contract — a connect upgrade could rename it,
+// which would silently disable the spoofed-key classification (which reads this
+// slice to tell a foreign-producer kafka_key header apart from a genuinely
+// keyless record) and leave the header in place for filterAndAlias to strip.
+// Hoisted to one const so the scan and the strip cannot drift to different
+// literals.
+const rpcnKafkaHeadersKey = "__rpcn_kafka_headers"
+
 func init() {
 	if err := service.RegisterBatchInput("uns_beta_reader", unsBetaReaderConfigSpec(), newUnsBetaReader); err != nil {
 		panic(err)
@@ -151,7 +173,7 @@ func init() {
 // and these top-level fields, so the reject logic here runs on the exact value
 // the inner redpanda input received. Errors here reach the user because the
 // framework — not a noop-logger manager — built the input.
-func newUnsBetaReader(conf *service.ParsedConfig, _ *service.Resources) (service.BatchInput, error) {
+func newUnsBetaReader(conf *service.ParsedConfig, res *service.Resources) (service.BatchInput, error) {
 	// Validate the template-normalized scalars with today's exact reject logic
 	// (and exact error strings). seed_brokers arrives already split/trimmed by
 	// the template's $brokers bloblang, so Go only checks the resulting length.
@@ -214,18 +236,54 @@ func newUnsBetaReader(conf *service.ParsedConfig, _ *service.Resources) (service
 		return nil, err
 	}
 
-	return newUnsBetaInputFor(inner, keyFilter), nil
+	// uns_beta drops-and-commits-past three classes of record. Each gets its own
+	// always-on counter on the outer stream's metrics registry (the
+	// framework-supplied Resources), classified from the RAW key/header per
+	// dropped record, so each loss class is independently observable:
+	//
+	//   - filtered_records     — an INTENDED filter drop: a real keyed record
+	//                            whose key matched no umh_topics pattern.
+	//   - dropped_keyless      — a record with an empty/absent Kafka key.
+	//   - dropped_spoofed_key  — a record carrying a foreign producer header
+	//                            literally named "kafka_key" (shadowing the key).
+	//
+	// The names are bare (no input_uns_beta_ prefix) by benthos convention, like
+	// the framework's input_received. KEPT (delivered) records increment nothing.
+	// Alert signals: see the dropTally comment. (ENG-5094 / ENG-5105)
+	counters := dropCounters{
+		filtered: res.Metrics().NewCounter("filtered_records"),
+		keyless:  res.Metrics().NewCounter("dropped_keyless"),
+		spoofed:  res.Metrics().NewCounter("dropped_spoofed_key"),
+	}
+
+	log := res.Logger()
+	// Startup log line: a deployed uns_beta is otherwise invisible in logs (the
+	// delegated redpanda input logs under its own path). Logging the broker /
+	// consumer_group / kafka_topic at construction lets an operator confirm from
+	// the logs which broker an instance is wired to. (ENG-5094 / ENG-5105)
+	log.With(
+		"broker_address", strings.Join(seedBrokers, ","),
+		"consumer_group", consumerGroup,
+		"kafka_topic", kafkaTopic,
+	).Info("uns_beta input starting")
+
+	return newUnsBetaInputFor(inner, keyFilter, withLogger(log), withDropCounters(counters)), nil
 }
 
 // readBatcher is the part of *service.OwnedInput that unsBetaInput drives: a
-// batch read and a close. Typing the field as an interface (rather than the
-// concrete *service.OwnedInput) lets the unit tests substitute a fake that
-// scripts ReadBatch return sequences, so the self-ack loop can be exercised
-// deterministically without a broker. *service.OwnedInput satisfies it.
+// batch read, a connectivity probe, and a close. Typing the field as an
+// interface (rather than the concrete *service.OwnedInput) lets the unit tests
+// substitute a fake that scripts ReadBatch return sequences, so the self-ack
+// loop can be exercised deterministically without a broker.
+// *service.OwnedInput satisfies it.
 //
-// A connectivity-test method is added when the reconnect logic lands.
+// ConnectionTest is the connectivity probe Connect runs: it lets the adapter
+// fail fast on an unreachable broker instead of starting a stream that delivers
+// nothing. *service.OwnedInput's ConnectionTest delegates to the inner redpanda
+// input, which pings the brokers. (ENG-5094 / ENG-5105)
 type readBatcher interface {
 	ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error)
+	ConnectionTest(ctx context.Context) service.ConnectionTestResults
 	Close(ctx context.Context) error
 }
 
@@ -245,16 +303,50 @@ func mustBetaKeyFilter(patterns []string) *betaKeyFilter {
 // (matches requires key != ""), so the keyless-drop contract holds.
 var matchEverythingFilter = mustBetaKeyFilter([]string{".*"})
 
+// dropCounters holds the three per-class drop counters. Any field may be nil:
+// *service.MetricCounter treats a nil receiver as a no-op Incr, so unit-test
+// paths that build the input without a metrics registry leave them nil.
+type dropCounters struct {
+	filtered *service.MetricCounter // INTENDED filter drop (real keyed, no pattern match)
+	keyless  *service.MetricCounter // empty/absent Kafka key
+	spoofed  *service.MetricCounter // foreign "kafka_key" producer header present
+}
+
+// unsBetaOption configures an unsBetaInput at construction. The defaults
+// (match-everything filter, discard logger, nil-as-noop counters) keep every
+// field safe to use unconditionally; an option overrides one of them.
+type unsBetaOption func(*unsBetaInput)
+
+// withLogger routes the input's startup line, Connect failure and the one-shot
+// wrong-type header guard to l. newUnsBetaReader passes the outer stream's
+// logger; the Connect specs pass a capturing logger so they can observe the
+// emitted lines.
+func withLogger(l *service.Logger) unsBetaOption {
+	return func(i *unsBetaInput) { i.log = l }
+}
+
+// withDropCounters routes the per-class drop counts to the supplied counters.
+// newUnsBetaReader passes the three outer-stream metrics counters.
+func withDropCounters(c dropCounters) unsBetaOption {
+	return func(i *unsBetaInput) { i.counters = c }
+}
+
 // newUnsBetaInputFor builds the adapter from an already-constructed delegated
 // reader and compiled key filter. A nil keyFilter defaults to the
-// match-everything [".*"] filter, so the unsBetaInput.keyFilter field is never
-// nil and ReadBatch can call i.keyFilter.matches unconditionally — no caller
-// (production or test) can build an instance that panics on a nil filter.
-func newUnsBetaInputFor(inner readBatcher, keyFilter *betaKeyFilter) *unsBetaInput {
+// match-everything [".*"] filter and the logger defaults to a discard logger, so
+// the keyFilter and log fields are never nil and ReadBatch/Connect can use them
+// unconditionally — no caller (production or test) can build an instance that
+// panics on a nil filter or logger. The filtered counter defaults to nil, which
+// *service.MetricCounter treats as a no-op Incr.
+func newUnsBetaInputFor(inner readBatcher, keyFilter *betaKeyFilter, opts ...unsBetaOption) *unsBetaInput {
 	if keyFilter == nil {
 		keyFilter = matchEverythingFilter
 	}
-	return &unsBetaInput{inner: inner, keyFilter: keyFilter}
+	i := &unsBetaInput{inner: inner, keyFilter: keyFilter, log: discardLogger}
+	for _, opt := range opts {
+		opt(i)
+	}
+	return i
 }
 
 // unsBetaInput adapts the delegated input (which manages its own connectivity)
@@ -265,12 +357,139 @@ type unsBetaInput struct {
 	// keyFilter is the compiled umh_topics filter; always non-nil (the field
 	// defaults to [".*"], which delivers every keyed record).
 	keyFilter *betaKeyFilter
+	// counters holds the three per-class drop counters (filtered / keyless /
+	// spoofed). Each is a nil-safe no-op Incr when the field is nil, so unit-test
+	// paths that build the input without a metrics registry leave them unset.
+	counters dropCounters
+	// log is the logger for the startup line, the Connect probe failure, and the
+	// one-shot wrong-type header guard. Never nil: newUnsBetaInputFor defaults it
+	// to a discard logger, so callers use it unconditionally.
+	log *service.Logger
+	// headerTypeWarned guards the one-shot Warn for a present-but-wrong-type
+	// rpcnKafkaHeadersKey value (a changed connect-internal contract). One per
+	// input, not per record.
+	headerTypeWarned bool
 }
 
-// Connect is a no-op: the delegated OwnedInput connects lazily on first
-// ReadBatch.
-func (i *unsBetaInput) Connect(context.Context) error {
+// connectProbeTimeout bounds the Connect connectivity probe. The delegated
+// redpanda input's ConnectionTest pings the seed brokers via kgo.Ping, which
+// iterates ALL seed brokers serially — against black-holed (silently dropped,
+// not refused) brokers each ping blocks until its own dial timeout, so the total
+// is additive in the broker count and otherwise bounded only by the framework
+// ctx. 10s caps the whole probe at a value short enough that a failed Connect
+// surfaces promptly (the AsyncReader retries Connect on its own cadence) yet long
+// enough to tolerate a slow-but-reachable broker handshake.
+const connectProbeTimeout = 10 * time.Second
+
+// Connect probes broker connectivity and fails fast on an unreachable broker
+// rather than starting a stream that delivers no records and logs no error. It
+// runs the delegated input's ConnectionTest (a broker ping) under a
+// connectProbeTimeout-bounded context and returns any failure. The delegated
+// OwnedInput still connects lazily for actual consumption on first ReadBatch —
+// this probe only gates Connect on reachability.
+//
+// The probe is bounded by connectProbeTimeout (not just the framework ctx)
+// because kgo.Ping walks the seed brokers serially: against black-holed brokers
+// the latency is additive, so an unbounded probe could hang far longer than a
+// single dial timeout. The local timeout caps the whole probe regardless of
+// broker count.
+//
+// A test that returns ErrConnectionTestNotSupported is treated as success: a
+// delegated input that cannot self-test must not be downgraded to a hard
+// failure (it falls back to lazy connect-on-read).
+//
+// The probe error is returned, not logged here: the framework's AsyncReader
+// logs a failed Connect on every retry, so a plugin-level log line would double
+// every retry's output during the exact outage this probe exists to surface.
+func (i *unsBetaInput) Connect(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, connectProbeTimeout)
+	defer cancel()
+	for _, res := range i.inner.ConnectionTest(ctx) {
+		if res.Err == nil || errors.Is(res.Err, service.ErrConnectionTestNotSupported) {
+			continue
+		}
+		return res.Err
+	}
 	return nil
+}
+
+// dropTally is the per-class count of records DROPPED in one filterAndAlias
+// pass. Each dropped record falls into exactly one class (the classification is
+// mutually exclusive, spoof-first); KEPT records are counted nowhere. ReadBatch
+// folds these into the three always-on counters.
+//
+// Alert signals (the three counters are independent, so each loss class is
+// distinguishable — the gap the old single filtered_records counter could not
+// tell apart):
+//   - dropped_keyless / dropped_spoofed_key climbing = a foreign or misconfigured
+//     producer (records with no Kafka key, or a producer header literally named
+//     "kafka_key" shadowing the native key).
+//   - filtered_records climbing while delivery (input_received) stays flat — the
+//     ratio filtered/(filtered+delivered) trending to 1 — = a umh_topics regex
+//     that ate the topic. (input_received counts only DELIVERED records, so a
+//     total drain makes the two DIVERGE, never converge.)
+type dropTally struct {
+	filtered int // real keyed record, matched no umh_topics pattern
+	keyless  int // empty/absent Kafka key (and no kafka_key spoof header)
+	spoofed  int // foreign producer header named "kafka_key" present
+}
+
+// hasSpoofHeader reports whether the record carries a foreign producer header
+// literally named "kafka_key" in the raw kgo header slice the delegated input
+// stashed under rpcnKafkaHeadersKey. Such a header shadows the real record key
+// before the umh_topics filter and the aliases run (the delegated input applies
+// headers after the native fields), so the WRONG records are
+// dropped-and-committed-past, or a keyless record is delivered with a forged
+// umh_topic. Recovering the shadowed real key is not possible at this layer and
+// is deferred to ENG-5125; this is classification-only.
+//
+// The match is on the header KEY name, never its value: the value is irrelevant
+// to the anomaly. The raw slice is a typed []kgo.RecordHeader (set via
+// MetaSetMut), so it is read with MetaGetMut — MetaGet would return the string
+// rendering, not the slice. This MUST run BEFORE filterAndAlias deletes the key.
+//
+// A present-but-wrong-type value means the connect-internal header contract
+// (rpcnKafkaHeadersKey) likely changed, which silently disables spoof
+// classification. That is a programmer/version error, not record data, so it is
+// surfaced once via the headerTypeWarned one-shot guard (NOT per record); the
+// record is then treated as carrying no spoof header.
+func (i *unsBetaInput) hasSpoofHeader(msg *service.Message) bool {
+	raw, ok := msg.MetaGetMut(rpcnKafkaHeadersKey)
+	if !ok {
+		return false
+	}
+	headers, ok := raw.([]kgo.RecordHeader)
+	if !ok {
+		if !i.headerTypeWarned {
+			i.log.Warn("uns_beta found metadata key " + rpcnKafkaHeadersKey + " holding an unexpected type (not []kgo.RecordHeader); the redpanda Connect internal header contract likely changed and kafka_key-spoof classification is now disabled.")
+			i.headerTypeWarned = true
+		}
+		return false
+	}
+	for _, h := range headers {
+		if h.Key == "kafka_key" {
+			return true
+		}
+	}
+	return false
+}
+
+// classifyDrop assigns a DROPPED record to exactly one loss class, spoof FIRST.
+// Order matters: a spoofed kafka_key:"" header overwrites the native key in
+// post-header metadata, so a spoofed record looks keyless when read via the
+// post-header MetaGet("kafka_key") value (the `key` argument). Checking the raw
+// header slice first ensures a spoofed record counts as spoofed, NOT keyless.
+// The keyless-vs-spoof decision is taken from the raw header slice + the
+// post-header key, never inferred from the (already-shadowed) MetaGet value alone.
+func (i *unsBetaInput) classifyDrop(msg *service.Message, key string, t *dropTally) {
+	switch {
+	case i.hasSpoofHeader(msg):
+		t.spoofed++
+	case key == "":
+		t.keyless++
+	default:
+		t.filtered++
+	}
 }
 
 // filterAndAlias applies the umh_topics filter to a delegated poll and stamps
@@ -296,11 +515,23 @@ func (i *unsBetaInput) Connect(context.Context) error {
 // auto_replay_nacks: the batch is a shallow copy and MetaSetMut/MetaDelete
 // clone the metadata map before writing, so the snapshot the retry list
 // replays on NACK is untouched. Only store immutable values (key is a string).
-func filterAndAlias(batch service.MessageBatch, f *betaKeyFilter) service.MessageBatch {
+//
+// It also classifies every DROPPED record into a dropTally (filtered / keyless
+// / spoofed), reading the raw key + header slice per record so the three
+// always-on counters are distinguishable. Classification is spoof-first (see
+// classifyDrop) and reads the raw rpcnKafkaHeadersKey slice, which is still
+// present on dropped records here (the strip below runs only on KEPT records).
+// The filter/alias/strip behavior is unchanged from the prior free function;
+// only the per-class tally is added.
+func (i *unsBetaInput) filterAndAlias(batch service.MessageBatch) (service.MessageBatch, dropTally) {
 	kept := make(service.MessageBatch, 0, len(batch))
+	var tally dropTally
 	for _, msg := range batch {
 		key, _ := msg.MetaGet("kafka_key")
-		if !f.matches(key) {
+		if !i.keyFilter.matches(key) {
+			// Dropped: classify the loss class from the raw key/header (spoof
+			// first), before any strip. KEPT records are counted nowhere.
+			i.classifyDrop(msg, key, &tally)
 			continue
 		}
 		// The filter guarantees a non-empty matching key here, so the
@@ -308,13 +539,13 @@ func filterAndAlias(batch service.MessageBatch, f *betaKeyFilter) service.Messag
 		msg.MetaSetMut("umh_topic", key)
 		msg.MetaSetMut("kafka_msg_key", key)
 		// The delegated input stores the original kgo header slice under
-		// __rpcn_kafka_headers; left in place it round-trips into
-		// downstream Kafka headers and compounds per hop through the uns
-		// output, so it is stripped here.
-		msg.MetaDelete("__rpcn_kafka_headers")
+		// rpcnKafkaHeadersKey; left in place it round-trips into downstream
+		// Kafka headers and compounds per hop through the uns output, so it is
+		// stripped here.
+		msg.MetaDelete(rpcnKafkaHeadersKey)
 		kept = append(kept, msg)
 	}
-	return kept
+	return kept, tally
 }
 
 func (i *unsBetaInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
@@ -327,7 +558,22 @@ func (i *unsBetaInput) ReadBatch(ctx context.Context) (service.MessageBatch, ser
 			// never touch it.
 			return batch, ack, err
 		}
-		kept := filterAndAlias(batch, i.keyFilter)
+		// filterAndAlias keeps the matching records and classifies every dropped
+		// record into the per-class tally (reading the raw kafka_key/header
+		// BEFORE the strip; spoof-first so a shadowed key counts as spoofed, not
+		// keyless). Fold the tally into the three always-on counters — each Incr
+		// is a nil-safe no-op when the counter is unset (unit-test paths).
+		// (ENG-5094 / ENG-5105)
+		kept, tally := i.filterAndAlias(batch)
+		if tally.filtered > 0 {
+			i.counters.filtered.Incr(int64(tally.filtered))
+		}
+		if tally.keyless > 0 {
+			i.counters.keyless.Incr(int64(tally.keyless))
+		}
+		if tally.spoofed > 0 {
+			i.counters.spoofed.Incr(int64(tally.spoofed))
+		}
 		if len(kept) > 0 {
 			return kept, ack, nil
 		}

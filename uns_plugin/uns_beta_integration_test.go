@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -165,8 +166,8 @@ uns_beta:
 					v, _ := msg.MetaGet(k)
 					m[k] = v
 				}
-				if _, ok := msg.MetaGet("__rpcn_kafka_headers"); ok {
-					m["__rpcn_kafka_headers"] = "present"
+				if _, ok := msg.MetaGet(rpcnKafkaHeadersKey); ok {
+					m[rpcnKafkaHeadersKey] = "present"
 				}
 				seen[string(bs)] = m
 			}
@@ -196,8 +197,8 @@ uns_beta:
 		Expect(m1["h-multi"]).To(Equal("hello"), "record headers must pass through as metadata")
 		// The delegated input's raw kgo header slice must not leak downstream:
 		// the uns output copies metadata into Kafka headers, so a surviving
-		// __rpcn_kafka_headers would compound per hop.
-		Expect(m1).NotTo(HaveKey("__rpcn_kafka_headers"), "__rpcn_kafka_headers must be stripped before delivery")
+		// rpcnKafkaHeadersKey value would compound per hop.
+		Expect(m1).NotTo(HaveKey(rpcnKafkaHeadersKey), rpcnKafkaHeadersKey+" must be stripped before delivery")
 
 		Expect(m2["umh_topic"]).To(Equal(key2), "umh_topic must alias the record's own key")
 		Expect(m2["kafka_msg_key"]).To(Equal(key2), "kafka_msg_key must alias the record's own key")
@@ -778,14 +779,96 @@ uns_beta:
 	})
 })
 
+// closedLocalPort binds a loopback listener to grab an OS-assigned port, then
+// closes it — the returned "127.0.0.1:PORT" is a port nothing is listening on,
+// so a dial against it is refused (a guaranteed-closed port, not merely an
+// "unlikely to be open" one).
+func closedLocalPort(t testingT) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve closed port: %v", err)
+	}
+	addr := l.Addr().String()
+	if err := l.Close(); err != nil {
+		t.Fatalf("close reserved port: %v", err)
+	}
+	return addr
+}
+
+// Connect must FAIL FAST against an unreachable broker rather than starting a
+// stream that delivers nothing. The broker-free unit specs (uns_beta_input_test.go)
+// fabricate the ConnectionTest result; this spec exercises the REAL probe path —
+// it builds a uns_beta_reader against a closed localhost port and asserts the
+// production Connect (delegated FranzReaderUnordered.ConnectionTest → kgo ping)
+// returns a non-nil error, bounded by connectProbeTimeout (F2). The redpanda
+// input is built on a real manager via ConfigSpec.ParseYAML, so this is the same
+// inner OwnedInput.ConnectionTest the deployed input runs, not a fake.
+// (ENG-5094 / ENG-5105)
+var _ = Describe("uns_beta Connect against an unreachable broker", Label("uns_beta"), func() {
+	It("returns a Connect error within the connect-probe bound", func() {
+		addr := closedLocalPort(GinkgoT())
+
+		// Build the uns_beta_reader directly so Connect can be called on the real
+		// input. The nested redpanda block mirrors what the uns_beta template
+		// renders (uns_beta_template.yaml) for the closed-port broker; the
+		// top-level normalized scalars match it by construction, as the template
+		// guarantees. ParseYAML builds the inner redpanda input on a real manager,
+		// so its ConnectionTest is the production ping.
+		readerYAML := `
+input:
+  redpanda:
+    seed_brokers: ["` + addr + `"]
+    topics: ["umh.messages"]
+    consumer_group: "uns-beta-unreachable"
+    start_offset: "earliest"
+seed_brokers: ["` + addr + `"]
+consumer_group: "uns-beta-unreachable"
+kafka_topic: "umh.messages"
+umh_topics: [".*"]
+`
+		pConf, err := unsBetaReaderConfigSpec().ParseYAML(readerYAML, service.GlobalEnvironment())
+		Expect(err).NotTo(HaveOccurred(), "the reader config must parse")
+
+		input, err := newUnsBetaReader(pConf, service.MockResources())
+		Expect(err).NotTo(HaveOccurred(), "the reader must construct against a (closed) broker")
+		defer func() {
+			// The connectivity probe spins up the inner redpanda reader, whose
+			// retry loop keeps dialing the closed port; OwnedInput.Close waits for
+			// that reader to stop and would otherwise block the spec. Bound the
+			// close — a leaked dial goroutine after the deadline is acceptable in
+			// this no-goleak suite; the assertion below is what the spec pins.
+			closeCtx, closeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer closeCancel()
+			_ = input.Close(closeCtx)
+		}()
+
+		// Run Connect off the spec goroutine so a HUNG probe (the bug F2 guards)
+		// trips the Eventually deadline and fails loudly, while a correctly bounded
+		// probe returns its refusal error well inside connectProbeTimeout.
+		done := make(chan error, 1)
+		go func() { done <- input.Connect(context.Background()) }()
+
+		var connErr error
+		Eventually(done, connectProbeTimeout+5*time.Second, 50*time.Millisecond).
+			Should(Receive(&connErr), "Connect must return within the connect-probe bound, not hang")
+		Expect(connErr).To(HaveOccurred(),
+			"Connect against a closed port must surface a real connection error, not start a stream that delivers nothing")
+	})
+})
+
 // capturingMetricsExporter is a service.MetricsExporter that records the NAME
-// of every metric the framework asks it to create into a mutex-guarded set,
-// returning no-op metric instances (mirroring benthos's own mockMetricsExporter
-// in public/service/metrics_test.go). It lets a test assert that a specific
-// metric NAME reached the OUTER stream's metrics registry.
+// of every metric the framework asks it to create, AND accumulates the summed
+// Incr of every counter keyed by name, into mutex-guarded maps (mirroring
+// benthos's own mockMetricsExporter in public/service/metrics_test.go). It lets
+// a test assert both that a metric NAME reached the OUTER stream's metrics
+// registry and, for counters, the VALUE that was incremented — so a counter
+// that is named but never incremented (or incremented by the wrong amount) is
+// caught, not passed.
 type capturingMetricsExporter struct {
-	mu    sync.Mutex
-	names map[string]bool
+	mu     sync.Mutex
+	names  map[string]bool
+	counts map[string]int64
 }
 
 func (c *capturingMetricsExporter) record(name string) {
@@ -802,9 +885,36 @@ func (c *capturingMetricsExporter) registered(name string) bool {
 	return c.names[name]
 }
 
+// counterValue returns the summed Incr of the named counter (0 if the counter
+// was never created or never incremented).
+func (c *capturingMetricsExporter) counterValue(name string) int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.counts[name]
+}
+
+// reset clears the recorded names and counter values. The capturer is a
+// process-global singleton (RegisterMetricsExporter is process-wide), so a spec
+// that asserts a counter value must reset first or it would observe increments
+// leaked from a prior spec.
+func (c *capturingMetricsExporter) reset() {
+	c.mu.Lock()
+	c.names = map[string]bool{}
+	c.counts = map[string]int64{}
+	c.mu.Unlock()
+}
+
+func (c *capturingMetricsExporter) addCount(name string, delta int64) {
+	c.mu.Lock()
+	c.counts[name] += delta
+	c.mu.Unlock()
+}
+
 func (c *capturingMetricsExporter) NewCounterCtor(name string, _ ...string) service.MetricsExporterCounterCtor {
 	c.record(name)
-	return func(_ ...string) service.MetricsExporterCounter { return noopMetric{} }
+	return func(_ ...string) service.MetricsExporterCounter {
+		return &accumulatingCounter{exporter: c, name: name}
+	}
 }
 
 func (c *capturingMetricsExporter) NewTimerCtor(name string, _ ...string) service.MetricsExporterTimerCtor {
@@ -819,15 +929,23 @@ func (c *capturingMetricsExporter) NewGaugeCtor(name string, _ ...string) servic
 
 func (c *capturingMetricsExporter) Close(context.Context) error { return nil }
 
-// noopMetric satisfies the counter/timer/gauge metric interfaces; the test only
-// cares that the metric was CREATED (its name recorded), not its value.
+// accumulatingCounter is a counter metric instance that sums every Incr into the
+// exporter's per-name total, so a spec can assert the incremented value (not just
+// that the counter was created).
+type accumulatingCounter struct {
+	exporter *capturingMetricsExporter
+	name     string
+}
+
+func (a *accumulatingCounter) Incr(v int64)          { a.exporter.addCount(a.name, v) }
+func (a *accumulatingCounter) IncrFloat64(v float64) { a.exporter.addCount(a.name, int64(v)) }
+
+// noopMetric satisfies the timer and gauge metric interfaces; those specs only
+// care that the metric was CREATED (its name recorded), not its value.
 type noopMetric struct{}
 
-func (noopMetric) Incr(int64)          {}
-func (noopMetric) IncrFloat64(float64) {}
-func (noopMetric) Timing(int64)        {}
-func (noopMetric) Set(int64)           {}
-func (noopMetric) SetFloat64(float64)  {}
+func (noopMetric) Timing(int64) {}
+func (noopMetric) Set(int64)    {}
 
 // captureExporterName is the metrics-exporter plugin name the test selects via
 // SetMetricsYAML. RegisterMetricsExporter is process-global and errors if the
@@ -837,7 +955,7 @@ func (noopMetric) SetFloat64(float64)  {}
 const captureExporterName = "uns_beta_test_capture"
 
 var (
-	captureExporter     = &capturingMetricsExporter{names: map[string]bool{}}
+	captureExporter     = &capturingMetricsExporter{names: map[string]bool{}, counts: map[string]int64{}}
 	captureExporterOnce sync.Once
 )
 
@@ -934,6 +1052,311 @@ uns_beta:
 			return captureExporter.registered("redpanda_lag")
 		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
 			Should(BeTrue(), "the inner redpanda input's redpanda_lag gauge never reached the outer stream's metrics registry — the inner input is being built on a detached/noop manager (the pre-restructure construction)")
+	})
+})
+
+// Dropped records must be observable. uns_beta drops records on two paths — the
+// per-record umh_topics filter (mixed batch) and the all-filtered self-ack poll.
+// The filtered_records counter on the outer stream's metrics
+// registry is incremented by the number of records dropped each poll. This spec
+// drives an all-filtered poll of 3 non-matching records and asserts the counter
+// value reaches the outer-attached capturer. (ENG-5094 / ENG-5105)
+var _ = Describe("uns_beta filtered_records counter", Label("uns_beta"), func() {
+	It("increments the filtered-records counter on the outer stream's metrics registry by the number of dropped records", func() {
+		registerCaptureExporter()
+		// The capturer is a process-global singleton; reset so the counter value
+		// asserted below reflects only this spec's drops, not increments leaked
+		// from a prior spec.
+		captureExporter.reset()
+
+		addr := startBroker(GinkgoT())
+		const group = "uns-beta-filtered-counter"
+		// An all-filtered poll: none of these keys match the select-1 filter
+		// below, so every record is dropped and self-acked.
+		produce(GinkgoT(), addr,
+			rec("umh.v1.acme.berlin.temp", `{"v":0}`),
+			rec("umh.v1.acme.munich.temp", `{"v":1}`),
+			rec("umh.v1.acme.hamburg.temp", `{"v":2}`))
+
+		sb := service.NewStreamBuilder()
+		Expect(sb.AddInputYAML(`
+uns_beta:
+  broker_address: "` + addr + `"
+  consumer_group: "` + group + `"
+  umh_topics:
+    - "^only-this$"
+`)).To(Succeed())
+		Expect(sb.SetMetricsYAML(captureExporterName + ": {}")).To(Succeed())
+
+		Expect(sb.AddBatchConsumerFunc(func(_ context.Context, _ service.MessageBatch) error {
+			return nil
+		})).To(Succeed())
+
+		stream, err := sb.Build()
+		Expect(err).NotTo(HaveOccurred())
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		var runErr error // written before close(done), read after <-done
+		go func() { defer close(done); runErr = stream.Run(ctx) }()
+		defer func() {
+			cancel()
+			<-done
+			if runErr != nil && !errors.Is(runErr, context.Canceled) {
+				Fail("stream run: " + runErr.Error())
+			}
+		}()
+
+		// The filtered_records counter on the outer-attached
+		// capturer must be incremented by exactly the 3 dropped records. Asserting
+		// the VALUE (not just that the counter was created) pins the increment
+		// path: deleting the Incr, or miscomputing the dropped count, leaves the
+		// counter at 0 and fails here — whereas a name-only assertion would pass
+		// the instant the counter is constructed.
+		Eventually(func() int64 {
+			return captureExporter.counterValue("filtered_records")
+		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
+			Should(Equal(int64(3)), "the filtered-records counter did not reach the dropped-record count on the outer stream's metrics registry — dropped records are unobservable")
+
+		// The 3 records are self-acked once, so the offset commits past them and
+		// they are never re-delivered: the count must settle at exactly 3, not
+		// keep climbing from re-polls.
+		Consistently(func() int64 {
+			return captureExporter.counterValue("filtered_records")
+		}).WithTimeout(2*time.Second).WithPolling(200*time.Millisecond).
+			Should(Equal(int64(3)), "the filtered-records counter over-counted — the same dropped records were counted more than once")
+	})
+
+	// A MIXED batch: N matching + M non-matching keyed records under a select-some
+	// filter. filtered_records must count exactly the M dropped records, NOT the
+	// whole batch (N+M). The all-filtered counter spec above cannot catch a mutant
+	// that increments by the total batch size — there len(batch)-len(kept) ==
+	// len(batch) — so this spec is the one that kills it. The N matching records
+	// must be delivered, and dropped_keyless / dropped_spoofed_key must stay 0
+	// (every dropped record here is a real keyed filter drop). (ENG-5094 / ENG-5105)
+	It("counts only the dropped records (M), not the whole mixed batch (N+M), and leaves keyless/spoofed at 0", func() {
+		registerCaptureExporter()
+		captureExporter.reset()
+
+		addr := startBroker(GinkgoT())
+		const group = "uns-beta-mixed-counter"
+		// N=2 matching (umh.v1.keep.*) + M=3 non-matching, all keyed.
+		produce(GinkgoT(), addr,
+			rec("umh.v1.keep.alpha", `{"v":0}`),   // delivered
+			rec("umh.v1.drop.beta", `{"v":1}`),    // filtered
+			rec("umh.v1.keep.gamma", `{"v":2}`),   // delivered
+			rec("umh.v1.drop.delta", `{"v":3}`),   // filtered
+			rec("umh.v1.drop.epsilon", `{"v":4}`)) // filtered
+		const wantDelivered = 2
+		const wantFiltered = 3
+
+		var mu sync.Mutex
+		var delivered int
+		sb := service.NewStreamBuilder()
+		Expect(sb.AddInputYAML(`
+uns_beta:
+  broker_address: "` + addr + `"
+  consumer_group: "` + group + `"
+  umh_topics:
+    - "^umh\\.v1\\.keep\\..+$"
+`)).To(Succeed())
+		Expect(sb.SetMetricsYAML(captureExporterName + ": {}")).To(Succeed())
+		Expect(sb.AddBatchConsumerFunc(func(_ context.Context, b service.MessageBatch) error {
+			mu.Lock()
+			delivered += len(b)
+			mu.Unlock()
+			return nil
+		})).To(Succeed())
+
+		stream, err := sb.Build()
+		Expect(err).NotTo(HaveOccurred())
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		var runErr error
+		go func() { defer close(done); runErr = stream.Run(ctx) }()
+		defer func() {
+			cancel()
+			<-done
+			if runErr != nil && !errors.Is(runErr, context.Canceled) {
+				Fail("stream run: " + runErr.Error())
+			}
+		}()
+
+		// The 2 matching records must be delivered.
+		Eventually(func() int {
+			mu.Lock()
+			defer mu.Unlock()
+			return delivered
+		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
+			Should(Equal(wantDelivered), "the matching records must be delivered")
+
+		// filtered_records must reach exactly M (the dropped subset), not N+M.
+		Eventually(func() int64 {
+			return captureExporter.counterValue("filtered_records")
+		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
+			Should(Equal(int64(wantFiltered)), "filtered_records must count only the M dropped records, not the whole batch")
+
+		// And it must SETTLE at M — a mutant incrementing by the whole batch size
+		// would show N+M here.
+		Consistently(func() int64 {
+			return captureExporter.counterValue("filtered_records")
+		}).WithTimeout(2*time.Second).WithPolling(200*time.Millisecond).
+			Should(Equal(int64(wantFiltered)), "filtered_records over- or under-counted the mixed batch")
+
+		// Every dropped record carried a real key and no spoof header, so the
+		// keyless / spoofed classes stay at 0.
+		Expect(captureExporter.counterValue("dropped_keyless")).To(Equal(int64(0)),
+			"a real keyed filter drop must not count as keyless")
+		Expect(captureExporter.counterValue("dropped_spoofed_key")).To(Equal(int64(0)),
+			"a real keyed filter drop must not count as spoofed")
+	})
+})
+
+// dropped_keyless counts records with an empty/absent Kafka key, which never
+// match any umh_topics pattern and are dropped-and-committed-past. This spec
+// produces a keyless record against the broker (a nil-key kgo.Record) and asserts
+// the dropped_keyless counter on the outer stream's metrics registry reaches it —
+// the always-on replacement for the removed one-shot keyless Warn. (ENG-5094 /
+// ENG-5105)
+var _ = Describe("uns_beta dropped_keyless counter", Label("uns_beta"), func() {
+	It("increments dropped_keyless for a record with no Kafka key", func() {
+		registerCaptureExporter()
+		captureExporter.reset()
+
+		addr := startBroker(GinkgoT())
+		const group = "uns-beta-keyless-counter"
+		// A keyless record: nil key. It never matches any pattern, so it is
+		// dropped-and-self-acked. A keyed matching record gives the stream
+		// something to deliver so the poll goroutine stays live.
+		produce(GinkgoT(), addr,
+			&kgo.Record{Key: nil, Value: []byte(`{"v":0}`)},
+			rec("umh.v1.keep.live", `{"v":1}`))
+
+		var mu sync.Mutex
+		var delivered int
+		sb := service.NewStreamBuilder()
+		Expect(sb.AddInputYAML(`
+uns_beta:
+  broker_address: "` + addr + `"
+  consumer_group: "` + group + `"
+  umh_topics:
+    - "^umh\\.v1\\.keep\\..+$"
+`)).To(Succeed())
+		Expect(sb.SetMetricsYAML(captureExporterName + ": {}")).To(Succeed())
+		Expect(sb.AddBatchConsumerFunc(func(_ context.Context, b service.MessageBatch) error {
+			mu.Lock()
+			delivered += len(b)
+			mu.Unlock()
+			return nil
+		})).To(Succeed())
+
+		stream, err := sb.Build()
+		Expect(err).NotTo(HaveOccurred())
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		var runErr error
+		go func() { defer close(done); runErr = stream.Run(ctx) }()
+		defer func() {
+			cancel()
+			<-done
+			if runErr != nil && !errors.Is(runErr, context.Canceled) {
+				Fail("stream run: " + runErr.Error())
+			}
+		}()
+
+		Eventually(func() int64 {
+			return captureExporter.counterValue("dropped_keyless")
+		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
+			Should(Equal(int64(1)), "the keyless drop must increment dropped_keyless on the outer stream's metrics registry")
+
+		// The keyless record carried a real (absent) key, not a spoof header, and
+		// the keyed record was delivered, not filtered.
+		Expect(captureExporter.counterValue("dropped_spoofed_key")).To(Equal(int64(0)),
+			"a keyless record must not count as spoofed")
+		Expect(captureExporter.counterValue("filtered_records")).To(Equal(int64(0)),
+			"a keyless record must not count as a filtered (real-keyed) drop")
+		mu.Lock()
+		Expect(delivered).To(Equal(1), "the keyed matching record must be delivered")
+		mu.Unlock()
+	})
+})
+
+// dropped_spoofed_key counts records carrying a foreign producer header literally
+// named "kafka_key" — the header shadows the native key in the delegated input's
+// post-header metadata, so the record is dropped (or delivered with a forged
+// umh_topic). This spec produces a non-matching record carrying that header and
+// asserts the dropped_spoofed_key counter reaches it — the always-on replacement
+// for the removed one-shot spoof Warn. The spoof classification reads the raw
+// header slice (rpcnKafkaHeadersKey), so a spoofed record counts as spoofed even
+// though its post-header key is the shadowing value. (ENG-5094 / ENG-5105)
+var _ = Describe("uns_beta dropped_spoofed_key counter", Label("uns_beta"), func() {
+	It("increments dropped_spoofed_key for a record carrying a kafka_key producer header", func() {
+		registerCaptureExporter()
+		captureExporter.reset()
+
+		addr := startBroker(GinkgoT())
+		const group = "uns-beta-spoofed-counter"
+		// A record whose NATIVE key does not match, carrying a foreign "kafka_key"
+		// header (also non-matching). It is dropped-and-self-acked; the raw header
+		// slice classifies it as spoofed. A keyed matching record keeps the stream
+		// delivering.
+		produce(GinkgoT(), addr,
+			&kgo.Record{
+				Key:     []byte("umh.v1.drop.native"),
+				Value:   []byte(`{"v":0}`),
+				Headers: []kgo.RecordHeader{{Key: "kafka_key", Value: []byte("umh.v1.drop.spoofed")}},
+			},
+			rec("umh.v1.keep.live", `{"v":1}`))
+
+		var mu sync.Mutex
+		var delivered int
+		sb := service.NewStreamBuilder()
+		Expect(sb.AddInputYAML(`
+uns_beta:
+  broker_address: "` + addr + `"
+  consumer_group: "` + group + `"
+  umh_topics:
+    - "^umh\\.v1\\.keep\\..+$"
+`)).To(Succeed())
+		Expect(sb.SetMetricsYAML(captureExporterName + ": {}")).To(Succeed())
+		Expect(sb.AddBatchConsumerFunc(func(_ context.Context, b service.MessageBatch) error {
+			mu.Lock()
+			delivered += len(b)
+			mu.Unlock()
+			return nil
+		})).To(Succeed())
+
+		stream, err := sb.Build()
+		Expect(err).NotTo(HaveOccurred())
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		var runErr error
+		go func() { defer close(done); runErr = stream.Run(ctx) }()
+		defer func() {
+			cancel()
+			<-done
+			if runErr != nil && !errors.Is(runErr, context.Canceled) {
+				Fail("stream run: " + runErr.Error())
+			}
+		}()
+
+		Eventually(func() int64 {
+			return captureExporter.counterValue("dropped_spoofed_key")
+		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
+			Should(Equal(int64(1)), "the spoofed-header drop must increment dropped_spoofed_key on the outer stream's metrics registry")
+
+		// Spoof-first classification: the record must NOT be miscounted as keyless
+		// (its post-header key is the shadowing value) or as a real filter drop.
+		Expect(captureExporter.counterValue("dropped_keyless")).To(Equal(int64(0)),
+			"a spoofed record must not count as keyless")
+		Expect(captureExporter.counterValue("filtered_records")).To(Equal(int64(0)),
+			"a spoofed record must not count as a filtered (real-keyed) drop")
+		mu.Lock()
+		Expect(delivered).To(Equal(1), "the keyed matching record must be delivered")
+		mu.Unlock()
 	})
 })
 

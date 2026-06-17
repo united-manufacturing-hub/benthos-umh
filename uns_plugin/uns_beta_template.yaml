@@ -15,7 +15,7 @@
 name: uns_beta
 type: input
 status: experimental
-summary: Consumes messages from the UMH platform's Kafka messaging system, redelivering NACKed batches instead of committing past them (ENG-5094).
+summary: Preview of the reliable UNS input; will replace `uns`.
 description: |
   uns_beta delegates to the official redpanda Connect input via a UMH core
   input (uns_beta_reader) so that NACKed batches are never committed away. It
