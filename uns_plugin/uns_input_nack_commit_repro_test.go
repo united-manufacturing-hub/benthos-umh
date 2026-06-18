@@ -92,7 +92,7 @@ func produce(t testingT, addr string, records ...*kgo.Record) {
 // committedOffset reads the offset committed for the given consumer group on
 // reproTopic/partition 0. The returned bool is false when the group has no
 // committed offset at all.
-func committedOffset(t testingT, addr, group string) (int64, bool) {
+func committedOffset(t testingT, addr string, group string) (int64, bool) {
 	t.Helper()
 	off, ok, err := committedOffsetE(addr, group)
 	if err != nil {
@@ -104,7 +104,7 @@ func committedOffset(t testingT, addr, group string) (int64, bool) {
 // committedOffsetE is the error-returning variant of committedOffset, for
 // callers off the test goroutine where Fatalf is illegal (e.g. assertions
 // inside a stream consumer callback).
-func committedOffsetE(addr, group string) (int64, bool, error) {
+func committedOffsetE(addr string, group string) (int64, bool, error) {
 	cl, err := kgo.NewClient(kgo.SeedBrokers(addr))
 	if err != nil {
 		return 0, false, fmt.Errorf("admin client: %w", err)
@@ -124,7 +124,7 @@ func committedOffsetE(addr, group string) (int64, bool, error) {
 	return o.At, true, nil
 }
 
-func rec(key, val string) *kgo.Record {
+func rec(key string, val string) *kgo.Record {
 	return &kgo.Record{Key: []byte(key), Value: []byte(val)}
 }
 
@@ -153,14 +153,14 @@ func TestUNSInput_CommitsPastNACK_DataLoss(t *testing.T) {
 
 	// Produce batch A, read it.
 	produce(t, addr, rec("umh.v1.acme.a0", `{"v":0}`), rec("umh.v1.acme.a1", `{"v":1}`), rec("umh.v1.acme.a2", `{"v":2}`))
-	batchA, ackA := readNonEmpty(t, ctx, input)
+	batchA, ackA := readNonEmpty(ctx, t, input)
 	if len(batchA) != 3 {
 		t.Fatalf("batch A: expected 3 messages, got %d", len(batchA))
 	}
 
 	// Produce batch B, read it.
 	produce(t, addr, rec("umh.v1.acme.b3", `{"v":3}`), rec("umh.v1.acme.b4", `{"v":4}`), rec("umh.v1.acme.b5", `{"v":5}`))
-	batchB, ackB := readNonEmpty(t, ctx, input)
+	batchB, ackB := readNonEmpty(ctx, t, input)
 	if len(batchB) != 3 {
 		t.Fatalf("batch B: expected 3 messages, got %d", len(batchB))
 	}
@@ -245,12 +245,12 @@ func TestOfficialGaplessDiscipline_NoDataLoss(t *testing.T) {
 
 	// Produce + poll batch A (offsets 0-2), track it as one batch.
 	produce(t, addr, rec("umh.v1.acme.a0", `{"v":0}`), rec("umh.v1.acme.a1", `{"v":1}`), rec("umh.v1.acme.a2", `{"v":2}`))
-	recsA := pollRecords(t, ctx, cl, 3)
+	recsA := pollRecords(ctx, t, cl, 3)
 	releaseA := checkpointer.Track(recsA[len(recsA)-1], int64(len(recsA)))
 
 	// Produce + poll batch B (offsets 3-5), track it as one batch.
 	produce(t, addr, rec("umh.v1.acme.b3", `{"v":3}`), rec("umh.v1.acme.b4", `{"v":4}`), rec("umh.v1.acme.b5", `{"v":5}`))
-	recsB := pollRecords(t, ctx, cl, 3)
+	recsB := pollRecords(ctx, t, cl, 3)
 	releaseB := checkpointer.Track(recsB[len(recsB)-1], int64(len(recsB)))
 
 	// B succeeds first (A is still in flight / NACKed). Resolving B does NOT
@@ -295,7 +295,7 @@ func TestOfficialGaplessDiscipline_NoDataLoss(t *testing.T) {
 // --- helpers ---------------------------------------------------------------
 
 // newReproInput builds the real UnsInput (real ConsumerClient) pointed at addr.
-func newReproInput(t *testing.T, addr, group string) service.BatchInput {
+func newReproInput(t *testing.T, addr string, group string) service.BatchInput {
 	t.Helper()
 	res := service.MockResources()
 	cfg := UnsInputConfig{
@@ -314,7 +314,7 @@ func newReproInput(t *testing.T, addr, group string) service.BatchInput {
 
 // readNonEmpty calls ReadBatch until it returns a non-empty batch (the input
 // returns (nil,nil,nil) on an empty poll, which can happen before records land).
-func readNonEmpty(t *testing.T, ctx context.Context, in service.BatchInput) (service.MessageBatch, service.AckFunc) {
+func readNonEmpty(ctx context.Context, t *testing.T, in service.BatchInput) (service.MessageBatch, service.AckFunc) {
 	t.Helper()
 	for {
 		batch, ackFn, err := in.ReadBatch(ctx)
@@ -331,7 +331,7 @@ func readNonEmpty(t *testing.T, ctx context.Context, in service.BatchInput) (ser
 }
 
 // pollRecords polls until it has collected exactly want records.
-func pollRecords(t *testing.T, ctx context.Context, cl *kgo.Client, want int) []*kgo.Record {
+func pollRecords(ctx context.Context, t *testing.T, cl *kgo.Client, want int) []*kgo.Record {
 	t.Helper()
 	var out []*kgo.Record
 	for len(out) < want {
@@ -350,7 +350,7 @@ func pollRecords(t *testing.T, ctx context.Context, cl *kgo.Client, want int) []
 // drainFromStart consumes reproTopic from the start with a brand-new group and
 // returns how many records it sees (bounded wait). Used to prove records are
 // still present in the log.
-func drainFromStart(t *testing.T, addr, group string, expect int) int {
+func drainFromStart(t *testing.T, addr string, group string, expect int) int {
 	t.Helper()
 	cl, err := kgo.NewClient(
 		kgo.SeedBrokers(addr),
@@ -374,7 +374,7 @@ func drainFromStart(t *testing.T, addr, group string, expect int) int {
 
 // drainGroupOnce resumes an existing group at its committed offset and returns
 // how many records it can read within a short window (0 == nothing redelivered).
-func drainGroupOnce(t *testing.T, addr, group string) int {
+func drainGroupOnce(t *testing.T, addr string, group string) int {
 	t.Helper()
 	cl, err := kgo.NewClient(
 		kgo.SeedBrokers(addr),

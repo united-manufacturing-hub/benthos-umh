@@ -28,18 +28,18 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/redpanda-data/benthos/v4/public/service"
 	// Registers benthos core components (incl. the "none" tracer that
 	// StreamBuilder.Build defaults to). The production binary gets these via
 	// its full component bundle; this minimal test package only blank-imports
 	// the kafka components, so the StreamBuilder build needs pure here.
 	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
+	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
 // runUnsBetaStream starts a StreamBuilder pipeline: uns_beta input -> consumerFn.
 // consumerFn's returned error NACKs the batch. Returns a stop func.
-func runUnsBetaStream(t testingT, unsBetaYAML string, consumerFn func(context.Context, service.MessageBatch) error) (stop func()) {
+func runUnsBetaStream(t testingT, unsBetaYAML string, consumerFn func(context.Context, service.MessageBatch) error) func() {
 	t.Helper()
 	sb := service.NewStreamBuilder()
 	if err := sb.AddInputYAML(unsBetaYAML); err != nil {

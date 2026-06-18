@@ -48,10 +48,9 @@ import (
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
-	"github.com/twmb/franz-go/pkg/kgo"
-
 	// Registers the official "redpanda" input that uns_beta delegates to.
 	_ "github.com/redpanda-data/connect/v4/public/components/kafka"
+	"github.com/twmb/franz-go/pkg/kgo"
 )
 
 // discardLogger is the default logger newUnsBetaInputFor installs when no

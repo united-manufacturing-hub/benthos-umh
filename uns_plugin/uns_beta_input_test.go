@@ -28,12 +28,11 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/redpanda-data/benthos/v4/public/service"
-	"github.com/twmb/franz-go/pkg/kgo"
-
 	// The "pure" components register the "none" tracer that StreamBuilder.Build
 	// defaults to; the render test below builds a (never-run) stream.
 	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
+	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/twmb/franz-go/pkg/kgo"
 )
 
 // capturingLogger is a *service.Logger backed by a slog handler that records
@@ -158,7 +157,7 @@ uns_beta:
 			Expect(rp[field]).To(BeAssignableToTypeOf(""), "field %s must render as a YAML string", field)
 			Expect(rp[field]).To(Equal(want), "field %s", field)
 		}
-		Expect(rp["auto_replay_nacks"]).To(Equal(true))
+		Expect(rp["auto_replay_nacks"]).To(BeTrue())
 	})
 
 	// Parity: each normalized scalar is computed once and referenced twice (top
@@ -545,7 +544,7 @@ var _ = Describe("uns_beta ack pass-through", Label("uns_beta"), func() {
 		inner.gotAckErr = errors.New("stale")
 		Expect(ack(context.Background(), nil)).To(Succeed())
 		Expect(inner.gotAckCalled).To(BeTrue())
-		Expect(inner.gotAckErr).To(BeNil(), "a nil ack outcome must pass through as nil")
+		Expect(inner.gotAckErr).ToNot(HaveOccurred(), "a nil ack outcome must pass through as nil")
 	})
 })
 
@@ -818,7 +817,7 @@ var _ = Describe("uns_beta wrong-type header guard", Label("uns_beta"), func() {
 	})
 
 	It("warns once when the rpcn-headers metadata holds an unexpected type", func() {
-		logger, cap := newCapturingLogger()
+		logger, capture := newCapturingLogger()
 		// A DROPPED record whose rpcnKafkaHeadersKey value is present but NOT a
 		// []kgo.RecordHeader — the connect-internal contract changed. The
 		// classification reads the raw slice and surfaces the wrong type once.
@@ -845,7 +844,7 @@ var _ = Describe("uns_beta wrong-type header guard", Label("uns_beta"), func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(kept).To(HaveLen(1), "the matching keep.* record on the third poll must be delivered")
 
-		out := cap.contents()
+		out := capture.contents()
 		Expect(out).To(ContainSubstring("unexpected type"), "a present-but-wrong-type rpcn-headers value must be flagged")
 		Expect(strings.Count(out, "unexpected type")).To(Equal(1), "the wrong-type Warn must be rate-limited to once per input")
 	})
