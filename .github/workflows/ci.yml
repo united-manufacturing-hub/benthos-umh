@@ -87,6 +87,12 @@ jobs:
             uns:
               - 'uns_plugin/**'
               - '!uns_plugin/**/*.md'
+              # uns_beta ships a build-time connect patch; a change to the patch
+              # or its Makefile wiring (without touching uns_plugin/go.mod/etc.)
+              # must still run test-uns-patched, whose patch-connect embeds the
+              # `git apply --check` drift gate and the semantic gate.
+              - 'patches/**'
+              - 'Makefile'
             nodered_js:
               - 'nodered_js_plugin/**'
               - '!nodered_js_plugin/**/*.md'

@@ -229,6 +229,35 @@ uns_beta:
 		rp := redpandaOf(reader)
 		Expect(rp["topics"]).To(Equal([]any{defaultInputKafkaTopic}))
 	})
+
+	// Safety property: connect's key_pattern pre-filter MUST be the same regex as
+	// uns_beta's own keep set, so connect never omits a record uns_beta would have
+	// kept. The pattern is built in two places that can silently drift — the
+	// bloblang template (umh_topics.map_each(p -> "(?:"+p+")").join("|")) and the
+	// Go betaKeyFilter (fmt.Sprintf("(?:%s)",p) + strings.Join("|")). Pin that the
+	// rendered redpanda.key_pattern EQUALS the Go-side combined regex built from
+	// the same umh_topics, reconstructed the way newBetaKeyFilter does it
+	// (re.String() returns the exact source the patterns were joined into).
+	It("renders redpanda.key_pattern equal to the Go-side betaKeyFilter combined regex", func() {
+		patterns := []string{`^umh\.v1\.acme\..*`, `^umh\.v1\.beta\..*`, `specific-key`}
+		// Single-quoted YAML scalars so the regex backslashes are literal (a
+		// double-quoted YAML scalar would treat \. as an escape and fail to parse).
+		reader := renderUnsBetaReader(`
+uns_beta:
+  broker_address: "localhost:9092"
+  consumer_group: "g"
+  umh_topics:
+    - '` + patterns[0] + `'
+    - '` + patterns[1] + `'
+    - '` + patterns[2] + `'
+`)
+		rp := redpandaOf(reader)
+
+		filter, err := newBetaKeyFilter(patterns)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rp["key_pattern"]).To(Equal(filter.re.String()),
+			"template key_pattern drifted from the Go betaKeyFilter join — connect's pre-filter is no longer a faithful superset of uns_beta's keep set")
+	})
 })
 
 // validReaderBody builds a minimal valid uns_beta_reader body: a redpanda
@@ -758,12 +787,33 @@ var _ = Describe("uns_beta drop classification", Label("uns_beta"), func() {
 	})
 
 	It("classifies an empty-key drop with no spoof header as keyless", func() {
-		keyless := service.NewMessage([]byte(`{"v":1}`)) // no kafka_key, no headers
+		keyless := service.NewMessage([]byte(`{"v":1}`))
+		// A GENUINELY keyless real record: connect's FranzRecordToMessageV1 always
+		// sets kafka_key (present-but-empty for an empty key). The present-but-empty
+		// meta is what distinguishes it from the connect high-water placeholder
+		// (which carries NO kafka_key meta and is dropped without classification).
+		keyless.MetaSetMut("kafka_key", "")
 
 		kept, tally := input.filterAndAlias(service.MessageBatch{keyless})
 
 		Expect(kept).To(BeEmpty())
 		Expect(tally.keyless).To(Equal(1))
+		Expect(tally.spoofed).To(Equal(0))
+		Expect(tally.filtered).To(Equal(0))
+	})
+
+	It("drops the connect high-water placeholder (no kafka_key meta) without counting any class", func() {
+		// The connect key-omit pre-filter keeps a poll's last non-matching record
+		// as a no-metadata placeholder (service.NewMessage(nil)) so its offset still
+		// commits. It reaches uns_beta but must be dropped here WITHOUT touching a
+		// per-reason counter — it is already accounted for by connect's
+		// key_omitted_records. The absent kafka_key meta is the recognizer.
+		placeholder := service.NewMessage(nil) // no metadata at all
+
+		kept, tally := input.filterAndAlias(service.MessageBatch{placeholder})
+
+		Expect(kept).To(BeEmpty(), "the placeholder must never be delivered")
+		Expect(tally.keyless).To(Equal(0), "the placeholder must NOT be miscounted as keyless")
 		Expect(tally.spoofed).To(Equal(0))
 		Expect(tally.filtered).To(Equal(0))
 	})
@@ -785,7 +835,8 @@ var _ = Describe("uns_beta drop classification", Label("uns_beta"), func() {
 		match.MetaSetMut("kafka_key", "umh.v1.keep.a") // delivered, counted nowhere
 		filtered := service.NewMessage([]byte(`{"v":2}`))
 		filtered.MetaSetMut("kafka_key", "umh.v1.drop.b")
-		keyless := service.NewMessage([]byte(`{"v":3}`)) // empty key
+		keyless := service.NewMessage([]byte(`{"v":3}`))
+		keyless.MetaSetMut("kafka_key", "") // genuinely keyless real record (present-but-empty)
 		spoofed := service.NewMessage([]byte(`{"v":4}`))
 		spoofed.MetaSetMut("kafka_key", "")
 		spoofed.MetaSetMut(rpcnKafkaHeadersKey, []kgo.RecordHeader{{Key: "kafka_key", Value: []byte("x")}})

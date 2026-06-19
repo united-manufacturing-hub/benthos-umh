@@ -526,7 +526,19 @@ func (i *unsBetaInput) filterAndAlias(batch service.MessageBatch) (service.Messa
 	kept := make(service.MessageBatch, 0, len(batch))
 	var tally dropTally
 	for _, msg := range batch {
-		key, _ := msg.MetaGet("kafka_key")
+		key, ok := msg.MetaGet("kafka_key")
+		// The connect key-omit pre-filter keeps a poll's LAST record as a
+		// high-water placeholder when it is non-matching, so its offset still
+		// commits (service.NewMessage(nil) — no metadata at all). Recognize that
+		// placeholder by the ABSENCE of the kafka_key meta (!ok): connect's
+		// FranzRecordToMessageV1 ALWAYS sets kafka_key on a real record (=="" for
+		// a genuinely keyless one, so ok==true), so a missing key meta can only be
+		// the placeholder. Drop it and increment NO per-reason counter — it is
+		// already accounted for by connect's key_omitted_records. A real keyless
+		// record (ok && key=="") still falls through to classifyDrop below.
+		if !ok {
+			continue
+		}
 		if !i.keyFilter.matches(key) {
 			// Dropped: classify the loss class from the raw key/header (spoof
 			// first), before any strip. KEPT records are counted nowhere.

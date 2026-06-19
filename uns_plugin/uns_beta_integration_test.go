@@ -1287,6 +1287,15 @@ uns_beta:
 		// that REACH uns_beta.
 		Expect(captureExporter.counterValue("filtered_records")).To(Equal(int64(0)),
 			"records omitted by the connect pre-filter must not reach uns_beta's filtered_records counter")
+		// The connect high-water placeholder (the poll's last non-matching record,
+		// kept with no metadata to carry the commit offset) reaches uns_beta but is
+		// dropped on the missing-kafka_key path WITHOUT touching a per-reason
+		// counter. Pin that it does not leak into dropped_keyless (it has no
+		// kafka_key meta, so the old `key==""` classify would have miscounted it).
+		Expect(captureExporter.counterValue("dropped_keyless")).To(Equal(int64(0)),
+			"the connect high-water placeholder must not be miscounted as dropped_keyless")
+		Expect(captureExporter.counterValue("dropped_spoofed_key")).To(Equal(int64(0)),
+			"records omitted by the connect pre-filter must not reach uns_beta's dropped_spoofed_key counter")
 	})
 
 	// A MIXED batch: N matching + M non-matching keyed records under a select-some

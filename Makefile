@@ -142,7 +142,10 @@ update-benthos:
 
 .PHONY: test
 test: setup-test-deps
-	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./...
+	@# uns_beta specs render the key_pattern against the CONNECT-PATCHED binary and
+	@# only pass under the patched lane (test-uns-patched); the unpatched catch-all
+	@# would run them against vanilla connect and fail, so exclude them here.
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='!uns_beta' ./...
 
 .PHONY: test-schema-export
 test-schema-export: $(GOTESTSUM)
