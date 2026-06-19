@@ -799,6 +799,132 @@ uns_beta:
 	})
 })
 
+// The mandatory safety gate: an explicit stop-and-restart across a long
+// non-matching run, proving no data loss and no stuck commit. Everything above
+// runs one stream to completion; nothing pins that a SECOND stream on the same
+// consumer group resumes from the committed offset rather than replaying acked
+// data. This is the durability claim of the whole filter design: the high-water
+// placeholder advances the commit over an omitted run so the re-read window stays
+// bounded, and a restart sees only data produced after the committed offset.
+//
+// Shape of the log (single produce, so offsets are call order):
+//   - offset 0:      matching  -> delivered in run 1
+//   - offsets 1..N:  non-matching -> all omitted in connect; the match is NOT
+//     last, so the high-water placeholder path is exercised, and N
+//     is large enough that whole fetches land all-non-matching
+//     (the all-non-match high-water case).
+//
+// A specific umh_topics pattern (NOT ".*") is used so the non-matches are
+// genuinely omitted in connect, not merely dropped by uns_beta's keyless guard.
+// (ENG-5094 / ENG-5105)
+var _ = Describe("uns_beta gapless restart", Label("uns_beta"), func() {
+	It("resumes a restarted consumer group from the committed offset with no loss and no replay across a long omitted run", func() {
+		addr := startBroker(GinkgoT())
+		const group = "uns-beta-gapless-restart"
+		const nonMatching = 1500 // a long omitted run, spanning many fetches
+		const total = 1 + nonMatching
+
+		// Offset 0 matches; offsets 1..1500 do not. The match is first, never
+		// last, so the kept subset is exhausted long before the high-water mark
+		// and the placeholder must carry the commit the rest of the way.
+		records := make([]*kgo.Record, total)
+		records[0] = rec("umh.v1.match.first", `{"v":"first"}`)
+		for i := 1; i < total; i++ {
+			records[i] = rec(fmt.Sprintf("umh.v1.nomatch.k%d", i), `{"v":"drop"}`)
+		}
+		produce(GinkgoT(), addr, records...)
+
+		streamYAML := `
+uns_beta:
+  broker_address: "` + addr + `"
+  consumer_group: "` + group + `"
+  umh_topics:
+    - "^umh\\.v1\\.match\\..+$"
+`
+
+		// --- Run 1: drain the whole log on group G ---
+		var mu sync.Mutex
+		var got []string
+		noPlaceholder := true // set false if any message arrives without a kafka_key
+		stop := runUnsBetaStream(GinkgoT(), streamYAML, func(_ context.Context, b service.MessageBatch) error {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, m := range b {
+				bs, _ := m.AsBytes()
+				got = append(got, string(bs))
+				// A high-water placeholder is a no-metadata record (no kafka_key).
+				// It rides the ack-gated batch to advance the commit but must be
+				// dropped before the consumer ever sees it. If one leaks, the
+				// selective consumer would receive empty/keyless junk.
+				if _, ok := m.MetaGet("kafka_key"); !ok {
+					noPlaceholder = false
+				}
+			}
+			return nil
+		})
+		defer stop()
+
+		// The committed offset reaches the high-water mark even though all but one
+		// record were omitted: this is the proof that the placeholder advances the
+		// commit so the re-read window is bounded (no stuck commit). Draining 1500
+		// omitted records then waiting for the 5s commit_period tick (hardcoded in
+		// the template, not shortenable from test config) can eat most of a 15s
+		// budget on a slow kfake startup, so this gets a 30s timeout.
+		Eventually(func(g Gomega) {
+			off, ok, err := committedOffsetE(addr, group)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(ok).To(BeTrue(), "no offset committed yet — the long omitted run wedged the partition")
+			g.Expect(off).To(Equal(int64(total)), "committed offset must reach the high-water mark, proving the placeholder advanced the commit over the omitted run")
+		}).WithTimeout(30 * time.Second).WithPolling(100 * time.Millisecond).Should(Succeed())
+
+		mu.Lock()
+		Expect(got).To(ConsistOf(`{"v":"first"}`), "only the single matching record may reach the consumer in run 1")
+		Expect(noPlaceholder).To(BeTrue(), "no high-water placeholder / keyless / no-kafka_key record may ever reach the consumer")
+		mu.Unlock()
+
+		// --- Restart: stop run 1, produce a SECOND match after the gap ---
+		// (Modeling a kill as stop-then-start on the same group is what the public
+		// stream lifecycle allows; the load-bearing assertion is that run 2 resumes
+		// from the committed offset, which is identical under a true mid-stream
+		// kill.)
+		stop()
+		produce(GinkgoT(), addr, rec("umh.v1.match.second", `{"v":"second"}`)) // offset == total
+
+		// --- Run 2: a NEW stream on the SAME group G ---
+		var mu2 sync.Mutex
+		var got2 []string
+		stop2 := runUnsBetaStream(GinkgoT(), streamYAML, func(_ context.Context, b service.MessageBatch) error {
+			mu2.Lock()
+			defer mu2.Unlock()
+			for _, m := range b {
+				bs, _ := m.AsBytes()
+				got2 = append(got2, string(bs))
+			}
+			return nil
+		})
+		defer stop2()
+
+		// Run 2 must deliver ONLY the new record. If it resumed from 0 (lost
+		// commit) the first match would reappear; if the placeholder had been
+		// committed past an un-acked record, the new record could be skipped.
+		Eventually(func() []string {
+			mu2.Lock()
+			defer mu2.Unlock()
+			return append([]string(nil), got2...)
+		}).WithTimeout(30*time.Second).WithPolling(100*time.Millisecond).
+			Should(ConsistOf(`{"v":"second"}`),
+				"the restarted group must deliver only the record produced after the committed offset — no replay of the acked first match, no loss of the new one")
+
+		// And the commit advances to cover the new record too.
+		Eventually(func(g Gomega) {
+			off, ok, err := committedOffsetE(addr, group)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(ok).To(BeTrue())
+			g.Expect(off).To(Equal(int64(total+1)), "committed offset must advance past the post-restart record")
+		}).WithTimeout(15 * time.Second).WithPolling(100 * time.Millisecond).Should(Succeed())
+	})
+})
+
 // closedLocalPort binds a loopback listener to grab an OS-assigned port, then
 // closes it — the returned "127.0.0.1:PORT" is a port nothing is listening on,
 // so a dial against it is refused (a guaranteed-closed port, not merely an
@@ -1075,14 +1201,22 @@ uns_beta:
 	})
 })
 
-// Dropped records must be observable. uns_beta drops records on two paths — the
-// per-record umh_topics filter (mixed batch) and the all-filtered self-ack poll.
-// The filtered_records counter on the outer stream's metrics
-// registry is incremented by the number of records dropped each poll. This spec
-// drives an all-filtered poll of 3 non-matching records and asserts the counter
-// value reaches the outer-attached capturer. (ENG-5094 / ENG-5105)
+// Dropped records must be observable. With the connect key_pattern pre-filter
+// (ENG-5105) a record whose native key fails the pattern is OMITTED in connect,
+// before it ever reaches uns_beta's filterAndAlias — so it can no longer touch
+// uns_beta's per-reason counters. Decision (a): those omitted records are
+// instead counted COARSELY by connect's key_omitted_records counter (on the same
+// outer stream metrics registry), and uns_beta's filtered_records now counts
+// ONLY records that REACH uns_beta (their native key matched the pattern) and
+// that uns_beta itself drops. Because the connect pre-filter is a faithful
+// superset of uns_beta's keep set, a real-keyed record that reaches uns_beta has
+// already matched, so filtered_records stays at 0 for these scenarios while
+// key_omitted_records carries the count. This spec drives an all-non-matching
+// poll of 3 records and asserts key_omitted_records reaches 3 on the outer
+// stream's metrics registry, with filtered_records left at 0. (ENG-5094 /
+// ENG-5105)
 var _ = Describe("uns_beta filtered_records counter", Label("uns_beta"), func() {
-	It("increments the filtered-records counter on the outer stream's metrics registry by the number of dropped records", func() {
+	It("counts records omitted by the connect pre-filter under key_omitted_records, leaving uns_beta's filtered_records at 0", func() {
 		registerCaptureExporter()
 		// The capturer is a process-global singleton; reset so the counter value
 		// asserted below reflects only this spec's drops, not increments leaked
@@ -1091,12 +1225,14 @@ var _ = Describe("uns_beta filtered_records counter", Label("uns_beta"), func() 
 
 		addr := startBroker(GinkgoT())
 		const group = "uns-beta-filtered-counter"
-		// An all-filtered poll: none of these keys match the select-1 filter
-		// below, so every record is dropped and self-acked.
+		// An all-non-matching poll: none of these keys match the select-1 filter
+		// below, so connect omits every one of them before message construction
+		// (M=3 omitted) and uns_beta never sees them.
 		produce(GinkgoT(), addr,
 			rec("umh.v1.acme.berlin.temp", `{"v":0}`),
 			rec("umh.v1.acme.munich.temp", `{"v":1}`),
 			rec("umh.v1.acme.hamburg.temp", `{"v":2}`))
+		const wantOmitted = 3
 
 		sb := service.NewStreamBuilder()
 		Expect(sb.AddInputYAML(`
@@ -1127,48 +1263,63 @@ uns_beta:
 			}
 		}()
 
-		// The filtered_records counter on the outer-attached
-		// capturer must be incremented by exactly the 3 dropped records. Asserting
-		// the VALUE (not just that the counter was created) pins the increment
-		// path: deleting the Incr, or miscomputing the dropped count, leaves the
-		// counter at 0 and fails here — whereas a name-only assertion would pass
-		// the instant the counter is constructed.
+		// The connect key_omitted_records counter on the outer-attached capturer
+		// must be incremented by exactly the 3 omitted records. Asserting the
+		// VALUE (not just that the counter was created) pins the Incr path:
+		// deleting the Incr, or miscounting the omitted run, leaves it at 0 and
+		// fails here.
 		Eventually(func() int64 {
-			return captureExporter.counterValue("filtered_records")
+			return captureExporter.counterValue("key_omitted_records")
 		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
-			Should(Equal(int64(3)), "the filtered-records counter did not reach the dropped-record count on the outer stream's metrics registry — dropped records are unobservable")
+			Should(Equal(int64(wantOmitted)), "the connect pre-filter's key_omitted_records counter did not reach the omitted-record count on the outer stream's metrics registry — pre-filtered records are unobservable")
 
-		// The 3 records are self-acked once, so the offset commits past them and
-		// they are never re-delivered: the count must settle at exactly 3, not
-		// keep climbing from re-polls.
+		// The omitted records are committed past once (the last-record placeholder
+		// carries the high-water offset), so the count settles at exactly 3, not
+		// climbing from re-polls.
 		Consistently(func() int64 {
-			return captureExporter.counterValue("filtered_records")
+			return captureExporter.counterValue("key_omitted_records")
 		}).WithTimeout(2*time.Second).WithPolling(200*time.Millisecond).
-			Should(Equal(int64(3)), "the filtered-records counter over-counted — the same dropped records were counted more than once")
+			Should(Equal(int64(wantOmitted)), "key_omitted_records over-counted — the same omitted records were counted more than once")
+
+		// uns_beta's per-reason filtered_records must stay 0: none of these records
+		// reached uns_beta (connect omitted them all), so uns_beta dropped nothing
+		// of its own. Decision (a): per-reason counters account only for records
+		// that REACH uns_beta.
+		Expect(captureExporter.counterValue("filtered_records")).To(Equal(int64(0)),
+			"records omitted by the connect pre-filter must not reach uns_beta's filtered_records counter")
 	})
 
 	// A MIXED batch: N matching + M non-matching keyed records under a select-some
-	// filter. filtered_records must count exactly the M dropped records, NOT the
-	// whole batch (N+M). The all-filtered counter spec above cannot catch a mutant
-	// that increments by the total batch size — there len(batch)-len(kept) ==
-	// len(batch) — so this spec is the one that kills it. The N matching records
-	// must be delivered, and dropped_keyless / dropped_spoofed_key must stay 0
-	// (every dropped record here is a real keyed filter drop). (ENG-5094 / ENG-5105)
-	It("counts only the dropped records (M), not the whole mixed batch (N+M), and leaves keyless/spoofed at 0", func() {
+	// filter. With the connect pre-filter, the M non-matching records are OMITTED
+	// in connect (counted by key_omitted_records) and never reach uns_beta; the N
+	// matching records are delivered. Because the connect pre-filter is a faithful
+	// superset of uns_beta's keep set, every record that reaches uns_beta has
+	// already matched, so uns_beta's own filtered_records stays at 0. This spec is
+	// the mixed-batch counterpart that pins key_omitted_records to exactly M (not
+	// N+M and not 0), proving the connect coarse count is per-omitted-record, not
+	// per-batch or per-poll. (ENG-5094 / ENG-5105)
+	It("counts only the omitted records (M) under key_omitted_records, delivers the N matching records, and leaves uns_beta's per-reason counters at 0", func() {
 		registerCaptureExporter()
 		captureExporter.reset()
 
 		addr := startBroker(GinkgoT())
 		const group = "uns-beta-mixed-counter"
-		// N=2 matching (umh.v1.keep.*) + M=3 non-matching, all keyed.
+		// N=2 matching (umh.v1.keep.*) + M=3 non-matching, all keyed. The LAST
+		// produced record (highest offset) is a MATCHING one on purpose: connect
+		// always keeps the last record of a poll as the high-water placeholder, and
+		// when that last record does NOT match it is carried to uns_beta as an
+		// empty (no-kafka_key) message that uns_beta classifies as keyless. Ending
+		// on a matching record keeps the placeholder a real delivered record, so
+		// this spec's per-reason-counters-stay-0 assertion is not muddied by the
+		// placeholder edge (that edge is its own observable; see below).
 		produce(GinkgoT(), addr,
-			rec("umh.v1.keep.alpha", `{"v":0}`),   // delivered
-			rec("umh.v1.drop.beta", `{"v":1}`),    // filtered
-			rec("umh.v1.keep.gamma", `{"v":2}`),   // delivered
-			rec("umh.v1.drop.delta", `{"v":3}`),   // filtered
-			rec("umh.v1.drop.epsilon", `{"v":4}`)) // filtered
+			rec("umh.v1.keep.alpha", `{"v":0}`),   // delivered (matches pattern)
+			rec("umh.v1.drop.beta", `{"v":1}`),    // omitted in connect
+			rec("umh.v1.drop.delta", `{"v":2}`),   // omitted in connect
+			rec("umh.v1.drop.epsilon", `{"v":3}`), // omitted in connect
+			rec("umh.v1.keep.gamma", `{"v":4}`))   // delivered (matches; also the high-water placeholder)
 		const wantDelivered = 2
-		const wantFiltered = 3
+		const wantOmitted = 3
 
 		var mu sync.Mutex
 		var delivered int
@@ -1211,44 +1362,55 @@ uns_beta:
 		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
 			Should(Equal(wantDelivered), "the matching records must be delivered")
 
-		// filtered_records must reach exactly M (the dropped subset), not N+M.
+		// key_omitted_records must reach exactly M (the omitted subset), not N+M
+		// (would mean matching records were omitted too) and not 0.
 		Eventually(func() int64 {
-			return captureExporter.counterValue("filtered_records")
+			return captureExporter.counterValue("key_omitted_records")
 		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
-			Should(Equal(int64(wantFiltered)), "filtered_records must count only the M dropped records, not the whole batch")
+			Should(Equal(int64(wantOmitted)), "key_omitted_records must count only the M omitted records, not the whole batch")
 
-		// And it must SETTLE at M — a mutant incrementing by the whole batch size
-		// would show N+M here.
+		// And it must SETTLE at M — a mutant counting the whole batch would show
+		// N+M here.
 		Consistently(func() int64 {
-			return captureExporter.counterValue("filtered_records")
+			return captureExporter.counterValue("key_omitted_records")
 		}).WithTimeout(2*time.Second).WithPolling(200*time.Millisecond).
-			Should(Equal(int64(wantFiltered)), "filtered_records over- or under-counted the mixed batch")
+			Should(Equal(int64(wantOmitted)), "key_omitted_records over- or under-counted the mixed batch")
 
-		// Every dropped record carried a real key and no spoof header, so the
-		// keyless / spoofed classes stay at 0.
+		// Every record that REACHED uns_beta had already matched the pattern (the
+		// connect pre-filter is a superset of uns_beta's keep set), so uns_beta
+		// dropped nothing of its own — all three per-reason counters stay 0.
+		Expect(captureExporter.counterValue("filtered_records")).To(Equal(int64(0)),
+			"records omitted by the connect pre-filter must not reach uns_beta's filtered_records counter")
 		Expect(captureExporter.counterValue("dropped_keyless")).To(Equal(int64(0)),
-			"a real keyed filter drop must not count as keyless")
+			"no record reaching uns_beta was keyless")
 		Expect(captureExporter.counterValue("dropped_spoofed_key")).To(Equal(int64(0)),
-			"a real keyed filter drop must not count as spoofed")
+			"no record reaching uns_beta carried a spoof header")
 	})
 })
 
-// dropped_keyless counts records with an empty/absent Kafka key, which never
-// match any umh_topics pattern and are dropped-and-committed-past. This spec
-// produces a keyless record against the broker (a nil-key kgo.Record) and asserts
-// the dropped_keyless counter on the outer stream's metrics registry reaches it —
-// the always-on replacement for the removed one-shot keyless Warn. (ENG-5094 /
-// ENG-5105)
+// dropped_keyless counts records with an empty/absent Kafka key that REACH
+// uns_beta and fail its `key != ""` guard. With the connect key_pattern
+// pre-filter (ENG-5105) a keyless record only reaches uns_beta when the pattern
+// matches the empty key — i.e. under a `.*` umh_topics (".*" matches ""). So this
+// spec uses `.*`: connect BUILDS the keyless record (it matched), it reaches
+// uns_beta, hits the `key != ""` guard in betaKeyFilter.matches, and increments
+// dropped_keyless. Under a SPECIFIC pattern the keyless record would instead be
+// OMITTED in connect (its empty key fails the pattern) and counted coarsely by
+// key_omitted_records — decision (a) — never reaching dropped_keyless; that path
+// is exercised by the filtered_records specs above. This spec pins the
+// keyless-reaches-uns_beta path that the `.*` (match-everything) deployment still
+// has. (ENG-5094 / ENG-5105)
 var _ = Describe("uns_beta dropped_keyless counter", Label("uns_beta"), func() {
-	It("increments dropped_keyless for a record with no Kafka key", func() {
+	It("increments dropped_keyless for a keyless record that reaches uns_beta under a match-everything pattern", func() {
 		registerCaptureExporter()
 		captureExporter.reset()
 
 		addr := startBroker(GinkgoT())
 		const group = "uns-beta-keyless-counter"
-		// A keyless record: nil key. It never matches any pattern, so it is
-		// dropped-and-self-acked. A keyed matching record gives the stream
-		// something to deliver so the poll goroutine stays live.
+		// A keyless record: nil key. Under the `.*` pattern below connect matches
+		// it (".*" matches the empty key) and BUILDS it, so it reaches uns_beta,
+		// where the `key != ""` guard drops it as keyless. A keyed record gives the
+		// stream something to deliver so the poll goroutine stays live.
 		produce(GinkgoT(), addr,
 			&kgo.Record{Key: nil, Value: []byte(`{"v":0}`)},
 			rec("umh.v1.keep.live", `{"v":1}`))
@@ -1261,7 +1423,7 @@ uns_beta:
   broker_address: "` + addr + `"
   consumer_group: "` + group + `"
   umh_topics:
-    - "^umh\\.v1\\.keep\\..+$"
+    - ".*"
 `)).To(Succeed())
 		Expect(sb.SetMetricsYAML(captureExporterName + ": {}")).To(Succeed())
 		Expect(sb.AddBatchConsumerFunc(func(_ context.Context, b service.MessageBatch) error {
@@ -1297,6 +1459,11 @@ uns_beta:
 			"a keyless record must not count as spoofed")
 		Expect(captureExporter.counterValue("filtered_records")).To(Equal(int64(0)),
 			"a keyless record must not count as a filtered (real-keyed) drop")
+		// Under `.*` connect omits nothing (every key, including the empty one,
+		// matches), so the connect coarse counter never fires — the keyless record
+		// is accounted for by uns_beta's dropped_keyless, not key_omitted_records.
+		Expect(captureExporter.counterValue("key_omitted_records")).To(Equal(int64(0)),
+			"under a match-everything pattern connect omits nothing, so key_omitted_records must stay 0")
 		mu.Lock()
 		Expect(delivered).To(Equal(1), "the keyed matching record must be delivered")
 		mu.Unlock()
@@ -1305,26 +1472,44 @@ uns_beta:
 
 // dropped_spoofed_key counts records carrying a foreign producer header literally
 // named "kafka_key" — the header shadows the native key in the delegated input's
-// post-header metadata, so the record is dropped (or delivered with a forged
-// umh_topic). This spec produces a non-matching record carrying that header and
-// asserts the dropped_spoofed_key counter reaches it — the always-on replacement
-// for the removed one-shot spoof Warn. The spoof classification reads the raw
-// header slice (rpcnKafkaHeadersKey), so a spoofed record counts as spoofed even
-// though its post-header key is the shadowing value. (ENG-5094 / ENG-5105)
+// post-header metadata, so uns_beta drops on the shadowed value. With the connect
+// key_pattern pre-filter (ENG-5105), the spoof vector that REACHES uns_beta — and
+// so reaches this counter — is the one whose NATIVE key MATCHES the pattern (so
+// connect builds and delivers the record) while the spoofed kafka_key header
+// FAILS the pattern: uns_beta reads the shadowed (spoofed) kafka_key, drops it,
+// and the raw header slice (rpcnKafkaHeadersKey) classifies it as spoofed even
+// though its post-header key is the shadowing value. This spec drives that
+// matching-native / failing-spoof record and asserts dropped_spoofed_key reaches
+// it.
+//
+// SECURITY — the other spoof vector is now CLOSED AT THE SOURCE: a record whose
+// NATIVE key does NOT match the pattern but carries a MATCHING spoofed kafka_key
+// header (the ENG-5125 spoof-DELIVER, where a foreign producer forges a kafka_key
+// to get a non-matching record delivered under a forged umh_topic) can no longer
+// be delivered: connect omits it on its non-matching NATIVE key before the
+// delegated input ever applies the header, so the forged header never gets a
+// chance to shadow the key. That omitted record is counted coarsely as
+// key_omitted_records, NOT flagged as a spoof — a security improvement (the spoof
+// can no longer land a delivery) with a quieter signal (it lands in the coarse
+// omit count rather than dropped_spoofed_key). The matching-native spoof below is
+// the residual vector this counter still observes. (ENG-5094 / ENG-5105 /
+// ENG-5125)
 var _ = Describe("uns_beta dropped_spoofed_key counter", Label("uns_beta"), func() {
-	It("increments dropped_spoofed_key for a record carrying a kafka_key producer header", func() {
+	It("increments dropped_spoofed_key for a matching-native record whose spoofed kafka_key header fails the pattern", func() {
 		registerCaptureExporter()
 		captureExporter.reset()
 
 		addr := startBroker(GinkgoT())
 		const group = "uns-beta-spoofed-counter"
-		// A record whose NATIVE key does not match, carrying a foreign "kafka_key"
-		// header (also non-matching). It is dropped-and-self-acked; the raw header
-		// slice classifies it as spoofed. A keyed matching record keeps the stream
-		// delivering.
+		// A record whose NATIVE key MATCHES the pattern (so connect builds and
+		// delivers it to uns_beta) carrying a foreign "kafka_key" header whose value
+		// FAILS the pattern. The delegated input applies the header after the native
+		// fields, shadowing kafka_key with the failing spoofed value; uns_beta drops
+		// on that value and the raw header slice classifies it as spoofed. A keyed
+		// matching record keeps the stream delivering.
 		produce(GinkgoT(), addr,
 			&kgo.Record{
-				Key:     []byte("umh.v1.drop.native"),
+				Key:     []byte("umh.v1.keep.native"),
 				Value:   []byte(`{"v":0}`),
 				Headers: []kgo.RecordHeader{{Key: "kafka_key", Value: []byte("umh.v1.drop.spoofed")}},
 			},
@@ -1374,6 +1559,13 @@ uns_beta:
 			"a spoofed record must not count as keyless")
 		Expect(captureExporter.counterValue("filtered_records")).To(Equal(int64(0)),
 			"a spoofed record must not count as a filtered (real-keyed) drop")
+		// Both records' NATIVE keys matched the pattern, so connect omitted
+		// neither: the matching-native spoof is the residual vector uns_beta still
+		// observes, not a connect-side omit. (The non-matching-native spoof-DELIVER
+		// vector — closed at the source — would instead show up here as
+		// key_omitted_records; see the Describe comment.)
+		Expect(captureExporter.counterValue("key_omitted_records")).To(Equal(int64(0)),
+			"both native keys matched the pattern, so connect omitted nothing")
 		mu.Lock()
 		Expect(delivered).To(Equal(1), "the keyed matching record must be delivered")
 		mu.Unlock()

@@ -94,6 +94,13 @@ mapping: |
   # even if it stays identical to the default.
   root.uns_beta_reader.input.redpanda.auto_replay_nacks = true
 
+  # Pre-filter records in connect by the SAME keep set as umh_topics, as a single
+  # RE2 alternation over the patterns, so non-matching records are omitted before
+  # message construction (the per-record build + context-wrap cost). connect's
+  # pre-filter is a faithful superset of uns_beta's keep set, so it never omits a
+  # record uns_beta would keep.
+  root.uns_beta_reader.input.redpanda.key_pattern = this.umh_topics.map_each(p -> "(?:" + p + ")").join("|")
+
   # The same normalized scalars as top-level reader fields (validation-only) and
   # the umh_topics passthrough.
   root.uns_beta_reader.umh_topics = this.umh_topics

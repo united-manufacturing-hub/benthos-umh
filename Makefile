@@ -164,13 +164,17 @@ test-unit-opc:
 test-integration-opc:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./opcua_plugin/...
 
+# The uns_beta specs render the template, which wires key_pattern — a field that
+# only exists on the patched connect reader. They therefore run in the patched
+# lane (test-uns-patched); excluding them here keeps the fast unpatched lane for
+# the legacy uns input green.
 .PHONY: test-uns
 test-uns:
-	@$(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='!redpanda' ./uns_plugin/...
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='!redpanda && !uns_beta' ./uns_plugin/...
 
 .PHONY: test-uns-redpanda
 test-uns-redpanda:
-	@$(GINKGO_CMD) $(GINKGO_FLAGS)  ./uns_plugin/...
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='!uns_beta' ./uns_plugin/...
 
 .PHONY: test-s7comm
 test-s7comm:

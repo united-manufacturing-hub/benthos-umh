@@ -30,3 +30,10 @@ jobs:
         uses: ./.github/actions/setup-test
       - name: Test
         run: make test-uns
+      # The uns_beta specs run against the build-time-patched connect reader
+      # (key_pattern omit pre-filter, ENG-5105). make test-uns-patched applies
+      # patches/connect-key-filter.patch onto a throwaway copy via a side modfile
+      # (committed go.mod untouched); the `git apply --check` inside it is the
+      # drift gate — a connect bump that moves the patched code fails here loudly.
+      - name: Test (uns_beta, patched connect)
+        run: make test-uns-patched
