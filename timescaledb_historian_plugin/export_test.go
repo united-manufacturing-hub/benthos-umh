@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"time"
 
+	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
@@ -44,12 +45,14 @@ func NewHistorianForConfig(conf *service.ParsedConfig) (*HistorianTestHandle, er
 
 // NewHistorianTestHandle builds an output directly against a DSN (integration tests).
 func NewHistorianTestHandle(dsn, contract string) *HistorianTestHandle {
+	mgr := service.MockResources()
 	return &HistorianTestHandle{o: &historianOutput{
 		dsnOverride:     dsn,
 		contract:        contract,
 		metadataKeysAll: true,
 		compressAfter:   168 * time.Hour,
-		logger:          service.MockResources().Logger(),
+		logger:          mgr.Logger(),
+		dropped:         mgr.Metrics().NewCounter("messages_dropped", "reason"),
 		dedup:           NewDedupCache(),
 	}}
 }
@@ -87,12 +90,27 @@ func (h *HistorianTestHandle) SQLToLtree(ctx context.Context, path string) (stri
 
 func (h *HistorianTestHandle) CountValueRows(ctx context.Context, contract string) int {
 	var n int
-	_ = h.o.pool.QueryRow(ctx, fmt.Sprintf("SELECT count(*) FROM value_%s", contract)).Scan(&n)
+	err := h.o.pool.QueryRow(ctx, fmt.Sprintf("SELECT count(*) FROM value_%s", contract)).Scan(&n)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
 	return n
 }
 
 func (h *HistorianTestHandle) CountAttributeRows(ctx context.Context, contract string) int {
 	var n int
-	_ = h.o.pool.QueryRow(ctx, fmt.Sprintf("SELECT count(*) FROM attribute_%s", contract)).Scan(&n)
+	err := h.o.pool.QueryRow(ctx, fmt.Sprintf("SELECT count(*) FROM attribute_%s", contract)).Scan(&n)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
 	return n
+}
+
+// AttributeValue reads the stored JSONB attribute for a key via the read surface
+// (attribute->>key), proving the column holds an object, not an array-of-pairs.
+func (h *HistorianTestHandle) AttributeValue(ctx context.Context, contract, key string) (string, bool) {
+	var v *string
+	q := fmt.Sprintf("SELECT attribute->>$1 FROM attribute_%s LIMIT 1", contract)
+	err := h.o.pool.QueryRow(ctx, q, key).Scan(&v)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	if v == nil {
+		return "", false
+	}
+	return *v, true
 }

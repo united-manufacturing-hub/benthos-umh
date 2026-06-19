@@ -46,6 +46,11 @@ var _ = Describe("metadata", func() {
 		b := tsh.Fingerprint(map[string]string{"y": "2", "x": "1"})
 		Expect(a).To(Equal(b))
 	})
+	It("fingerprint is a JSON object (matches the template's stored shape, not an array)", func() {
+		// The attribute column and the read surface (attribute->>'serialNumber') depend on
+		// this being {"k":"v"}, never [["k","v"]].
+		Expect(tsh.Fingerprint(map[string]string{"serialNumber": "abc"})).To(Equal(`{"serialNumber":"abc"}`))
+	})
 	It("flags high-churn keys present in the built map", func() {
 		md := map[string]string{"opcua_source_timestamp": "x", "serialNumber": "abc"}
 		Expect(tsh.HighChurnKeys(md)).To(ConsistOf("opcua_source_timestamp"))

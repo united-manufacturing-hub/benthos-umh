@@ -145,6 +145,13 @@ var _ = Describe("ParseTimestampMs", func() {
 		_, ok := tsh.ParseTimestampMs("not-a-number")
 		Expect(ok).To(BeFalse())
 	})
+	It("floors negative epoch ms like JS new Date (pre-1970)", func() {
+		// -1500 ms is 1.5s before the epoch. Integer-modulo truncation would give
+		// 1969-12-31T23:59:59.-500 and round the wrong way; UnixMilli floors correctly.
+		got, ok := tsh.ParseTimestampMs(float64(-1500))
+		Expect(ok).To(BeTrue())
+		Expect(got).To(Equal("1969-12-31T23:59:58.500Z"))
+	})
 })
 
 var _ = Describe("Transform", func() {
@@ -152,14 +159,14 @@ var _ = Describe("Transform", func() {
 		return map[string]any{"value": 3.5, "timestamp_ms": float64(0)},
 			map[string]string{"data_contract": "_pump_v1", "location_path": "acme.line1", "tag_name": "x", "virtual_path": "vibration"}
 	}
-	tr := func(p map[string]any, m map[string]string) (*tsh.Row, bool) {
+	tr := func(p map[string]any, m map[string]string) (*tsh.Row, tsh.DropReason) {
 		return tsh.Transform(p, m, "pump", true, nil, tsh.NewDedupCache().NewBatch())
 	}
 
 	It("maps a good message to a row", func() {
 		p, m := base()
-		row, ok := tr(p, m)
-		Expect(ok).To(BeTrue())
+		row, reason := tr(p, m)
+		Expect(reason).To(Equal(tsh.DropNone))
 		Expect(row.RawLocation).To(Equal("acme.line1"))
 		Expect(row.ContractName).To(Equal("_pump"))
 		Expect(row.ValueType).To(Equal("numeric"))
@@ -168,35 +175,44 @@ var _ = Describe("Transform", func() {
 		Expect(row.TS).To(Equal("1970-01-01T00:00:00.000Z"))
 		Expect(row.EmitMeta).To(BeTrue())
 	})
-	It("drops a non-matching contract", func() {
-		p, m := base()
-		m["data_contract"] = "_other_v1"
-		_, ok := tr(p, m)
-		Expect(ok).To(BeFalse())
-	})
 	It("keeps a boolean false value", func() {
 		p, m := base()
 		p["value"] = false
-		row, ok := tr(p, m)
-		Expect(ok).To(BeTrue())
+		row, reason := tr(p, m)
+		Expect(reason).To(Equal(tsh.DropNone))
 		Expect(*row.ValueNum).To(Equal(0.0))
 	})
-	It("drops when value is absent", func() {
-		p, m := base()
-		delete(p, "value")
-		_, ok := tr(p, m)
-		Expect(ok).To(BeFalse())
-	})
-	It("drops a Root.Objects.Server virtual_path", func() {
-		p, m := base()
-		m["virtual_path"] = "Root.Objects.Server.foo"
-		_, ok := tr(p, m)
-		Expect(ok).To(BeFalse())
-	})
-	It("drops when location normalizes to empty", func() {
-		p, m := base()
-		m["location_path"] = "..."
-		_, ok := tr(p, m)
-		Expect(ok).To(BeFalse())
+
+	DescribeTable("drops with the right reason",
+		func(mutate func(map[string]any, map[string]string), want tsh.DropReason) {
+			p, m := base()
+			mutate(p, m)
+			row, reason := tr(p, m)
+			Expect(row).To(BeNil())
+			Expect(reason).To(Equal(want))
+		},
+		Entry("non-matching contract", func(_ map[string]any, m map[string]string) { m["data_contract"] = "_other_v1" }, tsh.DropContractMismatch),
+		Entry("missing tag_name", func(_ map[string]any, m map[string]string) { delete(m, "tag_name") }, tsh.DropMissingLocationOrTag),
+		Entry("Root.Objects.Server virtual_path", func(_ map[string]any, m map[string]string) { m["virtual_path"] = "Root.Objects.Server.foo" }, tsh.DropServerVirtualPath),
+		Entry("absent value", func(p map[string]any, _ map[string]string) { delete(p, "value") }, tsh.DropMissingValueOrTimestamp),
+		Entry("empty location", func(_ map[string]any, m map[string]string) { m["location_path"] = "..." }, tsh.DropEmptyLocation),
+		Entry("non-finite value", func(p map[string]any, _ map[string]string) { p["value"] = math.Inf(1) }, tsh.DropUnclassifiableValue),
+		Entry("bad timestamp", func(p map[string]any, _ map[string]string) { p["timestamp_ms"] = "not-a-number" }, tsh.DropBadTimestamp),
+	)
+
+	It("suppresses EmitMeta on the second identical-metadata message (shared view)", func() {
+		view := tsh.NewDedupCache().NewBatch()
+		p1, m1 := base()
+		m1["serialNumber"] = "abc"
+		row1, reason1 := tsh.Transform(p1, m1, "pump", true, nil, view)
+		Expect(reason1).To(Equal(tsh.DropNone))
+		Expect(row1.EmitMeta).To(BeTrue())
+
+		p2, m2 := base()
+		p2["timestamp_ms"] = float64(1) // distinct value row, same metadata
+		m2["serialNumber"] = "abc"
+		row2, reason2 := tsh.Transform(p2, m2, "pump", true, nil, view)
+		Expect(reason2).To(Equal(tsh.DropNone))
+		Expect(row2.EmitMeta).To(BeFalse())
 	})
 })

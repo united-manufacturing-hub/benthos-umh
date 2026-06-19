@@ -1,0 +1,89 @@
+# Copyright 2026 UMH Systems GmbH
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# ============================================================================
+# TimescaleDB Historian — example bridge write flow
+#
+# Archives one UNS data contract into TimescaleDB using the UMH Historian schema,
+# via the `timescaledb_historian` output plugin. This is the typed-config successor
+# to the JavaScript-processor TimescaleDB Historian template; the plugin owns the
+# schema bootstrap, value/attribute writes, metadata de-duplication, and the
+# datatype/conflict guards, so the bridge body is just input -> output.
+#
+# DATABASE SETUP (one-time, run as a Postgres superuser before starting the bridge):
+#   The bridge logs in AS umh_owner and cannot create that role itself.
+#       CREATE ROLE umh_owner WITH LOGIN PASSWORD 'change-me';
+#       GRANT CREATE, CONNECT ON DATABASE umh TO umh_owner;
+#       GRANT CREATE ON SCHEMA public TO umh_owner;
+#   Requires PostgreSQL 13+ with the TimescaleDB and ltree extensions available.
+#
+# WHAT IT WRITES (per contract "pump" -> tables value_pump and attribute_pump):
+#   - value_<contract>: one row per (tag, millisecond). value_num for numbers/bools,
+#     value_text for strings/JSON. An identical replay at the same timestamp is
+#     absorbed; a DIFFERENT value at the same (tag, ts) RAISEs and stops the bridge
+#     until the source is fixed — including a >1 kHz tag emitting two distinct values
+#     inside one millisecond, which the millisecond UNS timestamp cannot tell apart
+#     from a real conflict. Each tag is pinned to one datatype; a later sample of a
+#     different type RAISEs.
+#   - attribute_<contract>: the message metadata as a JSON object, de-duplicated so an
+#     unchanged key set is not rewritten. Query it via attribute->>'key'.
+#
+# STARTUP BEHAVIOR: Connect() runs a server-version check and bootstraps the schema, so
+# an unreachable, too-old, or misconfigured database fails the bridge at startup rather
+# than running silently. A message that cannot be mapped (wrong data_contract, missing
+# location_path/tag_name, empty path, non-finite value, bad timestamp) is dropped and
+# counted under the `messages_dropped` metric (labelled by reason) — never nacked — so
+# one malformed message cannot stall the stream.
+#
+# Replace every "change-me" below before running.
+# ============================================================================
+
+input:
+  # Self-contained demo source: synthesizes one UNS-shaped tag so you can run this file
+  # directly against a local TimescaleDB (`benthos -c config/timescaledb-historian-example.yaml`).
+  # In a real umh-core bridge, delete this block and use the UNS source instead (see bottom).
+  generate:
+    interval: 1s
+    mapping: |
+      meta location_path = "enterprise.plant1.line1"
+      meta data_contract = "_pump"
+      meta tag_name = "temperature"
+      meta virtual_path = "motor"
+      root.value = 20 + random_int(max: 1000) / 100.0
+      root.timestamp_ms = timestamp_unix_milli()
+
+output:
+  timescaledb_historian:
+    host: change-me                 # TimescaleDB/Postgres host
+    port: 5432
+    database: umh
+    username: umh_owner
+    password: change-me             # the umh_owner password from DATABASE SETUP above
+    sslmode: require                # require | disable | verify-full
+    data_contract: pump             # bare lowercase name; no leading "_", no "_vN" suffix
+    # metadata_keys_all: true       # store every metadata key except structural/high-churn
+    # metadata_keys: []             # allowlist used only when metadata_keys_all=false
+    # compress_after: 168h          # compress chunks older than this
+    # retention: ""                 # drop chunks older than this; empty = keep forever
+
+# ----------------------------------------------------------------------------
+# Real umh-core bridge write flow: replace the `generate` input above with the UNS,
+# which already carries location_path / data_contract / tag_name / virtual_path as
+# metadata, so no tag_processor is needed. Scope umh_topics to the contract you archive.
+#
+# input:
+#   uns:
+#     umh_topics:
+#       - '^umh\.v1\..*\._pump.*'
+# ----------------------------------------------------------------------------

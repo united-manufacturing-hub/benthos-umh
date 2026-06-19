@@ -61,8 +61,9 @@ type historianOutput struct {
 	retentionSet                          bool
 	dsnOverride                           string // set by tests; empty => build from fields
 
-	logger *service.Logger
-	dedup  *DedupCache
+	logger  *service.Logger
+	dropped *service.MetricCounter // labelled by drop reason
+	dedup   *DedupCache
 
 	mu           sync.Mutex
 	pool         *pgxpool.Pool
@@ -71,7 +72,11 @@ type historianOutput struct {
 }
 
 func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*historianOutput, error) {
-	o := &historianOutput{logger: mgr.Logger(), dedup: NewDedupCache()}
+	o := &historianOutput{
+		logger:  mgr.Logger(),
+		dropped: mgr.Metrics().NewCounter("messages_dropped", "reason"),
+		dedup:   NewDedupCache(),
+	}
 	var err error
 	str := func(field string, dst *string) bool {
 		if err != nil {
@@ -146,6 +151,16 @@ func (o *historianOutput) buildDSN() string {
 	return u.String()
 }
 
+// redact returns err's text with the password masked, so a connection error carrying the
+// DSN cannot leak the secret into benthos logs (the password field promises redaction).
+func (o *historianOutput) redact(err error) string {
+	msg := err.Error()
+	if o.password != "" {
+		msg = strings.ReplaceAll(msg, o.password, "xxxxx")
+	}
+	return msg
+}
+
 func (o *historianOutput) dsn() string {
 	if o.dsnOverride != "" {
 		return o.dsnOverride
@@ -164,20 +179,24 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 	if o.pool == nil {
 		cfg, err := pgxpool.ParseConfig(o.dsn())
 		if err != nil {
-			return err
+			return fmt.Errorf("invalid connection settings: %s", o.redact(err)) // DSN echoes the password
 		}
 		cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec // simple protocol (pgbouncer txn pool)
 		cfg.ConnConfig.RuntimeParams["search_path"] = "public"
 		pool, err := pgxpool.NewWithConfig(ctx, cfg)
 		if err != nil {
-			return err
+			return fmt.Errorf("connect failed: %s", o.redact(err))
 		}
 		o.pool = pool
 	}
 
 	// Cheap liveness + version check on every Connect (also the first real round-trip).
+	// Bounded so a hung/partitioned server fails Connect instead of blocking the goroutine
+	// indefinitely (which would silently exhaust max_in_flight slots).
+	checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	var version int
-	if err := o.pool.QueryRow(ctx, "SELECT current_setting('server_version_num')::int").Scan(&version); err != nil {
+	if err := o.pool.QueryRow(checkCtx, "SELECT current_setting('server_version_num')::int").Scan(&version); err != nil {
 		return fmt.Errorf("connect check failed: %w", err)
 	}
 	if version < 130000 {
@@ -211,18 +230,21 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	rows := make([]*Row, 0, len(batch))
 	var churn []string
 	for _, msg := range batch {
+		meta := map[string]string{}
+		_ = msg.MetaWalk(func(k, v string) error { meta[k] = v; return nil })
 		structured, err := msg.AsStructured()
 		if err != nil {
-			continue // not a JSON object -> silent drop
+			o.recordDrop("not_structured", meta["umh_topic"])
+			continue
 		}
 		payload, ok := structured.(map[string]any)
 		if !ok {
+			o.recordDrop("not_object", meta["umh_topic"])
 			continue
 		}
-		meta := map[string]string{}
-		_ = msg.MetaWalk(func(k, v string) error { meta[k] = v; return nil })
-		row, ok := Transform(payload, meta, o.contract, o.metadataKeysAll, o.metadataKeys, view)
-		if !ok {
+		row, reason := Transform(payload, meta, o.contract, o.metadataKeysAll, o.metadataKeys, view)
+		if reason != DropNone {
+			o.recordDrop(string(reason), meta["umh_topic"])
 			continue
 		}
 		if len(row.churnKeys) > 0 && churn == nil {
@@ -260,6 +282,16 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	}
 	view.Commit() // promote dedup entries only after a successful commit
 	return nil
+}
+
+// recordDrop counts a discarded message under its reason and logs it at debug level.
+// A historian whose data_contract or upstream tag_name is misconfigured drops every
+// message; without this it would report healthy while writing zero rows, with no way to
+// tell "no data arriving" from "all data dropped". The umh_topic (may be empty) locates
+// the offending source.
+func (o *historianOutput) recordDrop(reason, topic string) {
+	o.dropped.Incr(1, reason)
+	o.logger.Debugf("TimescaleDB historian: dropped message (reason=%s, umh_topic=%q)", reason, topic)
 }
 
 func (o *historianOutput) warnHighChurnOnce(keys []string) {

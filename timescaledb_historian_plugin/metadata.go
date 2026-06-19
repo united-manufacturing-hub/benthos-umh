@@ -83,19 +83,15 @@ func BuildMetadata(meta map[string]string, keys []string) map[string]string {
 	return md
 }
 
-// Fingerprint is deterministic (sorted keys). The plugin only ever compares its
-// own fingerprints, so sorted order (vs the template's insertion order) is fine.
+// Fingerprint serializes metadata as a JSONB object ({"key":"value"}). This single
+// string is both what lands in the attribute column and the dedup comparison key, so
+// the stored shape matches the ManagementConsole template and read queries against the
+// shared attribute_<contract> table (attribute->>'key', attribute @> '{...}') resolve.
+// json.Marshal sorts map keys, so it is deterministic regardless of map iteration order;
+// the plugin only ever compares its own fingerprints, and JSONB ignores key order on the
+// SQL side anyway, so sorted order does not drift from the template's insertion order.
 func Fingerprint(md map[string]string) string {
-	keys := make([]string, 0, len(md))
-	for k := range md {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	ordered := make([][2]string, len(keys))
-	for i, k := range keys {
-		ordered[i] = [2]string{k, md[k]}
-	}
-	b, _ := json.Marshal(ordered)
+	b, _ := json.Marshal(md)
 	return string(b)
 }
 

@@ -155,6 +155,10 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(h.WriteBatch(ctx, service.MessageBatch{m2})).To(Succeed())
 		// same key set -> only the first emits an attribute row
 		Expect(h.CountAttributeRows(ctx, "meta")).To(Equal(1))
+		// stored as a JSON object, readable via attribute->>'key' (not an array-of-pairs)
+		v, ok := h.AttributeValue(ctx, "meta", "serialNumber")
+		Expect(ok).To(BeTrue())
+		Expect(v).To(Equal("abc"))
 	})
 
 	It("intra-batch: same tag+ts with different metadata RAISEs (real conflict)", func() {

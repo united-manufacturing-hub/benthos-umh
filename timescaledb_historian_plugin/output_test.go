@@ -58,7 +58,7 @@ data_contract: pump
 		Expect(strings.ToUpper(got)).NotTo(ContainSubstring("ON CONFLICT (TOPIC_ID, TS) DO NOTHING"))
 	})
 
-	It("wraps the raw location in to_ltree_path on the write path (Design B)", func() {
+	It("wraps the raw location in to_ltree_path on the write path", func() {
 		Expect(tsh.BootstrapSQLForTest("pump")).NotTo(ContainSubstring("$1::ltree"))
 	})
 })

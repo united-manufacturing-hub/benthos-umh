@@ -24,8 +24,8 @@ import (
 // (ManagementConsole/frontend/templates/custom/timescaledb/timescaledb-historian.yaml),
 // with two parameterizations: the contract name is substituted into table names,
 // and the compression/retention policies take their interval from config. The one
-// behavioral deviation (Design B) is that the loc CTE wraps the raw location_path
-// in to_ltree_path(), so write and read canonicalize through the same SQL function.
+// behavioral deviation is that the loc CTE wraps the raw location_path in
+// to_ltree_path(), so write and read canonicalize through the same SQL function.
 //
 // "CONTRACT_SLOT" is a sentinel replaced by the validated contract name (^[a-z0-9_]+$,
 // so substitution is injection-safe).

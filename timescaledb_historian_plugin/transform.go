@@ -131,10 +131,10 @@ func ParseTimestampMs(v any) (string, bool) {
 	if !isFinite(ms) || ms < -maxJSDateMs || ms > maxJSDateMs {
 		return "", false
 	}
-	msInt := int64(ms)
-	sec := msInt / 1000
-	nsec := (msInt % 1000) * int64(time.Millisecond)
-	return time.Unix(sec, nsec).UTC().Format("2006-01-02T15:04:05.000Z"), true
+	// time.UnixMilli floors toward negative infinity, matching JS new Date(ms); a manual
+	// sec/nsec split via integer modulo truncates toward zero and would shift pre-1970
+	// (ms<0) instants back across a second boundary, diverging from the template.
+	return time.UnixMilli(int64(ms)).UTC().Format("2006-01-02T15:04:05.000Z"), true
 }
 
 // Row is the result of transforming one UNS message into the values the SQL
@@ -153,42 +153,58 @@ type Row struct {
 	churnKeys    []string
 }
 
-// Transform maps one UNS message to a Row, or returns ok=false to drop it
-// silently. Order matches the spec: contract -> presence -> empty-path ->
-// typing -> timestamp -> metadata.
-func Transform(payload map[string]any, meta map[string]string, contract string, allMeta bool, allowlist []string, view *BatchView) (*Row, bool) {
+// DropReason classifies why Transform discarded a message. The empty value means the
+// message was kept. The caller uses it to label a dropped-message metric and log line,
+// so a misconfigured bridge (wrong data_contract, upstream not setting tag_name) is
+// visible instead of silently writing zero rows.
+type DropReason string
+
+const (
+	DropContractMismatch        DropReason = "contract_mismatch"
+	DropMissingLocationOrTag    DropReason = "missing_location_or_tag"
+	DropServerVirtualPath       DropReason = "server_virtual_path"
+	DropMissingValueOrTimestamp DropReason = "missing_value_or_timestamp"
+	DropEmptyLocation           DropReason = "empty_location"
+	DropUnclassifiableValue     DropReason = "unclassifiable_value"
+	DropBadTimestamp            DropReason = "bad_timestamp"
+)
+
+// Transform maps one UNS message to a Row, or returns a non-empty DropReason to drop it.
+// Order matches the spec: contract -> presence -> empty-path -> typing -> timestamp ->
+// metadata.
+func Transform(payload map[string]any, meta map[string]string, contract string, allMeta bool, allowlist []string, view *BatchView) (*Row, DropReason) {
 	// 1. contract match (incoming data_contract carries a leading "_")
 	want := "_" + contract
 	if NormalizeContract(meta["data_contract"]) != want {
-		return nil, false
+		return nil, DropContractMismatch
 	}
 	// 2. presence guards (null/absent only; 0/false/"" are valid)
 	loc := meta["location_path"]
 	tag := meta["tag_name"]
 	if loc == "" || tag == "" {
-		return nil, false
+		return nil, DropMissingLocationOrTag
 	}
 	if vp := meta["virtual_path"]; strings.HasPrefix(vp, "Root.Objects.Server") {
-		return nil, false
+		return nil, DropServerVirtualPath
 	}
 	value, hasValue := payload["value"]
 	tsRaw, hasTS := payload["timestamp_ms"]
 	if !hasValue || value == nil || !hasTS || tsRaw == nil {
-		return nil, false
+		return nil, DropMissingValueOrTimestamp
 	}
 	// 3. empty-path drop (canonicalization itself happens in SQL via to_ltree_path)
 	if LocationNormalizesToEmpty(loc) {
-		return nil, false
+		return nil, DropEmptyLocation
 	}
 	// 4. typing
 	vt, num, text, ok := ClassifyValue(value)
 	if !ok {
-		return nil, false
+		return nil, DropUnclassifiableValue
 	}
 	// 5. timestamp
 	ts, ok := ParseTimestampMs(tsRaw)
 	if !ok {
-		return nil, false
+		return nil, DropBadTimestamp
 	}
 	row := &Row{
 		RawLocation:  loc,
@@ -210,5 +226,8 @@ func Transform(payload map[string]any, meta map[string]string, contract string, 
 		row.EmitMeta = true
 		row.MetadataJSON = fp
 	}
-	return row, true
+	return row, DropNone
 }
+
+// DropNone is the zero DropReason: the message was kept.
+const DropNone DropReason = ""
