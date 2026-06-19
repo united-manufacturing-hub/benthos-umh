@@ -1,0 +1,3 @@
+kind: new
+body: '`uns_beta` input (preview) for reading from the Unified Namespace. Each message stays in-flight until your pipeline acknowledges it, and any message that is rejected is redelivered until accepted (ENG-5105)'
+time: 2026-06-19T12:09:05Z

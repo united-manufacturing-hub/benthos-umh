@@ -1,3 +1,0 @@
-kind: improvements
-body: uns_beta discards records that do not match its `umh_topics` filter before constructing them, sharply reducing memory allocations when subscribing to a few topics out of a high-volume namespace (ENG-5105)
-time: 2026-06-19T12:09:05Z
