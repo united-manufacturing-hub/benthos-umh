@@ -45,6 +45,7 @@ header:
     - "tests/*"
     - "proto/*"
     - ".changelog/**"
+    - "patches/**"
     - "**/LICENSE"
     - "**/NOTICE"
     - "**/NOTICES"
