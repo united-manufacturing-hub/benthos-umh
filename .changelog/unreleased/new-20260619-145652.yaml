@@ -1,0 +1,3 @@
+kind: new
+body: TimescaleDB Historian output for writing a UNS data contract to TimescaleDB from typed configuration, with start-up checks that fail the bridge when the database is misconfigured (ENG-5181)
+time: 2026-06-19T14:56:52.008709+02:00

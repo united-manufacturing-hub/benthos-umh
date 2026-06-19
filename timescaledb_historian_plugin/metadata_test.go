@@ -1,0 +1,53 @@
+// Copyright 2026 UMH Systems GmbH
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package timescaledb_historian_plugin_test
+
+import (
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	tsh "github.com/united-manufacturing-hub/benthos-umh/timescaledb_historian_plugin"
+)
+
+var _ = Describe("metadata", func() {
+	meta := map[string]string{
+		"serialNumber":           "abc",
+		"location_path":          "acme.line1", // structural -> excluded in all-mode
+		"opcua_source_timestamp": "x",          // high-churn -> excluded in all-mode
+		"_ltree":                 "internal",   // underscore-prefixed -> excluded in all-mode
+	}
+
+	It("all-mode excludes structural, high-churn, and _-prefixed", func() {
+		Expect(tsh.SelectMetaKeys(meta, true, nil)).To(ConsistOf("serialNumber"))
+	})
+	It("allowlist-mode takes the list verbatim (blacklist NOT applied)", func() {
+		Expect(tsh.SelectMetaKeys(meta, false, []string{"serialNumber", "opcua_source_timestamp"})).
+			To(ConsistOf("serialNumber", "opcua_source_timestamp"))
+	})
+	It("build omits allowlisted-but-absent keys", func() {
+		md := tsh.BuildMetadata(meta, []string{"serialNumber", "missing"})
+		Expect(md).To(HaveKeyWithValue("serialNumber", "abc"))
+		Expect(md).NotTo(HaveKey("missing"))
+	})
+	It("fingerprint is deterministic regardless of map order", func() {
+		a := tsh.Fingerprint(map[string]string{"x": "1", "y": "2"})
+		b := tsh.Fingerprint(map[string]string{"y": "2", "x": "1"})
+		Expect(a).To(Equal(b))
+	})
+	It("flags high-churn keys present in the built map", func() {
+		md := map[string]string{"opcua_source_timestamp": "x", "serialNumber": "abc"}
+		Expect(tsh.HighChurnKeys(md)).To(ConsistOf("opcua_source_timestamp"))
+	})
+})
