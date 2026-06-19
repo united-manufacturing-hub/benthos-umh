@@ -53,10 +53,16 @@ clean:
 run:
 	go run cmd/benthos/main.go run --log.level $(LOG_LEVEL) $(CONFIG)
 
+# build depends on patch-connect: the shipped binary registers uns_beta, whose
+# template wires key_pattern — a field that only exists on the patched connect
+# reader (ENG-5105). An unpatched binary would fail at runtime when a user
+# configures uns_beta, so every build is patched. The side modfile keeps the
+# committed go.mod clean; the patch-connect drift gate fails the build loudly on
+# a connect bump that moves the patched code.
 .PHONY: build
-build:
+build: patch-connect
 	@mkdir -p $(dir $(BENTHOS_BIN))
-	@go build \
+	@GOFLAGS=-modfile=$(PATCHED_MODFILE) go build \
        -ldflags "-s -w \
        -X github.com/redpanda-data/benthos/v4/internal/cli.Version=temp \
        -X github.com/redpanda-data/benthos/v4/internal/cli.DateBuilt=$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -70,9 +76,9 @@ patch-connect:
 	cp -R "$$CONNECT_SRC"/. $(CONNECT_VENDOR)/ && \
 	chmod -R u+w $(CONNECT_VENDOR) && \
 	( cd $(CONNECT_VENDOR) && git init -q && git add -A && \
-	  git -c user.email=patch@umh -c user.name=patch commit -qm base ) && \
-	git apply --check -p1 --directory=$(CONNECT_VENDOR) $(CONNECT_PATCH) && \
-	git apply -p1 --directory=$(CONNECT_VENDOR) $(CONNECT_PATCH) && \
+	  git -c user.email=patch@umh -c user.name=patch commit -qm base && \
+	  git apply --check -p1 ../$(CONNECT_PATCH) && \
+	  git apply -p1 ../$(CONNECT_PATCH) ) && \
 	cp go.mod $(PATCHED_MODFILE) && cp go.sum $(PATCHED_SUMFILE) && \
 	go mod edit -replace $(CONNECT_PKG)=./$(CONNECT_VENDOR) $(PATCHED_MODFILE) && \
 	echo "patched $(CONNECT_PKG) -> ./$(CONNECT_VENDOR); committed go.mod untouched." && \
@@ -86,7 +92,7 @@ check-connect-patch:
 	rm -rf $(CONNECT_VENDOR) && mkdir -p $(CONNECT_VENDOR) && \
 	cp -R "$$CONNECT_SRC"/. $(CONNECT_VENDOR)/ && \
 	chmod -R u+w $(CONNECT_VENDOR) && \
-	git apply --check -p1 --directory=$(CONNECT_VENDOR) $(CONNECT_PATCH) && \
+	( cd $(CONNECT_VENDOR) && git init -q && git apply --check -p1 ../$(CONNECT_PATCH) ) && \
 	echo "connect patch applies cleanly to $$(go list -m -f '{{.Version}}' $(CONNECT_PKG))"
 
 .PHONY: unpatch-connect

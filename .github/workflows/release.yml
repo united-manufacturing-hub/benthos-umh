@@ -78,11 +78,19 @@ jobs:
 
           echo "OUTPUT_NAME=benthos-${{ matrix.goos }}-${{ matrix.goarch }}${FILE_EXTENSION}" >> $GITHUB_ENV
 
+      # Patch connect before building (ENG-5105): the shipped binary registers
+      # uns_beta, whose template wires key_pattern, a field that only exists on
+      # the patched connect reader. The side modfile keeps the committed go.mod
+      # clean; the build below runs with GOFLAGS=-modfile=go.patched.mod.
+      - name: Patch connect
+        run: make patch-connect
+
       - name: Build Binary
         run: |
           mkdir -p ./dist
           GOOS=${{ env.GOOS }} GOARCH=${{ env.GOARCH }} \
             CGO_ENABLED=0 GOPROXY=https://golangproxy.umh.app,https://proxy.golang.org,direct \
+            GOFLAGS=-modfile=go.patched.mod \
             go build \
             -ldflags "-s -w \
             -X github.com/redpanda-data/benthos/v4/internal/cli.Version=${{ env.APP_VERSION }} \

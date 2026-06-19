@@ -23,6 +23,14 @@ ENV GOPROXY=https://golangproxy.umh.app,https://proxy.golang.org,direct
 COPY go.mod go.sum ./
 RUN go mod download
 
+# patch-connect needs the Makefiles and the connect patch (ENG-5105): the shipped
+# binary registers uns_beta, whose template wires key_pattern, a field that only
+# exists on the patched connect reader. An unpatched image would fail at runtime
+# when a user configures uns_beta, so the image build patches connect before
+# building. The side modfile (go.patched.mod) keeps the committed go.mod clean.
+COPY Makefile Makefile.Common ./
+COPY ./patches ./patches
+
 COPY ./pkg ./pkg
 COPY ./cmd ./cmd
 COPY ./downsampler_plugin ./downsampler_plugin
@@ -41,7 +49,10 @@ COPY ./stream_processor_plugin ./stream_processor_plugin
 COPY ./snowflake_put_plugin ./snowflake_put_plugin
 
 ENV CGO_ENABLED=0
-RUN go build \
+
+RUN make patch-connect
+
+RUN GOFLAGS=-modfile=go.patched.mod go build \
     -ldflags "-s -w \
     -X github.com/redpanda-data/benthos/v4/internal/cli.Version=${APP_VERSION} \
     -X github.com/redpanda-data/benthos/v4/internal/cli.DateBuilt=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
