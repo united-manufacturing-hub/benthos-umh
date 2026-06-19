@@ -236,3 +236,6 @@ cmd/schema-export/schema-export
 .DS_Store
 
 .self-review/
+
+# Transient patched copy of redpanda/connect (see Makefile patch-connect)
+.connect-patched/

@@ -23,6 +23,18 @@ BENTHOS_BIN := tmp/bin/benthos
 LOG_LEVEL ?= INFO
 CONFIG ?= ./config/opcua-hex-test.yaml
 
+# uns_beta pre-build key filter (ENG-5105): a perf-only patch to the official
+# redpanda Connect ordered franz reader that omits records a downstream key
+# filter would drop, before their message is built. We do not fork connect; the
+# diff lives in patches/ and is applied at build time onto a throwaway copy of
+# the pinned module, wired in via a transient `go mod edit -replace` (kept out of
+# the committed go.mod). `git apply --check` is the drift gate: a Renovate bump
+# that moves the code under the patch fails the build loudly. The copy is
+# git-baselined so the patch can always be regenerated with `git diff`.
+CONNECT_PKG := github.com/redpanda-data/connect/v4
+CONNECT_PATCH := patches/connect-key-filter.patch
+CONNECT_VENDOR := .connect-patched
+
 .PHONY: all
 all: clean build
 
@@ -46,6 +58,38 @@ build:
        -X github.com/redpanda-data/benthos/v4/internal/cli.DateBuilt=$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
        -o $(BENTHOS_BIN) \
        cmd/benthos/main.go
+
+.PHONY: patch-connect
+patch-connect:
+	@go mod edit -dropreplace $(CONNECT_PKG) && \
+	CONNECT_SRC=$$(go list -m -f '{{.Dir}}' $(CONNECT_PKG)) && \
+	rm -rf $(CONNECT_VENDOR) && mkdir -p $(CONNECT_VENDOR) && \
+	cp -R "$$CONNECT_SRC"/. $(CONNECT_VENDOR)/ && \
+	chmod -R u+w $(CONNECT_VENDOR) && \
+	( cd $(CONNECT_VENDOR) && git init -q && git add -A && \
+	  git -c user.email=patch@umh -c user.name=patch commit -qm base ) && \
+	git apply --check -p1 --directory=$(CONNECT_VENDOR) $(CONNECT_PATCH) && \
+	git apply -p1 --directory=$(CONNECT_VENDOR) $(CONNECT_PATCH) && \
+	go mod edit -replace $(CONNECT_PKG)=./$(CONNECT_VENDOR) && \
+	echo "patched $(CONNECT_PKG) -> ./$(CONNECT_VENDOR) (replace is transient; revert with: make unpatch-connect)"
+
+# Drift gate only: verify the diff still applies to the pinned module without
+# touching go.mod. CI runs this so a Renovate bump that moves connect fails loud.
+.PHONY: check-connect-patch
+check-connect-patch:
+	@go mod edit -dropreplace $(CONNECT_PKG) && \
+	CONNECT_SRC=$$(go list -m -f '{{.Dir}}' $(CONNECT_PKG)) && \
+	rm -rf $(CONNECT_VENDOR) && mkdir -p $(CONNECT_VENDOR) && \
+	cp -R "$$CONNECT_SRC"/. $(CONNECT_VENDOR)/ && \
+	chmod -R u+w $(CONNECT_VENDOR) && \
+	git apply --check -p1 --directory=$(CONNECT_VENDOR) $(CONNECT_PATCH) && \
+	echo "connect patch applies cleanly to $$(go list -m -f '{{.Version}}' $(CONNECT_PKG))"
+
+.PHONY: unpatch-connect
+unpatch-connect:
+	@go mod edit -dropreplace $(CONNECT_PKG) && \
+	rm -rf $(CONNECT_VENDOR) && \
+	echo "dropped replace for $(CONNECT_PKG); go.mod restored"
 
 .PHONY: lint
 lint: $(LINT)
