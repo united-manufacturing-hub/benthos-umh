@@ -1,5 +1,5 @@
 diff --git a/internal/impl/kafka/franz_reader_ordered.go b/internal/impl/kafka/franz_reader_ordered.go
-index bc0ca0e..273de8f 100644
+index bc0ca0e..589f25e 100644
 --- a/internal/impl/kafka/franz_reader_ordered.go
 +++ b/internal/impl/kafka/franz_reader_ordered.go
 @@ -17,6 +17,8 @@ package kafka
@@ -30,15 +30,16 @@ index bc0ca0e..273de8f 100644
  	}
  }
  
-@@ -83,6 +90,7 @@ type FranzReaderOrdered struct {
+@@ -83,6 +90,8 @@ type FranzReaderOrdered struct {
  	readBackOff           backoff.BackOff
  	topicLagRefreshPeriod time.Duration
  	batchMaxSize          uint64
 +	keyFilter             *regexp.Regexp
++	keyOmitted            *service.MetricCounter
  
  	res     *service.Resources
  	log     *service.Logger
-@@ -123,6 +131,12 @@ func NewFranzReaderOrderedFromConfig(conf *service.ParsedConfig, res *service.Re
+@@ -123,6 +132,19 @@ func NewFranzReaderOrderedFromConfig(conf *service.ParsedConfig, res *service.Re
  		return nil, err
  	}
  
@@ -46,18 +47,25 @@ index bc0ca0e..273de8f 100644
 +		if f.keyFilter, err = regexp.Compile(keyPattern); err != nil {
 +			return nil, fmt.Errorf("compiling %v: %w", kroFieldKeyPattern, err)
 +		}
++		// key_omitted_records is the coarse, connect-side count of records the
++		// pre-filter dropped before message construction (their native key failed
++		// key_pattern). It is the only observability the omitted records carry: a
++		// downstream consumer (uns_beta) never sees them, so its per-reason drop
++		// counters cannot account for them. Created ONLY when key_pattern is set —
++		// the unset path builds no counter and is byte-for-byte unchanged.
++		f.keyOmitted = res.Metrics().NewCounter("key_omitted_records")
 +	}
 +
  	return &f, nil
  }
  
-@@ -137,24 +151,42 @@ type batchWithRecords struct {
+@@ -137,24 +159,53 @@ type batchWithRecords struct {
  	size uint64
  }
  
 -func recordsToBatch(records []*kgo.Record, consumerLag *ConsumerLag) (batch batchWithRecords) {
 -	batch.b = make([]*messageWithRecord, len(records))
-+func recordsToBatch(records []*kgo.Record, consumerLag *ConsumerLag, keyFilter *regexp.Regexp) (batch batchWithRecords) {
++func recordsToBatch(records []*kgo.Record, consumerLag *ConsumerLag, keyFilter *regexp.Regexp, keyOmitted *service.MetricCounter) (batch batchWithRecords) {
 +	batch.b = make([]*messageWithRecord, 0, len(records))
  
 +	lastIdx := len(records) - 1
@@ -70,6 +78,21 @@ index bc0ca0e..273de8f 100644
 +
 +		matched := keyFilter == nil || keyFilter.Match(r.Key)
 +
++		// Every non-matching record is counted in key_omitted_records (the coarse
++		// connect-side drop count), whether it is omitted entirely (the continue
++		// below) or carried as the no-metadata last-record placeholder: in both
++		// cases its native key failed key_pattern and its content is never
++		// delivered. keyOmitted is nil-safe (nil *service.MetricCounter Incr is a
++		// no-op), and is nil exactly when keyFilter is nil, so the unset path is
++		// untouched.
++		if !matched {
++			keyOmitted.Incr(1)
+ 		}
+ 
+-		rmsg := &messageWithRecord{
+-			m:    msg,
+-			r:    r,
+-			size: uint64(len(r.Value) + len(r.Key)),
 +		// Non-matching record: omit entirely (no build, no batch entry → also
 +		// skips the per-message context wrap in pop()). Its offset still commits
 +		// because the LAST record of every poll is always kept — as a
@@ -82,12 +105,8 @@ index bc0ca0e..273de8f 100644
 +			r.Key = nil
 +			r.Value = nil
 +			continue
- 		}
- 
--		rmsg := &messageWithRecord{
--			m:    msg,
--			r:    r,
--			size: uint64(len(r.Value) + len(r.Key)),
++		}
++
 +		var msg *service.Message
 +		if matched {
 +			msg = FranzRecordToMessageV1(r)
@@ -106,12 +125,12 @@ index bc0ca0e..273de8f 100644
  
  		// The record lives on for checkpointing, but we don't need the contents
  		// going forward so discard these. This looked fine to me but could
-@@ -599,7 +631,7 @@ func (f *FranzReaderOrdered) Connect(ctx context.Context) error {
+@@ -599,7 +650,7 @@ func (f *FranzReaderOrdered) Connect(ctx context.Context) error {
  					return
  				}
  
 -				batch := recordsToBatch(p.Records, consumerLag)
-+				batch := recordsToBatch(p.Records, consumerLag, f.keyFilter)
++				batch := recordsToBatch(p.Records, consumerLag, f.keyFilter, f.keyOmitted)
  				if len(batch.b) == 0 {
  					return
  				}
