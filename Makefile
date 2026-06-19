@@ -27,13 +27,17 @@ CONFIG ?= ./config/opcua-hex-test.yaml
 # redpanda Connect ordered franz reader that omits records a downstream key
 # filter would drop, before their message is built. We do not fork connect; the
 # diff lives in patches/ and is applied at build time onto a throwaway copy of
-# the pinned module, wired in via a transient `go mod edit -replace` (kept out of
-# the committed go.mod). `git apply --check` is the drift gate: a Renovate bump
-# that moves the code under the patch fails the build loudly. The copy is
-# git-baselined so the patch can always be regenerated with `git diff`.
+# the pinned module. The replace is written to a SIDE MODFILE (go.patched.mod),
+# NOT the committed go.mod, so the committed go.mod NEVER changes and no commit
+# can ever capture the local replace. Patched build/test runs set
+# GOFLAGS=-modfile=go.patched.mod. `git apply --check` is the drift gate: a
+# Renovate bump that moves the code under the patch fails the build loudly. The
+# copy is git-baselined so the patch can always be regenerated with `git diff`.
 CONNECT_PKG := github.com/redpanda-data/connect/v4
 CONNECT_PATCH := patches/connect-key-filter.patch
 CONNECT_VENDOR := .connect-patched
+PATCHED_MODFILE := go.patched.mod
+PATCHED_SUMFILE := go.patched.sum
 
 .PHONY: all
 all: clean build
@@ -61,8 +65,7 @@ build:
 
 .PHONY: patch-connect
 patch-connect:
-	@go mod edit -dropreplace $(CONNECT_PKG) && \
-	CONNECT_SRC=$$(go list -m -f '{{.Dir}}' $(CONNECT_PKG)) && \
+	@CONNECT_SRC=$$(go list -m -f '{{.Dir}}' $(CONNECT_PKG)) && \
 	rm -rf $(CONNECT_VENDOR) && mkdir -p $(CONNECT_VENDOR) && \
 	cp -R "$$CONNECT_SRC"/. $(CONNECT_VENDOR)/ && \
 	chmod -R u+w $(CONNECT_VENDOR) && \
@@ -70,15 +73,16 @@ patch-connect:
 	  git -c user.email=patch@umh -c user.name=patch commit -qm base ) && \
 	git apply --check -p1 --directory=$(CONNECT_VENDOR) $(CONNECT_PATCH) && \
 	git apply -p1 --directory=$(CONNECT_VENDOR) $(CONNECT_PATCH) && \
-	go mod edit -replace $(CONNECT_PKG)=./$(CONNECT_VENDOR) && \
-	echo "patched $(CONNECT_PKG) -> ./$(CONNECT_VENDOR) (replace is transient; revert with: make unpatch-connect)"
+	cp go.mod $(PATCHED_MODFILE) && cp go.sum $(PATCHED_SUMFILE) && \
+	go mod edit -replace $(CONNECT_PKG)=./$(CONNECT_VENDOR) $(PATCHED_MODFILE) && \
+	echo "patched $(CONNECT_PKG) -> ./$(CONNECT_VENDOR); committed go.mod untouched." && \
+	echo "build/test patched with: GOFLAGS=-modfile=$(PATCHED_MODFILE) go test -tags connect_patched ./uns_plugin/..."
 
 # Drift gate only: verify the diff still applies to the pinned module without
 # touching go.mod. CI runs this so a Renovate bump that moves connect fails loud.
 .PHONY: check-connect-patch
 check-connect-patch:
-	@go mod edit -dropreplace $(CONNECT_PKG) && \
-	CONNECT_SRC=$$(go list -m -f '{{.Dir}}' $(CONNECT_PKG)) && \
+	@CONNECT_SRC=$$(go list -m -f '{{.Dir}}' $(CONNECT_PKG)) && \
 	rm -rf $(CONNECT_VENDOR) && mkdir -p $(CONNECT_VENDOR) && \
 	cp -R "$$CONNECT_SRC"/. $(CONNECT_VENDOR)/ && \
 	chmod -R u+w $(CONNECT_VENDOR) && \
@@ -87,9 +91,15 @@ check-connect-patch:
 
 .PHONY: unpatch-connect
 unpatch-connect:
-	@go mod edit -dropreplace $(CONNECT_PKG) && \
+	@rm -f $(PATCHED_MODFILE) $(PATCHED_SUMFILE) && \
 	rm -rf $(CONNECT_VENDOR) && \
-	echo "dropped replace for $(CONNECT_PKG); go.mod restored"
+	echo "removed $(PATCHED_MODFILE)/$(PATCHED_SUMFILE) and $(CONNECT_VENDOR); committed go.mod was never touched"
+
+# Run the uns_beta suite against the patched build (side modfile keeps the
+# committed go.mod clean; connect_patched tag pulls in the alloc-budget gate).
+.PHONY: test-uns-patched
+test-uns-patched: patch-connect
+	@GOFLAGS=-modfile=$(PATCHED_MODFILE) go test -tags connect_patched -count=1 -timeout=900s ./uns_plugin/... -args -ginkgo.label-filter='uns_beta'
 
 .PHONY: lint
 lint: $(LINT)

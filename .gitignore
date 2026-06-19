@@ -237,5 +237,7 @@ cmd/schema-export/schema-export
 
 .self-review/
 
-# Transient patched copy of redpanda/connect (see Makefile patch-connect)
+# Transient patched copy of redpanda/connect + its side modfile (see Makefile patch-connect)
 .connect-patched/
+go.patched.mod
+go.patched.sum
