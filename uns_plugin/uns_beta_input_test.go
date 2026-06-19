@@ -126,6 +126,7 @@ uns_beta:
   broker_address: "broker1:9092, broker2:9092,"
   consumer_group: "grp"
   kafka_topic: "custom.messages"
+  umh_topics: [".*"]
 `)
 		rp := redpandaOf(reader)
 
@@ -173,6 +174,7 @@ uns_beta:
   broker_address: "broker1:9092, broker2:9092,"
   consumer_group: "grp"
   kafka_topic: "custom.messages"
+  umh_topics: [".*"]
 `)
 		rp := redpandaOf(reader)
 		Expect(reader["consumer_group"]).To(Equal(rp["consumer_group"]))
@@ -198,6 +200,7 @@ uns_beta:
   broker_address: "localhost:9092"
   consumer_group: " g "
   kafka_topic: " custom.messages "
+  umh_topics: [".*"]
 `)
 		rp := redpandaOf(reader)
 		Expect(rp["consumer_group"]).To(Equal("g"))
@@ -212,6 +215,7 @@ uns_beta:
 uns_beta:
   broker_address: "b1:9092, b2:9092,"
   consumer_group: "g"
+  umh_topics: [".*"]
 `)
 		rp := redpandaOf(reader)
 		Expect(rp["seed_brokers"]).To(Equal([]any{"b1:9092", "b2:9092"}))
@@ -225,9 +229,38 @@ uns_beta:
 uns_beta:
   broker_address: "localhost:9092"
   consumer_group: "g"
+  umh_topics: [".*"]
 `)
 		rp := redpandaOf(reader)
 		Expect(rp["topics"]).To(Equal([]any{defaultInputKafkaTopic}))
+	})
+
+	It("falls back to the embedded broker when broker_address is omitted", func() {
+		reader := renderUnsBetaReader(`
+uns_beta:
+  consumer_group: "g"
+  umh_topics: [".*"]
+`)
+		rp := redpandaOf(reader)
+		Expect(rp["seed_brokers"]).To(Equal([]any{"localhost:9092"}))
+	})
+
+	// umh_topics is mandatory: a consumer must declare what it wants rather than
+	// silently subscribing to the whole namespace. Omitting it renders an empty
+	// list (no implicit [".*"]), which the reader rejects at startup — before the
+	// inner input is built (newUnsBetaReader compiles the filter first).
+	It("rejects an omitted umh_topics instead of subscribing to everything", func() {
+		sb := service.NewEnvironment().NewStreamBuilder()
+		Expect(sb.AddInputYAML(`
+uns_beta:
+  consumer_group: "g"
+`)).To(Succeed())
+		Expect(sb.AddConsumerFunc(func(context.Context, *service.Message) error { return nil })).To(Succeed())
+		stream, err := sb.Build()
+		Expect(err).NotTo(HaveOccurred())
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		Expect(stream.Run(ctx)).To(MatchError(ContainSubstring("umh_topics must not be empty")))
 	})
 
 	// Safety property: connect's key_pattern pre-filter MUST be the same regex as

@@ -97,6 +97,7 @@ var _ = Describe("uns_beta input delivery", Label("uns_beta"), func() {
 uns_beta:
   broker_address: "`+addr+`"
   consumer_group: "`+group+`"
+  umh_topics: [".*"]
 `, func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
@@ -176,6 +177,7 @@ var _ = Describe("uns_beta metadata contract", Label("uns_beta"), func() {
 uns_beta:
   broker_address: "`+addr+`"
   consumer_group: "`+group+`"
+  umh_topics: [".*"]
 `, func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
@@ -262,6 +264,7 @@ uns_beta:
 uns_beta:
   broker_address: "`+addr+`"
   consumer_group: "`+group+`"
+  umh_topics: [".*"]
 `, func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
@@ -338,6 +341,7 @@ uns_beta:
 uns_beta:
   broker_address: "`+addr+`"
   consumer_group: "`+group+`"
+  umh_topics: [".*"]
 `, func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
@@ -495,11 +499,11 @@ uns_beta:
 			"only the Berlin-keyed record may reach the consumer: Munich fails the umh_topics regex and a keyless record never matches any pattern")
 	})
 
-	// The keyless contract holds even when umh_topics is OMITTED: the default
-	// is [".*"], and `.*` matches "" as a regex — this pins that the
-	// never-match rule overrides even the match-everything default (rationale
-	// and the legacy behavior change: betaKeyFilter.matches doc).
-	It("drops a keyless record under the default match-everything filter and still commits past it", func() {
+	// The keyless contract holds even under an explicit match-everything filter:
+	// `.*` matches "" as a regex, yet a keyless record is still dropped — this
+	// pins that the never-match rule overrides even [".*"] (rationale and the
+	// legacy behavior change: betaKeyFilter.matches doc).
+	It("drops a keyless record under an explicit match-everything filter and still commits past it", func() {
 		addr := startBroker(GinkgoT())
 		const group = "uns-beta-keyless"
 		// One produce call: the keyed record rides alongside so the delegated
@@ -517,6 +521,7 @@ uns_beta:
 uns_beta:
   broker_address: "`+addr+`"
   consumer_group: "`+group+`"
+  umh_topics: [".*"]
 `, func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
@@ -1151,6 +1156,7 @@ var _ = Describe("uns_beta inner-input metrics routing", Label("uns_beta"), func
 uns_beta:
   broker_address: "` + addr + `"
   consumer_group: "` + group + `"
+  umh_topics: [".*"]
 `)).To(Succeed())
 		// Select the capturing exporter. The metrics-section YAML keys the
 		// exporter by its registered plugin name (see benthos's own
@@ -1603,6 +1609,7 @@ var _ = Describe("uns_beta NACK redelivery capstone", Label("uns_beta"), func() 
 uns_beta:
   broker_address: "`+addr+`"
   consumer_group: "`+group+`"
+  umh_topics: [".*"]
 `, func(_ context.Context, b service.MessageBatch) error {
 			// This callback runs off the test goroutine, so a Gomega failure
 			// inside it must be recovered here to be reported instead of

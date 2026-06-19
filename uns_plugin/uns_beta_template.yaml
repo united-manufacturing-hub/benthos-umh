@@ -31,8 +31,10 @@ description: |
 
 fields:
   - name: broker_address
-    description: 'Kafka broker address to connect to. A single address or multiple addresses separated by commas. For example: "localhost:9092" or "broker1:9092,broker2:9092".'
+    description: 'Kafka broker address to connect to. A single address or multiple addresses separated by commas. For example: "localhost:9092" or "broker1:9092,broker2:9092". Inside UMH Core this defaults to the embedded Redpanda; override it only to consume from an external broker.'
     type: string
+    default: "localhost:9092"
+    advanced: true
 
   - name: consumer_group
     description: Consumer group used when consuming the configured Kafka topic.
@@ -45,11 +47,9 @@ fields:
     advanced: true
 
   - name: umh_topics
-    description: List of RE2 regex patterns matched against each record's Kafka key (the umh_topic). Only records whose key matches at least one pattern are delivered; records with an empty or absent key never match any pattern. Patterns are unanchored; use ^...$ to match the full key. Defaults to a single match-everything pattern.
+    description: List of RE2 regex patterns matched against each record's Kafka key (the umh_topic). Only records whose key matches at least one pattern are delivered; records with an empty or absent key never match any pattern. Patterns are unanchored; use ^...$ to match the full key. Required; to consume the whole namespace, set it explicitly to [".*"].
     type: string
     kind: list
-    default: [".*"]
-    advanced: true
 
 mapping: |
   #!blobl
