@@ -14,17 +14,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// NBIRTH/DBIRTH metrics must parse into full UMH metadata, not just a payload value.
+// BIRTH metrics must parse into full UMH metadata, not just a payload value.
 //
-// The ManagementConsole default Sparkplug B template (ENG-5176) relies on birth
-// metrics carrying umh_location_path / umh_tag_name / umh_virtual_path: it lets BIRTH
-// through so every metric declared in a birth certificate seeds the Topic Browser
-// with its initial value, instead of only the metrics that actively change via DATA.
+// Customer-facing failure mode (ENG-5176): in Sparkplug B a device sends a metric's
+// initial value in its BIRTH certificate (NBIRTH/DBIRTH) and only sends later changes
+// as DATA (NDATA/DDATA). UMH already processes DATA, but if BIRTH is ignored, any
+// metric that never changes after birth (most static and config tags) never reaches
+// the UNS, so customers see an incomplete set of tags in the Topic Browser. The fix
+// is in the ManagementConsole default template, which now lets BIRTH through; that
+// only works if the input attaches umh_location_path / umh_tag_name / umh_virtual_path
+// and the value to birth metrics.
 //
 // Existing coverage does not pin this: sparkplug_b_datatype_test.go feeds a BIRTH
 // through CreateSplitMessages but asserts only the payload value, and the umh_*
-// integration test filters BIRTH out and validates DDATA only. This spec locks in
-// that a birth metric produces umh_* metadata so the template fix cannot regress
+// integration test filters BIRTH out and validates DDATA only. These specs lock in
+// that a birth metric produces umh_* metadata, so the template fix cannot regress
 // silently from the input side.
 package sparkplug_plugin_test
 
