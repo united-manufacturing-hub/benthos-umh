@@ -1,5 +1,5 @@
 diff --git a/internal/impl/kafka/franz_reader_ordered.go b/internal/impl/kafka/franz_reader_ordered.go
-index bc0ca0e..dac6c11 100644
+index bc0ca0e..273de8f 100644
 --- a/internal/impl/kafka/franz_reader_ordered.go
 +++ b/internal/impl/kafka/franz_reader_ordered.go
 @@ -17,6 +17,8 @@ package kafka
@@ -51,16 +51,62 @@ index bc0ca0e..dac6c11 100644
  	return &f, nil
  }
  
-@@ -137,7 +151,7 @@ type batchWithRecords struct {
+@@ -137,24 +151,42 @@ type batchWithRecords struct {
  	size uint64
  }
  
 -func recordsToBatch(records []*kgo.Record, consumerLag *ConsumerLag) (batch batchWithRecords) {
+-	batch.b = make([]*messageWithRecord, len(records))
 +func recordsToBatch(records []*kgo.Record, consumerLag *ConsumerLag, keyFilter *regexp.Regexp) (batch batchWithRecords) {
- 	batch.b = make([]*messageWithRecord, len(records))
++	batch.b = make([]*messageWithRecord, 0, len(records))
  
++	lastIdx := len(records) - 1
  	for i, r := range records {
-@@ -599,7 +613,7 @@ func (f *FranzReaderOrdered) Connect(ctx context.Context) error {
+-		msg := FranzRecordToMessageV1(r)
+-		if consumerLag != nil {
+-			lag := consumerLag.Load(r.Topic, r.Partition)
+-			msg.MetaSetMut("kafka_lag", lag)
++		size := uint64(len(r.Value) + len(r.Key))
++
++		matched := keyFilter == nil || keyFilter.Match(r.Key)
++
++		// Non-matching record: omit entirely (no build, no batch entry → also
++		// skips the per-message context wrap in pop()). Its offset still commits
++		// because the LAST record of every poll is always kept — as a
++		// no-metadata placeholder when it doesn't match — so the batch's final
++		// offset reaches the partition high-water mark and the commit advances
++		// over the skipped run. The placeholder rides in the same ack-gated batch
++		// as any matches, so a NACK still blocks the commit (ENG-5094). With
++		// keyFilter == nil every record matches → behaviour is unchanged.
++		if !matched && i != lastIdx {
++			r.Key = nil
++			r.Value = nil
++			continue
+ 		}
+ 
+-		rmsg := &messageWithRecord{
+-			m:    msg,
+-			r:    r,
+-			size: uint64(len(r.Value) + len(r.Key)),
++		var msg *service.Message
++		if matched {
++			msg = FranzRecordToMessageV1(r)
++			if consumerLag != nil {
++				lag := consumerLag.Load(r.Topic, r.Partition)
++				msg.MetaSetMut("kafka_lag", lag)
++			}
++		} else {
++			msg = service.NewMessage(nil)
+ 		}
+ 
+-		batch.b[i] = rmsg
+-		batch.size += rmsg.size
++		batch.b = append(batch.b, &messageWithRecord{m: msg, r: r, size: size})
++		batch.size += size
+ 
+ 		// The record lives on for checkpointing, but we don't need the contents
+ 		// going forward so discard these. This looked fine to me but could
+@@ -599,7 +631,7 @@ func (f *FranzReaderOrdered) Connect(ctx context.Context) error {
  					return
  				}
  
