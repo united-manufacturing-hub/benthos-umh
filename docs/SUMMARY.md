@@ -10,6 +10,7 @@
   - [Siemens S7](input/siemens-s7.md)
   - [Ethernet/IP](input/ethernet-ip.md)
   - [UNS Input](input/uns-input.md)
+  - [UNS Beta Input (preview)](input/uns-beta-input.md)
   - [More](https://docs.redpanda.com/redpanda-connect/components/inputs/about/)
 - [Libraries](libraries/README.md)
   - [UMH Topic Parser](libraries/umh-topic-parser.md)

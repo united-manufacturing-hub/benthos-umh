@@ -19,6 +19,7 @@ This section covers Benthos input plugins for collecting data from various indus
 - **[Ethernet/IP](ethernet-ip.md)** - Interfaces with Rockwell and other Ethernet/IP compatible controllers, mainly supporting the CIP protocol.
 
 - **[UNS Input](uns-input.md)** - Connects to UMH Core's Unified Namespace to consume and filter messages using regex patterns against UMH topic keys.
+- **[UNS Beta Input (preview)](uns-beta-input.md)** - Experimental, reliable replacement for UNS Input: an at-least-once consumer that keeps each message in-flight until your pipeline acknowledges it, redelivering rejected messages until they are accepted.
 
 - **[More Input Plugins](https://docs.redpanda.com/redpanda-connect/components/inputs/about/)** - Additional built-in input plugins available in Benthos/Redpanda Connect for various data sources.
 
