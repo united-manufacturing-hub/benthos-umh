@@ -56,12 +56,32 @@ func runUnsBetaStream(t testingT, unsBetaYAML string, consumerFn func(context.Co
 	done := make(chan struct{})
 	var runErr error // written before close(done), read after <-done
 	go func() { defer close(done); runErr = stream.Run(ctx) }()
+	var stopOnce sync.Once
 	return func() {
-		cancel()
-		<-done
-		if runErr != nil && !errors.Is(runErr, context.Canceled) {
-			t.Fatalf("stream run: %v", runErr)
-		}
+		// Idempotent: specs may call stop() explicitly AND via defer (e.g. a
+		// restart spec stops run 1 before starting run 2). A second StopWithin on
+		// an already-stopped stream would error, so guard with sync.Once.
+		stopOnce.Do(func() {
+			// StopWithin (not a bare context cancel) is what actually tears the inner
+			// redpanda input down: stream.Run returns on ctx cancel in microseconds
+			// WITHOUT waiting for the delegated franz client to stop, so a bare cancel
+			// leaves a leaked consumer goroutine that keeps polling and committing on
+			// the same consumer group. A restart spec that produces a record after
+			// stop() would otherwise see the lingering stream-1 consumer eat and commit
+			// past it (apparent data loss that is purely a teardown race, not a filter
+			// bug). StopWithin drains the franz client before returning, so the group
+			// is genuinely free for a restart. The streams under test self-terminate
+			// quickly once their input closes; 30s is a generous teardown bound.
+			stopErr := stream.StopWithin(30 * time.Second)
+			cancel() // backstop: unblock Run if StopWithin's path left it parked
+			<-done
+			if stopErr != nil {
+				t.Fatalf("stream stop: %v", stopErr)
+			}
+			if runErr != nil && !errors.Is(runErr, context.Canceled) {
+				t.Fatalf("stream run: %v", runErr)
+			}
+		})
 	}
 }
 
