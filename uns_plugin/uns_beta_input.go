@@ -34,6 +34,12 @@
 // an opaque OwnedInput with no accessor, so this equality is a template
 // convention guarded by the render/parity tests, not a Go guarantee. A
 // hand-authored uns_beta_reader could set the two independently.
+//
+// Why two registrations and not one: a managed input keeping its kafka_lag and
+// metrics on the outer stream can only come from a framework-parsed `input:`
+// field, so the template (lean surface) and the reader (behavior) can't be
+// merged without building the redpanda input on a throwaway manager and losing
+// its kafka_lag/metrics.
 
 package uns_plugin
 

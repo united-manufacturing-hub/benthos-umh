@@ -40,6 +40,7 @@ var _ = Describe("detectSource", func() {
 		// comes from the template YAML's name: field. Guard both the template and
 		// its backing reader so a regen that drops uns_beta from umhPluginNames
 		// (re-classifying it as upstream and breaking MC autocomplete) fails here.
+		// (Why uns_beta is two registrations: see uns_plugin/uns_beta_input.go.)
 		Entry("uns_beta", "uns_beta", "benthos-umh"),
 		Entry("uns_beta_reader", "uns_beta_reader", "benthos-umh"),
 		// Upstream Benthos plugins
