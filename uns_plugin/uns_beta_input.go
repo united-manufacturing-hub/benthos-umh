@@ -12,34 +12,55 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// uns_beta input (ENG-5094): a thin adapter that delegates to the official
-// redpanda Connect input via OwnedInput so that NACKed batches are never
-// committed away.
+// uns_beta input (ENG-5094): a NACK-safe Unified Namespace consumer. It
+// delegates consuming and committing to the official redpanda Connect input
+// (via OwnedInput) so a message the pipeline rejects is redelivered rather than
+// committed away, and adds the UMH layer on top: the umh_topics filter and the
+// umh_topic / kafka_msg_key metadata.
 //
-// uns_beta is two registered pieces:
-//   - "uns_beta" — a benthos template (MustRegisterTemplateYAML) exposing the
-//     lean 4-field user surface (broker_address, consumer_group, kafka_topic,
-//     umh_topics) and synthesizing the nested redpanda config in its mapping.
-//   - "uns_beta_reader" — this Go core input (internal/Deprecated). Its spec
-//     declares an `input:` field that the FRAMEWORK parses on the real manager,
-//     so the inner redpanda input's logs, metrics and kafka_lag route through
-//     the outer stream's logger/metrics registry instead of the noop manager
-//     that the old ParseYAML(nil) construction built them on.
+// SHAPE (read this before trying to collapse it into one plugin).
 //
-// For template-produced configs the normalized scalars (seed_brokers,
+// uns_beta is registered as two things, but only one of them ever runs:
+//   - "uns_beta" is a benthos TEMPLATE: a config alias. It exposes the lean
+//     4-field surface (broker_address, consumer_group, kafka_topic, umh_topics).
+//     At config-load benthos expands `uns_beta: {4 fields}` into
+//     `uns_beta_reader: {input: {redpanda: {full config}}, ...}`, and then
+//     uns_beta is gone. It never runs and never sees a message.
+//   - "uns_beta_reader" is THIS Go input, the only thing that runs. It builds
+//     the redpanda input from its `input:` field and wraps it. So at runtime:
+//     uns_beta_reader wraps redpanda (the child that emits kafka_lag).
+//
+// WHY TWO, and not one Go input. The work splits across two phases, and only
+// one of them can be Go:
+//   1. config-load: benthos expands templates and fixes the input tree. The
+//      "4 fields -> full redpanda config" translation has to happen here.
+//   2. construction: benthos calls this constructor with the parsed config.
+//      Our Go runs here.
+// redpanda's metrics, notably kafka_lag, only reach the pipeline when benthos
+// builds redpanda as a MANAGED child, and the only API that does that,
+// FieldInput("input"), reads an already-parsed `input:` field. Our Go runs in
+// phase 2 and has no way to hand benthos a config it assembled and say "build
+// and manage this." So the "4 fields -> full config" translation cannot be Go;
+// it has to be a template, the only thing that runs in phase 1.
+//
+// You can collapse uns_beta to one Go input only by building redpanda yourself
+// in Go, which makes it unmanaged and drops kafka_lag and the redpanda metrics.
+// Calling connect's redpanda constructor directly is not an option either: it
+// lives in connect's internal/ package, unimportable from here (the same Go
+// internal/ wall that forced the build-time franz-reader patch). A clean
+// single-plugin uns_beta would need connect to re-export that constructor
+// upstream.
+//
+// CAVEAT: for template-produced configs the normalized scalars (seed_brokers,
 // consumer_group, kafka_topic) are computed once and written to both the nested
-// redpanda block and these top-level reader fields, so they match by
-// construction of the template. uns_beta_reader itself is a Deprecated raw
-// surface and validates only the top-level copy; the inner redpanda config is
-// an opaque OwnedInput with no accessor, so this equality is a template
-// convention guarded by the render/parity tests, not a Go guarantee. A
-// hand-authored uns_beta_reader could set the two independently.
+// redpanda block and the top-level reader fields, so they match by construction.
+// uns_beta_reader validates only the top-level copy; the inner redpanda config
+// is an opaque OwnedInput with no accessor, so that equality is a template
+// convention the render/parity tests guard, not a Go guarantee. A hand-authored
+// uns_beta_reader could set the two independently.
 //
-// Why two registrations and not one: a managed input keeping its kafka_lag and
-// metrics on the outer stream can only come from a framework-parsed `input:`
-// field, so the template (lean surface) and the reader (behavior) can't be
-// merged without building the redpanda input on a throwaway manager and losing
-// its kafka_lag/metrics.
+// uns_beta_reader is Deprecated()/undocumented so the Management Console steers
+// users to the uns_beta template, not this raw nested-input surface.
 
 package uns_plugin
 
