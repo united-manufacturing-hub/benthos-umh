@@ -363,7 +363,8 @@ jobs:
       - test-downsampler
       - test-classic-to-core
       - test-snowflake-put
-      - test-historian    if: always()
+      - test-historian
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check result
