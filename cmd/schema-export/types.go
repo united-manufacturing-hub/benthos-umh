@@ -46,6 +46,9 @@ type PluginSpec struct {
 	Description string               `json:"description,omitempty"`
 	Config      map[string]FieldSpec `json:"config"`
 	FieldOrder  []string             `json:"field_order"` // preserves Go struct declaration order
+	// Set when config is one inline value (e.g. bloblang string), not an object.
+	RootType string `json:"-"`
+	RootKind string `json:"-"`
 }
 
 // MarshalJSON serializes PluginSpec with Config keys in FieldOrder order.

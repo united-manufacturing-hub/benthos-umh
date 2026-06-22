@@ -31,6 +31,11 @@
       "matchDepNames": ["go"],
       "matchManagers": ["gomod"],
       "rangeStrategy": "bump"
+    },
+    {
+      "description": "Pin gosnowflake to v1 - v2 is a breaking major requiring code changes",
+      "matchDepNames": ["github.com/snowflakedb/gosnowflake"],
+      "allowedVersions": "<2.0.0"
     }
   ]
 }

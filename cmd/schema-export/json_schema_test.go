@@ -242,6 +242,7 @@ var _ = Describe("JSON Schema Generator", func() {
 				Name:        "deep-plugin",
 				Type:        "input",
 				Description: "Plugin with deep nesting",
+				FieldOrder:  []string{"connection"},
 				Config: map[string]FieldSpec{
 					"connection": {
 						Name:        "connection",
@@ -346,6 +347,7 @@ var _ = Describe("JSON Schema Generator", func() {
 				Source:      "benthos-umh",
 				Summary:     "Reads data from Modbus devices",
 				Description: "This input plugin enables Benthos to read data directly from Modbus devices.",
+				FieldOrder:  []string{"controller", "slaveIDs", "addresses", "workarounds"},
 				Config: map[string]FieldSpec{
 					"controller": {
 						Name:        "controller",
@@ -481,6 +483,47 @@ var _ = Describe("JSON Schema Generator", func() {
 			mPos := strings.Index(jsonStr, `"m_field"`)
 			Expect(zPos).To(BeNumerically("<", aPos), "z_field must appear before a_field in JSON")
 			Expect(aPos).To(BeNumerically("<", mPos), "a_field must appear before m_field in JSON")
+		})
+	})
+
+	Context("inline-value plugins (e.g. bloblang)", func() {
+		// The bloblang processor's entire config is a mapping string, e.g.
+		//   - bloblang: |-
+		//       root = this
+		// so its schema must be type:string. Typing it as object made the editor
+		// flag every valid mapping with "Expected object but received string". (ENG-4926)
+		It("should emit type:string, not object, for a bloblang-like inline config", func() {
+			plugin := PluginSpec{
+				Name:        "bloblang",
+				Type:        "processor",
+				Description: "Executes a Bloblang mapping on messages.",
+				RootType:    "string",
+				RootKind:    "scalar",
+			}
+
+			result := convertPluginToJSONSchema(plugin)
+
+			Expect(result["type"]).To(Equal("string"))
+			Expect(result["description"]).To(Equal("Executes a Bloblang mapping on messages."))
+			// A scalar carries none of the object machinery.
+			Expect(result).NotTo(HaveKey("properties"))
+			Expect(result).NotTo(HaveKey("additionalProperties"))
+		})
+
+		It("should emit type:array for an inline array config (e.g. try/for_each)", func() {
+			plugin := PluginSpec{
+				Name:     "try",
+				Type:     "processor",
+				RootType: "processor",
+				RootKind: "array",
+			}
+
+			result := convertPluginToJSONSchema(plugin)
+
+			Expect(result["type"]).To(Equal("array"))
+			items, ok := result["items"].(map[string]any)
+			Expect(ok).To(BeTrue())
+			Expect(items["type"]).To(Equal("object"))
 		})
 	})
 })
