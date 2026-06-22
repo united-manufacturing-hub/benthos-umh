@@ -1,3 +1,0 @@
-kind: fixes
-body: 'OPC UA: subscriptions now survive a reconnect, so data collection resumes automatically after a network interruption instead of stalling until the input is restarted'
-time: 2026-06-18T16:38:17.000000+02:00
