@@ -74,6 +74,8 @@ type Config struct {
 	// Discovery REBIRTH configuration (secondary_active/primary only)
 	RequestBirthOnConnect bool          `yaml:"request_birth_on_connect"` // Send REBIRTH requests to newly discovered nodes
 	BirthRequestThrottle  time.Duration `yaml:"birth_request_throttle"`   // Minimum time between REBIRTH requests
+
+	IncludeEdgeNodeInLocation bool `yaml:"include_edge_node_in_location"`
 }
 
 // AutoDetectRole determines the role based on configuration (Host-only for INPUT plugin)

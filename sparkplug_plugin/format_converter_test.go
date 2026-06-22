@@ -605,6 +605,67 @@ func stringPtr(s string) *string {
 	return &s
 }
 
+var _ = Describe("Edge node in location path (ENG-5175)", func() {
+	var converter *FormatConverter
+
+	BeforeEach(func() {
+		converter = NewFormatConverter()
+	})
+
+	locationOf := func(edgeNode string, device string, includeEdgeNode bool) string {
+		deviceID := composeLocationDeviceID(edgeNode, device, includeEdgeNode)
+		result, err := converter.DecodeSparkplugToUMH(&SparkplugMessage{
+			GroupID:    "FactoryA",
+			EdgeNodeID: edgeNode,
+			DeviceID:   deviceID,
+			MetricName: "AmbientTemp",
+			Value:      25.5,
+			DataType:   "double",
+			Timestamp:  time.Now(),
+		}, "_raw")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.TopicInfo.Level0).NotTo(BeEmpty())
+		loc := result.TopicInfo.Level0
+		if len(result.TopicInfo.LocationSublevels) > 0 {
+			for _, sub := range result.TopicInfo.LocationSublevels {
+				loc = loc + "." + sub
+			}
+		}
+		return loc
+	}
+
+	Context("when include_edge_node_in_location is enabled", func() {
+		It("nests device data under its edge node", func() {
+			Expect(locationOf("Line1", "IO Controller", true)).
+				To(Equal("Line1.IO_Controller"))
+		})
+
+		It("namespaces identically-named devices on different edge nodes to distinct location paths", func() {
+			node1 := locationOf("Line1", "IO Controller", true)
+			node2 := locationOf("Line2", "IO Controller", true)
+			Expect(node1).NotTo(Equal(node2))
+			Expect(node1).To(Equal("Line1.IO_Controller"))
+			Expect(node2).To(Equal("Line2.IO_Controller"))
+		})
+
+		It("leaves node-level data (empty device) at the edge node", func() {
+			Expect(locationOf("Line1", "", true)).To(Equal("Line1"))
+		})
+	})
+
+	Context("when include_edge_node_in_location is disabled (default, backward compatible)", func() {
+		It("keeps device data at the device level, dropping the edge node", func() {
+			Expect(locationOf("Line1", "IO Controller", false)).
+				To(Equal("IO_Controller"))
+		})
+
+		It("leaves Parris-encoded multi-level device IDs unchanged", func() {
+			Expect(locationOf("EdgeNode1", "enterprise:site:area", false)).
+				To(Equal("enterprise.site.area"))
+		})
+	})
+})
+
 var _ = Describe("Sanitization for UMH compatibility", func() {
 	var converter *FormatConverter
 
