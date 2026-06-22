@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package timescaledb_historian_plugin
+package historian_plugin
 
 import (
 	"context"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -27,7 +28,7 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
-func timescaledbHistorianConfig() *service.ConfigSpec {
+func historianConfig() *service.ConfigSpec {
 	return service.NewConfigSpec().
 		Beta().
 		Categories("Services").
@@ -61,21 +62,26 @@ type historianOutput struct {
 	retentionSet                          bool
 	dsnOverride                           string // set by tests; empty => build from fields
 
-	logger  *service.Logger
-	dropped *service.MetricCounter // labelled by drop reason
-	dedup   *DedupCache
+	logger    *service.Logger
+	dropped   *service.MetricCounter // labeled by drop reason
+	dedupSize *service.MetricGauge   // current dedup-cache entry count
+	dedup     *DedupCache
 
 	mu           sync.Mutex
 	pool         *pgxpool.Pool
 	bootstrapped bool
-	churnOnce    sync.Once
+
+	churnMu     sync.Mutex
+	warnedChurn map[string]struct{} // high-churn keys already warned about
 }
 
 func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*historianOutput, error) {
 	o := &historianOutput{
-		logger:  mgr.Logger(),
-		dropped: mgr.Metrics().NewCounter("messages_dropped", "reason"),
-		dedup:   NewDedupCache(),
+		logger:      mgr.Logger(),
+		dropped:     mgr.Metrics().NewCounter("messages_dropped", "reason"),
+		dedupSize:   mgr.Metrics().NewGauge("dedup_cache_size"),
+		dedup:       NewDedupCache(),
+		warnedChurn: map[string]struct{}{},
 	}
 	var err error
 	str := func(field string, dst *string) bool {
@@ -163,10 +169,17 @@ func (o *historianOutput) buildDSN() string {
 
 // redact returns err's text with the password masked, so a connection error carrying the
 // DSN cannot leak the secret into benthos logs (the password field promises redaction).
+// buildDSN percent-encodes the password via url.UserPassword, so the DSN in an error
+// contains the ENCODED form, not the raw one — mask both. The encoded form is computed
+// with the same encoder buildDSN uses, so it matches exactly.
 func (o *historianOutput) redact(err error) string {
 	msg := err.Error()
-	if o.password != "" {
-		msg = strings.ReplaceAll(msg, o.password, "xxxxx")
+	if o.password == "" {
+		return msg
+	}
+	msg = strings.ReplaceAll(msg, o.password, "xxxxx")
+	if enc := strings.TrimPrefix(url.UserPassword("", o.password).String(), ":"); enc != "" && enc != o.password {
+		msg = strings.ReplaceAll(msg, enc, "xxxxx")
 	}
 	return msg
 }
@@ -216,12 +229,18 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 	if o.bootstrapped {
 		return nil
 	}
-	conn, err := o.pool.Acquire(ctx)
+	// Bound the bootstrap too: it takes pg_advisory_xact_lock and runs DDL, which can
+	// block on a competing instance or lock contention. DDL gets a larger budget than the
+	// liveness check, but it must have a deadline so a hung bootstrap fails-and-retries
+	// instead of blocking Connect (and, via o.mu, every WriteBatch) forever.
+	bootCtx, cancelBoot := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancelBoot()
+	conn, err := o.pool.Acquire(bootCtx)
 	if err != nil {
 		return err
 	}
 	defer conn.Release()
-	if _, err := conn.Exec(ctx, o.bootstrapStmt()); err != nil {
+	if _, err := conn.Exec(bootCtx, o.bootstrapStmt()); err != nil {
 		return fmt.Errorf("schema bootstrap failed: %w", err) // guard stays false -> next Connect retries
 	}
 	o.bootstrapped = true
@@ -238,7 +257,7 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 
 	view := o.dedup.NewBatch()
 	rows := make([]*Row, 0, len(batch))
-	var churn []string
+	churn := map[string]struct{}{}
 	for _, msg := range batch {
 		meta := map[string]string{}
 		_ = msg.MetaWalk(func(k, v string) error { meta[k] = v; return nil })
@@ -257,14 +276,12 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 			o.recordDrop(string(reason), meta["umh_topic"])
 			continue
 		}
-		if len(row.churnKeys) > 0 && churn == nil {
-			churn = row.churnKeys
+		for _, k := range row.churnKeys { // union across the whole batch, not just the first row
+			churn[k] = struct{}{}
 		}
 		rows = append(rows, row)
 	}
-	if churn != nil {
-		o.warnHighChurnOnce(churn)
-	}
+	o.warnHighChurn(churn)
 	if len(rows) == 0 {
 		return nil
 	}
@@ -278,11 +295,11 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	vq := valueQueryFor(o.contract)
 	aq := attributeQueryFor(o.contract)
 	for _, r := range rows {
-		if _, err := tx.Exec(ctx, vq, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, r.ValueType, r.TS, r.ValueNum, r.ValueText); err != nil {
+		if _, err := tx.Exec(ctx, vq, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType), r.TS, r.ValueNum, r.ValueText); err != nil {
 			return fmt.Errorf("value write failed: %w", err) // RAISE -> error -> nack -> degraded+stall
 		}
 		if r.EmitMeta {
-			if _, err := tx.Exec(ctx, aq, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, r.ValueType, r.TS, r.MetadataJSON); err != nil {
+			if _, err := tx.Exec(ctx, aq, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType), r.TS, r.MetadataJSON); err != nil {
 				return fmt.Errorf("attribute write failed: %w", err)
 			}
 		}
@@ -291,6 +308,7 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 		return err
 	}
 	view.Commit() // promote dedup entries only after a successful commit
+	o.dedupSize.Set(int64(o.dedup.Len()))
 	return nil
 }
 
@@ -299,18 +317,35 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 // message; without this it would report healthy while writing zero rows, with no way to
 // tell "no data arriving" from "all data dropped". The umh_topic (may be empty) locates
 // the offending source.
-func (o *historianOutput) recordDrop(reason, topic string) {
+func (o *historianOutput) recordDrop(reason string, topic string) {
 	o.dropped.Incr(1, reason)
 	o.logger.Debugf("TimescaleDB historian: dropped message (reason=%s, umh_topic=%q)", reason, topic)
 }
 
-func (o *historianOutput) warnHighChurnOnce(keys []string) {
-	o.churnOnce.Do(func() {
-		o.logger.Warnf("TimescaleDB historian: archiving high-churn metadata key(s) [%s]. These change on nearly every message, so the attribute table grows per-message and de-duplication does not help. Remove them from metadata_keys unless you specifically need them.", strings.Join(keys, ", "))
-	})
+// warnHighChurn warns once per distinct high-churn key. The warning exists to drive a
+// config fix, so it must report the FULL set of offending keys (unioned across the batch)
+// and re-fire when a new one appears, rather than logging one key once for the whole process.
+func (o *historianOutput) warnHighChurn(keys map[string]struct{}) {
+	if len(keys) == 0 {
+		return
+	}
+	o.churnMu.Lock()
+	var fresh []string
+	for k := range keys {
+		if _, seen := o.warnedChurn[k]; !seen {
+			o.warnedChurn[k] = struct{}{}
+			fresh = append(fresh, k)
+		}
+	}
+	o.churnMu.Unlock()
+	if len(fresh) == 0 {
+		return
+	}
+	sort.Strings(fresh)
+	o.logger.Warnf("TimescaleDB historian: archiving high-churn metadata key(s) [%s]. These change on nearly every message, so the attribute table grows per-message and de-duplication does not help. Remove them from metadata_keys unless you specifically need them.", strings.Join(fresh, ", "))
 }
 
-func (o *historianOutput) Close(ctx context.Context) error {
+func (o *historianOutput) Close(_ context.Context) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.pool != nil {
@@ -321,7 +356,7 @@ func (o *historianOutput) Close(ctx context.Context) error {
 }
 
 func init() {
-	err := service.RegisterBatchOutput("timescaledb_historian", timescaledbHistorianConfig(),
+	err := service.RegisterBatchOutput("historian", historianConfig(),
 		func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchOutput, service.BatchPolicy, int, error) {
 			maxInFlight, err := conf.FieldInt("max_in_flight")
 			if err != nil {

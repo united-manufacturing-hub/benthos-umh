@@ -12,20 +12,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package timescaledb_historian_plugin
+package historian_plugin
 
-import "sync"
+import (
+	lru "github.com/hashicorp/golang-lru/v2"
+)
+
+// dedupCacheSize caps the per-process fingerprint cache. The key embeds the
+// location/virtual_path, so a source that churns those would grow an unbounded map;
+// an LRU gives a hard ceiling. Eviction is safe: an evicted entry just re-emits one
+// attribute row, which the SQL ON CONFLICT re-deduplicates.
+const dedupCacheSize = 100_000
 
 // DedupCache is the persistent, per-process metadata fingerprint cache. A batch
 // gets a working view over it; the view is promoted only after the batch commits.
+// The underlying LRU is its own synchronization, so no extra mutex is needed.
 type DedupCache struct {
-	mu        sync.Mutex
-	committed map[string]string // cache key -> fingerprint
+	committed *lru.Cache[string, string] // cache key -> fingerprint
 }
 
 func NewDedupCache() *DedupCache {
-	return &DedupCache{committed: make(map[string]string)}
+	c, _ := lru.New[string, string](dedupCacheSize) // err only on size <= 0
+	return &DedupCache{committed: c}
 }
+
+// Len reports the number of cached fingerprints (exposed for a metrics gauge).
+func (c *DedupCache) Len() int { return c.committed.Len() }
 
 // NewBatch returns a working view seeded from the committed cache.
 func (c *DedupCache) NewBatch() *BatchView {
@@ -43,23 +55,19 @@ type BatchView struct {
 // ShouldEmit reports whether this (key, fingerprint) needs an attribute write,
 // updating the working set immediately so a later same-key call in this batch
 // dedups against the earlier one. The committed cache covers prior batches.
-func (v *BatchView) ShouldEmit(key, fingerprint string) bool {
+func (v *BatchView) ShouldEmit(key string, fingerprint string) bool {
 	if fp, seen := v.working[key]; seen {
 		v.working[key] = fingerprint
 		return fp != fingerprint
 	}
-	v.parent.mu.Lock()
-	prior, ok := v.parent.committed[key]
-	v.parent.mu.Unlock()
+	prior, ok := v.parent.committed.Get(key)
 	v.working[key] = fingerprint
 	return !ok || prior != fingerprint
 }
 
 // Commit promotes every working-set entry into the committed cache.
 func (v *BatchView) Commit() {
-	v.parent.mu.Lock()
-	defer v.parent.mu.Unlock()
 	for k, fp := range v.working {
-		v.parent.committed[k] = fp
+		v.parent.committed.Add(k, fp)
 	}
 }

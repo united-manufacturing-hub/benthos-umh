@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package timescaledb_historian_plugin_test
+package historian_plugin_test
 
 import (
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
 	"github.com/redpanda-data/benthos/v4/public/service"
-	tsh "github.com/united-manufacturing-hub/benthos-umh/timescaledb_historian_plugin"
+
+	tsh "github.com/united-manufacturing-hub/benthos-umh/historian_plugin"
 )
 
 var _ = Describe("config", func() {
@@ -32,7 +32,7 @@ port: 5432
 password: secret
 data_contract: pump
 `
-		parsed, err := tsh.TimescaleDBHistorianConfig().ParseYAML(yaml, service.NewEnvironment())
+		parsed, err := tsh.HistorianConfig().ParseYAML(yaml, service.NewEnvironment())
 		Expect(err).NotTo(HaveOccurred())
 		h, err := tsh.NewHistorianForConfig(parsed)
 		Expect(err).NotTo(HaveOccurred())
@@ -41,7 +41,7 @@ data_contract: pump
 
 	It("rejects an invalid data_contract at construction", func() {
 		yaml := "host: h\npassword: p\ndata_contract: Pump\n"
-		parsed, err := tsh.TimescaleDBHistorianConfig().ParseYAML(yaml, service.NewEnvironment())
+		parsed, err := tsh.HistorianConfig().ParseYAML(yaml, service.NewEnvironment())
 		Expect(err).NotTo(HaveOccurred())
 		_, err = tsh.NewHistorianForConfig(parsed)
 		Expect(err).To(HaveOccurred())
@@ -49,7 +49,7 @@ data_contract: pump
 
 	It("rejects a sub-second compress_after (would render INTERVAL '0 seconds')", func() {
 		yaml := "host: h\npassword: p\ndata_contract: pump\ncompress_after: 100ms\n"
-		parsed, err := tsh.TimescaleDBHistorianConfig().ParseYAML(yaml, service.NewEnvironment())
+		parsed, err := tsh.HistorianConfig().ParseYAML(yaml, service.NewEnvironment())
 		Expect(err).NotTo(HaveOccurred())
 		_, err = tsh.NewHistorianForConfig(parsed)
 		Expect(err).To(MatchError(ContainSubstring("compress_after must be at least 1s")))
@@ -57,7 +57,7 @@ data_contract: pump
 
 	It("rejects a sub-second retention when set", func() {
 		yaml := "host: h\npassword: p\ndata_contract: pump\nretention: 0s\n"
-		parsed, err := tsh.TimescaleDBHistorianConfig().ParseYAML(yaml, service.NewEnvironment())
+		parsed, err := tsh.HistorianConfig().ParseYAML(yaml, service.NewEnvironment())
 		Expect(err).NotTo(HaveOccurred())
 		_, err = tsh.NewHistorianForConfig(parsed)
 		Expect(err).To(MatchError(ContainSubstring("retention must be at least 1s")))

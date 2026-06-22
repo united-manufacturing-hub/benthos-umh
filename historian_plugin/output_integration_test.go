@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package timescaledb_historian_plugin_test
+package historian_plugin_test
 
 import (
 	"context"
@@ -21,12 +21,12 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/redpanda-data/benthos/v4/public/service"
-	tsh "github.com/united-manufacturing-hub/benthos-umh/timescaledb_historian_plugin"
+	tsh "github.com/united-manufacturing-hub/benthos-umh/historian_plugin"
 )
 
 var (
@@ -34,7 +34,7 @@ var (
 	pgContainer *postgres.PostgresContainer
 )
 
-func mkMsg(value any, tsMs float64, contract, loc, tag string, extraMeta map[string]string) *service.Message {
+func mkMsg(value any, tsMs float64, contract string, loc string, tag string, extraMeta map[string]string) *service.Message {
 	m := service.NewMessage(nil)
 	m.SetStructured(map[string]any{"value": value, "timestamp_ms": tsMs})
 	m.MetaSet("data_contract", contract)
@@ -51,8 +51,8 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 	var ctx context.Context
 
 	BeforeAll(func() {
-		if os.Getenv("TEST_TIMESCALEDB_HISTORIAN") == "" {
-			Skip("set TEST_TIMESCALEDB_HISTORIAN=true to run TimescaleDB integration tests")
+		if os.Getenv("TEST_HISTORIAN") == "" {
+			Skip("set TEST_HISTORIAN=true to run TimescaleDB integration tests")
 		}
 		ctx = context.Background()
 		c, err := postgres.Run(ctx, "timescale/timescaledb:latest-pg16",
@@ -167,6 +167,23 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		a := mkMsg(1.0, 7000, "_intra_v1", "l.a", "t", map[string]string{"serialNumber": "A"})
 		b := mkMsg(1.0, 7000, "_intra_v1", "l.a", "t", map[string]string{"serialNumber": "B"})
 		Expect(h.WriteBatch(ctx, service.MessageBatch{a, b})).NotTo(Succeed())
+	})
+
+	It("re-emits metadata after a rolled-back batch (dedup view discarded on failure)", func() {
+		h := connected("reemit")
+		defer h.Close(ctx)
+		// 1. baseline value + metadata B at ts=8000
+		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(1.0, 8000, "_reemit_v1", "l.a", "t", map[string]string{"serialNumber": "A"})})).To(Succeed())
+		Expect(h.CountAttributeRows(ctx, "reemit")).To(Equal(1))
+		// 2. a conflicting value at the SAME ts carrying NEW metadata B -> the value write
+		//    RAISEs -> the whole batch nacks and rolls back, so B is never committed to the
+		//    dedup cache (and never written).
+		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(2.0, 8000, "_reemit_v1", "l.a", "t", map[string]string{"serialNumber": "B"})})).NotTo(Succeed())
+		Expect(h.CountAttributeRows(ctx, "reemit")).To(Equal(1))
+		// 3. a valid write for the same tag with metadata B at a fresh ts must RE-EMIT B,
+		//    because the prior view was discarded on rollback (not silently suppressed).
+		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(3.0, 9000, "_reemit_v1", "l.a", "t", map[string]string{"serialNumber": "B"})})).To(Succeed())
+		Expect(h.CountAttributeRows(ctx, "reemit")).To(Equal(2))
 	})
 })
 

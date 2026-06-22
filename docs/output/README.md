@@ -12,7 +12,7 @@ This section covers Benthos output plugins for writing data to various industria
 
 - **[Snowflake PUT Output](snowflake-put.md)** - Writes batched messages to a Snowflake stage and optionally triggers Snowpipe ingestion. Ported from warpstreamlabs/bento.
 
-- **[TimescaleDB Historian Output](timescaledb-historian.md)** - Archives one UNS data contract into TimescaleDB using the UMH Historian schema, bootstrapping the schema and de-duplicating metadata, with a startup check that fails the bridge on a misconfigured database.
+- **[TimescaleDB Historian Output](historian.md)** - Saves one UNS data contract into TimescaleDB using the UMH Historian schema, bootstrapping the schema and de-duplicating metadata, with a startup check that fails the bridge on a misconfigured database.
 
 - **[More Output Plugins](https://docs.redpanda.com/redpanda-connect/components/outputs/about/)** - Additional built-in output plugins available in Benthos/Redpanda Connect for various destinations.
 

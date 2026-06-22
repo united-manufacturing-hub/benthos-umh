@@ -1,9 +1,9 @@
 # TimescaleDB Historian Output
 
-Archives one UNS data contract into TimescaleDB using the UMH Historian schema. The
+Saves one UNS data contract into TimescaleDB using the UMH Historian schema. The
 plugin owns the schema bootstrap, the value/attribute writes, metadata de-duplication,
-and the datatype/conflict guards, so a bridge write flow is just an input and this output
-— no JavaScript processor or hand-written `sql_raw`.
+and the datatype/conflict guards, so a bridge write flow is just an input and this output.
+No JavaScript processor or hand-written `sql_raw` is needed.
 
 ## Prerequisites
 
@@ -49,20 +49,46 @@ For `data_contract: pump`, the plugin creates and writes two hypertables:
 ## Behavior
 
 - **Startup check.** `Connect()` verifies the server version and bootstraps the schema, so
-  an unreachable, too-old, or misconfigured database fails the bridge at startup instead of
-  running silently against it.
+  an unreachable, too-old, or misconfigured database fails the bridge at startup rather than
+  writing to a misconfigured database unnoticed.
 - **Idempotent replays.** An identical value at the same `(tag, ts)` is absorbed.
 - **Conflict and datatype guards halt the bridge.** A *different* value at the same
   `(tag, ts)`, or a tag whose datatype flips (numeric ↔ text), RAISEs and stops the bridge
-  until the source is fixed — a deliberate choice so corrupt history is never written.
-  This includes a tag emitting two distinct values within one millisecond, which the
-  millisecond UNS timestamp cannot distinguish from a real conflict.
+  until the source is fixed. This is deliberate: corrupt history is never written. It
+  includes a tag emitting two distinct values within one millisecond, which the millisecond
+  UNS timestamp cannot distinguish from a real conflict, so this contract is unsuitable for
+  tags that emit distinct values faster than 1 kHz.
 - **Malformed messages are dropped, not nacked.** Wrong `data_contract`, missing
   `location_path`/`tag_name`, an empty location path, a non-finite number, or an
   unparseable timestamp drop the message and increment the `messages_dropped` metric
   (labelled by `reason`), so one bad message never stalls the stream.
 - **Metadata de-duplication.** An attribute row is rewritten only when its key set changes,
-  via an in-process fingerprint cache (per-process, bounded by tag cardinality).
+  via an in-process, LRU-bounded fingerprint cache. The cache is cleared on restart, so
+  each tag re-emits its metadata once after a restart (absorbed idempotently).
+
+## Numeric precision
+
+`value_num` is `DOUBLE PRECISION`. That is exact for sensor floats but loses precision for
+integer counters above 2^53 (~9e15) and for exact decimals. Route such tags to a text data
+contract instead, where the value is stored verbatim in `value_text`.
+
+## Location identity
+
+The location is canonicalized into an `ltree` path: every character outside `[A-Za-z0-9_]`
+becomes `_`, each label is truncated to 255 characters, and empty labels are dropped. So
+`enterprise.line-1`, `enterprise.line_1`, and `enterprise.line@1` all resolve to the **same**
+`topic_id` and share one time-series. Distinguish sources by their path segments, not by
+punctuation alone.
+
+## Schema and compatibility
+
+The plugin owns the schema: it bootstraps the baseline DDL idempotently on first connect
+and **never alters an already-created `value_<contract>` / `attribute_<contract>` table**.
+A breaking schema change ships as a new contract (new tables), never an in-place migration.
+
+The baseline is a port of the Management Console TimescaleDB Historian template and writes
+the same tables. To avoid schema drift, a given contract/database must be written by exactly
+**one** writer type — the plugin **or** the template, never both.
 
 ## Quick example
 
@@ -72,7 +98,7 @@ input:
     umh_topics:
       - '^umh\.v1\..*\._pump.*'
 output:
-  timescaledb_historian:
+  historian:
     host: timescaledb.example.com
     password: change-me
     data_contract: pump

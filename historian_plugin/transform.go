@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package timescaledb_historian_plugin
+package historian_plugin
 
 import (
 	"encoding/json"
@@ -32,7 +32,37 @@ const (
 var (
 	reVersionSuffix = regexp.MustCompile(`_v\d+$`)
 	reContract      = regexp.MustCompile(`^[a-z0-9_]+$`)
+	reNonLtreeLabel = regexp.MustCompile(`[^A-Za-z0-9_]`)
 )
+
+// ValueType is the value_type SQL enum domain ('numeric' | 'text'). Using a named
+// type with constants keeps the two Go producers (ClassifyValue, Row) in sync; a typo
+// would otherwise surface only at write time as a Postgres enum error and stall the bridge.
+type ValueType string
+
+const (
+	ValueNumeric ValueType = "numeric"
+	ValueText    ValueType = "text"
+)
+
+// CanonicalLtreePath mirrors the SQL to_ltree_path(): split on ".", replace every
+// [^A-Za-z0-9_] with "_", truncate each label to 255 chars, and drop empty labels. The
+// in-process dedup key must use this so its topic identity matches the DB's (raw
+// "line-1" and "line_1" both canonicalize to "line_1" -> one topic_id).
+func CanonicalLtreePath(loc string) string {
+	segs := strings.Split(loc, ".")
+	out := make([]string, 0, len(segs))
+	for _, s := range segs {
+		s = reNonLtreeLabel.ReplaceAllString(s, "_")
+		if r := []rune(s); len(r) > 255 {
+			s = string(r[:255])
+		}
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	return strings.Join(out, ".")
+}
 
 // NormalizeContract strips a trailing _vN (all versions share one table).
 func NormalizeContract(metaContract string) string {
@@ -66,33 +96,33 @@ func LocationNormalizesToEmpty(locationPath string) bool {
 // template's JS typing. Numbers arrive as float64 (benthos structured decoding);
 // json.Number is tolerated. A non-finite number is dropped (ok=false), never coerced.
 // Exactly one of num/text is non-nil; the unused one stays nil -> SQL NULL.
-func ClassifyValue(v any) (valueType string, num *float64, text *string, ok bool) {
+func ClassifyValue(v any) (ValueType, *float64, *string, bool) {
 	switch tv := v.(type) {
 	case bool:
 		n := 0.0
 		if tv {
 			n = 1.0
 		}
-		return "numeric", &n, nil, true
+		return ValueNumeric, &n, nil, true
 	case float64:
 		if !isFinite(tv) {
 			return "", nil, nil, false
 		}
-		return "numeric", &tv, nil, true
+		return ValueNumeric, &tv, nil, true
 	case json.Number:
 		f, err := tv.Float64()
 		if err != nil || !isFinite(f) {
 			return "", nil, nil, false
 		}
-		return "numeric", &f, nil, true
+		return ValueNumeric, &f, nil, true
 	case string:
-		return "text", nil, truncateRunes(tv), true
+		return ValueText, nil, truncateRunes(tv), true
 	default:
 		b, err := json.Marshal(v)
 		if err != nil {
 			return "", nil, nil, false
 		}
-		return "text", nil, truncateRunes(string(b)), true
+		return ValueText, nil, truncateRunes(string(b)), true
 	}
 }
 
@@ -144,7 +174,7 @@ type Row struct {
 	ContractName string
 	VirtualPath  string
 	TagName      string
-	ValueType    string
+	ValueType    ValueType
 	TS           string
 	ValueNum     *float64
 	ValueText    *string
@@ -216,15 +246,22 @@ func Transform(payload map[string]any, meta map[string]string, contract string, 
 		ValueNum:     num,
 		ValueText:    text,
 	}
-	// 6. metadata: select -> build -> fingerprint -> dedup
+	// 6. metadata: select -> build -> fingerprint -> dedup. Skip entirely when there is
+	// no eligible metadata, so a metadata-less tag does not write an attribute='{}' row
+	// (and burn a hypertable chunk) on its first message.
 	keys := SelectMetaKeys(meta, allMeta, allowlist)
 	md := BuildMetadata(meta, keys)
-	row.churnKeys = HighChurnKeys(md)
-	fp := Fingerprint(md)
-	cacheKey := "md:" + want + ":" + loc + ":" + meta["virtual_path"] + ":" + tag
-	if view.ShouldEmit(cacheKey, fp) {
-		row.EmitMeta = true
-		row.MetadataJSON = fp
+	if len(md) > 0 {
+		row.churnKeys = HighChurnKeys(md)
+		fp := Fingerprint(md)
+		// Key on the CANONICAL location so the in-process identity matches the DB topic_id
+		// (see CanonicalLtreePath). "\x00" separates fields because it cannot appear in any
+		// of them, so distinct topics can never collide into one key.
+		cacheKey := strings.Join([]string{want, CanonicalLtreePath(loc), meta["virtual_path"], tag}, "\x00")
+		if view.ShouldEmit(cacheKey, fp) {
+			row.EmitMeta = true
+			row.MetadataJSON = fp
+		}
 	}
 	return row, DropNone
 }

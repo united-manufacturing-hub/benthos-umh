@@ -24,6 +24,7 @@ import (
 	_ "github.com/united-manufacturing-hub/benthos-umh/classic_to_core_plugin"
 	_ "github.com/united-manufacturing-hub/benthos-umh/downsampler_plugin"
 	_ "github.com/united-manufacturing-hub/benthos-umh/eip_plugin"
+	_ "github.com/united-manufacturing-hub/benthos-umh/historian_plugin"
 	_ "github.com/united-manufacturing-hub/benthos-umh/modbus_plugin"
 	_ "github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin"
 	_ "github.com/united-manufacturing-hub/benthos-umh/opcua_plugin"
@@ -33,7 +34,6 @@ import (
 	_ "github.com/united-manufacturing-hub/benthos-umh/sparkplug_plugin"
 	_ "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin"
 	_ "github.com/united-manufacturing-hub/benthos-umh/tag_processor_plugin"
-	_ "github.com/united-manufacturing-hub/benthos-umh/timescaledb_historian_plugin"
 	_ "github.com/united-manufacturing-hub/benthos-umh/topic_browser_plugin"
 	_ "github.com/united-manufacturing-hub/benthos-umh/uns_plugin"
 )

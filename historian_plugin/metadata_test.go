@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package timescaledb_historian_plugin_test
+package historian_plugin_test
 
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	tsh "github.com/united-manufacturing-hub/benthos-umh/timescaledb_historian_plugin"
+	tsh "github.com/united-manufacturing-hub/benthos-umh/historian_plugin"
 )
 
 var _ = Describe("metadata", func() {

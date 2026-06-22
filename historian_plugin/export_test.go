@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package timescaledb_historian_plugin
+package historian_plugin
 
 import (
 	"context"
@@ -23,12 +23,20 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
-// TimescaleDBHistorianConfig exposes the config spec for tests.
-func TimescaleDBHistorianConfig() *service.ConfigSpec { return timescaledbHistorianConfig() }
+// HistorianConfig exposes the config spec for tests.
+func HistorianConfig() *service.ConfigSpec { return historianConfig() }
 
 // BootstrapSQLForTest renders the bootstrap DDL for a contract (default policies).
 func BootstrapSQLForTest(contract string) string {
 	return bootstrapSQL(contract, 168*time.Hour, 0, false)
+}
+
+// RedactDSN builds an output with the given password, returns its DSN (the form that
+// leaks in an error) and redact() applied to an error whose text embeds that DSN.
+func RedactDSN(password string) (string, string) {
+	o := &historianOutput{username: "umh_owner", password: password, host: "db", port: 5432, database: "umh", sslmode: "require"}
+	dsn := o.buildDSN()
+	return dsn, o.redact(fmt.Errorf("failed to connect: %s", dsn))
 }
 
 // HistorianTestHandle wraps the unexported output so external tests can drive it.
@@ -44,7 +52,7 @@ func NewHistorianForConfig(conf *service.ParsedConfig) (*HistorianTestHandle, er
 }
 
 // NewHistorianTestHandle builds an output directly against a DSN (integration tests).
-func NewHistorianTestHandle(dsn, contract string) *HistorianTestHandle {
+func NewHistorianTestHandle(dsn string, contract string) *HistorianTestHandle {
 	mgr := service.MockResources()
 	return &HistorianTestHandle{o: &historianOutput{
 		dsnOverride:     dsn,
@@ -109,7 +117,7 @@ func (h *HistorianTestHandle) CountAttributeRows(ctx context.Context, contract s
 
 // AttributeValue reads the stored JSONB attribute for a key via the read surface
 // (attribute->>key), proving the column holds an object, not an array-of-pairs.
-func (h *HistorianTestHandle) AttributeValue(ctx context.Context, contract, key string) (string, bool) {
+func (h *HistorianTestHandle) AttributeValue(ctx context.Context, contract string, key string) (string, bool) {
 	ExpectWithOffset(1, h.o.pool).NotTo(BeNil(), "Connect must succeed before AttributeValue")
 	var v *string
 	q := fmt.Sprintf("SELECT attribute->>$1 FROM attribute_%s LIMIT 1", contract)

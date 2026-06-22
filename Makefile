@@ -118,13 +118,13 @@ test-uns:
 test-uns-redpanda:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS)  ./uns_plugin/...
 
-.PHONY: test-timescaledb-historian
-test-timescaledb-historian:
-	@$(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='!postgres' ./timescaledb_historian_plugin/...
+.PHONY: test-historian
+test-historian:
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='!postgres' ./historian_plugin/...
 
-.PHONY: test-timescaledb-historian-postgres
-test-timescaledb-historian-postgres:
-	@TEST_TIMESCALEDB_HISTORIAN=true $(GINKGO_CMD) $(GINKGO_FLAGS) ./timescaledb_historian_plugin/...
+.PHONY: test-historian-postgres
+test-historian-postgres:
+	@TEST_HISTORIAN=true $(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='postgres' ./historian_plugin/...
 
 .PHONY: test-s7comm
 test-s7comm:

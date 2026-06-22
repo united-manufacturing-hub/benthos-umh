@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package timescaledb_historian_plugin_test
+package historian_plugin_test
 
 import (
 	"testing"
@@ -21,7 +21,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-func TestTimescaleDBHistorian(t *testing.T) {
+func TestHistorian(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "TimescaleDB Historian Suite")
 }

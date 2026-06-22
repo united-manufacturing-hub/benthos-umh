@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package timescaledb_historian_plugin
+package historian_plugin
 
 import (
 	"fmt"
@@ -181,11 +181,11 @@ ON CONFLICT (topic_id, ts) DO UPDATE
     ELSE a.attribute
   END;`
 
-func sub(sql, contract string) string {
+func sub(sql string, contract string) string {
 	return strings.ReplaceAll(sql, "CONTRACT_SLOT", contract)
 }
 
-func policyBlock(table string, compressAfter, retention time.Duration, retentionSet bool) string {
+func policyBlock(table string, compressAfter time.Duration, retention time.Duration, retentionSet bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `DO $pol$
 BEGIN
@@ -205,7 +205,7 @@ BEGIN
 	return b.String()
 }
 
-func bootstrapSQL(contract string, compressAfter, retention time.Duration, retentionSet bool) string {
+func bootstrapSQL(contract string, compressAfter time.Duration, retention time.Duration, retentionSet bool) string {
 	s := bootstrapTemplate
 	s = strings.Replace(s, "VALUE_POLICY_SLOT", policyBlock("value_CONTRACT_SLOT", compressAfter, retention, retentionSet), 1)
 	s = strings.Replace(s, "ATTR_POLICY_SLOT", policyBlock("attribute_CONTRACT_SLOT", compressAfter, retention, retentionSet), 1)

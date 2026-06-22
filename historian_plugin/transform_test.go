@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package timescaledb_historian_plugin_test
+package historian_plugin_test
 
 import (
 	"math"
@@ -21,7 +21,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	tsh "github.com/united-manufacturing-hub/benthos-umh/timescaledb_historian_plugin"
+	tsh "github.com/united-manufacturing-hub/benthos-umh/historian_plugin"
 )
 
 var _ = Describe("contract helpers", func() {
@@ -52,6 +52,37 @@ var _ = Describe("contract helpers", func() {
 	)
 })
 
+var _ = Describe("CanonicalLtreePath", func() {
+	DescribeTable("mirrors the SQL to_ltree_path identity",
+		func(in, want string) { Expect(tsh.CanonicalLtreePath(in)).To(Equal(want)) },
+		Entry("plain", "acme.line1", "acme.line1"),
+		Entry("non-word chars become _", "acme@line/1", "acme_line_1"),
+		Entry("dash vs underscore alias", "acme.line-1", "acme.line_1"),
+		Entry("empty segments dropped", "a...b", "a.b"),
+		Entry("all dots -> empty", "...", ""),
+	)
+	It("collapses dash/underscore/at variants to one identity", func() {
+		a := tsh.CanonicalLtreePath("enterprise.line-1")
+		b := tsh.CanonicalLtreePath("enterprise.line_1")
+		c := tsh.CanonicalLtreePath("enterprise.line@1")
+		Expect(a).To(Equal(b))
+		Expect(b).To(Equal(c))
+	})
+})
+
+var _ = Describe("redact (password masking in connection errors)", func() {
+	It("masks both the raw and the url-encoded password", func() {
+		pw := "p@ss/w:rd %x"
+		dsn, redacted := tsh.RedactDSN(pw)
+		// sanity: the DSN really does carry the encoded password (the leak path)
+		Expect(dsn).NotTo(ContainSubstring(pw))
+		// neither the raw nor the encoded password survives redaction
+		Expect(redacted).NotTo(ContainSubstring(pw))
+		Expect(redacted).NotTo(ContainSubstring("p%40ss"))
+		Expect(redacted).To(ContainSubstring("xxxxx"))
+	})
+})
+
 var _ = Describe("LocationNormalizesToEmpty", func() {
 	DescribeTable("matches the SQL to_ltree_path NULL condition",
 		func(in string, empty bool) { Expect(tsh.LocationNormalizesToEmpty(in)).To(Equal(empty)) },
@@ -70,7 +101,7 @@ var _ = Describe("ClassifyValue", func() {
 	It("bool true -> numeric 1", func() {
 		vt, num, text, ok := tsh.ClassifyValue(true)
 		Expect(ok).To(BeTrue())
-		Expect(vt).To(Equal("numeric"))
+		Expect(vt).To(Equal(tsh.ValueNumeric))
 		Expect(num).To(Equal(ptrF(1)))
 		Expect(text).To(BeNil())
 	})
@@ -82,7 +113,7 @@ var _ = Describe("ClassifyValue", func() {
 	It("finite float -> numeric", func() {
 		vt, num, _, ok := tsh.ClassifyValue(3.5)
 		Expect(ok).To(BeTrue())
-		Expect(vt).To(Equal("numeric"))
+		Expect(vt).To(Equal(tsh.ValueNumeric))
 		Expect(num).To(Equal(ptrF(3.5)))
 	})
 	It("NaN -> dropped", func() {
@@ -96,7 +127,7 @@ var _ = Describe("ClassifyValue", func() {
 	It("string -> text as-is", func() {
 		vt, num, text, ok := tsh.ClassifyValue("hello")
 		Expect(ok).To(BeTrue())
-		Expect(vt).To(Equal("text"))
+		Expect(vt).To(Equal(tsh.ValueText))
 		Expect(num).To(BeNil())
 		Expect(*text).To(Equal("hello"))
 	})
@@ -169,11 +200,27 @@ var _ = Describe("Transform", func() {
 		Expect(reason).To(Equal(tsh.DropNone))
 		Expect(row.RawLocation).To(Equal("acme.line1"))
 		Expect(row.ContractName).To(Equal("_pump"))
-		Expect(row.ValueType).To(Equal("numeric"))
+		Expect(row.ValueType).To(Equal(tsh.ValueNumeric))
 		Expect(*row.ValueNum).To(Equal(3.5))
 		Expect(row.ValueText).To(BeNil())
 		Expect(row.TS).To(Equal("1970-01-01T00:00:00.000Z"))
+		// base() carries only structural metadata (all stripped), so no attribute row.
+		Expect(row.EmitMeta).To(BeFalse())
+	})
+	It("emits an object-shaped attribute when an eligible metadata key is present", func() {
+		p, m := base()
+		m["serialNumber"] = "abc"
+		row, reason := tr(p, m)
+		Expect(reason).To(Equal(tsh.DropNone))
 		Expect(row.EmitMeta).To(BeTrue())
+		Expect(row.MetadataJSON).To(Equal(`{"serialNumber":"abc"}`))
+	})
+	It("does not emit an attribute row when there is no eligible metadata", func() {
+		p, m := base() // only structural keys -> BuildMetadata returns {}
+		row, reason := tr(p, m)
+		Expect(reason).To(Equal(tsh.DropNone))
+		Expect(row.EmitMeta).To(BeFalse())
+		Expect(row.MetadataJSON).To(BeEmpty())
 	})
 	It("keeps a boolean false value", func() {
 		p, m := base()
