@@ -1,3 +1,0 @@
-kind: fixes
-body: 'OPC UA: a single unreadable or invalid node ID no longer blocks monitoring the rest of a subscribed batch'
-time: 2026-06-18T16:38:19.000000+02:00

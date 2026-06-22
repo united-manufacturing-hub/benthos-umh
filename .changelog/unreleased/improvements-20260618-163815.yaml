@@ -1,3 +1,0 @@
-kind: improvements
-body: 'OPC UA: encrypted connections (`Basic256Sha256`, both `Sign` and `Sign & Encrypt`) now complete reliably, including signing-only mode which previously failed to connect'
-time: 2026-06-18T16:38:15.000000+02:00
