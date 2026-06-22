@@ -67,6 +67,10 @@ For `data_contract: pump`, the plugin creates and writes two hypertables:
 ## Quick example
 
 ```yaml
+input:
+  uns:
+    umh_topics:
+      - '^umh\.v1\..*\._pump.*'
 output:
   timescaledb_historian:
     host: timescaledb.example.com
@@ -74,5 +78,5 @@ output:
     data_contract: pump
 ```
 
-A complete, runnable bridge example (including the UNS source form) is in
-[`config/timescaledb-historian-example.yaml`](../../config/timescaledb-historian-example.yaml).
+To deploy a bridge against this output from the Management Console, use the
+**TimescaleDB Historian (Native)** template in the Add Bridge wizard.
