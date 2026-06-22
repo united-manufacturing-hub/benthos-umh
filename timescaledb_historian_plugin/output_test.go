@@ -47,6 +47,22 @@ data_contract: pump
 		Expect(err).To(HaveOccurred())
 	})
 
+	It("rejects a sub-second compress_after (would render INTERVAL '0 seconds')", func() {
+		yaml := "host: h\npassword: p\ndata_contract: pump\ncompress_after: 100ms\n"
+		parsed, err := tsh.TimescaleDBHistorianConfig().ParseYAML(yaml, service.NewEnvironment())
+		Expect(err).NotTo(HaveOccurred())
+		_, err = tsh.NewHistorianForConfig(parsed)
+		Expect(err).To(MatchError(ContainSubstring("compress_after must be at least 1s")))
+	})
+
+	It("rejects a sub-second retention when set", func() {
+		yaml := "host: h\npassword: p\ndata_contract: pump\nretention: 0s\n"
+		parsed, err := tsh.TimescaleDBHistorianConfig().ParseYAML(yaml, service.NewEnvironment())
+		Expect(err).NotTo(HaveOccurred())
+		_, err = tsh.NewHistorianForConfig(parsed)
+		Expect(err).To(MatchError(ContainSubstring("retention must be at least 1s")))
+	})
+
 	It("embeds the contract and the conflict-RAISE invariants in the bootstrap", func() {
 		got := tsh.BootstrapSQLForTest("pump")
 		Expect(got).To(ContainSubstring("value_pump"))

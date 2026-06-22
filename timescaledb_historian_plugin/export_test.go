@@ -78,6 +78,9 @@ func (h *HistorianTestHandle) SetDSN(dsn string) {
 
 // SQLToLtree runs the ported to_ltree_path() and returns (value, isNull).
 func (h *HistorianTestHandle) SQLToLtree(ctx context.Context, path string) (string, bool) {
+	if h == nil || h.o == nil || h.o.pool == nil {
+		return "", false
+	}
 	var v *string
 	if err := h.o.pool.QueryRow(ctx, "SELECT to_ltree_path($1)::text", path).Scan(&v); err != nil {
 		return "", false
@@ -89,6 +92,7 @@ func (h *HistorianTestHandle) SQLToLtree(ctx context.Context, path string) (stri
 }
 
 func (h *HistorianTestHandle) CountValueRows(ctx context.Context, contract string) int {
+	ExpectWithOffset(1, h.o.pool).NotTo(BeNil(), "Connect must succeed before CountValueRows")
 	var n int
 	err := h.o.pool.QueryRow(ctx, fmt.Sprintf("SELECT count(*) FROM value_%s", contract)).Scan(&n)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred())
@@ -96,6 +100,7 @@ func (h *HistorianTestHandle) CountValueRows(ctx context.Context, contract strin
 }
 
 func (h *HistorianTestHandle) CountAttributeRows(ctx context.Context, contract string) int {
+	ExpectWithOffset(1, h.o.pool).NotTo(BeNil(), "Connect must succeed before CountAttributeRows")
 	var n int
 	err := h.o.pool.QueryRow(ctx, fmt.Sprintf("SELECT count(*) FROM attribute_%s", contract)).Scan(&n)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred())
@@ -105,6 +110,7 @@ func (h *HistorianTestHandle) CountAttributeRows(ctx context.Context, contract s
 // AttributeValue reads the stored JSONB attribute for a key via the read surface
 // (attribute->>key), proving the column holds an object, not an array-of-pairs.
 func (h *HistorianTestHandle) AttributeValue(ctx context.Context, contract, key string) (string, bool) {
+	ExpectWithOffset(1, h.o.pool).NotTo(BeNil(), "Connect must succeed before AttributeValue")
 	var v *string
 	q := fmt.Sprintf("SELECT attribute->>$1 FROM attribute_%s LIMIT 1", contract)
 	err := h.o.pool.QueryRow(ctx, q, key).Scan(&v)

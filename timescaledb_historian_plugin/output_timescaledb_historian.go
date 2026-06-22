@@ -37,12 +37,12 @@ func timescaledbHistorianConfig() *service.ConfigSpec {
 		Field(service.NewStringField("database").Description("Database name.").Default("umh").Advanced()).
 		Field(service.NewStringField("username").Description("Login role.").Default("umh_owner").Advanced()).
 		Field(service.NewStringField("password").Description("Role password (plaintext in config; redacted in logs).").Secret()).
-		Field(service.NewStringField("sslmode").Description("require | disable | verify-full.").Default("require").Advanced()).
+		Field(service.NewStringField("sslmode").Description("require | disable | verify-full.").Default("require").Examples("require", "disable", "verify-full").Advanced()).
 		Field(service.NewStringField("sslrootcert").Description("CA cert path (inside the umh-core container).").Default("").Advanced()).
 		Field(service.NewStringField("sslcert").Description("Client cert path.").Default("").Advanced()).
 		Field(service.NewStringField("sslkey").Description("Client key path.").Default("").Advanced()).
 		Field(service.NewStringField("data_contract").Description("Bare lowercase contract name, e.g. \"pump\".")).
-		Field(service.NewBoolField("metadata_keys_all").Description("Store all metadata keys except blacklists.").Default(true).Advanced()).
+		Field(service.NewBoolField("metadata_keys_all").Description("Store all metadata keys except blacklists.").Default(true).Examples(true, false).Advanced()).
 		Field(service.NewStringListField("metadata_keys").Description("Allowlist when metadata_keys_all=false.").Default([]any{}).Advanced()).
 		Field(service.NewStringField("compress_after").Description("Compress chunks older than this (per contract).").Default("168h").Advanced()).
 		Field(service.NewStringField("retention").Description("Drop chunks older than this; empty = keep forever.").Default("").Advanced()).
@@ -116,6 +116,13 @@ func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*hi
 	if o.compressAfter, err = time.ParseDuration(caStr); err != nil {
 		return nil, fmt.Errorf("compress_after: %w", err)
 	}
+	// The policy SQL renders whole seconds (int64(d.Seconds())), so a zero or
+	// sub-second value collapses to INTERVAL '0 seconds' and produces an invalid
+	// TimescaleDB policy. Reject it here for a clear error instead of a confusing
+	// bootstrap failure on Connect.
+	if o.compressAfter < time.Second {
+		return nil, fmt.Errorf("compress_after must be at least 1s, got %q", caStr)
+	}
 	retStr, err := conf.FieldString("retention")
 	if err != nil {
 		return nil, err
@@ -123,6 +130,9 @@ func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*hi
 	if retStr != "" {
 		if o.retention, err = time.ParseDuration(retStr); err != nil {
 			return nil, fmt.Errorf("retention: %w", err)
+		}
+		if o.retention < time.Second {
+			return nil, fmt.Errorf("retention must be at least 1s when set, got %q", retStr)
 		}
 		o.retentionSet = true
 	}
