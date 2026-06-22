@@ -35,6 +35,7 @@ CONFIG ?= ./config/opcua-hex-test.yaml
 # copy is git-baselined so the patch can always be regenerated with `git diff`.
 CONNECT_PKG := github.com/redpanda-data/connect/v4
 CONNECT_PATCH := patches/connect-key-filter.patch
+CONNECT_FORWARD_PATCH := patches/connect-redpanda-forward.patch
 CONNECT_VENDOR := .connect-patched
 PATCHED_MODFILE := go.patched.mod
 PATCHED_SUMFILE := go.patched.sum
@@ -78,14 +79,18 @@ patch-connect:
 	( cd $(CONNECT_VENDOR) && git init -q && git add -A && \
 	  git -c user.email=patch@umh -c user.name=patch commit -qm base && \
 	  git apply --check -p1 ../$(CONNECT_PATCH) && \
-	  git apply -p1 ../$(CONNECT_PATCH) ) && \
+	  git apply -p1 ../$(CONNECT_PATCH) && \
+	  git apply --check -p1 ../$(CONNECT_FORWARD_PATCH) && \
+	  git apply -p1 ../$(CONNECT_FORWARD_PATCH) ) && \
 	cp go.mod $(PATCHED_MODFILE) && cp go.sum $(PATCHED_SUMFILE) && \
 	go mod edit -replace $(CONNECT_PKG)=./$(CONNECT_VENDOR) $(PATCHED_MODFILE) && \
 	echo "patched $(CONNECT_PKG) -> ./$(CONNECT_VENDOR); committed go.mod untouched." && \
 	echo "build/test patched with: GOFLAGS=-modfile=$(PATCHED_MODFILE) go test -tags connect_patched ./uns_plugin/..."
 
-# Drift gate only: verify the diff still applies to the pinned module without
-# touching go.mod. CI runs this so a Renovate bump that moves connect fails loud.
+# Drift gate only: verify the key-filter patch still applies to the pinned
+# module without touching go.mod. Not run by CI; run manually after a
+# connect bump. The forwarder patch is exercised by patch-connect (and the
+# connect_patched test lane), not by this gate.
 .PHONY: check-connect-patch
 check-connect-patch:
 	@CONNECT_SRC=$$(go list -m -f '{{.Dir}}' $(CONNECT_PKG)) && \
