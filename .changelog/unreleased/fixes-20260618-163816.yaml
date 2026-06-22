@@ -1,3 +1,0 @@
-kind: fixes
-body: 'OPC UA: reading or subscribing to large tag sets (roughly a thousand or more) over an encrypted connection no longer drops the connection with an `EOF` error'
-time: 2026-06-18T16:38:16.000000+02:00
