@@ -538,6 +538,10 @@ Or non-interactively:
 
 Commit the fragment from `.changelog/unreleased/` as part of your PR.
 
+## Releasing
+
+Cut a release by opening a `main ← staging` PR titled with the bare version (e.g. `v0.13.0`); the Changelog workflow generates the changelog automatically. Merge it as a **merge commit** (not a squash), then push a lightweight `vX.Y.Z` tag on the `main` tip — that triggers `release.yml` and the downstream umh-core/ManagementConsole bumps. See umh-core's [`RELEASING.md`](https://github.com/united-manufacturing-hub/united-manufacturing-hub/blob/staging/umh-core/RELEASING.md) for the cross-repo pattern.
+
 ## Testing Approach
 
 - **Unit Tests**: Per-plugin using Ginkgo v2
