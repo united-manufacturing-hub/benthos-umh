@@ -48,9 +48,8 @@ func toSet(keys ...string) map[string]struct{} {
 	return m
 }
 
-// SelectMetaKeys picks which metadata keys to store. In all-keys mode it drops
-// "_"-prefixed, structural, and high-churn keys; in allowlist mode it takes the
-// allowlist verbatim (allowlist wins over the blacklists).
+// SelectMetaKeys picks which metadata keys to store: in all-keys mode it drops
+// "_"-prefixed, structural, and high-churn keys; in allowlist mode it takes the list verbatim.
 func SelectMetaKeys(meta map[string]string, allKeys bool, allowlist []string) []string {
 	if !allKeys {
 		return append([]string(nil), allowlist...)
@@ -71,8 +70,7 @@ func SelectMetaKeys(meta map[string]string, allKeys bool, allowlist []string) []
 	return keys
 }
 
-// BuildMetadata keeps only keys that are present (present == non-null for
-// benthos string metadata), in both modes.
+// BuildMetadata keeps only the keys that are present in meta.
 func BuildMetadata(meta map[string]string, keys []string) map[string]string {
 	md := make(map[string]string)
 	for _, k := range keys {
@@ -83,20 +81,16 @@ func BuildMetadata(meta map[string]string, keys []string) map[string]string {
 	return md
 }
 
-// Fingerprint serializes metadata as a JSONB object ({"key":"value"}). This single
-// string is both what lands in the attribute column and the dedup comparison key, so
-// the stored shape matches the ManagementConsole template and read queries against the
-// shared attribute_<contract> table (attribute->>'key', attribute @> '{...}') resolve.
-// json.Marshal sorts map keys, so it is deterministic regardless of map iteration order;
-// the plugin only ever compares its own fingerprints, and JSONB ignores key order on the
-// SQL side anyway, so sorted order does not drift from the template's insertion order.
+// Fingerprint serializes metadata as a JSONB object ({"key":"value"}) — both the stored
+// attribute value and the dedup key. The object shape (not an array) is what makes
+// attribute->>'key' / @> queries resolve. json.Marshal sorts keys, so it is deterministic.
 func Fingerprint(md map[string]string) string {
 	b, _ := json.Marshal(md)
 	return string(b)
 }
 
-// HighChurnKeys returns the built keys that are known high-churn (only reachable
-// in allowlist mode, where the blacklist is intentionally bypassed).
+// HighChurnKeys returns the stored keys that are known high-churn (reachable only in
+// allowlist mode, which bypasses the blacklist).
 func HighChurnKeys(md map[string]string) []string {
 	var out []string
 	for k := range md {

@@ -35,9 +35,7 @@ var (
 	reNonLtreeLabel = regexp.MustCompile(`[^A-Za-z0-9_]`)
 )
 
-// ValueType is the value_type SQL enum domain ('numeric' | 'text'). Using a named
-// type with constants keeps the two Go producers (ClassifyValue, Row) in sync; a typo
-// would otherwise surface only at write time as a Postgres enum error and stall the bridge.
+// ValueType is the umh.value_type SQL enum domain.
 type ValueType string
 
 const (
@@ -45,10 +43,8 @@ const (
 	ValueText    ValueType = "text"
 )
 
-// CanonicalLtreePath mirrors the SQL to_ltree_path(): split on ".", replace every
-// [^A-Za-z0-9_] with "_", truncate each label to 255 chars, and drop empty labels. The
-// in-process dedup key must use this so its topic identity matches the DB's (raw
-// "line-1" and "line_1" both canonicalize to "line_1" -> one topic_id).
+// CanonicalLtreePath mirrors the SQL umh.to_ltree_path() so the in-process dedup key
+// shares the DB's topic identity (raw "line-1" and "line_1" both map to "line_1").
 func CanonicalLtreePath(loc string) string {
 	segs := strings.Split(loc, ".")
 	out := make([]string, 0, len(segs))
@@ -69,7 +65,6 @@ func NormalizeContract(metaContract string) string {
 	return reVersionSuffix.ReplaceAllString(metaContract, "")
 }
 
-// ValidateContract enforces the bare-lowercase-name rule from the template.
 func ValidateContract(c string) error {
 	if !reContract.MatchString(c) {
 		return fmt.Errorf("data_contract %q invalid: use a bare lowercase name (letters, digits, underscores), e.g. \"pump\"", c)
@@ -83,19 +78,15 @@ func ValidateContract(c string) error {
 	return nil
 }
 
-// LocationNormalizesToEmpty reports whether to_ltree_path() would return NULL,
-// i.e. every "."-split segment is empty. Non-word characters become "_" in SQL
-// (they never vanish), so any non-empty segment survives; removing all "." thus
-// leaves "" iff all segments were empty. Depends only on the ASCII "." split, so
-// it cannot drift from the SQL function.
+// LocationNormalizesToEmpty reports whether umh.to_ltree_path() would return NULL. Only
+// "." is dropped by the split; every other char survives as itself or "_", so the path is
+// empty iff all "."-split segments were empty.
 func LocationNormalizesToEmpty(locationPath string) bool {
 	return strings.ReplaceAll(locationPath, ".", "") == ""
 }
 
-// ClassifyValue routes a payload value to value_num or value_text, mirroring the
-// template's JS typing. Numbers arrive as float64 (benthos structured decoding);
-// json.Number is tolerated. A non-finite number is dropped (ok=false), never coerced.
-// Exactly one of num/text is non-nil; the unused one stays nil -> SQL NULL.
+// ClassifyValue routes a value to value_num or value_text. A non-finite number is dropped
+// (ok=false). Exactly one of num/text is non-nil.
 func ClassifyValue(v any) (ValueType, *float64, *string, bool) {
 	switch tv := v.(type) {
 	case bool:
@@ -136,8 +127,8 @@ func truncateRunes(s string) *string {
 	return &s
 }
 
-// ParseTimestampMs mirrors the template's Number(timestamp_ms)+new Date() guards.
-// Returns a UTC ISO-8601 string with milliseconds; ok=false when non-finite or out of range.
+// ParseTimestampMs returns a UTC ISO-8601 string with milliseconds; ok=false when
+// non-finite or out of range.
 func ParseTimestampMs(v any) (string, bool) {
 	var ms float64
 	switch tv := v.(type) {
@@ -161,14 +152,11 @@ func ParseTimestampMs(v any) (string, bool) {
 	if !isFinite(ms) || ms < -maxJSDateMs || ms > maxJSDateMs {
 		return "", false
 	}
-	// time.UnixMilli floors toward negative infinity, matching JS new Date(ms); a manual
-	// sec/nsec split via integer modulo truncates toward zero and would shift pre-1970
-	// (ms<0) instants back across a second boundary, diverging from the template.
+	// UnixMilli floors toward negative infinity, matching JS new Date(ms) for pre-1970 ms.
 	return time.UnixMilli(int64(ms)).UTC().Format("2006-01-02T15:04:05.000Z"), true
 }
 
-// Row is the result of transforming one UNS message into the values the SQL
-// queries bind. RawLocation is bound at $1 and the SQL wraps it in to_ltree_path().
+// Row holds the values one message binds into the SQL queries.
 type Row struct {
 	RawLocation  string
 	ContractName string
@@ -183,13 +171,11 @@ type Row struct {
 	churnKeys    []string
 }
 
-// DropReason classifies why Transform discarded a message. The empty value means the
-// message was kept. The caller uses it to label a dropped-message metric and log line,
-// so a misconfigured bridge (wrong data_contract, upstream not setting tag_name) is
-// visible instead of silently writing zero rows.
+// DropReason labels a dropped message for the metric/log; "" (DropNone) means kept.
 type DropReason string
 
 const (
+	DropNone                    DropReason = ""
 	DropContractMismatch        DropReason = "contract_mismatch"
 	DropMissingLocationOrTag    DropReason = "missing_location_or_tag"
 	DropServerVirtualPath       DropReason = "server_virtual_path"
@@ -200,15 +186,11 @@ const (
 )
 
 // Transform maps one UNS message to a Row, or returns a non-empty DropReason to drop it.
-// Order matches the spec: contract -> presence -> empty-path -> typing -> timestamp ->
-// metadata.
 func Transform(payload map[string]any, meta map[string]string, contract string, allMeta bool, allowlist []string, view *BatchView) (*Row, DropReason) {
-	// 1. contract match (incoming data_contract carries a leading "_")
 	want := "_" + contract
 	if NormalizeContract(meta["data_contract"]) != want {
 		return nil, DropContractMismatch
 	}
-	// 2. presence guards (null/absent only; 0/false/"" are valid)
 	loc := meta["location_path"]
 	tag := meta["tag_name"]
 	if loc == "" || tag == "" {
@@ -222,16 +204,13 @@ func Transform(payload map[string]any, meta map[string]string, contract string, 
 	if !hasValue || value == nil || !hasTS || tsRaw == nil {
 		return nil, DropMissingValueOrTimestamp
 	}
-	// 3. empty-path drop (canonicalization itself happens in SQL via to_ltree_path)
 	if LocationNormalizesToEmpty(loc) {
 		return nil, DropEmptyLocation
 	}
-	// 4. typing
 	vt, num, text, ok := ClassifyValue(value)
 	if !ok {
 		return nil, DropUnclassifiableValue
 	}
-	// 5. timestamp
 	ts, ok := ParseTimestampMs(tsRaw)
 	if !ok {
 		return nil, DropBadTimestamp
@@ -246,17 +225,13 @@ func Transform(payload map[string]any, meta map[string]string, contract string, 
 		ValueNum:     num,
 		ValueText:    text,
 	}
-	// 6. metadata: select -> build -> fingerprint -> dedup. Skip entirely when there is
-	// no eligible metadata, so a metadata-less tag does not write an attribute='{}' row
-	// (and burn a hypertable chunk) on its first message.
 	keys := SelectMetaKeys(meta, allMeta, allowlist)
 	md := BuildMetadata(meta, keys)
+	// Skip when there is no eligible metadata, so a metadata-less tag never writes an
+	// attribute='{}' row. "\x00" joins the key fields because it cannot occur in any of them.
 	if len(md) > 0 {
 		row.churnKeys = HighChurnKeys(md)
 		fp := Fingerprint(md)
-		// Key on the CANONICAL location so the in-process identity matches the DB topic_id
-		// (see CanonicalLtreePath). "\x00" separates fields because it cannot appear in any
-		// of them, so distinct topics can never collide into one key.
 		cacheKey := strings.Join([]string{want, CanonicalLtreePath(loc), meta["virtual_path"], tag}, "\x00")
 		if view.ShouldEmit(cacheKey, fp) {
 			row.EmitMeta = true
@@ -265,6 +240,3 @@ func Transform(payload map[string]any, meta map[string]string, contract string, 
 	}
 	return row, DropNone
 }
-
-// DropNone is the zero DropReason: the message was kept.
-const DropNone DropReason = ""

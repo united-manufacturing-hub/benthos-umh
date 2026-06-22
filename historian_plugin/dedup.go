@@ -18,17 +18,14 @@ import (
 	lru "github.com/hashicorp/golang-lru/v2"
 )
 
-// dedupCacheSize caps the per-process fingerprint cache. The key embeds the
-// location/virtual_path, so a source that churns those would grow an unbounded map;
-// an LRU gives a hard ceiling. Eviction is safe: an evicted entry just re-emits one
-// attribute row, which the SQL ON CONFLICT re-deduplicates.
+// dedupCacheSize bounds the per-process fingerprint cache. Eviction is safe: an evicted
+// entry just re-emits one attribute row, which the SQL ON CONFLICT re-deduplicates.
 const dedupCacheSize = 100_000
 
-// DedupCache is the persistent, per-process metadata fingerprint cache. A batch
-// gets a working view over it; the view is promoted only after the batch commits.
-// The underlying LRU is its own synchronization, so no extra mutex is needed.
+// DedupCache is the per-process metadata fingerprint cache (key -> fingerprint). A batch
+// works over a view that is promoted into the cache only after the batch commits.
 type DedupCache struct {
-	committed *lru.Cache[string, string] // cache key -> fingerprint
+	committed *lru.Cache[string, string]
 }
 
 func NewDedupCache() *DedupCache {
@@ -36,25 +33,21 @@ func NewDedupCache() *DedupCache {
 	return &DedupCache{committed: c}
 }
 
-// Len reports the number of cached fingerprints (exposed for a metrics gauge).
 func (c *DedupCache) Len() int { return c.committed.Len() }
 
-// NewBatch returns a working view seeded from the committed cache.
 func (c *DedupCache) NewBatch() *BatchView {
 	return &BatchView{parent: c, working: make(map[string]string)}
 }
 
-// BatchView accumulates this batch's emit decisions. Promote with Commit only
-// after the batch transaction commits; discard it (let it be GC'd) on rollback
-// so a retried batch re-emits.
+// BatchView accumulates a batch's emit decisions. Promote with Commit only after the
+// transaction commits; on rollback it is discarded so a retried batch re-emits.
 type BatchView struct {
 	parent  *DedupCache
 	working map[string]string
 }
 
-// ShouldEmit reports whether this (key, fingerprint) needs an attribute write,
-// updating the working set immediately so a later same-key call in this batch
-// dedups against the earlier one. The committed cache covers prior batches.
+// ShouldEmit reports whether (key, fingerprint) needs an attribute write, recording it in
+// the working set so a later same-key call in this batch dedups against it.
 func (v *BatchView) ShouldEmit(key string, fingerprint string) bool {
 	if fp, seen := v.working[key]; seen {
 		v.working[key] = fingerprint
@@ -65,7 +58,6 @@ func (v *BatchView) ShouldEmit(key string, fingerprint string) bool {
 	return !ok || prior != fingerprint
 }
 
-// Commit promotes every working-set entry into the committed cache.
 func (v *BatchView) Commit() {
 	for k, fp := range v.working {
 		v.parent.committed.Add(k, fp)

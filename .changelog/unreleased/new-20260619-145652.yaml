@@ -1,3 +1,3 @@
 kind: new
-body: TimescaleDB Historian output that saves a UNS data contract into TimescaleDB. The bridge fails at startup when the target database is unreachable or misconfigured, rather than writing to a misconfigured database unnoticed (ENG-5181)
+body: TimescaleDB Historian output that saves a UNS data contract into TimescaleDB under a dedicated umh schema. The bridge fails at startup when the target database is unreachable or misconfigured, rather than writing to a misconfigured database unnoticed (ENG-5181)
 time: 2026-06-19T14:56:52.008709+02:00

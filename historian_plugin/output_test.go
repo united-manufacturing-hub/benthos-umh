@@ -65,8 +65,9 @@ data_contract: pump
 
 	It("embeds the contract and the conflict-RAISE invariants in the bootstrap", func() {
 		got := tsh.BootstrapSQLForTest("pump")
-		Expect(got).To(ContainSubstring("value_pump"))
-		Expect(got).To(ContainSubstring("attribute_pump"))
+		Expect(got).To(ContainSubstring("CREATE SCHEMA IF NOT EXISTS umh"))
+		Expect(got).To(ContainSubstring("umh.value_pump"))
+		Expect(got).To(ContainSubstring("umh.attribute_pump"))
 		Expect(got).NotTo(ContainSubstring("CONTRACT_SLOT"))
 		Expect(got).To(ContainSubstring("raise_pk_conflict"))
 		Expect(got).To(ContainSubstring("tag_value_type_guard"))

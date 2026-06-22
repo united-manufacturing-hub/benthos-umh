@@ -122,10 +122,8 @@ func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*hi
 	if o.compressAfter, err = time.ParseDuration(caStr); err != nil {
 		return nil, fmt.Errorf("compress_after: %w", err)
 	}
-	// The policy SQL renders whole seconds (int64(d.Seconds())), so a zero or
-	// sub-second value collapses to INTERVAL '0 seconds' and produces an invalid
-	// TimescaleDB policy. Reject it here for a clear error instead of a confusing
-	// bootstrap failure on Connect.
+	// Sub-second durations render as INTERVAL '0 seconds' (whole-second SQL) and make an
+	// invalid policy; reject here for a clear error instead of a bootstrap failure.
 	if o.compressAfter < time.Second {
 		return nil, fmt.Errorf("compress_after must be at least 1s, got %q", caStr)
 	}
@@ -167,11 +165,9 @@ func (o *historianOutput) buildDSN() string {
 	return u.String()
 }
 
-// redact returns err's text with the password masked, so a connection error carrying the
-// DSN cannot leak the secret into benthos logs (the password field promises redaction).
-// buildDSN percent-encodes the password via url.UserPassword, so the DSN in an error
-// contains the ENCODED form, not the raw one — mask both. The encoded form is computed
-// with the same encoder buildDSN uses, so it matches exactly.
+// redact masks the password in an error. buildDSN percent-encodes it, so a DSN-bearing
+// error carries the encoded form, not the raw one; mask both (the encoded form uses the
+// same encoder as buildDSN).
 func (o *historianOutput) redact(err error) string {
 	msg := err.Error()
 	if o.password == "" {
@@ -213,9 +209,7 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 		o.pool = pool
 	}
 
-	// Cheap liveness + version check on every Connect (also the first real round-trip).
-	// Bounded so a hung/partitioned server fails Connect instead of blocking the goroutine
-	// indefinitely (which would silently exhaust max_in_flight slots).
+	// Liveness + version check, bounded so a hung server fails Connect instead of blocking.
 	checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	var version int
@@ -229,10 +223,8 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 	if o.bootstrapped {
 		return nil
 	}
-	// Bound the bootstrap too: it takes pg_advisory_xact_lock and runs DDL, which can
-	// block on a competing instance or lock contention. DDL gets a larger budget than the
-	// liveness check, but it must have a deadline so a hung bootstrap fails-and-retries
-	// instead of blocking Connect (and, via o.mu, every WriteBatch) forever.
+	// Bounded: bootstrap takes an advisory lock and runs DDL, which can contend; a deadline
+	// lets a hung bootstrap fail-and-retry instead of blocking Connect (and WriteBatch via o.mu).
 	bootCtx, cancelBoot := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancelBoot()
 	conn, err := o.pool.Acquire(bootCtx)
@@ -312,19 +304,14 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	return nil
 }
 
-// recordDrop counts a discarded message under its reason and logs it at debug level.
-// A historian whose data_contract or upstream tag_name is misconfigured drops every
-// message; without this it would report healthy while writing zero rows, with no way to
-// tell "no data arriving" from "all data dropped". The umh_topic (may be empty) locates
-// the offending source.
+// recordDrop counts and debug-logs a discarded message, so a misconfigured bridge that
+// drops everything is visible (the metric) rather than silently healthy with zero rows.
 func (o *historianOutput) recordDrop(reason string, topic string) {
 	o.dropped.Incr(1, reason)
 	o.logger.Debugf("TimescaleDB historian: dropped message (reason=%s, umh_topic=%q)", reason, topic)
 }
 
-// warnHighChurn warns once per distinct high-churn key. The warning exists to drive a
-// config fix, so it must report the FULL set of offending keys (unioned across the batch)
-// and re-fire when a new one appears, rather than logging one key once for the whole process.
+// warnHighChurn warns once per distinct high-churn key (re-firing when a new one appears).
 func (o *historianOutput) warnHighChurn(keys map[string]struct{}) {
 	if len(keys) == 0 {
 		return

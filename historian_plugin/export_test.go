@@ -90,7 +90,7 @@ func (h *HistorianTestHandle) SQLToLtree(ctx context.Context, path string) (stri
 		return "", false
 	}
 	var v *string
-	if err := h.o.pool.QueryRow(ctx, "SELECT to_ltree_path($1)::text", path).Scan(&v); err != nil {
+	if err := h.o.pool.QueryRow(ctx, "SELECT umh.to_ltree_path($1)::text", path).Scan(&v); err != nil {
 		return "", false
 	}
 	if v == nil {
@@ -102,7 +102,7 @@ func (h *HistorianTestHandle) SQLToLtree(ctx context.Context, path string) (stri
 func (h *HistorianTestHandle) CountValueRows(ctx context.Context, contract string) int {
 	ExpectWithOffset(1, h.o.pool).NotTo(BeNil(), "Connect must succeed before CountValueRows")
 	var n int
-	err := h.o.pool.QueryRow(ctx, fmt.Sprintf("SELECT count(*) FROM value_%s", contract)).Scan(&n)
+	err := h.o.pool.QueryRow(ctx, fmt.Sprintf("SELECT count(*) FROM umh.value_%s", contract)).Scan(&n)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred())
 	return n
 }
@@ -110,7 +110,7 @@ func (h *HistorianTestHandle) CountValueRows(ctx context.Context, contract strin
 func (h *HistorianTestHandle) CountAttributeRows(ctx context.Context, contract string) int {
 	ExpectWithOffset(1, h.o.pool).NotTo(BeNil(), "Connect must succeed before CountAttributeRows")
 	var n int
-	err := h.o.pool.QueryRow(ctx, fmt.Sprintf("SELECT count(*) FROM attribute_%s", contract)).Scan(&n)
+	err := h.o.pool.QueryRow(ctx, fmt.Sprintf("SELECT count(*) FROM umh.attribute_%s", contract)).Scan(&n)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred())
 	return n
 }
@@ -120,7 +120,7 @@ func (h *HistorianTestHandle) CountAttributeRows(ctx context.Context, contract s
 func (h *HistorianTestHandle) AttributeValue(ctx context.Context, contract string, key string) (string, bool) {
 	ExpectWithOffset(1, h.o.pool).NotTo(BeNil(), "Connect must succeed before AttributeValue")
 	var v *string
-	q := fmt.Sprintf("SELECT attribute->>$1 FROM attribute_%s LIMIT 1", contract)
+	q := fmt.Sprintf("SELECT attribute->>$1 FROM umh.attribute_%s LIMIT 1", contract)
 	err := h.o.pool.QueryRow(ctx, q, key).Scan(&v)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred())
 	if v == nil {

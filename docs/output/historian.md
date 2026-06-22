@@ -9,12 +9,12 @@ No JavaScript processor or hand-written `sql_raw` is needed.
 
 - PostgreSQL 13+ with the TimescaleDB and `ltree` extensions available.
 - A non-superuser owner role, created once before the bridge starts (the bridge logs in
-  as this role and cannot create it itself):
+  as this role and cannot create it itself). It creates and owns the dedicated `umh` schema
+  via the database-level grant, so no privilege on `public` is needed:
 
   ```sql
   CREATE ROLE umh_owner WITH LOGIN PASSWORD 'change-me';
   GRANT CREATE, CONNECT ON DATABASE umh TO umh_owner;
-  GRANT CREATE ON SCHEMA public TO umh_owner;
   ```
 
 ## Configuration
@@ -36,15 +36,16 @@ No JavaScript processor or hand-written `sql_raw` is needed.
 
 ## What it writes
 
-For `data_contract: pump`, the plugin creates and writes two hypertables:
+All objects live in a dedicated `umh` schema. For `data_contract: pump`, the plugin creates
+and writes two hypertables:
 
-- **`value_pump`** — one row per `(tag, millisecond)`. Numbers and booleans land in
+- **`umh.value_pump`** — one row per `(tag, millisecond)`. Numbers and booleans land in
   `value_num`, strings and JSON in `value_text`.
-- **`attribute_pump`** — the message metadata as a JSON object, queryable via
+- **`umh.attribute_pump`** — the message metadata as a JSON object, queryable via
   `attribute->>'key'` and `attribute @> '{...}'`.
 
-`get_topic_id(location_path, virtual_path, data_contract, tag_name)` resolves a tag to its
-`topic_id` for ad-hoc and Grafana queries.
+`umh.get_topic_id(location_path, virtual_path, data_contract, tag_name)` resolves a tag to
+its `topic_id` for ad-hoc and Grafana queries.
 
 ## Behavior
 
@@ -82,9 +83,11 @@ punctuation alone.
 
 ## Schema and compatibility
 
-The plugin owns the schema: it bootstraps the baseline DDL idempotently on first connect
-and **never alters an already-created `value_<contract>` / `attribute_<contract>` table**.
-A breaking schema change ships as a new contract (new tables), never an in-place migration.
+The plugin owns the schema: it bootstraps the baseline DDL into the `umh` schema
+idempotently on first connect and **never alters an already-created
+`umh.value_<contract>` / `umh.attribute_<contract>` table**. A breaking schema change ships
+as a new contract (new tables), never an in-place migration. (`ltree` stays in `public`,
+its conventional shared home.)
 
 The baseline is a port of the Management Console TimescaleDB Historian template and writes
 the same tables. To avoid schema drift, a given contract/database must be written by exactly
