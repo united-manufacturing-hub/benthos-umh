@@ -241,3 +241,5 @@ cmd/schema-export/schema-export
 .connect-patched/
 go.patched.mod
 go.patched.sum
+003_klaus/
+vsdd/
