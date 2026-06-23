@@ -22,7 +22,7 @@ on:
 
 jobs:
   generate-changelog:
-    if: startsWith(github.event.pull_request.title, 'v')
+    if: startsWith(github.event.pull_request.title, 'v') && github.head_ref == 'staging'
     runs-on: ubuntu-latest
     steps:
       - name: Generate GitHub App Token
