@@ -154,6 +154,53 @@ func (s *BboltStore) Get(ctx context.Context, key string) (any, bool) {
 	return item.Value, true
 }
 
+func (s *BboltStore) Update(ctx context.Context, key string, fn func(old any, exists bool) (any, error)) error {
+	err := ctx.Err()
+	if err != nil {
+		return err
+	}
+	if key == "" {
+		return fmt.Errorf("cache: key must not be empty")
+	}
+	if fn == nil {
+		return fmt.Errorf("cache: update fn must not be nil")
+	}
+
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bboltBucket)
+		if b == nil {
+			return fmt.Errorf("cache: bucket missing")
+		}
+
+		var old any
+		exists := false
+		raw := b.Get([]byte(key))
+		if raw != nil {
+			var item Item
+			err := json.Unmarshal(raw, &item)
+			if err == nil && !item.Expired() {
+				old = item.Value
+				exists = true
+			}
+		}
+
+		newVal, err := fn(old, exists)
+		if err != nil {
+			return err
+		}
+
+		var expiration int64
+		if s.defaultExpiration > 0 {
+			expiration = time.Now().Add(s.defaultExpiration).UnixNano()
+		}
+		data, err := json.Marshal(Item{Value: newVal, Expiration: expiration})
+		if err != nil {
+			return fmt.Errorf("cache: encode value: %w", err)
+		}
+		return b.Put([]byte(key), data)
+	})
+}
+
 func (s *BboltStore) Stats(ctx context.Context) (Stats, error) {
 	err := ctx.Err()
 	if err != nil {
