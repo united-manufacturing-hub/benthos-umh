@@ -30,6 +30,8 @@ type Cache interface {
 	Get(ctx context.Context, key string) (any, bool)
 	// Delete removes the entry for key. No-op when key does not exist.
 	Delete(ctx context.Context, key string) error
+	// Update atomically reads, transforms, and writes a value under key.
+	Update(ctx context.Context, key string, fn func(old any, exists bool) (any, error)) error
 	// Stats reports the current key count and on-disk size.
 	Stats(ctx context.Context) (Stats, error)
 	// Close releases any resources held by the store.

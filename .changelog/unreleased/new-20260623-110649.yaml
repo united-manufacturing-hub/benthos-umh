@@ -1,0 +1,3 @@
+kind: new
+body: nodered_js cache gains a persistent disk-backed backend, a TTL option, atomic cache.update for read-modify-write, and cache_keys / cache_disk_bytes metrics (ENG-3463)
+time: 2026-06-23T11:06:49.896448+02:00
