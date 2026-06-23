@@ -372,6 +372,23 @@ func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) e
 				u.logger.Errorf("cache.delete failed: %v", err)
 			}
 		},
+		"update": func(key string, fn goja.Value) {
+			callable, ok := goja.AssertFunction(fn)
+			if !ok {
+				u.logger.Errorf("cache.update: second argument must be a function")
+				return
+			}
+			err := u.cache.Update(ctx, key, func(old any, exists bool) (any, error) {
+				result, callErr := callable(goja.Undefined(), vm.ToValue(old), vm.ToValue(exists))
+				if callErr != nil {
+					return nil, callErr
+				}
+				return result.Export(), nil
+			})
+			if err != nil {
+				u.logger.Errorf("cache.update failed: %v", err)
+			}
+		},
 	}
 	return vm.Set("cache", cacheObj)
 }
