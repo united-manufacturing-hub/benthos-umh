@@ -67,7 +67,7 @@ func NewBboltStore(path string, defaultExpiration time.Duration) (*BboltStore, e
 	}
 
 	err = db.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists(bboltBucket)
+		_, err = tx.CreateBucketIfNotExists(bboltBucket)
 		return err
 	})
 	if err != nil {
