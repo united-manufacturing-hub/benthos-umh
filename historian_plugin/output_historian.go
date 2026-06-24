@@ -64,6 +64,8 @@ type historianOutput struct {
 
 	logger    *service.Logger
 	dropped   *service.MetricCounter // labeled by drop reason
+	valueRows *service.MetricCounter // value rows upserted (after commit)
+	attrRows  *service.MetricCounter // attribute rows upserted (after commit)
 	dedupSize *service.MetricGauge   // current dedup-cache entry count
 	dedup     *DedupCache
 
@@ -78,8 +80,10 @@ type historianOutput struct {
 func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*historianOutput, error) {
 	o := &historianOutput{
 		logger:      mgr.Logger(),
-		dropped:     mgr.Metrics().NewCounter("messages_dropped", "reason"),
-		dedupSize:   mgr.Metrics().NewGauge("dedup_cache_size"),
+		dropped:     mgr.Metrics().NewCounter("historian_messages_dropped", "reason"),
+		valueRows:   mgr.Metrics().NewCounter("historian_value_rows_written"),
+		attrRows:    mgr.Metrics().NewCounter("historian_attribute_rows_written"),
+		dedupSize:   mgr.Metrics().NewGauge("historian_dedup_cache_size"),
 		dedup:       NewDedupCache(),
 		warnedChurn: map[string]struct{}{},
 	}
@@ -201,7 +205,6 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 			return fmt.Errorf("invalid connection settings: %s", o.redact(err)) // DSN echoes the password
 		}
 		cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec // simple protocol (pgbouncer txn pool)
-		cfg.ConnConfig.RuntimeParams["search_path"] = "public"
 		pool, err := pgxpool.NewWithConfig(ctx, cfg)
 		if err != nil {
 			return fmt.Errorf("connect failed: %s", o.redact(err))
@@ -286,6 +289,7 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 
 	vq := valueQueryFor(o.contract)
 	aq := attributeQueryFor(o.contract)
+	attrCount := 0
 	for _, r := range rows {
 		if _, err := tx.Exec(ctx, vq, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType), r.TS, r.ValueNum, r.ValueText); err != nil {
 			return fmt.Errorf("value write failed: %w", err) // RAISE -> error -> nack -> degraded+stall
@@ -294,6 +298,7 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 			if _, err := tx.Exec(ctx, aq, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType), r.TS, r.MetadataJSON); err != nil {
 				return fmt.Errorf("attribute write failed: %w", err)
 			}
+			attrCount++
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -301,6 +306,8 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	}
 	view.Commit() // promote dedup entries only after a successful commit
 	o.dedupSize.Set(int64(o.dedup.Len()))
+	o.valueRows.Incr(int64(len(rows)))
+	o.attrRows.Incr(int64(attrCount))
 	return nil
 }
 

@@ -61,11 +61,22 @@ its `topic_id` for ad-hoc and Grafana queries.
   tags that emit distinct values faster than 1 kHz.
 - **Malformed messages are dropped, not nacked.** Wrong `data_contract`, missing
   `location_path`/`tag_name`, an empty location path, a non-finite number, or an
-  unparseable timestamp drop the message and increment the `messages_dropped` metric
+  unparseable timestamp drop the message and increment the `historian_messages_dropped` metric
   (labelled by `reason`), so one bad message never stalls the stream.
 - **Metadata de-duplication.** An attribute row is rewritten only when its key set changes,
   via an in-process, LRU-bounded fingerprint cache. The cache is cleared on restart, so
   each tag re-emits its metadata once after a restart (absorbed idempotently).
+
+## Metrics
+
+On top of benthos's built-in output metrics (`output_sent`, `output_error`,
+`output_latency_ns`), the plugin emits:
+
+- `historian_value_rows_written` — value rows upserted (counted after the batch commits).
+- `historian_attribute_rows_written` — attribute rows upserted; the gap below the value-row
+  count is metadata de-duplication at work.
+- `historian_messages_dropped` (labeled by `reason`) — messages dropped before any write.
+- `historian_dedup_cache_size` — current dedup-cache entry count.
 
 ## Numeric precision
 
@@ -108,4 +119,4 @@ output:
 ```
 
 To deploy a bridge against this output from the Management Console, use the
-**TimescaleDB Historian (Native)** template in the Add Bridge wizard.
+**Historian** template in the Add Bridge wizard.
