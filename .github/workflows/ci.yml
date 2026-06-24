@@ -340,7 +340,6 @@ jobs:
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-historian.yml
-    secrets: inherit
 
   result:
     name: Check Required Steps

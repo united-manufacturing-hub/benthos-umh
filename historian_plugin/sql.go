@@ -29,7 +29,7 @@ import (
 
 const bootstrapTemplate = `BEGIN;
 SELECT pg_advisory_xact_lock(hashtext('uns_to_timescale_bootstrap'));
-CREATE EXTENSION IF NOT EXISTS ltree;
+CREATE EXTENSION IF NOT EXISTS ltree WITH SCHEMA public;
 CREATE SCHEMA IF NOT EXISTS umh;
 CREATE TABLE IF NOT EXISTS umh.schema_migrations (
   version    INT PRIMARY KEY,

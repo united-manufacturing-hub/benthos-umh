@@ -75,7 +75,7 @@ On top of benthos's built-in output metrics (`output_sent`, `output_error`,
 - `historian_value_rows_written` — value rows upserted (counted after the batch commits).
 - `historian_attribute_rows_written` — attribute rows upserted; the gap below the value-row
   count is metadata de-duplication at work.
-- `historian_messages_dropped` (labeled by `reason`) — messages dropped before any write.
+- `historian_messages_dropped` (labelled by `reason`) — messages dropped before any write.
 - `historian_dedup_cache_size` — current dedup-cache entry count.
 
 ## Numeric precision
