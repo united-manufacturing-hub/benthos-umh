@@ -1074,6 +1074,43 @@ return msg;
 			Eventually(func() int { return len(*msgs) }).Should(Equal(2))
 			Expect(payloadFloat(*msgs, 1)).To(Equal(float64(2)))
 		})
+
+		It("update increments counter atomically across concurrent messages", func() {
+			handler, msgs, cancel := buildStream(`
+cache.update("counter", function(old, exists) {
+  return (exists ? old : 0) + 1;
+});
+msg.payload = cache.get("counter");
+return msg;
+`)
+			defer cancel()
+
+			const numMsgs = 100
+			ctx := context.Background()
+			var wg sync.WaitGroup
+			wg.Add(numMsgs)
+			for range numMsgs {
+				go func() {
+					defer wg.Done()
+					_ = handler(ctx, newMsg("tick"))
+				}()
+			}
+			wg.Wait()
+
+			Eventually(func() int { return len(*msgs) }).Should(Equal(numMsgs))
+
+			// Final payload reflects the latest counter, which must equal numMsgs
+			// because each update is atomic. Without cache.update, concurrent
+			// get-modify-set would lose increments.
+			max := float64(0)
+			for i := range numMsgs {
+				v := payloadFloat(*msgs, i)
+				if v > max {
+					max = v
+				}
+			}
+			Expect(max).To(Equal(float64(numMsgs)), "expected counter to reach N exactly")
+		})
 	})
 })
 
