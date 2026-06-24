@@ -71,6 +71,12 @@ var _ = Describe("uns_beta_single config validation", Label("uns_beta"), func() 
 		Entry("invalid umh_topics regex is rejected",
 			"consumer_group: \"g\"\numh_topics: [\"[\"]\n",
 			ContainSubstring("invalid umh_topics pattern at index 0:")),
+		Entry("consumer_group with a newline is rejected (YAML injection guard)",
+			"consumer_group: \"x\\nauto_replay_nacks: false\"\numh_topics: [\".*\"]\n",
+			ContainSubstring("consumer_group must not contain control characters or newlines")),
+		Entry("broker_address with a newline is rejected (YAML injection guard)",
+			"broker_address: \"localhost:9092\\nstart_offset: latest\"\nconsumer_group: \"g\"\numh_topics: [\".*\"]\n",
+			ContainSubstring("broker_address must not contain control characters or newlines")),
 	)
 
 	It("rejects a missing required consumer_group at parse time", func() {
