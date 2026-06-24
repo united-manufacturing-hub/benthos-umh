@@ -643,6 +643,7 @@ return msg;`)).
 			Default("1h"),
 	).
 		Description("Cache configuration for state across messages.").
+		Default(map[string]any{}).
 		Advanced())
 
 func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchProcessor, error) {
