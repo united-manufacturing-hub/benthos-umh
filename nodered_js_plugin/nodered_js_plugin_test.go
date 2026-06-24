@@ -1102,14 +1102,14 @@ return msg;
 			// Final payload reflects the latest counter, which must equal numMsgs
 			// because each update is atomic. Without cache.update, concurrent
 			// get-modify-set would lose increments.
-			max := float64(0)
+			maxVal := float64(0)
 			for i := range numMsgs {
 				v := payloadFloat(*msgs, i)
-				if v > max {
-					max = v
+				if v > maxVal {
+					maxVal = v
 				}
 			}
-			Expect(max).To(Equal(float64(numMsgs)), "expected counter to reach N exactly")
+			Expect(maxVal).To(Equal(float64(numMsgs)), "expected counter to reach N exactly")
 		})
 	})
 })

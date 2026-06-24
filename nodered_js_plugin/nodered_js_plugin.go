@@ -683,7 +683,12 @@ func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (
 		})()
 	`, code)
 
-	return NewNodeREDJSProcessor(wrappedCode, mgr.Logger(), mgr.Metrics(), store)
+	processor, err := NewNodeREDJSProcessor(wrappedCode, mgr.Logger(), mgr.Metrics(), store)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	return processor, nil
 }
 
 func init() {

@@ -91,6 +91,21 @@ cache.update("counter", function(old, exists) {
 
 Whatever `fn` returns is stored under `key`. The whole sequence (read, run `fn`, write) happens inside one transaction. Concurrent `cache.update` calls on the same key serialize.
 
+> **Warning: don't call cache methods inside `fn`.** The store's write lock is held for the duration of `fn`. Calling `cache.set`, `cache.get`, `cache.exists`, `cache.delete`, or another `cache.update` from inside the callback deadlocks the processor permanently — the goroutine waits for a lock it already holds, every other concurrent cache call blocks behind it, and the pipeline stalls until restart. Use the `old` and `exists` arguments instead; they already reflect the current state for that key.
+>
+> ```javascript
+> // ❌ deadlocks
+> cache.update("counter", function(old, exists) {
+>   if (cache.exists("counter")) { ... }   // nested call — blocks forever
+>   return (old || 0) + 1;
+> });
+>
+> // ✅ use the arguments
+> cache.update("counter", function(old, exists) {
+>   return (exists ? old : 0) + 1;
+> });
+> ```
+
 #### When to use which
 
 | Pattern | Use |
