@@ -16,6 +16,7 @@ package cache_test
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -104,6 +105,110 @@ var _ = Describe("MemoryStore", func() {
 		err = store.Delete(ctx, "")
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("key must not be empty"))
+	})
+
+	Describe("Update", func() {
+		DescribeTable(
+			"reads old + writes new atomically",
+			func(preset, returnValue, expectStored any) {
+				hasPreset := preset != nil
+				if hasPreset {
+					Expect(store.Set(ctx, "k", preset)).To(Succeed())
+				}
+
+				err := store.Update(ctx, "k", func(old any, exists bool) (any, error) {
+					Expect(exists).To(Equal(hasPreset))
+					if hasPreset {
+						Expect(old).To(Equal(preset))
+					} else {
+						Expect(old).To(BeNil())
+					}
+					return returnValue, nil
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				v, ok := store.Get(ctx, "k")
+				Expect(ok).To(BeTrue())
+				Expect(v).To(Equal(expectStored))
+			},
+			Entry("missing key: fn sees nil/false and writes new value",
+				nil, float64(1), float64(1)),
+			Entry("existing numeric key: fn sees old and writes increment",
+				float64(5), float64(6), float64(6)),
+			Entry("existing string key: fn sees string and rewrites",
+				"before", "after", "after"),
+			Entry("existing object: fn returns mutated copy",
+				map[string]any{"n": float64(1)},
+				map[string]any{"n": float64(2)},
+				map[string]any{"n": float64(2)}),
+		)
+
+		boom := fmt.Errorf("boom")
+
+		DescribeTable(
+			"failure modes leave store unchanged",
+			func(useCanceledCtx bool, key string, fn func(any, bool) (any, error), wantErr error, wantSubstr string) {
+				Expect(store.Set(ctx, "k", "before")).To(Succeed())
+
+				cctx := ctx
+				if useCanceledCtx {
+					c, cancel := context.WithCancel(context.Background())
+					cancel()
+					cctx = c
+				}
+
+				err := store.Update(cctx, key, fn)
+				Expect(err).To(HaveOccurred())
+				if wantErr != nil {
+					Expect(err).To(MatchError(wantErr))
+				}
+				if wantSubstr != "" {
+					Expect(err.Error()).To(ContainSubstring(wantSubstr))
+				}
+
+				if key == "k" {
+					v, ok := store.Get(ctx, "k")
+					Expect(ok).To(BeTrue())
+					Expect(v).To(Equal("before"))
+				}
+			},
+			Entry("empty key",
+				false, "", func(any, bool) (any, error) { return nil, nil },
+				nil, "key must not be empty"),
+			Entry("nil fn",
+				false, "k", (func(any, bool) (any, error))(nil),
+				nil, "update fn must not be nil"),
+			Entry("fn returns error",
+				false, "k", func(any, bool) (any, error) { return "after", boom },
+				boom, ""),
+			Entry("ctx canceled",
+				true, "k", func(any, bool) (any, error) { return "after", nil },
+				context.Canceled, ""),
+		)
+
+		It("is atomic under concurrent updaters on the same key", func() {
+			const goroutines = 200
+			var wg sync.WaitGroup
+			wg.Add(goroutines)
+
+			for range goroutines {
+				go func() {
+					defer wg.Done()
+					_ = store.Update(ctx, "counter", func(old any, exists bool) (any, error) {
+						var n float64
+						if exists {
+							n, _ = old.(float64)
+						}
+						return n + 1, nil
+					})
+				}()
+			}
+			wg.Wait()
+
+			v, ok := store.Get(ctx, "counter")
+			Expect(ok).To(BeTrue())
+			Expect(v).To(Equal(float64(goroutines)), "expected exactly N increments, lost updates indicate a race")
+		})
 	})
 
 	Describe("expiration", func() {
