@@ -48,9 +48,51 @@ func toSet(keys ...string) map[string]struct{} {
 	return m
 }
 
+// MetaExcluder is a precompiled, user-configured blacklist of metadata keys to drop in
+// all-keys mode. Entries are either exact key names or a trailing-"*" prefix ("opcua_*").
+// A bare "*" matches every key; empty entries are skipped.
+type MetaExcluder struct {
+	exact    map[string]struct{}
+	prefixes []string // pattern with the trailing "*" removed
+}
+
+// NewMetaExcluder compiles the patterns once so Match is allocation-free per message.
+func NewMetaExcluder(patterns []string) *MetaExcluder {
+	e := &MetaExcluder{exact: map[string]struct{}{}}
+	for _, p := range patterns {
+		if p == "" {
+			continue
+		}
+		if strings.HasSuffix(p, "*") {
+			e.prefixes = append(e.prefixes, strings.TrimSuffix(p, "*"))
+			continue
+		}
+		e.exact[p] = struct{}{}
+	}
+	return e
+}
+
+// Match reports whether key is blacklisted. The nil receiver (no excluder configured)
+// matches nothing.
+func (e *MetaExcluder) Match(key string) bool {
+	if e == nil {
+		return false
+	}
+	if _, ok := e.exact[key]; ok {
+		return true
+	}
+	for _, p := range e.prefixes {
+		if strings.HasPrefix(key, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // SelectMetaKeys picks which metadata keys to store: in all-keys mode it drops
-// "_"-prefixed, structural, and high-churn keys; in allowlist mode it takes the list verbatim.
-func SelectMetaKeys(meta map[string]string, allKeys bool, allowlist []string) []string {
+// "_"-prefixed, structural, high-churn, and user-blacklisted (excl) keys; in allowlist
+// mode it takes the list verbatim (the allowlist is already explicit, so excl is ignored).
+func SelectMetaKeys(meta map[string]string, allKeys bool, allowlist []string, excl *MetaExcluder) []string {
 	if !allKeys {
 		return append([]string(nil), allowlist...)
 	}
@@ -63,6 +105,9 @@ func SelectMetaKeys(meta map[string]string, allKeys bool, allowlist []string) []
 			continue
 		}
 		if _, ok := highChurn[k]; ok {
+			continue
+		}
+		if excl.Match(k) {
 			continue
 		}
 		keys = append(keys, k)

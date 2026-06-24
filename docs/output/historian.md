@@ -29,8 +29,9 @@ No JavaScript processor or hand-written `sql_raw` is needed.
 | `sslmode` | no | `require` | `require` \| `disable` \| `verify-full`. |
 | `sslrootcert` / `sslcert` / `sslkey` | no | `""` | TLS cert paths inside the container. |
 | `data_contract` | yes | — | Bare lowercase contract name, e.g. `pump`; no leading `_`, no `_vN` suffix. |
-| `metadata_keys_all` | no | `true` | Store every metadata key except structural/high-churn keys. |
+| `metadata_keys_all` | no | `true` | Store every metadata key except structural/high-churn keys and any `metadata_keys_exclude` match. |
 | `metadata_keys` | no | `[]` | Allowlist used only when `metadata_keys_all=false`. |
+| `metadata_keys_exclude` | no | `[]` | Blacklist applied only when `metadata_keys_all=true`. Each entry is an exact key name or a trailing-`*` prefix (e.g. `opcua_*`); matches are dropped on top of the built-in exclusions. A bare `*` drops everything. Ignored in allowlist mode. |
 | `compress_after` | no | `168h` | Compress chunks older than this. |
 | `retention` | no | `""` | Drop chunks older than this; empty keeps data forever. |
 

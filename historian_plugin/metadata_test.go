@@ -30,10 +30,10 @@ var _ = Describe("metadata", func() {
 	}
 
 	It("all-mode excludes structural, high-churn, and _-prefixed", func() {
-		Expect(tsh.SelectMetaKeys(meta, true, nil)).To(ConsistOf("serialNumber"))
+		Expect(tsh.SelectMetaKeys(meta, true, nil, nil)).To(ConsistOf("serialNumber"))
 	})
 	It("allowlist-mode takes the list verbatim (blacklist NOT applied)", func() {
-		Expect(tsh.SelectMetaKeys(meta, false, []string{"serialNumber", "opcua_source_timestamp"})).
+		Expect(tsh.SelectMetaKeys(meta, false, []string{"serialNumber", "opcua_source_timestamp"}, nil)).
 			To(ConsistOf("serialNumber", "opcua_source_timestamp"))
 	})
 	It("build omits allowlisted-but-absent keys", func() {
@@ -54,5 +54,60 @@ var _ = Describe("metadata", func() {
 	It("flags high-churn keys present in the built map", func() {
 		md := map[string]string{"opcua_source_timestamp": "x", "serialNumber": "abc"}
 		Expect(tsh.HighChurnKeys(md)).To(ConsistOf("opcua_source_timestamp"))
+	})
+})
+
+var _ = Describe("metadata exclude blacklist", func() {
+	Describe("MetaExcluder.Match", func() {
+		It("matches exact key names", func() {
+			e := tsh.NewMetaExcluder([]string{"serialNumber"})
+			Expect(e.Match("serialNumber")).To(BeTrue())
+			Expect(e.Match("serialnumber")).To(BeFalse()) // case-sensitive
+			Expect(e.Match("other")).To(BeFalse())
+		})
+		It("matches a trailing-* prefix", func() {
+			e := tsh.NewMetaExcluder([]string{"opcua_*"})
+			Expect(e.Match("opcua_source_timestamp")).To(BeTrue())
+			Expect(e.Match("opcua_")).To(BeTrue()) // empty remainder still matches the prefix
+			Expect(e.Match("opcua")).To(BeFalse()) // shorter than the prefix
+			Expect(e.Match("spb_sequence")).To(BeFalse())
+		})
+		It("treats a bare * as match-everything", func() {
+			e := tsh.NewMetaExcluder([]string{"*"})
+			Expect(e.Match("anything")).To(BeTrue())
+			Expect(e.Match("")).To(BeTrue())
+		})
+		It("skips empty-string entries (never matches everything by accident)", func() {
+			e := tsh.NewMetaExcluder([]string{""})
+			Expect(e.Match("anything")).To(BeFalse())
+			Expect(e.Match("")).To(BeFalse())
+		})
+		It("combines exact and prefix entries", func() {
+			e := tsh.NewMetaExcluder([]string{"serialNumber", "opcua_*"})
+			Expect(e.Match("serialNumber")).To(BeTrue())
+			Expect(e.Match("opcua_x")).To(BeTrue())
+			Expect(e.Match("keep")).To(BeFalse())
+		})
+		It("is nil-safe (no excluder configured)", func() {
+			var e *tsh.MetaExcluder
+			Expect(e.Match("anything")).To(BeFalse())
+		})
+	})
+
+	Describe("SelectMetaKeys with an excluder", func() {
+		meta := map[string]string{
+			"serialNumber": "abc",
+			"keep":         "1",
+			"opcua_vendor": "siemens",
+		}
+		It("all-mode additionally drops blacklisted keys", func() {
+			e := tsh.NewMetaExcluder([]string{"serialNumber", "opcua_*"})
+			Expect(tsh.SelectMetaKeys(meta, true, nil, e)).To(ConsistOf("keep"))
+		})
+		It("allowlist-mode ignores the excluder (allowlist is explicit)", func() {
+			e := tsh.NewMetaExcluder([]string{"serialNumber"})
+			Expect(tsh.SelectMetaKeys(meta, false, []string{"serialNumber", "keep"}, e)).
+				To(ConsistOf("serialNumber", "keep"))
+		})
 	})
 })

@@ -161,6 +161,28 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(v).To(Equal("abc"))
 	})
 
+	It("omits blacklisted metadata keys from the stored attribute row", func() {
+		h := connected("excl")
+		defer h.Close(ctx)
+		h.SetMetaExclude([]string{"secret_token", "opcua_*"})
+		msg := mkMsg(1.0, 1000, "_excl_v1", "l.a", "t", map[string]string{
+			"serialNumber": "keep-me",
+			"secret_token": "drop-me",
+			"opcua_vendor": "drop-me-too",
+		})
+		Expect(h.WriteBatch(ctx, service.MessageBatch{msg})).To(Succeed())
+		Expect(h.CountAttributeRows(ctx, "excl")).To(Equal(1))
+		// non-blacklisted key survives
+		v, ok := h.AttributeValue(ctx, "excl", "serialNumber")
+		Expect(ok).To(BeTrue())
+		Expect(v).To(Equal("keep-me"))
+		// exact-match and prefix-match blacklist entries are both dropped
+		_, ok = h.AttributeValue(ctx, "excl", "secret_token")
+		Expect(ok).To(BeFalse())
+		_, ok = h.AttributeValue(ctx, "excl", "opcua_vendor")
+		Expect(ok).To(BeFalse())
+	})
+
 	It("intra-batch: same tag+ts with different metadata RAISEs (real conflict)", func() {
 		h := connected("intra")
 		defer h.Close(ctx)

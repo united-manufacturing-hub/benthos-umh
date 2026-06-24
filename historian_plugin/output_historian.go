@@ -45,6 +45,7 @@ func historianConfig() *service.ConfigSpec {
 		Field(service.NewStringField("data_contract").Description("Bare lowercase contract name, e.g. \"pump\".")).
 		Field(service.NewBoolField("metadata_keys_all").Description("Store all metadata keys except blacklists.").Default(true).Examples(true, false).Advanced()).
 		Field(service.NewStringListField("metadata_keys").Description("Allowlist when metadata_keys_all=false.").Default([]any{}).Advanced()).
+		Field(service.NewStringListField("metadata_keys_exclude").Description("Blacklist applied only when metadata_keys_all=true: drop these metadata keys on top of the built-in structural/high-churn exclusions. Each entry is an exact key name or a trailing-* prefix (e.g. \"opcua_*\"). Ignored in allowlist mode.").Default([]any{}).Examples([]any{"serialNumber"}, []any{"opcua_*", "spb_*"}).Advanced()).
 		Field(service.NewStringField("compress_after").Description("Compress chunks older than this (per contract).").Default("168h").Advanced()).
 		Field(service.NewStringField("retention").Description("Drop chunks older than this; empty = keep forever.").Default("").Advanced()).
 		Field(service.NewBatchPolicyField("batching")).
@@ -58,6 +59,7 @@ type historianOutput struct {
 	contract                              string
 	metadataKeysAll                       bool
 	metadataKeys                          []string
+	metadataExclude                       *MetaExcluder
 	compressAfter, retention              time.Duration
 	retentionSet                          bool
 	dsnOverride                           string // set by tests; empty => build from fields
@@ -118,6 +120,14 @@ func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*hi
 	}
 	if o.metadataKeys, err = conf.FieldStringList("metadata_keys"); err != nil {
 		return nil, err
+	}
+	excludePatterns, err := conf.FieldStringList("metadata_keys_exclude")
+	if err != nil {
+		return nil, err
+	}
+	o.metadataExclude = NewMetaExcluder(excludePatterns)
+	if !o.metadataKeysAll && len(excludePatterns) > 0 {
+		o.logger.Warnf("metadata_keys_exclude is set but ignored: it only applies when metadata_keys_all=true (allowlist mode is already explicit)")
 	}
 	caStr, err := conf.FieldString("compress_after")
 	if err != nil {
@@ -266,7 +276,7 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 			o.recordDrop("not_object", meta["umh_topic"])
 			continue
 		}
-		row, reason := Transform(payload, meta, o.contract, o.metadataKeysAll, o.metadataKeys, view)
+		row, reason := Transform(payload, meta, o.contract, o.metadataKeysAll, o.metadataKeys, o.metadataExclude, view)
 		if reason != DropNone {
 			o.recordDrop(string(reason), meta["umh_topic"])
 			continue

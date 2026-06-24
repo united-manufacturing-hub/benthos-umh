@@ -191,7 +191,7 @@ var _ = Describe("Transform", func() {
 			map[string]string{"data_contract": "_pump_v1", "location_path": "acme.line1", "tag_name": "x", "virtual_path": "vibration"}
 	}
 	tr := func(p map[string]any, m map[string]string) (*tsh.Row, tsh.DropReason) {
-		return tsh.Transform(p, m, "pump", true, nil, tsh.NewDedupCache().NewBatch())
+		return tsh.Transform(p, m, "pump", true, nil, nil, tsh.NewDedupCache().NewBatch())
 	}
 
 	It("maps a good message to a row", func() {
@@ -251,14 +251,14 @@ var _ = Describe("Transform", func() {
 		view := tsh.NewDedupCache().NewBatch()
 		p1, m1 := base()
 		m1["serialNumber"] = "abc"
-		row1, reason1 := tsh.Transform(p1, m1, "pump", true, nil, view)
+		row1, reason1 := tsh.Transform(p1, m1, "pump", true, nil, nil, view)
 		Expect(reason1).To(Equal(tsh.DropNone))
 		Expect(row1.EmitMeta).To(BeTrue())
 
 		p2, m2 := base()
 		p2["timestamp_ms"] = float64(1) // distinct value row, same metadata
 		m2["serialNumber"] = "abc"
-		row2, reason2 := tsh.Transform(p2, m2, "pump", true, nil, view)
+		row2, reason2 := tsh.Transform(p2, m2, "pump", true, nil, nil, view)
 		Expect(reason2).To(Equal(tsh.DropNone))
 		Expect(row2.EmitMeta).To(BeFalse())
 	})

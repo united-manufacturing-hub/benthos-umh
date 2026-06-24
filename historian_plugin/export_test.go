@@ -68,6 +68,11 @@ func NewHistorianTestHandle(dsn string, contract string) *HistorianTestHandle {
 	}}
 }
 
+// SetMetaExclude configures the metadata blacklist (all-keys mode) for integration tests.
+func (h *HistorianTestHandle) SetMetaExclude(patterns []string) {
+	h.o.metadataExclude = NewMetaExcluder(patterns)
+}
+
 func (h *HistorianTestHandle) BuildDSN() string                  { return h.o.buildDSN() }
 func (h *HistorianTestHandle) Connect(ctx context.Context) error { return h.o.Connect(ctx) }
 func (h *HistorianTestHandle) WriteBatch(ctx context.Context, b service.MessageBatch) error {

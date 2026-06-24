@@ -186,7 +186,7 @@ const (
 )
 
 // Transform maps one UNS message to a Row, or returns a non-empty DropReason to drop it.
-func Transform(payload map[string]any, meta map[string]string, contract string, allMeta bool, allowlist []string, view *BatchView) (*Row, DropReason) {
+func Transform(payload map[string]any, meta map[string]string, contract string, allMeta bool, allowlist []string, excl *MetaExcluder, view *BatchView) (*Row, DropReason) {
 	want := "_" + contract
 	if NormalizeContract(meta["data_contract"]) != want {
 		return nil, DropContractMismatch
@@ -225,7 +225,7 @@ func Transform(payload map[string]any, meta map[string]string, contract string, 
 		ValueNum:     num,
 		ValueText:    text,
 	}
-	keys := SelectMetaKeys(meta, allMeta, allowlist)
+	keys := SelectMetaKeys(meta, allMeta, allowlist, excl)
 	md := BuildMetadata(meta, keys)
 	// Skip when there is no eligible metadata, so a metadata-less tag never writes an
 	// attribute='{}' row. "\x00" joins the key fields because it cannot occur in any of them.
