@@ -121,13 +121,22 @@ func newUnsBetaSingle(conf *service.ParsedConfig, res *service.Resources) (servi
 		return nil, err
 	}
 
+	// The config-validation unit test constructs the input with a nil
+	// *service.Resources; res.Metrics() panics on a nil receiver, so guard it.
+	// A nil keylessCounter is a no-op Incr (*service.MetricCounter treats a
+	// nil receiver as a no-op), so the nil-resources path stays safe.
+	var keylessCounter *service.MetricCounter
+	if res != nil {
+		keylessCounter = res.Metrics().NewCounter("dropped_keyless")
+	}
 	return &unsBetaSingleInput{
-		res:           res,
-		seedBrokers:   seedBrokers,
-		kafkaTopic:    kafkaTopic,
-		consumerGroup: consumerGroup,
-		umhTopics:     patterns,
-		keyFilter:     keyFilter,
+		res:            res,
+		seedBrokers:    seedBrokers,
+		kafkaTopic:     kafkaTopic,
+		consumerGroup:  consumerGroup,
+		umhTopics:      patterns,
+		keyFilter:      keyFilter,
+		keylessCounter: keylessCounter,
 	}, nil
 }
 
@@ -143,6 +152,19 @@ type unsBetaSingleInput struct {
 	consumerGroup string
 	umhTopics     []string
 	keyFilter     *betaKeyFilter
+
+	// keylessCounter counts keyless drops to match uns_beta's dropped_keyless
+	// counter (records with an empty Kafka key that reach ReadBatch and fail
+	// the `key != ""` guard). Parity holds for genuine (non-spoofed) keyless
+	// records only: a record whose native key is empty but carries a foreign
+	// header named "kafka_key" (the ENG-5125 spoof vector) is tallied as
+	// dropped_spoofed_key by uns_beta's spoof-first classifyDrop, but is
+	// mis-counted as dropped_keyless here because the single form lacks
+	// hasSpoofHeader. The other two per-reason counters
+	// (dropped_spoofed_key, filtered_records) are not wired in the single
+	// form. Spoof detection is deferred to ENG-5125, which closes the gap for
+	// both forms together.
+	keylessCounter *service.MetricCounter
 
 	// inner is built on first Connect by buildUnsBetaSingleInner (forwarder
 	// under connect_patched, stub otherwise). nil until then.
@@ -194,6 +216,30 @@ func (i *unsBetaSingleInput) ReadBatch(ctx context.Context) (service.MessageBatc
 				continue
 			}
 			if !i.keyFilter.matches(key) {
+				// A real keyless record (ok && key=="") reached this guard
+				// because connect's key_pattern matched the empty key (".*"
+				// matches ""); the `key != ""` guard in matches drops it.
+				// Count it on the outer stream's metrics registry, mirroring
+				// uns_beta's dropped_keyless counter — but only for genuine
+				// keyless records. A spoofed-keyless record (native key empty,
+				// foreign "kafka_key" header shadowing it — the ENG-5125 spoof
+				// vector) is mis-counted here as dropped_keyless because this
+				// form lacks uns_beta's spoof-first hasSpoofHeader check; uns_beta
+				// tallies it as dropped_spoofed_key. TODO(ENG-5125): port
+				// hasSpoofHeader/classifyDrop so spoofed records are not
+				// mis-counted, and wire dropped_spoofed_key.
+				// The connect high-water placeholder is recognized by the
+				// ABSENCE of kafka_key meta (!ok path above), so it does not
+				// reach this counter today — but that recognition depends on
+				// connect's current __rpcn_kafka_headers/key-meta semantics; a
+				// connect upgrade that changes them (see rpcnKafkaHeadersKey in
+				// uns_beta_input.go) could surface the placeholder here. This
+				// is a shared invariant (uns_beta's filterAndAlias has the same
+				// dependency), so the parameterized suite cannot detect its
+				// regression.
+				if key == "" {
+					i.keylessCounter.Incr(1)
+				}
 				continue
 			}
 			// Stamp the umh_topic/kafka_msg_key aliases and strip the
