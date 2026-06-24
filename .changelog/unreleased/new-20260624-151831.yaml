@@ -1,0 +1,3 @@
+kind: new
+body: Sparkplug B input can attach the raw proto-encoded metric as base64 metadata (`spb_metric_raw`) via the `passthrough_raw_metric` flag, exposing proto2 extension fields for downstream decoding (ENG-5242)
+time: 2026-06-24T15:18:31.361763+02:00

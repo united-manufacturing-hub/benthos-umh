@@ -76,6 +76,10 @@ type Config struct {
 	BirthRequestThrottle  time.Duration `yaml:"birth_request_throttle"`   // Minimum time between REBIRTH requests
 
 	IncludeEdgeNodeInLocation bool `yaml:"include_edge_node_in_location"`
+
+	// PassthroughRawMetric attaches the raw, proto-encoded metric as base64 metadata
+	// (spb_metric_raw) so downstream decoders can read proto2 extension fields (ENG-5242).
+	PassthroughRawMetric bool `yaml:"passthrough_raw_metric"`
 }
 
 // AutoDetectRole determines the role based on configuration (Host-only for INPUT plugin)

@@ -185,6 +185,7 @@ Here's how a Sparkplug B message maps to UMH-Core using the Modified Parris Meth
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `include_edge_node_in_location` | `bool` | `false` | Nest device-level data under its Sparkplug edge node. When `true`, device data maps to `location_path = <edge_node>.<device>`; node-level data (no device) is unaffected. |
+| `passthrough_raw_metric` | `bool` | `false` | Also attach the raw, proto-encoded metric as base64 metadata `spb_metric_raw`, alongside the normal decoded value, so a downstream protobuf decoder can read proto2 extension fields this input does not decode. Attached per metric only — death events carry none. The bytes duplicate the metric into a Kafka header, so very large metrics may hit broker message/header size limits. Off by default. |
 
 **When to enable.** The default decode treats `device_id` as the full location path
 (UMH's Modified Parris Method, where `enterprise:site:area` → `enterprise.site.area` and

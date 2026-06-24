@@ -16,6 +16,7 @@ package sparkplug_plugin
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -130,6 +131,11 @@ Key features:
 			Optional()).
 		Field(service.NewBoolField("include_edge_node_in_location").
 			Description("Nest device-level data under its Sparkplug edge node, so location_path becomes <edge_node>.<device> (e.g. 'Line1.IO_Controller'). Enable for native/brownfield Sparkplug where the edge node is a real hierarchy level and devices on different nodes may share a name. Leave disabled (default) for UMH Parris-encoded publishers where device_id already carries the full location path. Node-level data (no device) is unaffected.").
+			Default(false).
+			Examples(true, false).
+			Advanced()).
+		Field(service.NewBoolField("passthrough_raw_metric").
+			Description("Also attach the raw, re-marshaled `Payload.Metric` as base64 metadata `spb_metric_raw`, preserving proto2 extension fields this input does not decode. Pair with a downstream protobuf decoder that has the device's `.proto`. Travels as a Kafka header and roughly doubles per-metric size, so large metrics may hit broker size limits. Off by default.").
 			Default(false).
 			Examples(true, false).
 			Advanced()).
@@ -396,6 +402,8 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 	config.BirthRequestThrottle, _ = conf.FieldDuration("birth_request_throttle")
 
 	config.IncludeEdgeNodeInLocation, _ = conf.FieldBool("include_edge_node_in_location")
+
+	config.PassthroughRawMetric, _ = conf.FieldBool("passthrough_raw_metric")
 
 	// Parse subscription section using namespace (optional)
 	if conf.Contains("subscription") {
@@ -1130,6 +1138,15 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 		msg.MetaSet("spb_bdseq", fmt.Sprintf("%d", state.BdSeq))
 	}
 	s.stateMu.RUnlock()
+
+	// Best-effort: a marshal error attaches nothing rather than dropping the message (ENG-5242).
+	if s.config.PassthroughRawMetric {
+		if raw, err := proto.Marshal(metric); err != nil {
+			s.logger.Warnf("passthrough_raw_metric: failed to marshal metric %q: %v", metricName, err)
+		} else {
+			msg.MetaSet("spb_metric_raw", base64.StdEncoding.EncodeToString(raw))
+		}
+	}
 
 	// Try to add UMH conversion metadata (optional, non-failing)
 	s.tryAddUMHMetadata(msg, metric, payload, topicInfo)

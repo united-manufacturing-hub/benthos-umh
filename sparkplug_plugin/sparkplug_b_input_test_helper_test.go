@@ -128,6 +128,12 @@ func (w *SparkplugInputTestWrapper) SetRequestBirthOnConnect(enabled bool) {
 	w.input.config.RequestBirthOnConnect = enabled
 }
 
+// SetPassthroughRawMetric overrides the PassthroughRawMetric flag (ENG-5242) for tests
+// that exercise the raw-metric metadata attachment in createMessageFromMetric.
+func (w *SparkplugInputTestWrapper) SetPassthroughRawMetric(enabled bool) {
+	w.input.config.PassthroughRawMetric = enabled
+}
+
 // SeedAliasCache pre-populates the alias cache for the given deviceKey from the supplied
 // (name, alias) pair metrics. Tests use this for a "BIRTH already applied" baseline.
 func (w *SparkplugInputTestWrapper) SeedAliasCache(deviceKey string, metrics []*sparkplugb.Payload_Metric) {
