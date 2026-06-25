@@ -71,13 +71,13 @@ func plainMetric() *sparkplugb.Payload_Metric {
 	return &m
 }
 
-const metaExtSnippet = `package acme;
+const metaExtSnippet = `package example;
 extend org.eclipse.tahu.protobuf.Payload.MetaData {
   optional int64 extra_value = 9;
 }
 `
 
-const valueExtSnippet = `package acme;
+const valueExtSnippet = `package example;
 message CanMessage { optional uint32 id = 1; }
 extend org.eclipse.tahu.protobuf.Payload.MetaData {
   optional int64 extra_value = 9;
@@ -97,7 +97,7 @@ var _ = Describe("Sparkplug extension decode (ENG-5229)", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(present).To(BeTrue())
 			Expect(flat).To(HaveKeyWithValue("extra_value", "1719300000123456"))
-			Expect(decoded).To(ContainSubstring(`"[acme.extra_value]"`))
+			Expect(decoded).To(ContainSubstring(`"[example.extra_value]"`))
 		})
 
 		It("puts a message-typed extension only in the JSON blob, not in the flat keys", func() {
@@ -108,7 +108,7 @@ var _ = Describe("Sparkplug extension decode (ENG-5229)", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(present).To(BeTrue())
 			Expect(flat).NotTo(HaveKey("can"))
-			Expect(decoded).To(ContainSubstring(`"[acme.can]"`))
+			Expect(decoded).To(ContainSubstring(`"[example.can]"`))
 		})
 
 		It("reports not-present for a metric carrying no extension", func() {
@@ -130,21 +130,21 @@ var _ = Describe("Sparkplug extension decode (ENG-5229)", func() {
 		})
 
 		It("rejects a snippet that imports the Sparkplug schema itself", func() {
-			snippet := "package acme;\nimport \"" + extSparkplugImportPath + "\";\n" +
+			snippet := "package example;\nimport \"" + extSparkplugImportPath + "\";\n" +
 				"extend org.eclipse.tahu.protobuf.Payload.MetaData { optional int64 extra_value = 9; }\n"
 			_, err := newExtensionDecoder(snippet)
 			Expect(err).To(MatchError(ContainSubstring("do not import")))
 		})
 
 		It("rejects a snippet that declares no extensions", func() {
-			_, err := newExtensionDecoder("package acme;\nmessage Foo { optional int32 a = 1; }\n")
+			_, err := newExtensionDecoder("package example;\nmessage Foo { optional int32 a = 1; }\n")
 			Expect(err).To(MatchError(ContainSubstring("no extensions")))
 		})
 
 		It("rejects two scalar extensions that collide on the same leaf key", func() {
-			// Distinct fully-qualified names (acme.extra_value vs acme.Holder.extra_value)
+			// Distinct fully-qualified names (example.extra_value vs example.Holder.extra_value)
 			// — so protocompile accepts them — but the same leaf, which our check rejects.
-			snippet := `package acme;
+			snippet := `package example;
 extend org.eclipse.tahu.protobuf.Payload.MetaData {
   optional int64 extra_value = 9;
 }
@@ -159,7 +159,7 @@ message Holder {
 		})
 
 		It("surfaces a parse error against the customer's snippet line", func() {
-			_, err := newExtensionDecoder("package acme;\nthis is not valid proto\n")
+			_, err := newExtensionDecoder("package example;\nthis is not valid proto\n")
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("compile extension schema"))
 		})

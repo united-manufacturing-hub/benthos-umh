@@ -246,7 +246,7 @@ input:
       group_id: "DeviceLevelTest"
     decode_extensions:
       extensions: |
-        package acme;
+        package example;
         extend org.eclipse.tahu.protobuf.Payload.MetaData {
           optional int64 extra_value = 9;
         }
