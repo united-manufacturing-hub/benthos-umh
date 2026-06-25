@@ -1,0 +1,3 @@
+kind: new
+body: Sparkplug B input decodes proto2 extension fields — such as a sub-millisecond `timestamp_ns` — from an inline schema, exposing them per metric as `spb_ext_*` and `spb_metric_decoded` metadata (ENG-5229)
+time: 2026-06-25T10:15:00.000000+02:00
