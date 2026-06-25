@@ -92,7 +92,7 @@ func newExtensionDecoder(snippet string) (*extensionDecoder, error) {
 }
 
 // decode returns the metric's scalar extensions as leaf->value pairs and the full decoded
-// metric as JSON; present is false when the metric carries no extension. Re-marshalling
+// metric as JSON; present is false when the metric carries no extension. Re-marshaling
 // recovers the extension bytes that proto2 retained through the standard decode.
 func (d *extensionDecoder) decode(metric *sparkplugb.Payload_Metric) (map[string]string, string, bool, error) {
 	raw, err := proto.Marshal(metric)
