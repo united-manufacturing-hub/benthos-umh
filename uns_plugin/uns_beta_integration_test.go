@@ -85,20 +85,31 @@ func runUnsBetaStream(t testingT, unsBetaYAML string, consumerFn func(context.Co
 	}
 }
 
-var _ = Describe("uns_beta input delivery", Label("uns_beta"), func() {
+// describeBothForms runs a behavioral Describe body against both the uns_beta
+// (template form) and uns_beta_single (Go form), nesting each under a Context
+// named after the plugin so a divergence names the form. The body receives the
+// plugin name and must thread it into every AddInputYAML / reader-construction
+// call so the scenario actually exercises the named form. (R4, ENG-5105)
+func describeBothForms(name string, body func(pluginName string)) bool {
+	Describe(name, Label("uns_beta"), func() {
+		for _, pluginName := range []string{"uns_beta", "uns_beta_single"} {
+			Context(pluginName, func() {
+				body(pluginName)
+			})
+		}
+	})
+	return false
+}
+
+var _ = describeBothForms("uns_beta input delivery", func(pluginName string) {
 	It("delivers a produced message and commits its offset on ack", func() {
 		addr := startBroker(GinkgoT())
-		const group = "uns-beta-delivery"
+		group := "uns-beta-delivery-" + pluginName
 		produce(GinkgoT(), addr, rec("umh.v1.acme.berlin.temp", `{"v":1}`))
 
 		var mu sync.Mutex
 		var got []string
-		stop := runUnsBetaStream(GinkgoT(), `
-uns_beta:
-  broker_address: "`+addr+`"
-  consumer_group: "`+group+`"
-  umh_topics: [".*"]
-`, func(_ context.Context, b service.MessageBatch) error {
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `.*`), func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
 			for _, m := range b {
@@ -146,10 +157,10 @@ uns_beta:
 // runs and before the aliases are stamped (the documented gap pinned below).
 // For non-UMH producers that send no headers the aliases are the only source
 // of umh_topic. (ENG-5094)
-var _ = Describe("uns_beta metadata contract", Label("uns_beta"), func() {
+var _ = describeBothForms("uns_beta metadata contract", func(pluginName string) {
 	It("aliases each message's own record key and passes the native redpanda metadata through", func() {
 		addr := startBroker(GinkgoT())
-		const group = "uns-beta-meta"
+		group := "uns-beta-meta-" + pluginName
 		const key1 = "umh.v1.acme.k1"
 		const key2 = "umh.v1.acme.k2"
 		// Two records with distinct keys pin per-message aliasing: a regression
@@ -173,12 +184,7 @@ var _ = Describe("uns_beta metadata contract", Label("uns_beta"), func() {
 
 		var mu sync.Mutex
 		seen := map[string]map[string]string{} // payload -> metadata snapshot
-		stop := runUnsBetaStream(GinkgoT(), `
-uns_beta:
-  broker_address: "`+addr+`"
-  consumer_group: "`+group+`"
-  umh_topics: [".*"]
-`, func(_ context.Context, b service.MessageBatch) error {
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `.*`), func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
 			for _, msg := range b {
@@ -244,7 +250,7 @@ uns_beta:
 	// as their decimal strings. (ENG-5094 / ENG-5105)
 	It("reads single-byte, empty, and multi-byte headers back as strings without corrupting native int fields", func() {
 		addr := startBroker(GinkgoT())
-		const group = "uns-beta-header-typing"
+		group := "uns-beta-header-typing-" + pluginName
 		const key = "umh.v1.acme.headertyping"
 		produce(GinkgoT(), addr,
 			&kgo.Record{
@@ -260,12 +266,7 @@ uns_beta:
 
 		var mu sync.Mutex
 		var snap map[string]string // metadata snapshot of the delivered message
-		stop := runUnsBetaStream(GinkgoT(), `
-uns_beta:
-  broker_address: "`+addr+`"
-  consumer_group: "`+group+`"
-  umh_topics: [".*"]
-`, func(_ context.Context, b service.MessageBatch) error {
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `.*`), func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
 			for _, msg := range b {
@@ -326,7 +327,7 @@ uns_beta:
 	// the new contract.
 	It("stamps a spoofed kafka_key header over the real record key (documented gap)", func() {
 		addr := startBroker(GinkgoT())
-		const group = "uns-beta-spoof"
+		group := "uns-beta-spoof-" + pluginName
 		produce(GinkgoT(), addr, &kgo.Record{
 			Key:   []byte("umh.v1.acme.real"),
 			Value: []byte(`{"v":1}`),
@@ -337,12 +338,7 @@ uns_beta:
 
 		var mu sync.Mutex
 		var umhTopics []string
-		stop := runUnsBetaStream(GinkgoT(), `
-uns_beta:
-  broker_address: "`+addr+`"
-  consumer_group: "`+group+`"
-  umh_topics: [".*"]
-`, func(_ context.Context, b service.MessageBatch) error {
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `.*`), func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
 			for _, msg := range b {
@@ -381,7 +377,7 @@ uns_beta:
 	// pin should be replaced with the new contract.
 	It("drops and commits past a matching record whose spoofed kafka_key header fails the filter (documented gap)", func() {
 		addr := startBroker(GinkgoT())
-		const group = "uns-beta-spoof-dataloss"
+		group := "uns-beta-spoof-dataloss-" + pluginName
 		produce(GinkgoT(), addr,
 			&kgo.Record{
 				// offset 0: the real key matches the filter, but the spoofed
@@ -399,13 +395,7 @@ uns_beta:
 
 		var mu sync.Mutex
 		var got []string
-		stop := runUnsBetaStream(GinkgoT(), `
-uns_beta:
-  broker_address: "`+addr+`"
-  consumer_group: "`+group+`"
-  umh_topics:
-    - "umh\\.v1\\.acme\\..+"
-`, func(_ context.Context, b service.MessageBatch) error {
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `umh\.v1\.acme\..+`), func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
 			for _, m := range b {
@@ -443,10 +433,10 @@ uns_beta:
 // betaKeyFilter.matches doc). The delegated ack covers the whole poll, so a
 // batch mixing kept and dropped records must still commit past the dropped
 // offsets once the kept subset is acked. (ENG-5094)
-var _ = Describe("uns_beta umh_topics key filter", Label("uns_beta"), func() {
+var _ = describeBothForms("uns_beta umh_topics key filter", func(pluginName string) {
 	It("delivers only matching keys, drops keyless records, and commits past the dropped offsets", func() {
 		addr := startBroker(GinkgoT())
-		const group = "uns-beta-keyfilter"
+		group := "uns-beta-keyfilter-" + pluginName
 		// All three records go in ONE produce call so they share a fetch and —
 		// overwhelmingly likely under kfake — one delegated batch; the public
 		// surface cannot deterministically force a single batch. The matching
@@ -462,13 +452,7 @@ var _ = Describe("uns_beta umh_topics key filter", Label("uns_beta"), func() {
 
 		var mu sync.Mutex
 		var got []string
-		stop := runUnsBetaStream(GinkgoT(), `
-uns_beta:
-  broker_address: "`+addr+`"
-  consumer_group: "`+group+`"
-  umh_topics:
-    - "umh\\.v1\\.acme\\.berlin\\..+"
-`, func(_ context.Context, b service.MessageBatch) error {
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `umh\.v1\.acme\.berlin\..+`), func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
 			for _, m := range b {
@@ -505,7 +489,7 @@ uns_beta:
 	// legacy behavior change: betaKeyFilter.matches doc).
 	It("drops a keyless record under an explicit match-everything filter and still commits past it", func() {
 		addr := startBroker(GinkgoT())
-		const group = "uns-beta-keyless"
+		group := "uns-beta-keyless-" + pluginName
 		// One produce call: the keyed record rides alongside so the delegated
 		// batch is — overwhelmingly likely under kfake — never all-filtered
 		// (the all-filtered case, where ReadBatch self-acks the empty batch so
@@ -517,12 +501,7 @@ uns_beta:
 
 		var mu sync.Mutex
 		var got []string
-		stop := runUnsBetaStream(GinkgoT(), `
-uns_beta:
-  broker_address: "`+addr+`"
-  consumer_group: "`+group+`"
-  umh_topics: [".*"]
-`, func(_ context.Context, b service.MessageBatch) error {
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `.*`), func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
 			for _, m := range b {
@@ -561,10 +540,10 @@ uns_beta:
 // at offset 0 forever. uns_beta must self-ack the delegated transaction on an
 // all-filtered poll so the commit advances even though the consumer never sees a
 // message. (ENG-5094 / ENG-5105)
-var _ = Describe("uns_beta all-filtered poll commit", Label("uns_beta"), func() {
+var _ = describeBothForms("uns_beta all-filtered poll commit", func(pluginName string) {
 	It("self-acks an all-filtered poll so the committed offset advances while the consumer receives nothing", func() {
 		addr := startBroker(GinkgoT())
-		const group = "uns-beta-all-filtered"
+		group := "uns-beta-all-filtered-" + pluginName
 		// Three records, none of whose keys match the select-1 filter below: this
 		// is the all-filtered poll. The consumer never sees a message, yet the
 		// offset must still advance to 3 — otherwise the partition wedges.
@@ -575,13 +554,7 @@ var _ = Describe("uns_beta all-filtered poll commit", Label("uns_beta"), func() 
 
 		var mu sync.Mutex
 		var got []string
-		stop := runUnsBetaStream(GinkgoT(), `
-uns_beta:
-  broker_address: "`+addr+`"
-  consumer_group: "`+group+`"
-  umh_topics:
-    - "^only-this$"
-`, func(_ context.Context, b service.MessageBatch) error {
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `^only-this$`), func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
 			for _, m := range b {
@@ -619,7 +592,7 @@ uns_beta:
 	// the high-water mark) and the one matching record is delivered.
 	It("drains a high-cardinality selective stream to completion, delivering only the matching record", func() {
 		addr := startBroker(GinkgoT())
-		const group = "uns-beta-selective-drain"
+		group := "uns-beta-selective-drain-" + pluginName
 		const total = 2000
 		const matchAt = 1234 // the single matching record's offset
 
@@ -635,13 +608,7 @@ uns_beta:
 
 		var mu sync.Mutex
 		var got []string
-		stop := runUnsBetaStream(GinkgoT(), `
-uns_beta:
-  broker_address: "`+addr+`"
-  consumer_group: "`+group+`"
-  umh_topics:
-    - "^umh\\.v1\\.match\\..+$"
-`, func(_ context.Context, b service.MessageBatch) error {
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `^umh\.v1\.match\..+$`), func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
 			for _, m := range b {
@@ -680,12 +647,12 @@ uns_beta:
 // position a never-committed group at the high-water mark, so a record produced
 // before the group connected would be skipped — the arrival assertion below
 // would time out. (ENG-5094 / spec P5)
-var _ = Describe("uns_beta start-from-earliest", Label("uns_beta"), func() {
+var _ = describeBothForms("uns_beta start-from-earliest", func(pluginName string) {
 	It("delivers records produced before a fresh consumer group started", func() {
 		addr := startBroker(GinkgoT())
 		// A never-committed group name (unique suffix) so there is no committed
 		// offset to resume from — start_offset alone decides where it begins.
-		group := fmt.Sprintf("uns-beta-earliest-%d", time.Now().UnixNano())
+		group := fmt.Sprintf("uns-beta-earliest-%s-%d", pluginName, time.Now().UnixNano())
 
 		// Produce BOTH records FIRST, before any consumer exists. Their keys
 		// match the umh_topics filter so they are delivered, not dropped.
@@ -696,13 +663,7 @@ var _ = Describe("uns_beta start-from-earliest", Label("uns_beta"), func() {
 		var mu sync.Mutex
 		var got []string
 		// THEN start the stream with the fresh group.
-		stop := runUnsBetaStream(GinkgoT(), `
-uns_beta:
-  broker_address: "`+addr+`"
-  consumer_group: "`+group+`"
-  umh_topics:
-    - "^umh\\.v1\\."
-`, func(_ context.Context, b service.MessageBatch) error {
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `^umh\.v1\.`), func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
 			for _, m := range b {
@@ -742,10 +703,10 @@ uns_beta:
 // committed" whether the ack was pending OR fired prematurely, so it cannot
 // distinguish correct from buggy. The premature-ack ordering is pinned instead
 // by the broker-free self-ack unit specs (uns_beta_input_test.go).
-var _ = Describe("uns_beta mixed-batch NACK redelivery", Label("uns_beta"), func() {
+var _ = describeBothForms("uns_beta mixed-batch NACK redelivery", func(pluginName string) {
 	It("redelivers the NACKed kept record without committing past it and re-drops the filtered one", func() {
 		addr := startBroker(GinkgoT())
-		const group = "uns-beta-mixed-nack"
+		group := "uns-beta-mixed-nack-" + pluginName
 		// One produce call: matching (offset 0) + non-matching (offset 1) share
 		// one fetch, overwhelmingly likely one delegated batch under kfake.
 		produce(GinkgoT(), addr,
@@ -757,13 +718,7 @@ var _ = Describe("uns_beta mixed-batch NACK redelivery", Label("uns_beta"), func
 		deliveries := map[string]int{} // payload -> delivery count
 		const failuresWanted = 2
 
-		stop := runUnsBetaStream(GinkgoT(), `
-uns_beta:
-  broker_address: "`+addr+`"
-  consumer_group: "`+group+`"
-  umh_topics:
-    - "^umh\\.v1\\.acme\\..+$"
-`, func(_ context.Context, b service.MessageBatch) error {
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `^umh\.v1\.acme\..+$`), func(_ context.Context, b service.MessageBatch) error {
 			defer GinkgoRecover()
 			mu.Lock()
 			defer mu.Unlock()
@@ -822,10 +777,10 @@ uns_beta:
 // A specific umh_topics pattern (NOT ".*") is used so the non-matches are
 // genuinely omitted in connect, not merely dropped by uns_beta's keyless guard.
 // (ENG-5094 / ENG-5105)
-var _ = Describe("uns_beta gapless restart", Label("uns_beta"), func() {
+var _ = describeBothForms("uns_beta gapless restart", func(pluginName string) {
 	It("resumes a restarted consumer group from the committed offset with no loss and no replay across a long omitted run", func() {
 		addr := startBroker(GinkgoT())
-		const group = "uns-beta-gapless-restart"
+		group := "uns-beta-gapless-restart-" + pluginName
 		const nonMatching = 1500 // a long omitted run, spanning many fetches
 		const total = 1 + nonMatching
 
@@ -839,13 +794,7 @@ var _ = Describe("uns_beta gapless restart", Label("uns_beta"), func() {
 		}
 		produce(GinkgoT(), addr, records...)
 
-		streamYAML := `
-uns_beta:
-  broker_address: "` + addr + `"
-  consumer_group: "` + group + `"
-  umh_topics:
-    - "^umh\\.v1\\.match\\..+$"
-`
+		streamYAML := unsBetaInputYAML(pluginName, addr, group, `^umh\.v1\.match\..+$`)
 
 		// --- Run 1: drain the whole log on group G ---
 		var mu sync.Mutex
@@ -950,23 +899,23 @@ func closedLocalPort(t testingT) string {
 // Connect must FAIL FAST against an unreachable broker rather than starting a
 // stream that delivers nothing. The broker-free unit specs (uns_beta_input_test.go)
 // fabricate the ConnectionTest result; this spec exercises the REAL probe path —
-// it builds a uns_beta_reader against a closed localhost port and asserts the
-// production Connect (delegated FranzReaderUnordered.ConnectionTest → kgo ping)
-// returns a non-nil error, bounded by connectProbeTimeout (F2). The redpanda
-// input is built on a real manager via ConfigSpec.ParseYAML, so this is the same
-// inner OwnedInput.ConnectionTest the deployed input runs, not a fake.
+// it builds the input against a closed localhost port and asserts the production
+// Connect returns a non-nil error, bounded by connectProbeTimeout (F2).
 // (ENG-5094 / ENG-5105)
-var _ = Describe("uns_beta Connect against an unreachable broker", Label("uns_beta"), func() {
+var _ = describeBothForms("uns_beta Connect against an unreachable broker", func(pluginName string) {
 	It("returns a Connect error within the connect-probe bound", func() {
 		addr := closedLocalPort(GinkgoT())
 
-		// Build the uns_beta_reader directly so Connect can be called on the real
-		// input. The nested redpanda block mirrors what the uns_beta template
-		// renders (uns_beta_template.yaml) for the closed-port broker; the
-		// top-level normalized scalars match it by construction, as the template
-		// guarantees. ParseYAML builds the inner redpanda input on a real manager,
-		// so its ConnectionTest is the production ping.
-		readerYAML := `
+		// Build the reader directly so Connect can be called on the real input.
+		// The two forms have different construction paths: uns_beta uses the
+		// internal uns_beta_reader config spec (nested redpanda block + top-level
+		// scalars), while uns_beta_single uses the lean 4-field surface.
+		// Both forms' Connect must surface a real connection error against a
+		// closed port, not start a stream that delivers nothing.
+		var input service.BatchInput
+		switch pluginName {
+		case "uns_beta":
+			readerYAML := `
 input:
   redpanda:
     seed_brokers: ["` + addr + `"]
@@ -978,11 +927,27 @@ consumer_group: "uns-beta-unreachable"
 kafka_topic: "umh.messages"
 umh_topics: [".*"]
 `
-		pConf, err := unsBetaReaderConfigSpec().ParseYAML(readerYAML, service.GlobalEnvironment())
-		Expect(err).NotTo(HaveOccurred(), "the reader config must parse")
-
-		input, err := newUnsBetaReader(pConf, service.MockResources())
-		Expect(err).NotTo(HaveOccurred(), "the reader must construct against a (closed) broker")
+			pConf, err := unsBetaReaderConfigSpec().ParseYAML(readerYAML, service.GlobalEnvironment())
+			Expect(err).NotTo(HaveOccurred(), "the reader config must parse")
+			input, err = newUnsBetaReader(pConf, service.MockResources())
+			Expect(err).NotTo(HaveOccurred(), "the reader must construct against a (closed) broker")
+		case "uns_beta_single":
+			// uns_beta_single constructs the inner redpanda input lazily on
+			// first Connect via buildUnsBetaSingleInner, so construction
+			// succeeds without dialing; the closed-port error surfaces on
+			// Connect itself.
+			singleYAML := fmt.Sprintf(`
+broker_address: %q
+consumer_group: "uns-beta-unreachable"
+umh_topics: [".*"]
+`, addr)
+			pConf, err := unsBetaSingleConfigSpec().ParseYAML(singleYAML, service.GlobalEnvironment())
+			Expect(err).NotTo(HaveOccurred(), "the reader config must parse")
+			input, err = newUnsBetaSingle(pConf, service.MockResources())
+			Expect(err).NotTo(HaveOccurred(), "the reader must construct against a (closed) broker")
+		default:
+			Fail("unknown plugin: " + pluginName)
+		}
 		defer func() {
 			// The connectivity probe spins up the inner redpanda reader, whose
 			// retry loop keeps dialing the closed port; OwnedInput.Close waits for
@@ -1143,6 +1108,10 @@ func registerCaptureExporter() {
 // exporter. Under the pre-restructure noop-manager construction the inner
 // input's metrics would land on a discarded registry and `redpanda_lag` would
 // never reach the capturer, so this assertion would fail.
+//
+// NOT parameterized over both forms (R4, ENG-5105): this spec tests the uns_beta
+// template form's metrics-routing path specifically. The uns_beta_single form
+// has its own equivalent R3 spec in uns_beta_single_metrics_routing_test.go.
 var _ = Describe("uns_beta inner-input metrics routing", Label("uns_beta"), func() {
 	It("routes the inner redpanda input's redpanda_lag gauge through the outer stream's metrics registry", func() {
 		registerCaptureExporter()
@@ -1221,6 +1190,13 @@ uns_beta:
 // poll of 3 records and asserts key_omitted_records reaches 3 on the outer
 // stream's metrics registry, with filtered_records left at 0. (ENG-5094 /
 // ENG-5105)
+//
+// NOT parameterized over both forms (R4, ENG-5105): the registration-only
+// parity for filtered_records is already covered by the parameterized
+// DescribeTable in uns_beta_parameterized_behavioral_test.go. This uns_beta-only
+// spec additionally asserts the connect pre-filter's key_omitted_records
+// counter behavior, which is structurally identical between forms (the
+// pre-filter lives in connect, not in either form's Go code).
 var _ = Describe("uns_beta filtered_records counter", Label("uns_beta"), func() {
 	It("counts records omitted by the connect pre-filter under key_omitted_records, leaving uns_beta's filtered_records at 0", func() {
 		registerCaptureExporter()
@@ -1415,6 +1391,12 @@ uns_beta:
 // is exercised by the filtered_records specs above. This spec pins the
 // keyless-reaches-uns_beta path that the `.*` (match-everything) deployment still
 // has. (ENG-5094 / ENG-5105)
+//
+// NOT parameterized over both forms (R4, ENG-5105): dropped_keyless counter
+// parity is already covered by the parameterized DescribeTable in
+// uns_beta_parameterized_behavioral_test.go. This uns_beta-only spec additionally
+// asserts key_omitted_records stays 0 under `.*`, which is structurally
+// identical between forms (the pre-filter lives in connect).
 var _ = Describe("uns_beta dropped_keyless counter", Label("uns_beta"), func() {
 	It("increments dropped_keyless for a keyless record that reaches uns_beta under a match-everything pattern", func() {
 		registerCaptureExporter()
@@ -1509,6 +1491,11 @@ uns_beta:
 // omit count rather than dropped_spoofed_key). The matching-native spoof below is
 // the residual vector this counter still observes. (ENG-5094 / ENG-5105 /
 // ENG-5125)
+//
+// NOT parameterized over both forms (R4, ENG-5105): uns_beta_single does not
+// wire dropped_spoofed_key or the hasSpoofHeader/classifyDrop primitive that
+// feeds it — spoof detection is deferred to ENG-5125. Parameterizing this spec
+// over uns_beta_single would always fail (the counter is never registered).
 var _ = Describe("uns_beta dropped_spoofed_key counter", Label("uns_beta"), func() {
 	It("increments dropped_spoofed_key for a matching-native record whose spoofed kafka_key header fails the pattern", func() {
 		registerCaptureExporter()
@@ -1592,10 +1579,10 @@ uns_beta:
 // uns input commits the polled head past a NACKed batch (data loss); uns_beta
 // must instead redeliver the NACKed message until it succeeds and commit only
 // after.
-var _ = Describe("uns_beta NACK redelivery capstone", Label("uns_beta"), func() {
+var _ = describeBothForms("uns_beta NACK redelivery capstone", func(pluginName string) {
 	It("redelivers a NACKed message until success and commits the offset only after", func() {
 		addr := startBroker(GinkgoT())
-		const group = "uns-beta-capstone"
+		group := "uns-beta-capstone-" + pluginName
 		// A occupies offset 0, B offset 1 (produce is synchronous, in call order).
 		produce(GinkgoT(), addr,
 			rec("umh.v1.acme.poison", `{"v":"A"}`),
@@ -1605,12 +1592,7 @@ var _ = Describe("uns_beta NACK redelivery capstone", Label("uns_beta"), func() 
 		const failuresWanted = 3
 		var mu sync.Mutex
 		deliveries := map[string]int{} // payload -> delivery count
-		stop := runUnsBetaStream(GinkgoT(), `
-uns_beta:
-  broker_address: "`+addr+`"
-  consumer_group: "`+group+`"
-  umh_topics: [".*"]
-`, func(_ context.Context, b service.MessageBatch) error {
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `.*`), func(_ context.Context, b service.MessageBatch) error {
 			// This callback runs off the test goroutine, so a Gomega failure
 			// inside it must be recovered here to be reported instead of
 			// crashing the suite.
