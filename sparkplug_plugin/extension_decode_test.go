@@ -24,7 +24,7 @@ import (
 )
 
 // metricWithMetaExt builds a Sparkplug metric whose per-metric MetaData carries a proto2
-// extension at field 9 (the customer's timestamp_ns), as a device would send on the wire.
+// extension at field 9 (the customer's extra_value), as a device would send on the wire.
 func metricWithMetaExt(tsNs int64) *sparkplugb.Payload_Metric {
 	var meta []byte
 	meta = protowire.AppendTag(meta, 9, protowire.VarintType)
@@ -73,14 +73,14 @@ func plainMetric() *sparkplugb.Payload_Metric {
 
 const metaExtSnippet = `package acme;
 extend org.eclipse.tahu.protobuf.Payload.MetaData {
-  optional int64 timestamp_ns = 9;
+  optional int64 extra_value = 9;
 }
 `
 
 const valueExtSnippet = `package acme;
 message CanMessage { optional uint32 id = 1; }
 extend org.eclipse.tahu.protobuf.Payload.MetaData {
-  optional int64 timestamp_ns = 9;
+  optional int64 extra_value = 9;
 }
 extend org.eclipse.tahu.protobuf.Payload.MetricValueExtension {
   optional CanMessage can = 1;
@@ -96,8 +96,8 @@ var _ = Describe("Sparkplug extension decode (ENG-5229)", func() {
 			flat, decoded, present, err := d.decode(metricWithMetaExt(1719300000123456))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(present).To(BeTrue())
-			Expect(flat).To(HaveKeyWithValue("timestamp_ns", "1719300000123456"))
-			Expect(decoded).To(ContainSubstring(`"[acme.timestamp_ns]"`))
+			Expect(flat).To(HaveKeyWithValue("extra_value", "1719300000123456"))
+			Expect(decoded).To(ContainSubstring(`"[acme.extra_value]"`))
 		})
 
 		It("puts a message-typed extension only in the JSON blob, not in the flat keys", func() {
@@ -131,7 +131,7 @@ var _ = Describe("Sparkplug extension decode (ENG-5229)", func() {
 
 		It("rejects a snippet that imports the Sparkplug schema itself", func() {
 			snippet := "package acme;\nimport \"" + extSparkplugImportPath + "\";\n" +
-				"extend org.eclipse.tahu.protobuf.Payload.MetaData { optional int64 timestamp_ns = 9; }\n"
+				"extend org.eclipse.tahu.protobuf.Payload.MetaData { optional int64 extra_value = 9; }\n"
 			_, err := newExtensionDecoder(snippet)
 			Expect(err).To(MatchError(ContainSubstring("do not import")))
 		})
@@ -142,20 +142,20 @@ var _ = Describe("Sparkplug extension decode (ENG-5229)", func() {
 		})
 
 		It("rejects two scalar extensions that collide on the same leaf key", func() {
-			// Distinct fully-qualified names (acme.timestamp_ns vs acme.Holder.timestamp_ns)
+			// Distinct fully-qualified names (acme.extra_value vs acme.Holder.extra_value)
 			// — so protocompile accepts them — but the same leaf, which our check rejects.
 			snippet := `package acme;
 extend org.eclipse.tahu.protobuf.Payload.MetaData {
-  optional int64 timestamp_ns = 9;
+  optional int64 extra_value = 9;
 }
 message Holder {
   extend org.eclipse.tahu.protobuf.Payload.MetricValueExtension {
-    optional int64 timestamp_ns = 1;
+    optional int64 extra_value = 1;
   }
 }
 `
 			_, err := newExtensionDecoder(snippet)
-			Expect(err).To(MatchError(ContainSubstring("spb_ext_timestamp_ns")))
+			Expect(err).To(MatchError(ContainSubstring("spb_ext_extra_value")))
 		})
 
 		It("surfaces a parse error against the customer's snippet line", func() {

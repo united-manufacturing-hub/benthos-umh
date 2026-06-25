@@ -136,7 +136,7 @@ Key features:
 		// Extension Decoding (opt-in, ENG-5229)
 		Field(service.NewObjectField("decode_extensions",
 			service.NewStringField("extensions").
-				Description("Inline proto2 schema declaring extensions of the Sparkplug `Payload.MetaData` and/or `Payload.MetricValueExtension` messages (e.g. a sub-millisecond `timestamp_ns`). Write only `package` + `extend` blocks, plus any custom message types or well-known-type imports; the plugin compiles it as proto2 and adds the Sparkplug import (do not write a `syntax` line or import the Sparkplug schema). Scalar extensions are attached per carrying metric as `spb_ext_<field>`; the full decoded metric (including message-typed extensions) as `spb_metric_decoded` JSON. Metrics without an extension are unaffected.").
+				Description("Inline proto2 schema declaring extensions of the Sparkplug `Payload.MetaData` and/or `Payload.MetricValueExtension` messages. Write only `package` + `extend` blocks, plus any custom message types or well-known-type imports; the plugin compiles it as proto2 and adds the Sparkplug import (do not write a `syntax` line or import the Sparkplug schema). Scalar extensions are attached per carrying metric as `spb_ext_<field>`; the full decoded metric (including message-typed extensions) as `spb_metric_decoded` JSON. Metrics without an extension are unaffected.").
 				Default("").
 				Optional()).
 			Description("Opt-in decoding of proto2 Sparkplug extension fields that the standard decode retains but ignores.").
@@ -214,8 +214,7 @@ type sparkplugInput struct {
 	sequenceGapRebirths     *service.MetricCounter // REBIRTH requests sent because of a sequence number gap
 	aliasRebirths           Counter                // REBIRTH requests sent because DATA aliases were unresolved
 
-	// Extension decoding (opt-in, ENG-5229). extDecoder is nil when decode_extensions is unset.
-	// Read-only after construction; the per-metric decode is strictly additive metadata.
+	// Extension decoding (ENG-5229); nil when decode_extensions is unset.
 	extDecoder            *extensionDecoder
 	extensionDecodeErrors *service.MetricCounter
 	extDecodeLogMu        sync.Mutex
@@ -421,7 +420,8 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 	// Parse subscription section using namespace (optional)
 	if conf.Contains("subscription") {
 		subscriptionConf := conf.Namespace("subscription")
-		groups, err := subscriptionConf.FieldStringList("groups")
+		var groups []string
+		groups, err = subscriptionConf.FieldStringList("groups")
 		if err == nil {
 			config.Subscription.Groups = groups
 		}
@@ -434,7 +434,7 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 	// - AutoExtractValues: true (required for UMH-Core format)
 
 	// Validate configuration (this will auto-detect the role)
-	if err := config.Validate(); err != nil {
+	if err = config.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
@@ -1166,8 +1166,8 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	// Try to add UMH conversion metadata (optional, non-failing)
 	s.tryAddUMHMetadata(msg, metric, payload, topicInfo)
 
-	// Decode proto2 extension fields (opt-in via decode_extensions). Strictly additive: only
-	// sets new metadata keys, never the value or existing metadata, and never fails the metric.
+	// Decode proto2 extension fields (opt-in). Additive only: sets new metadata, never the
+	// value or existing keys, and never fails the metric.
 	if s.extDecoder != nil {
 		if flat, decoded, present, err := s.extDecoder.decode(metric); err != nil {
 			s.noteExtDecodeError(metric.GetName(), err)
@@ -1182,9 +1182,8 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	return msg
 }
 
-// noteExtDecodeError records a per-metric extension decode failure: it always bumps the
-// counter and logs the first occurrence, then throttles to one warning per 30s so a
-// systematic failure (e.g. a mis-declared field type) cannot flood the logs.
+// noteExtDecodeError counts the failure and warns at most once per 30s, so a systematic
+// failure (e.g. a mis-declared field type) can't flood the logs.
 func (s *sparkplugInput) noteExtDecodeError(metricName string, err error) {
 	s.extensionDecodeErrors.Incr(1)
 	s.extDecodeLogMu.Lock()

@@ -33,30 +33,27 @@ import (
 )
 
 const (
-	// extSnippetVirtualPath is the synthetic filename the customer's snippet compiles under;
-	// it appears in compile diagnostics.
 	extSnippetVirtualPath = "extensions.proto"
-	// extSparkplugImportPath must equal the path recorded in the embedded Sparkplug descriptor.
+	// extSparkplugImportPath must equal the path recorded in the embedded descriptor, or the
+	// resolver cannot satisfy the injected import.
 	extSparkplugImportPath = "proto/sparkplug_b_official.proto"
-	// extPreamble is prepended to the snippet: syntax must be the first statement, and the
-	// import makes the Sparkplug extendees (Payload.MetaData / Payload.MetricValueExtension)
-	// resolvable. One line, so compile diagnostics are offset by exactly extPreambleLines.
+	// extPreamble is prepended so the snippet compiles as proto2 and the Sparkplug extendees
+	// resolve. extPreambleLines must track the number of newlines so diagnostics map back to
+	// the customer's line.
 	extPreamble      = `syntax = "proto2"; import "` + extSparkplugImportPath + `";` + "\n"
 	extPreambleLines = 1
 )
 
-// extensionDecoder turns the proto2 extension bytes a Sparkplug metric carries (but the
-// standard decode ignores) into metadata. It compiles the customer's inline extension schema
-// once, against the embedded Sparkplug descriptor, and is read-only — safe for concurrent use
-// by Read after newExtensionDecoder returns.
+// extensionDecoder decodes the proto2 extension bytes a Sparkplug metric carries but the
+// standard decode ignores. It is built once and is read-only afterwards.
 type extensionDecoder struct {
 	types      *protoregistry.Types
 	metricDesc protoreflect.MessageDescriptor
 }
 
-// newExtensionDecoder compiles the proto2 snippet and builds the resolver. It fails (so the
-// bridge fails to start) on an unparseable snippet, a snippet that declares no extensions, or
-// two scalar extensions whose leaf names would collide into the same spb_ext_* key.
+// newExtensionDecoder compiles the snippet and fails (so the bridge fails to start) on an
+// unparseable snippet, one declaring no extensions, or two scalar extensions whose leaf names
+// collide into the same spb_ext_* key.
 func newExtensionDecoder(snippet string) (*extensionDecoder, error) {
 	if err := validateExtensionSnippet(snippet); err != nil {
 		return nil, err
@@ -84,7 +81,6 @@ func newExtensionDecoder(snippet string) (*extensionDecoder, error) {
 	if err := registerFileExtensions(types, files[0]); err != nil {
 		return nil, fmt.Errorf("register extensions: %w", err)
 	}
-
 	if err := checkExtensions(types); err != nil {
 		return nil, err
 	}
@@ -95,24 +91,21 @@ func newExtensionDecoder(snippet string) (*extensionDecoder, error) {
 	}, nil
 }
 
-// decode re-marshals the metric (proto2 retains the extension bytes the standard decode kept),
-// decodes it against the generated Payload.Metric descriptor with the extension resolver, and
-// returns the scalar extensions as flat leaf->value pairs plus the full decoded metric as JSON.
-// present is false (and the strings nil/empty) when the metric carries no extension at all, so
-// the caller adds no metadata.
-func (d *extensionDecoder) decode(metric *sparkplugb.Payload_Metric) (flat map[string]string, decodedJSON string, present bool, err error) {
+// decode returns the metric's scalar extensions as leaf->value pairs and the full decoded
+// metric as JSON; present is false when the metric carries no extension. Re-marshalling
+// recovers the extension bytes that proto2 retained through the standard decode.
+func (d *extensionDecoder) decode(metric *sparkplugb.Payload_Metric) (map[string]string, string, bool, error) {
 	raw, err := proto.Marshal(metric)
 	if err != nil {
 		return nil, "", false, fmt.Errorf("re-marshal metric: %w", err)
 	}
 	m := dynamicpb.NewMessage(d.metricDesc)
-	if err := (proto.UnmarshalOptions{Resolver: d.types}).Unmarshal(raw, m); err != nil {
+	if err = (proto.UnmarshalOptions{Resolver: d.types}).Unmarshal(raw, m); err != nil {
 		return nil, "", false, fmt.Errorf("decode metric against extension schema: %w", err)
 	}
 
-	flat = map[string]string{}
-	present = collectExtensions(m, flat)
-	if !present {
+	flat := map[string]string{}
+	if !collectExtensions(m, flat) {
 		return nil, "", false, nil
 	}
 
@@ -123,9 +116,9 @@ func (d *extensionDecoder) decode(metric *sparkplugb.Payload_Metric) (flat map[s
 	return flat, string(jb), true, nil
 }
 
-// collectExtensions walks the decoded message, recursing into sub-messages (extensions live on
-// the nested MetaData and MetricValueExtension, not on the metric itself). It records every
-// scalar extension as a flat leaf->value pair and reports whether any extension is set.
+// collectExtensions records every scalar extension as a leaf->value pair and reports whether
+// any extension is set. It recurses because the extensions live on the nested MetaData and
+// MetricValueExtension, not on the metric itself.
 func collectExtensions(m protoreflect.Message, flat map[string]string) bool {
 	present := false
 	m.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
@@ -138,7 +131,6 @@ func collectExtensions(m protoreflect.Message, flat map[string]string) bool {
 		if fd.Kind() == protoreflect.MessageKind || fd.Kind() == protoreflect.GroupKind {
 			switch {
 			case fd.IsMap():
-				// Sparkplug extendees have no map fields; nothing to recurse.
 			case fd.IsList():
 				l := v.List()
 				for i := 0; i < l.Len(); i++ {
@@ -166,8 +158,8 @@ func isScalarExtKind(k protoreflect.Kind) bool {
 	}
 }
 
-// scalarToString formats a scalar extension value the way protojson would render it, so a
-// spb_ext_* metadata value matches the corresponding key inside spb_metric_decoded.
+// scalarToString formats the value as protojson would, so a spb_ext_* value matches the
+// corresponding key inside spb_metric_decoded.
 func scalarToString(fd protoreflect.FieldDescriptor, v protoreflect.Value) string {
 	switch fd.Kind() {
 	case protoreflect.BoolKind:
@@ -196,8 +188,6 @@ func scalarToString(fd protoreflect.FieldDescriptor, v protoreflect.Value) strin
 	}
 }
 
-// sanitizeExtLeaf maps an extension's leaf field name to its spb_ext_* suffix. Proto field
-// names are already [A-Za-z0-9_], so this is effectively identity, but it guards the contract.
 func sanitizeExtLeaf(name string) string {
 	var b strings.Builder
 	b.Grow(len(name))
@@ -212,9 +202,9 @@ func sanitizeExtLeaf(name string) string {
 	return b.String()
 }
 
-// validateExtensionSnippet rejects the two preamble collisions: a customer-declared syntax
-// (proto3 is unsupported; we own the proto2 line) and a self-import of the Sparkplug schema
-// (the plugin injects it — a second import is a duplicate-import compile error).
+// validateExtensionSnippet rejects a customer-declared syntax (proto3 is unsupported; the
+// plugin owns the proto2 line) and a self-import of the Sparkplug schema (a second import is a
+// duplicate-import compile error) before either reaches the compiler.
 func validateExtensionSnippet(snippet string) error {
 	for i, line := range strings.Split(snippet, "\n") {
 		t := strings.TrimSpace(line)
@@ -257,9 +247,9 @@ func registerMessageExtensions(types *protoregistry.Types, ms protoreflect.Messa
 	return nil
 }
 
-// checkExtensions enforces two startup invariants: at least one extension exists, and no two
-// scalar extensions collapse to the same spb_ext_* leaf key (message-typed extensions are not
-// flattened, so they never collide).
+// checkExtensions requires at least one extension and rejects two scalar extensions whose leaf
+// names map to the same spb_ext_* key (message-typed extensions are not flattened, so they
+// never collide).
 func checkExtensions(types *protoregistry.Types) error {
 	count := 0
 	seen := map[string]protoreflect.FullName{}
@@ -289,8 +279,8 @@ func checkExtensions(types *protoregistry.Types) error {
 
 var extPosRe = regexp.MustCompile(regexp.QuoteMeta(extSnippetVirtualPath) + `:(\d+):(\d+)`)
 
-// remapCompileError rewrites protocompile's position prefix so it points at the customer's
-// snippet line (subtracting the injected preamble) under a friendlier filename.
+// remapCompileError points protocompile's position back at the customer's snippet line by
+// subtracting the injected preamble.
 func remapCompileError(err error) error {
 	s := extPosRe.ReplaceAllStringFunc(err.Error(), func(m string) string {
 		sub := extPosRe.FindStringSubmatch(m)
