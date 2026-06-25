@@ -218,6 +218,51 @@ location path — enabling it there would prepend the edge node and corrupt the 
 > bridge's `tag_processor` by setting `location_path` from `spb_edge_node_id_sanitized` and
 > `virtual_path` from `spb_device_id_sanitized`.
 
+### Extension Decoding
+
+Sparkplug B lets publishers carry custom data in proto2 extensions of two messages:
+`Payload.MetaData` (per-metric metadata) and `Payload.MetricValueExtension` (the metric
+value). The standard decode keeps those bytes but cannot name them, because they are not in
+the built-in schema. Supply the extension definitions and the plugin decodes them per metric.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `decode_extensions.extensions` | `string` | `""` | Inline proto2 schema declaring the extensions to decode. Empty (the default) disables decoding. |
+
+Write only the `package` and `extend` blocks, plus any custom message types or well-known-type
+imports (for example `google/protobuf/timestamp.proto`). The plugin compiles the snippet as
+proto2 and adds the Sparkplug import, so do **not** write a `syntax` line or import the
+Sparkplug schema yourself. The extendees must use these fully-qualified names:
+
+- `org.eclipse.tahu.protobuf.Payload.MetaData`
+- `org.eclipse.tahu.protobuf.Payload.MetricValueExtension`
+
+```yaml
+input:
+  sparkplug_b:
+    mqtt:
+      urls: ["tcp://localhost:1883"]
+    identity:
+      group_id: "DeviceLevelTest"
+    decode_extensions:
+      extensions: |
+        package acme;
+        extend org.eclipse.tahu.protobuf.Payload.MetaData {
+          optional int64 extra_value = 9;
+        }
+```
+
+For each metric that carries an extension, the plugin attaches:
+
+- `spb_ext_<field>` — one metadata key per scalar extension (for example, `spb_ext_extra_value`), usable directly in a `tag_processor` with no protobuf handling.
+- `spb_metric_decoded` — the full decoded metric as a JSON string, where extensions appear as `[package.field]` keys. Use it for message-typed extensions: `JSON.parse(msg.meta.spb_metric_decoded)`.
+
+Metrics without an extension are emitted unchanged. The snippet compiles once at startup; an
+unparseable snippet, a snippet with no extensions, or two scalar extensions whose names map to
+the same `spb_ext_*` key fails the bridge at startup with the offending line. Extensions are a
+proto2-only feature, so the snippet must be proto2; the device's own implementation language
+is irrelevant, since the wire format is identical.
+
 ---
 
 ## Technical Details
