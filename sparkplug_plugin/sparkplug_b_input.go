@@ -128,6 +128,11 @@ Key features:
 			Description("Minimum time between REBIRTH commands to the same node, applied across every rebirth reason. Prevents the alias-recovery storm where DATA arriving in the BIRTH round-trip window fires another rebirth. Set to `0` to disable throttling.").
 			Default("1s").
 			Optional()).
+		Field(service.NewBoolField("include_edge_node_in_location").
+			Description("Nest device-level data under its Sparkplug edge node, so location_path becomes <edge_node>.<device> (e.g. 'Line1.IO_Controller'). Enable for native/brownfield Sparkplug where the edge node is a real hierarchy level and devices on different nodes may share a name. Leave disabled (default) for UMH Parris-encoded publishers where device_id already carries the full location path. Node-level data (no device) is unaffected.").
+			Default(false).
+			Examples(true, false).
+			Advanced()).
 		// Subscription Configuration
 		Field(service.NewObjectField("subscription",
 			service.NewStringListField("groups").
@@ -389,6 +394,8 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 	// Parse discovery REBIRTH configuration
 	config.RequestBirthOnConnect, _ = conf.FieldBool("request_birth_on_connect")
 	config.BirthRequestThrottle, _ = conf.FieldDuration("birth_request_throttle")
+
+	config.IncludeEdgeNodeInLocation, _ = conf.FieldBool("include_edge_node_in_location")
 
 	// Parse subscription section using namespace (optional)
 	if conf.Contains("subscription") {
@@ -1456,6 +1463,16 @@ func ValidateSequenceNumber(lastSeq uint8, currentSeq uint8) bool {
 	return currentSeq == expectedNext
 }
 
+func composeLocationDeviceID(edgeNode string, device string, includeEdgeNode bool) string {
+	if device == "" {
+		return edgeNode
+	}
+	if includeEdgeNode {
+		return edgeNode + ":" + device
+	}
+	return device
+}
+
 // tryAddUMHMetadata attempts to convert Sparkplug B data to UMH format and add UMH metadata.
 // This is a non-failing operation - if conversion fails, it adds status flags and continues.
 func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
@@ -1500,19 +1517,19 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 	}
 
 	// For NDATA messages (node-level data), use EdgeNode as DeviceID when Device is empty
-	deviceID := topicInfo.Device
-	if deviceID == "" {
-		deviceID = topicInfo.EdgeNode
+	if topicInfo.Device == "" {
 		// Set spb_device_id metadata for consistency (used by Topic Browser and other downstream processors)
 		// Even though this is NDATA (node-level), we're treating EdgeNode as the device identifier
-		msg.MetaSet("spb_device_id", deviceID)
-		msg.MetaSet("spb_device_id_sanitized", s.sanitizeForTopic(deviceID))
+		msg.MetaSet("spb_device_id", topicInfo.EdgeNode)
+		msg.MetaSet("spb_device_id_sanitized", s.sanitizeForTopic(topicInfo.EdgeNode))
 	}
+
+	locationDeviceID := composeLocationDeviceID(topicInfo.EdgeNode, topicInfo.Device, s.config.IncludeEdgeNodeInLocation)
 
 	sparkplugMsg := &SparkplugMessage{
 		GroupID:    topicInfo.Group,
 		EdgeNodeID: topicInfo.EdgeNode,
-		DeviceID:   deviceID,
+		DeviceID:   locationDeviceID,
 		Value:      rawValue,
 		DataType:   dataType,
 		Timestamp:  time.Now(), // Will be overridden below if payload has timestamp

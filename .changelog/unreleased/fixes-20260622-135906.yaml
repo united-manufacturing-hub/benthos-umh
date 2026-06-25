@@ -1,0 +1,3 @@
+kind: fixes
+body: Sparkplug B input can nest device data under its edge node via include_edge_node_in_location, so identically-named devices on different edge nodes no longer collide at the top of the hierarchy (ENG-5175)
+time: 2026-06-22T13:59:06.673049+02:00

@@ -180,6 +180,44 @@ Here's how a Sparkplug B message maps to UMH-Core using the Modified Parris Meth
 | `request_birth_on_connect` | `bool` | `true` | Send REBIRTH when DATA arrives from a node with no prior BIRTH on this bridge. Typical after a bridge restart. Ignored under `secondary_passive`. Controls only the discovery path; sequence-gap and unresolved-aliases recovery always run for `secondary_active` and `primary`. |
 | `birth_request_throttle` | `duration` | `"1s"` | Minimum time between REBIRTH commands to the same node, shared across every rebirth reason. Collapses simultaneous discovery, sequence-gap, and unresolved-aliases signals into one broker command per window. Set to `0` to disable throttling. |
 
+### Hierarchy Section
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `include_edge_node_in_location` | `bool` | `false` | Nest device-level data under its Sparkplug edge node. When `true`, device data maps to `location_path = <edge_node>.<device>`; node-level data (no device) is unaffected. |
+
+**When to enable.** The default decode treats `device_id` as the full location path
+(UMH's Modified Parris Method, where `enterprise:site:area` → `enterprise.site.area` and
+the edge node is only a session identity). That is correct for UMH-published streams, but
+a **native / brownfield** Sparkplug producer uses `Group / EdgeNode / Device` as genuine
+nested levels — the `device_id` is just a device name. With the default, such device data
+lands at the top of the hierarchy and identically-named devices on different edge nodes
+collide. Set `include_edge_node_in_location: true` to put each device under the edge node
+that owns it:
+
+```yaml
+input:
+  sparkplug_b:
+    mqtt:
+      urls: ["tcp://localhost:1883"]
+    identity:
+      group_id: "FactoryA"
+    include_edge_node_in_location: true
+```
+
+| Topic | `include_edge_node_in_location: false` (default) | `true` |
+|-------|--------------------------------------------------|--------|
+| `spBv1.0/g/DDATA/Line1/IO Controller` | `IO_Controller` | `Line1.IO_Controller` |
+| `spBv1.0/g/DDATA/Line2/IO Controller` | `IO_Controller` (collides with Line1) | `Line2.IO_Controller` |
+| `spBv1.0/g/NDATA/Line1` (node-level) | `Line1` | `Line1` (unchanged) |
+
+Leave it `false` for Parris-encoded publishers, whose `device_id` already carries the full
+location path — enabling it there would prepend the edge node and corrupt the path.
+
+> **No-rebuild workaround:** on the default template you can achieve the same nesting in the
+> bridge's `tag_processor` by setting `location_path` from `spb_edge_node_id_sanitized` and
+> `virtual_path` from `spb_device_id_sanitized`.
+
 ---
 
 ## Technical Details
