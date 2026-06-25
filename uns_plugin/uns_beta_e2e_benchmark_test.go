@@ -187,8 +187,8 @@ func BenchmarkE2E_DrainKfake(b *testing.B) {
 	runDrainMatrix(b, startBroker(b))
 }
 
-// runDrainMatrix produces the corpus once, then benchmarks {uns, uns_beta} x
-// {match_all, select_one} draining it from addr.
+// runDrainMatrix produces the corpus once, then benchmarks {uns, uns_beta,
+// uns_beta_single} x {match_all, select_one} draining it from addr.
 func runDrainMatrix(b *testing.B, addr string) {
 	benchProduce(b, addr, benchCorpus())
 
@@ -206,6 +206,7 @@ func runDrainMatrix(b *testing.B, addr string) {
 	}{
 		{"uns", "bench-uns"},
 		{"uns_beta", "bench-unsbeta"},
+		{"uns_beta_single", "bench-unsbetasingle"},
 	}
 
 	for _, sc := range scenarios {

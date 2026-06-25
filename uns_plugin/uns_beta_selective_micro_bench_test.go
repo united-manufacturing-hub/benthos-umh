@@ -25,6 +25,14 @@
 // message construction then discards it. This benchmark measures exactly that delta.
 // Network/fetch/decompression are IDENTICAL for both and are NOT in the benchmark.
 //
+// Scope: these benchmarks are uns_beta-specific. uns_beta_single pre-filters at
+// the Kafka consumer via connect's key_pattern, so a dropped record never reaches
+// the build-then-filter path measured here (it is dropped before a service.Message
+// is constructed). uns_beta_single's dropped-record cost is therefore a single
+// regex match at the source, structurally identical to legacy uns's pre-filter,
+// and its end-to-end drain cost is covered by the {select_one, uns_beta_single}
+// case in uns_beta_e2e_benchmark_test.go.
+//
 // All symbols are prefixed `micro` to avoid in-package redeclaration collisions.
 package uns_plugin
 
