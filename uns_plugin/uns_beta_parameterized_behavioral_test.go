@@ -125,12 +125,17 @@ func droppedKeylessCounterScenario(pluginName string) {
 	}).WithTimeout(2 * time.Second).WithPolling(200 * time.Millisecond).
 		Should(Equal(int64(1)), pluginName+" must not over-count dropped_keyless (a climb would indicate the ENG-5094 redelivery wedge)")
 
-	// dropped_spoofed_key and filtered_records are wired only by uns_beta's
-	// filterAndAlias; uns_beta_single does not yet register them (later rung,
-	// ENG-5125), so counterValue returns 0 on a map miss for the single form.
-	// These assertions therefore meaningfully guard uns_beta; for
-	// uns_beta_single they confirm the counters are absent, not that
-	// miscounting into them is impossible.
+	// dropped_spoofed_key and filtered_records are registered (and, for
+	// filtered_records, incremented on the keyed non-matching branch) by BOTH
+	// forms' constructors. This scenario sends a keyless record and a keyed
+	// MATCHING record, so neither triggers the filtered_records increment path;
+	// counterValue==0 here reflects "no triggering record was sent", not a
+	// map-miss absence and not "the counter is never incremented". The
+	// filtered_records increment path is not exercised by any integration
+	// scenario for either form (connect's key_pattern pre-filter omits keyed
+	// non-matching records before ReadBatch); end-to-end coverage of the
+	// increment is tracked in ENG-5125. dropped_spoofed_key is not registered
+	// in the single form (no hasSpoofHeader), so a map miss returns 0 there.
 	Expect(captureExporter.counterValue("dropped_spoofed_key")).To(Equal(int64(0)),
 		pluginName+": a keyless record must not count as spoofed")
 	Expect(captureExporter.counterValue("filtered_records")).To(Equal(int64(0)),
@@ -158,4 +163,84 @@ var _ = DescribeTable("uns_beta dropped_keyless counter (parameterized over both
 	droppedKeylessCounterScenario,
 	Entry("uns_beta (template form)", "uns_beta"),
 	Entry("uns_beta_single (Go form)", "uns_beta_single"),
+)
+
+// filteredRecordsCounterScenario asserts that uns_beta's own filtered_records
+// counter is registered on the outer stream's metrics registry for both forms.
+// The single form previously omitted the counter entirely; the registration
+// assertion catches a form that omits the NewCounter call.
+//
+// Both forms register filtered_records eagerly in their constructor
+// (uns_beta_input.go newUnsBetaReader; uns_beta_single_input.go
+// newUnsBetaSingle). The constructor runs when the stream starts the input
+// (during stream.Run, not at StreamBuilder.Build), so the assertion polls for
+// registration rather than checking synchronously after Build.
+//
+// The increment is not exercised here. A single shared umh_topics list cannot
+// reach the Go-level !matches branch for a keyed record: connect's key_pattern
+// pre-filter and the Go-level keyFilter apply the same pattern, so a keyed
+// non-matching record is dropped by connect before ReadBatch. Exercising the
+// increment requires a connect-level seam or direct ReadBatch injection, which
+// belongs to the ENG-5125 rung.
+func filteredRecordsCounterScenario(pluginName string) {
+	registerCaptureExporter()
+	captureExporter.reset()
+
+	addr := startBroker(GinkgoT())
+	group := fmt.Sprintf("uns-beta-param-filtered-%s-%d", pluginName, time.Now().UnixNano())
+
+	sb := service.NewStreamBuilder()
+	Expect(sb.AddInputYAML(unsBetaInputYAML(pluginName, addr, group, `^only-this$`))).To(Succeed())
+	Expect(sb.SetMetricsYAML(captureExporterName + ": {}")).To(Succeed())
+	Expect(sb.AddBatchConsumerFunc(func(_ context.Context, _ service.MessageBatch) error {
+		return nil
+	})).To(Succeed())
+
+	stream, err := sb.Build()
+	Expect(err).NotTo(HaveOccurred())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	var runErr error
+	go func() { defer close(done); runErr = stream.Run(ctx) }()
+	defer func() {
+		cancel()
+		<-done
+		if runErr != nil && !errors.Is(runErr, context.Canceled) {
+			Fail("stream run: " + runErr.Error())
+		}
+	}()
+
+	// The input constructor runs when the stream starts it (during Run), and
+	// registers filtered_records eagerly there. A form that omits the
+	// NewCounter call never registers it and fails this poll.
+	Eventually(func() bool {
+		return captureExporter.registered("filtered_records")
+	}).WithTimeout(15 * time.Second).WithPolling(100 * time.Millisecond).
+		Should(BeTrue(),
+			pluginName+": filtered_records counter must be registered on the outer stream's metrics registry")
+}
+
+// The filtered_records counter registration behavioral Describe, parameterized
+// over both forms. The single form previously did not register the
+// filtered_records counter at all, so the registration assertion failed for
+// the single form. Registration is structural only: it proves the counter name
+// exists on the registry, not that the increment fires. The increment path
+// (keyed records whose key matches no umh_topics pattern) is tracked in
+// ENG-5125, which requires a harness that bypasses connect's key_pattern
+// pre-filter.
+//
+// Coverage gap (ENG-5125): neither Entry below exercises the filtered_records
+// INCREMENT for either form. Connect's key_pattern pre-filter omits keyed
+// non-matching records before ReadBatch in both forms, so the Go-level !matches
+// branch (where the increment lives) is never reached by this scenario, which
+// sends no records at all. A regression that removes the filtered.Incr from
+// either form would leave this Describe green. Closing the gap requires a
+// connect-level seam or direct ReadBatch injection with a keyed non-matching
+// record, which belongs to the ENG-5125 rung.
+var _ = DescribeTable("uns_beta filtered_records counter registration only (structural, parameterized over both forms)",
+	Label("uns_beta"),
+	filteredRecordsCounterScenario,
+	Entry("uns_beta (template form) — registration only; increment path NOT covered (ENG-5125)", "uns_beta"),
+	Entry("uns_beta_single (Go form) — registration only; increment path NOT covered (ENG-5125)", "uns_beta_single"),
 )

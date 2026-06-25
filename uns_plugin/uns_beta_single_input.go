@@ -126,17 +126,29 @@ func newUnsBetaSingle(conf *service.ParsedConfig, res *service.Resources) (servi
 	// A nil keylessCounter is a no-op Incr (*service.MetricCounter treats a
 	// nil receiver as a no-op), so the nil-resources path stays safe.
 	var keylessCounter *service.MetricCounter
+	var filteredCounter *service.MetricCounter
 	if res != nil {
 		keylessCounter = res.Metrics().NewCounter("dropped_keyless")
+		// filtered_records counts keyed records that reach ReadBatch but fail
+		// the umh_topics filter (the !matches branch with key != ""), mirroring
+		// uns_beta's dropCounters.filtered. The handle is stored so the counter
+		// is wired — registered AND incremented — rather than a dead
+		// registration whose handle is discarded and can never fire (which would
+		// read as a false zero on the divergence path). The increment path is
+		// not exercised by the integration suite: connect's key_pattern
+		// pre-filter omits keyed non-matching records before ReadBatch in both
+		// forms, so end-to-end coverage of the increment is tracked in ENG-5125.
+		filteredCounter = res.Metrics().NewCounter("filtered_records")
 	}
 	return &unsBetaSingleInput{
-		res:            res,
-		seedBrokers:    seedBrokers,
-		kafkaTopic:     kafkaTopic,
-		consumerGroup:  consumerGroup,
-		umhTopics:      patterns,
-		keyFilter:      keyFilter,
-		keylessCounter: keylessCounter,
+		res:             res,
+		seedBrokers:     seedBrokers,
+		kafkaTopic:      kafkaTopic,
+		consumerGroup:   consumerGroup,
+		umhTopics:       patterns,
+		keyFilter:       keyFilter,
+		keylessCounter:  keylessCounter,
+		filteredCounter: filteredCounter,
 	}, nil
 }
 
@@ -157,14 +169,24 @@ type unsBetaSingleInput struct {
 	// counter (records with an empty Kafka key that reach ReadBatch and fail
 	// the `key != ""` guard). Parity holds for genuine (non-spoofed) keyless
 	// records only: a record whose native key is empty but carries a foreign
-	// header named "kafka_key" (the ENG-5125 spoof vector) is tallied as
-	// dropped_spoofed_key by uns_beta's spoof-first classifyDrop, but is
-	// mis-counted as dropped_keyless here because the single form lacks
-	// hasSpoofHeader. The other two per-reason counters
-	// (dropped_spoofed_key, filtered_records) are not wired in the single
-	// form. Spoof detection is deferred to ENG-5125, which closes the gap for
-	// both forms together.
+	// header named "kafka_key" is tallied as dropped_spoofed_key by uns_beta's
+	// spoof-first classifyDrop, but is mis-counted as dropped_keyless here
+	// because the single form lacks hasSpoofHeader. Of the other two per-reason
+	// counters, filtered_records is registered AND incremented (the !matches
+	// branch with key != ""), mirroring uns_beta's dropCounters.filtered; the
+	// increment path is not exercised by the integration suite (connect's
+	// key_pattern pre-filter omits keyed non-matching records before ReadBatch),
+	// so end-to-end coverage is tracked in ENG-5125. dropped_spoofed_key is not
+	// registered at all in the single form (no hasSpoofHeader to feed it).
+	// Spoof detection is tracked in ENG-5125, which closes the gap for both
+	// forms together.
 	keylessCounter *service.MetricCounter
+
+	// filteredCounter counts keyed records that reach ReadBatch but fail the
+	// umh_topics filter (the !matches branch with key != ""). Mirrors uns_beta's
+	// dropCounters.filtered; nil under a nil-resources build, in which case
+	// *service.MetricCounter treats a nil receiver as a no-op Incr.
+	filteredCounter *service.MetricCounter
 
 	// inner is built on first Connect by buildUnsBetaSingleInner (forwarder
 	// under connect_patched, stub otherwise). nil until then.
@@ -239,6 +261,14 @@ func (i *unsBetaSingleInput) ReadBatch(ctx context.Context) (service.MessageBatc
 				// regression.
 				if key == "" {
 					i.keylessCounter.Incr(1)
+				} else {
+					// A keyed non-matching record reached ReadBatch (only
+					// possible if connect's key_pattern pre-filter diverges
+					// from this Go-level filter, or a connect upgrade disables
+					// it). Count it on filtered_records, mirroring uns_beta's
+					// dropCounters.filtered, so the divergence is observable
+					// rather than a silent dead-zero.
+					i.filteredCounter.Incr(1)
 				}
 				continue
 			}
