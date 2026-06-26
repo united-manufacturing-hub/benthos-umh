@@ -397,37 +397,64 @@ func (u *NodeREDJSProcessor) setupProtobuf(vm *goja.Runtime) error {
 }
 
 // HandleExecutionResult handles JavaScript execution results.
-func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) (*service.Message, bool, error) {
+//
+// A function may return:
+//   - null / undefined: the message is dropped,
+//   - a single message object: one output,
+//   - an array of message objects: one output per element (fan-out).
+func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*service.Message, error) {
 	// Handle null/undefined returns
 	if result.Equals(goja.Undefined()) || result.Equals(goja.Null()) {
 		u.messagesDropped.Incr(1)
 		u.logger.Debug("Message dropped due to null/undefined return")
-		return service.NewMessage(nil), false, nil
+		return nil, nil
 	}
 
-	// Convert return value to message object
-	returnedMsg, ok := result.Export().(map[string]interface{})
+	exported := result.Export()
+
+	// Fan-out: an array of message objects produces one output per element.
+	if arr, ok := exported.([]interface{}); ok {
+		out := make([]*service.Message, 0, len(arr))
+		for _, el := range arr {
+			msg, err := messageFromReturnValue(el)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, msg)
+		}
+		return out, nil
+	}
+
+	msg, err := messageFromReturnValue(exported)
+	if err != nil {
+		return nil, err
+	}
+	return []*service.Message{msg}, nil
+}
+
+// messageFromReturnValue builds a service.Message from a single JS return
+// value, which must be a message object (a map with payload/meta).
+// NewMessage(nil) is safe: the air-gap wrapper restores input context onto
+// outputs in production, so Copy()/WithContext() is a no-op (see CLAUDE.md
+// "Output context is restored by the engine, not the plugin").
+func messageFromReturnValue(v interface{}) (*service.Message, error) {
+	returnedMsg, ok := v.(map[string]interface{})
 	if !ok {
-		return service.NewMessage(nil), false, fmt.Errorf("function must return a message object or null")
+		return service.NewMessage(nil), fmt.Errorf("function must return a message object or null")
 	}
 
-	// Create new message with returned content.
-	// NewMessage(nil) is safe: the air-gap wrapper restores input context onto
-	// outputs in production, so Copy()/WithContext() is a no-op (see CLAUDE.md
-	// "Output context is restored by the engine, not the plugin").
 	newMsg := service.NewMessage(nil)
 	if payload, exists := returnedMsg["payload"]; exists {
 		newMsg.SetStructured(payload)
 	}
 	if meta, exists := returnedMsg["meta"].(map[string]interface{}); exists {
-		for k, v := range meta {
-			if str, ok := v.(string); ok {
+		for k, val := range meta {
+			if str, ok := val.(string); ok {
 				newMsg.MetaSet(k, str)
 			}
 		}
 	}
-
-	return newMsg, true, nil
+	return newMsg, nil
 }
 
 func FormatConsoleLogMsg(data []any) string {
@@ -451,13 +478,11 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 	for _, msg := range batch {
 		u.messagesProcessed.Incr(1)
 
-		processedMsg, shouldKeep, err := u.processSingleMessage(ctx, msg)
+		processedMsgs, err := u.processSingleMessage(ctx, msg)
 		if err != nil {
 			return nil, err
 		}
-		if shouldKeep {
-			resultBatch = append(resultBatch, processedMsg)
-		}
+		resultBatch = append(resultBatch, processedMsgs...)
 	}
 
 	if len(resultBatch) == 0 {
@@ -468,7 +493,7 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 }
 
 // processSingleMessage processes a single message using a VM from the pool
-func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *service.Message) (*service.Message, bool, error) {
+func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *service.Message) ([]*service.Message, error) {
 	vm := u.getVM()
 	defer u.putVM(vm)
 
@@ -477,7 +502,7 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 	if err != nil {
 		u.messagesErrored.Incr(1)
 		u.logger.Errorf("%v\nOriginal message: %v", err, msg)
-		return nil, false, nil
+		return nil, nil
 	}
 
 	// Add metadata to the message wrapper
@@ -488,7 +513,7 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 	}); err != nil {
 		u.messagesErrored.Incr(1)
 		u.logger.Errorf("Failed to walk message metadata: %v\nOriginal message: %v", err, msg)
-		return nil, false, nil
+		return nil, nil
 	}
 	jsMsg["meta"] = meta
 
@@ -496,7 +521,7 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 	if err = u.SetupJSEnvironment(ctx, vm, jsMsg); err != nil {
 		u.messagesErrored.Incr(1)
 		u.logger.Errorf("%v\nMessage content: %v", err, jsMsg)
-		return nil, false, nil
+		return nil, nil
 	}
 
 	// Execute the compiled JavaScript program
@@ -504,18 +529,18 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 	if err != nil {
 		u.messagesErrored.Incr(1)
 		u.logJSError(err, jsMsg)
-		return nil, false, nil
+		return nil, nil
 	}
 
 	// Handle the execution result
-	newMsg, shouldKeep, err := u.HandleExecutionResult(result)
+	newMsgs, err := u.HandleExecutionResult(result)
 	if err != nil {
 		u.messagesErrored.Incr(1)
 		u.logger.Errorf("%v\nMessage content: %v\nReturned value: %v", err, jsMsg, result.Export())
-		return nil, false, err
+		return nil, err
 	}
 
-	return newMsg, shouldKeep, nil
+	return newMsgs, nil
 }
 
 // Helper function to log JavaScript errors

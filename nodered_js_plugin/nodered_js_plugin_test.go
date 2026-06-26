@@ -206,6 +206,81 @@ nodered_js:
 			Expect(string(jsonStr)).To(Equal(`"new message"`))
 		})
 
+		It("should fan out one output per element when the function returns an array", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    return [
+      {payload: {value: 1}, meta: {tag_name: "a"}},
+      {payload: {value: 2}, meta: {tag_name: "b"}}
+    ];
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// The function returned a 2-element array, so exactly two outputs
+			// must reach the consumer, one per element, order preserved.
+			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
+				return len(messages)
+			}).Should(Equal(2))
+
+			// First output: element 0's payload and meta.
+			messagesMutex.Lock()
+			msg0 := messages[0]
+			msg1 := messages[1]
+			messagesMutex.Unlock()
+			structured0, err := msg0.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			jsonStr0, err := json.Marshal(structured0)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(jsonStr0)).To(Equal(`{"value":1}`))
+			tagName0, exists := msg0.MetaGet("tag_name")
+			Expect(exists).To(BeTrue())
+			Expect(tagName0).To(Equal("a"))
+
+			// Second output: element 1's payload and meta.
+			structured1, err := msg1.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			jsonStr1, err := json.Marshal(structured1)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(jsonStr1)).To(Equal(`{"value":2}`))
+			tagName1, exists := msg1.MetaGet("tag_name")
+			Expect(exists).To(BeTrue())
+			Expect(tagName1).To(Equal("b"))
+		})
+
 		It("should drop messages when returning null", func() {
 			builder := service.NewStreamBuilder()
 
