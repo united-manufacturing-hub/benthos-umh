@@ -376,7 +376,10 @@ func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) (*service.
 		return service.NewMessage(nil), false, fmt.Errorf("function must return a message object or null")
 	}
 
-	// Create new message with returned content
+	// Create new message with returned content.
+	// NewMessage(nil) is safe: the air-gap wrapper restores input context onto
+	// outputs in production, so Copy()/WithContext() is a no-op (see CLAUDE.md
+	// "Output context is restored by the engine, not the plugin").
 	newMsg := service.NewMessage(nil)
 	if payload, exists := returnedMsg["payload"]; exists {
 		newMsg.SetStructured(payload)
