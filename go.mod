@@ -51,6 +51,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/redpanda v0.42.0
 	github.com/twmb/franz-go v1.21.3
 	github.com/twmb/franz-go/pkg/kadm v1.18.0
+	github.com/twmb/franz-go/pkg/kfake v0.0.0-20260606182254-a0f8f332c495
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78
 	golang.org/x/crypto v0.53.0
 	golang.org/x/sys v0.46.0
