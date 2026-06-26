@@ -281,6 +281,195 @@ nodered_js:
 			Expect(tagName1).To(Equal("b"))
 		})
 
+		It("should skip nil array elements and fan out the rest", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    return [
+      {payload: {value: 1}, meta: {tag_name: "a"}},
+      null,
+      {payload: {value: 2}, meta: {tag_name: "b"}}
+    ];
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// The null element in the middle is skipped rather than erroring
+			// the batch, so the two non-nil elements survive.
+			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
+				return len(messages)
+			}).Should(Equal(2))
+
+			messagesMutex.Lock()
+			msg0 := messages[0]
+			msg1 := messages[1]
+			messagesMutex.Unlock()
+
+			// First output: element 0's payload and meta.
+			structured0, err := msg0.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			jsonStr0, err := json.Marshal(structured0)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(jsonStr0)).To(Equal(`{"value":1}`))
+			tagName0, exists := msg0.MetaGet("tag_name")
+			Expect(exists).To(BeTrue())
+			Expect(tagName0).To(Equal("a"))
+
+			// Second output: element 2's payload and meta (element 1 was nil, skipped).
+			structured1, err := msg1.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			jsonStr1, err := json.Marshal(structured1)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(jsonStr1)).To(Equal(`{"value":2}`))
+			tagName1, exists := msg1.MetaGet("tag_name")
+			Expect(exists).To(BeTrue())
+			Expect(tagName1).To(Equal("b"))
+		})
+
+		It("should skip undefined array elements and fan out the rest", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    return [
+      {payload: {value: 1}, meta: {tag_name: "a"}},
+      undefined,
+      {payload: {value: 2}, meta: {tag_name: "b"}}
+    ];
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// goja exports JS undefined as Go nil, so it hits the same
+			// skip branch as null.
+			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
+				return len(messages)
+			}).Should(Equal(2))
+
+			messagesMutex.Lock()
+			msg0 := messages[0]
+			msg1 := messages[1]
+			messagesMutex.Unlock()
+
+			structured0, err := msg0.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			jsonStr0, err := json.Marshal(structured0)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(jsonStr0)).To(Equal(`{"value":1}`))
+
+			structured1, err := msg1.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			jsonStr1, err := json.Marshal(structured1)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(jsonStr1)).To(Equal(`{"value":2}`))
+		})
+
+		It("should drop all messages when returning an all-nil array", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    return [null, null];
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var count int64
+			err = builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&count, 1)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Every element is nil, so the fan-out produces an empty
+			// batch: no consumer outputs and no error.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&count)
+			}, "500ms").Should(Equal(int64(0)))
+		})
+
 		It("should drop messages when returning null", func() {
 			builder := service.NewStreamBuilder()
 
