@@ -45,6 +45,7 @@ jobs:
       downsampler: ${{ steps.filter.outputs.downsampler }}
       classic_to_core: ${{ steps.filter.outputs.classic_to_core }}
       snowflake_put: ${{ steps.filter.outputs.snowflake_put }}
+      historian: ${{ steps.filter.outputs.historian }}
       pkg: ${{ steps.filter.outputs.pkg }}
       cmd: ${{ steps.filter.outputs.cmd }}
       gomod: ${{ steps.filter.outputs.gomod }}
@@ -102,6 +103,9 @@ jobs:
             snowflake_put:
               - 'snowflake_put_plugin/**'
               - '!snowflake_put_plugin/**/*.md'
+            historian:
+              - 'historian_plugin/**'
+              - '!historian_plugin/**/*.md'
             pkg:
               - 'pkg/**'
             cmd:
@@ -327,6 +331,16 @@ jobs:
     uses: ./.github/workflows/test-snowflake-put.yml
     secrets: inherit
 
+  test-historian:
+    needs: [detect-changes, lint]
+    if: |
+      always() &&
+      needs.lint.result == 'success' &&
+      (needs.detect-changes.outputs.historian == 'true' ||
+       needs.detect-changes.outputs.gomod == 'true' ||
+       needs.detect-changes.outputs.cmd == 'true')
+    uses: ./.github/workflows/test-historian.yml
+
   result:
     name: Check Required Steps
     needs:
@@ -348,6 +362,7 @@ jobs:
       - test-downsampler
       - test-classic-to-core
       - test-snowflake-put
+      - test-historian
     if: always()
     runs-on: ubuntu-latest
     steps:

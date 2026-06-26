@@ -118,6 +118,14 @@ test-uns:
 test-uns-redpanda:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS)  ./uns_plugin/...
 
+.PHONY: test-historian
+test-historian:
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='!postgres' ./historian_plugin/...
+
+.PHONY: test-historian-postgres
+test-historian-postgres:
+	@TEST_HISTORIAN=true $(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='postgres' ./historian_plugin/...
+
 .PHONY: test-s7comm
 test-s7comm:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./s7comm_plugin/...

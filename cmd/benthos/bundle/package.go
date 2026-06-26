@@ -24,6 +24,7 @@ import (
 	_ "github.com/united-manufacturing-hub/benthos-umh/classic_to_core_plugin"
 	_ "github.com/united-manufacturing-hub/benthos-umh/downsampler_plugin"
 	_ "github.com/united-manufacturing-hub/benthos-umh/eip_plugin"
+	_ "github.com/united-manufacturing-hub/benthos-umh/historian_plugin"
 	_ "github.com/united-manufacturing-hub/benthos-umh/modbus_plugin"
 	_ "github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin"
 	_ "github.com/united-manufacturing-hub/benthos-umh/opcua_plugin"
