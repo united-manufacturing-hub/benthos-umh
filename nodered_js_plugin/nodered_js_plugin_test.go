@@ -427,6 +427,68 @@ nodered_js:
 			Expect(string(jsonStr1)).To(Equal(`{"value":2}`))
 		})
 
+		It("should error the batch when an array element is a non-object primitive", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    return [
+      {payload: {value: 1}, meta: {tag_name: "a"}},
+      42,
+      {payload: {value: 2}, meta: {tag_name: "b"}}
+    ];
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// A non-object array element errors the batch atomically: zero
+			// fan-out outputs survive, and the single error-marked input is
+			// passed through to the consumer (HaveLen(1)), observed via GetError().
+			var batchErr error
+			Eventually(func() bool {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
+				if len(messages) == 0 {
+					return false
+				}
+				batchErr = messages[0].GetError()
+				return batchErr != nil
+			}).Should(BeTrue(), "expected the batch-fatal error to reach the consumer message")
+
+			messagesMutex.Lock()
+			Expect(batchErr).To(MatchError("array elements must be message objects"))
+			messagesMutex.Unlock()
+		})
+
 		It("should drop all messages when returning an all-nil array", func() {
 			builder := service.NewStreamBuilder()
 

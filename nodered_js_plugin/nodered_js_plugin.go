@@ -390,7 +390,7 @@ func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*servic
 			}
 			msg, err := messageFromReturnValue(el)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("array elements must be message objects")
 			}
 			out = append(out, msg)
 		}
