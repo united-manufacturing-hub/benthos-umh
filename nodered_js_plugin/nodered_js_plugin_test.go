@@ -282,11 +282,24 @@ nodered_js:
 		})
 
 		It("should skip nil array elements and fan out the rest", func() {
-			builder := service.NewStreamBuilder()
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
 
 			var msgHandler service.MessageHandlerFunc
 			msgHandler, err := builder.AddProducerFunc()
 			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
 
 			err = builder.AddProcessorYAML(`
 nodered_js:
@@ -312,7 +325,7 @@ nodered_js:
 			stream, err := builder.Build()
 			Expect(err).NotTo(HaveOccurred())
 
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
 			go func() {
@@ -331,6 +344,14 @@ nodered_js:
 				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(2))
+
+			// A partial-nil array still produces outputs, so the whole-input
+			// drop counter must stay at 0.
+			Consistently(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "500ms").Should(Equal(int64(0)))
 
 			messagesMutex.Lock()
 			msg0 := messages[0]
@@ -490,11 +511,24 @@ nodered_js:
 		})
 
 		It("should drop all messages when returning an all-nil array", func() {
-			builder := service.NewStreamBuilder()
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
 
 			var msgHandler service.MessageHandlerFunc
 			msgHandler, err := builder.AddProducerFunc()
 			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
 
 			err = builder.AddProcessorYAML(`
 nodered_js:
@@ -513,7 +547,7 @@ nodered_js:
 			stream, err := builder.Build()
 			Expect(err).NotTo(HaveOccurred())
 
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
 			go func() {
@@ -530,6 +564,75 @@ nodered_js:
 			Consistently(func() int64 {
 				return atomic.LoadInt64(&count)
 			}, "500ms").Should(Equal(int64(0)))
+
+			// The whole input was dropped, so messagesDropped is bumped once.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}).Should(Equal(int64(1)))
+		})
+
+		It("should bump messagesDropped once when the function returns an empty array", func() {
+			// An empty array return is a whole-input drop: 0 outputs AND
+			// messagesDropped incremented exactly once.
+			// Default StreamBuilder metrics are no-op, so the counter is
+			// observed via a registered MetricsExporter.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    return [];
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			// (a) 0 consumer outputs: the whole input was dropped.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+
+			// (b) messagesDropped bumped exactly once for the whole input.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}).Should(Equal(int64(1)))
 		})
 
 		It("should drop messages when returning null", func() {
@@ -1444,6 +1547,52 @@ func indentLines(s string, prefix string) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// counterCaptureMetrics is a service.MetricsExporter that aggregates integer
+// counter increments by counter name, ignoring labels. It is the only public
+// seam (outside the benthos module) to observe processor-level MetricCounter
+// increments such as nodered_js's internal messagesDropped, which is not
+// readable through the default StreamBuilder (its metrics are no-op).
+type counterCaptureMetrics struct {
+	mu     *sync.Mutex
+	counts map[string]int64
+}
+
+func (m *counterCaptureMetrics) NewCounterCtor(name string, _ ...string) service.MetricsExporterCounterCtor {
+	return func(_ ...string) service.MetricsExporterCounter {
+		return &capturedCounter{name: name, mu: m.mu, counts: m.counts}
+	}
+}
+
+func (m *counterCaptureMetrics) NewTimerCtor(string, ...string) service.MetricsExporterTimerCtor {
+	return func(...string) service.MetricsExporterTimer { return noopTimer{} }
+}
+
+func (m *counterCaptureMetrics) NewGaugeCtor(string, ...string) service.MetricsExporterGaugeCtor {
+	return func(...string) service.MetricsExporterGauge { return noopGauge{} }
+}
+
+func (m *counterCaptureMetrics) Close(context.Context) error { return nil }
+
+type capturedCounter struct {
+	name   string
+	mu     *sync.Mutex
+	counts map[string]int64
+}
+
+func (c *capturedCounter) Incr(n int64) {
+	c.mu.Lock()
+	c.counts[c.name] += n
+	c.mu.Unlock()
+}
+
+type noopTimer struct{}
+
+func (noopTimer) Timing(int64) {}
+
+type noopGauge struct{}
+
+func (noopGauge) Set(int64) {}
 
 var _ = Describe("js logmessage", func() {
 	DescribeTable("format",
