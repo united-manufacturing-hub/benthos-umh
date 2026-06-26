@@ -310,6 +310,17 @@ output:
     key: "${! @umh_topic }"  # Use metadata as key
 ```
 
+### Output context is restored by the engine, not the plugin
+
+`service.NewMessage(nil)` in these plugins was flagged as dropping the SortGroup source tag and the OpenTelemetry trace parent from output messages. It does not. Every processor registered via `service.RegisterBatchProcessor` (all benthos-umh processors) is wrapped at runtime in `v2BatchedToV1Processor` (`internal/component/processor/auto_observed.go`), which saves and restores message contexts around the plugin call:
+
+1. Before the plugin runs, it saves each input part's `context.Context` (`origCtxs`, `auto_observed.go:242`).
+2. After the plugin returns, it restores the saved input context onto every output part (`auto_observed.go:280-294`); fan-out children (`partIdx >= len(inputs)`) fall back to input index 0.
+
+The SortGroup tag and trace parent reach the output regardless of how the plugin builds its messages. `NewMessage(nil)` is safe here, and a plugin-side `msg.Copy()` or `newMsg.WithContext(input.Context())` is a no-op (the wrapper overwrites it). Verified: a `tag_processor` 1→2 fan-out through the full `service.NewStreamBuilder` pipeline resolves `Indexer.IndexOf(output)` to the source index with no plugin-side context handling.
+
+Any context/lineage/ACK-SortGroup claim about these plugins must be verified against the full stream pipeline, not the plugin's `ProcessBatch` in isolation.
+
 ### JavaScript Engine: goja
 
 All JavaScript execution uses **goja engine** (pure Go):
