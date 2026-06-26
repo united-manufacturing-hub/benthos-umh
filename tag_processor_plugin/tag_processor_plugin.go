@@ -712,8 +712,11 @@ func (p *TagProcessor) normalizeVirtualPathMetadata(msg *service.Message) (strin
 	return sanitized, true
 }
 
-func (p *TagProcessor) Close(_ context.Context) error {
-	return nil
+func (p *TagProcessor) Close(ctx context.Context) error {
+	if p.jsProcessor == nil {
+		return nil
+	}
+	return p.jsProcessor.Close(ctx)
 }
 
 // compilePrograms compiles all JavaScript code once at startup for optimal runtime performance
