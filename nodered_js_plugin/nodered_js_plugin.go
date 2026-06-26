@@ -369,8 +369,11 @@ func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) e
 //   - an array of message objects: one output per element (fan-out).
 //
 // null/undefined elements within a returned array are skipped during
-// fan-out (no output, not counted as a drop — the input still produced
-// outputs); non-object elements still error the batch.
+// fan-out. If every element is nil/undefined, or the array is empty,
+// the whole input is treated as a single drop — messagesDropped is
+// incremented once and no outputs are produced. Otherwise (>=1
+// surviving output) nil/undefined elements are skipped with no drop
+// bump. Non-object elements still error the batch.
 func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*service.Message, error) {
 	// Handle null/undefined returns
 	if result.Equals(goja.Undefined()) || result.Equals(goja.Null()) {
@@ -393,6 +396,9 @@ func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*servic
 				return nil, fmt.Errorf("array elements must be message objects")
 			}
 			out = append(out, msg)
+		}
+		if len(out) == 0 {
+			u.messagesDropped.Incr(1)
 		}
 		return out, nil
 	}
