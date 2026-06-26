@@ -15,42 +15,13 @@
 package topic_browser_plugin
 
 import (
-	"strings"
-
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
 )
 
 // LocationPath returns the full location path by joining level0 with all location sublevels.
-// This provides a convenient way to get the complete hierarchical location path as a single string,
-// which is useful for logging, display, and filtering operations.
 //
-// The method includes defensive programming practices:
-//   - Handles nil receiver gracefully to prevent panics
-//   - Trims leading/trailing whitespace from all segments to ensure consistent hash equality
-//
-// Returns:
-//   - string: Complete location path (e.g., "enterprise.site.area.line")
-//   - Empty string if topicInfo is nil
-//
-// Example:
-//   - If Level0 = "enterprise" and LocationSublevels = ["site", "area"]
-//   - Returns: "enterprise.site.area"
-//   - If LocationSublevels is empty, returns just "enterprise"
-//   - If Level0 = " enterprise " and LocationSublevels = [" site ", " area "]
-//   - Returns: "enterprise.site.area" (whitespace trimmed)
+// Deprecated: use the canonical (*proto.TopicInfo).LocationPath() method directly. This thin
+// wrapper remains so existing call sites keep compiling; it delegates to the canonical method.
 func LocationPath(t *proto.TopicInfo) string {
-	if t == nil { // guard against accidental nil pointer deref
-		return ""
-	}
-	// trim to ensure " enterprise " and "enterprise" hash identically
-	base := strings.TrimSpace(t.Level0)
-	if len(t.LocationSublevels) == 0 {
-		return base
-	}
-	cleaned := make([]string, 0, len(t.LocationSublevels)+1)
-	cleaned = append(cleaned, base)
-	for _, s := range t.LocationSublevels {
-		cleaned = append(cleaned, strings.TrimSpace(s))
-	}
-	return strings.Join(cleaned, ".")
+	return t.LocationPath()
 }
