@@ -367,6 +367,10 @@ func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) e
 //   - null / undefined: the message is dropped,
 //   - a single message object: one output,
 //   - an array of message objects: one output per element (fan-out).
+//
+// null/undefined elements within a returned array are skipped during
+// fan-out (no output, not counted as a drop — the input still produced
+// outputs); non-object elements still error the batch.
 func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*service.Message, error) {
 	// Handle null/undefined returns
 	if result.Equals(goja.Undefined()) || result.Equals(goja.Null()) {
@@ -381,6 +385,9 @@ func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*servic
 	if arr, ok := exported.([]interface{}); ok {
 		out := make([]*service.Message, 0, len(arr))
 		for _, el := range arr {
+			if el == nil {
+				continue
+			}
 			msg, err := messageFromReturnValue(el)
 			if err != nil {
 				return nil, err
