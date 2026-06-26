@@ -31,6 +31,12 @@ const bootstrapTemplate = `BEGIN;
 SELECT pg_advisory_xact_lock(hashtext('uns_to_timescale_bootstrap'));
 CREATE EXTENSION IF NOT EXISTS ltree WITH SCHEMA public;
 CREATE SCHEMA IF NOT EXISTS umh;
+-- Migration ledger: records which numbered schema changes this database has applied.
+-- Everything created below is the immutable BASELINE -- never edit a CREATE here to change
+-- an existing table/column/constraint, because a database that already ran it will not
+-- re-run it. Append schema CHANGES as numbered, forward-only steps in the MIGRATIONS
+-- section just before COMMIT (generated from schemaMigrations in sql.go). Query the current
+-- version with: SELECT max(version) FROM umh.schema_migrations;
 CREATE TABLE IF NOT EXISTS umh.schema_migrations (
   version    INT PRIMARY KEY,
   applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -40,11 +46,15 @@ BEGIN
   CREATE TYPE umh.value_type AS ENUM ('numeric', 'text');
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
+-- Dimension tables use fillfactor 90: the per-message ON CONFLICT DO UPDATE upserts that
+-- resolve ids rewrite the same indexed values, so the spare page room keeps those updates
+-- HOT (no index churn, dead tuples self-pruned). The value/attribute hypertables are
+-- insert-mostly and keep the default fillfactor.
 CREATE TABLE IF NOT EXISTS umh.location (
   location_id BIGSERIAL PRIMARY KEY,
   path        LTREE NOT NULL,
   UNIQUE (path)
-);
+) WITH (fillfactor = 90);
 CREATE INDEX IF NOT EXISTS idx_location_path_gist ON umh.location USING GIST (path);
 CREATE TABLE IF NOT EXISTS umh.tag (
   tag_id        BIGSERIAL PRIMARY KEY,
@@ -53,7 +63,7 @@ CREATE TABLE IF NOT EXISTS umh.tag (
   data_contract_name TEXT  NOT NULL,
   value_type    umh.value_type NOT NULL,
   UNIQUE (virtual_path, name, data_contract_name)
-);
+) WITH (fillfactor = 90);
 CREATE OR REPLACE FUNCTION umh.tag_value_type_guard()
 RETURNS trigger LANGUAGE plpgsql AS $guard$
 BEGIN
@@ -77,7 +87,7 @@ CREATE TABLE IF NOT EXISTS umh.topic (
   location_id BIGINT NOT NULL REFERENCES umh.location(location_id),
   tag_id      BIGINT NOT NULL REFERENCES umh.tag(tag_id),
   UNIQUE (location_id, tag_id)
-);
+) WITH (fillfactor = 90);
 -- topic_id is deliberately not an FK on the hypertables: a per-chunk FK takes a
 -- ShareRowExclusiveLock on topic and deadlocks concurrent writers.
 CREATE TABLE IF NOT EXISTS umh.value_CONTRACT_SLOT (
@@ -128,6 +138,13 @@ AS $fn$
     JOIN umh.topic t ON t.location_id = l.location_id AND t.tag_id = g.tag_id
    WHERE l.path = umh.to_ltree_path(p_location_path);
 $fn$;
+-- ===================== MIGRATIONS =====================
+-- Forward-only, run-once schema changes applied AFTER the baseline above. Generated from
+-- schemaMigrations in sql.go so the version list lives in one place; each step is gated on
+-- umh.schema_migrations and runs inside this transaction's advisory lock, so the upgrade is
+-- atomic and an older bridge sharing the database can never revert a newer one.
+MIGRATIONS_SLOT
+-- ======================================================
 COMMIT;`
 
 const dimensionCTE = `WITH loc AS (
@@ -149,8 +166,19 @@ tp AS (
 )
 `
 
+// topicResolveSQL upserts the location/tag/topic dimension rows and returns the topic_id,
+// WITHOUT touching the per-contract value/attribute tables. It is run once per distinct topic
+// in its own short-lived statement so the shared dimension-row write locks (the location row
+// especially -- every row of a contract touches it) release immediately, instead of being
+// held for the whole value-write batch. Holding them batch-long serializes concurrent batches
+// (max_in_flight) on the shared location row, which stops batching from scaling.
+const topicResolveSQL = dimensionCTE + `SELECT topic_id FROM tp;`
+
+// valueInsert / attributeInsert write one row against an already-resolved topic_id (passed as
+// $1), so the value-write phase only touches distinct (topic_id, ts) rows and concurrent
+// batches do not contend. The ON CONFLICT guard is identical to the dimension-joined form.
 const valueInsert = `INSERT INTO umh.value_CONTRACT_SLOT AS v (topic_id, ts, value_num, value_text)
-SELECT tp.topic_id, $6::timestamptz, $7::double precision, $8 FROM tp
+VALUES ($1, $2::timestamptz, $3::double precision, $4)
 ON CONFLICT (topic_id, ts) DO UPDATE
   SET value_num = CASE
     WHEN v.value_num  IS DISTINCT FROM EXCLUDED.value_num
@@ -163,7 +191,7 @@ ON CONFLICT (topic_id, ts) DO UPDATE
   END;`
 
 const attributeInsert = `INSERT INTO umh.attribute_CONTRACT_SLOT AS a (topic_id, ts, attribute)
-SELECT tp.topic_id, $6::timestamptz, $7::jsonb FROM tp
+VALUES ($1, $2::timestamptz, $3::jsonb)
 ON CONFLICT (topic_id, ts) DO UPDATE
   SET attribute = CASE
     WHEN a.attribute IS DISTINCT FROM EXCLUDED.attribute
@@ -173,6 +201,63 @@ ON CONFLICT (topic_id, ts) DO UPDATE
            NULL::jsonb)
     ELSE a.attribute
   END;`
+
+// migration is one forward-only schema step. version must be unique and ascending across
+// schemaMigrations. sql is the DDL applied when the step has not yet run on a database, and
+// must itself be idempotent (CREATE/ALTER ... IF NOT EXISTS): a fresh database whose baseline
+// already includes the change still records the version, so the DDL must no-op there. sql may
+// be empty -- version 1 is the baseline created above, recorded without extra DDL.
+// CONTRACT_SLOT in sql is substituted with the contract name like the rest of the bootstrap.
+// The step is wrapped in a DO $mig$ block, so sql must not contain the tag "$mig$".
+type migration struct {
+	version int
+	sql     string
+}
+
+// schemaMigrations is the ordered, forward-only migration ledger. Version 1 IS the baseline
+// above: the umh schema is greenfield (never deployed, and nothing was versioned before it),
+// so its initial form is simply version 1 of a fresh sequence -- the standard "initial schema
+// is a migration" convention (cf. Flyway baseline, Django 0001_initial). The plugin can record
+// a baseline version where the ManagementConsole template leaves the ledger empty because the
+// plugin has a single bootstrap statement, not two writers sharing one ledger.
+//
+// To evolve the schema, APPEND the next version with its (idempotent) DDL -- never edit a
+// baseline CREATE or an existing entry, because a database that already ran it will not re-run
+// it. "Current version" is SELECT max(version) FROM umh.schema_migrations (1 on a fresh DB).
+//
+// Example next step:
+//
+//	{version: 2, sql: "ALTER TABLE umh.value_CONTRACT_SLOT ADD COLUMN IF NOT EXISTS quality SMALLINT;"},
+var schemaMigrations = []migration{
+	{version: 1}, // baseline above; recorded as the initial schema version
+}
+
+// highestMigrationVersion returns the highest version in schemaMigrations: the schema version
+// a freshly bootstrapped database ends at, and the in-code source of truth for the version.
+func highestMigrationVersion() int {
+	v := 0
+	for _, m := range schemaMigrations {
+		if m.version > v {
+			v = m.version
+		}
+	}
+	return v
+}
+
+// migrationsBlock renders the MIGRATIONS section: each step is gated on umh.schema_migrations
+// so it applies at most once per database and records its version on success. It runs inside
+// the bootstrap's BEGIN/COMMIT and advisory lock, so the whole upgrade is atomic.
+func migrationsBlock() string {
+	var b strings.Builder
+	for _, m := range schemaMigrations {
+		fmt.Fprintf(&b, "DO $mig$\nBEGIN\n  IF NOT EXISTS (SELECT 1 FROM umh.schema_migrations WHERE version = %[1]d) THEN\n", m.version)
+		if s := strings.TrimSpace(m.sql); s != "" {
+			b.WriteString("    " + s + "\n")
+		}
+		fmt.Fprintf(&b, "    INSERT INTO umh.schema_migrations (version) VALUES (%[1]d);\n  END IF;\nEND $mig$;\n", m.version)
+	}
+	return b.String()
+}
 
 func sub(sql string, contract string) string {
 	return strings.ReplaceAll(sql, "CONTRACT_SLOT", contract)
@@ -202,8 +287,9 @@ func bootstrapSQL(contract string, compressAfter time.Duration, retention time.D
 	s := bootstrapTemplate
 	s = strings.Replace(s, "VALUE_POLICY_SLOT", policyBlock("umh.value_CONTRACT_SLOT", compressAfter, retention, retentionSet), 1)
 	s = strings.Replace(s, "ATTR_POLICY_SLOT", policyBlock("umh.attribute_CONTRACT_SLOT", compressAfter, retention, retentionSet), 1)
+	s = strings.Replace(s, "MIGRATIONS_SLOT", migrationsBlock(), 1)
 	return sub(s, contract)
 }
 
-func valueQueryFor(contract string) string     { return sub(dimensionCTE+valueInsert, contract) }
-func attributeQueryFor(contract string) string { return sub(dimensionCTE+attributeInsert, contract) }
+func valueQueryFor(contract string) string     { return sub(valueInsert, contract) }
+func attributeQueryFor(contract string) string { return sub(attributeInsert, contract) }

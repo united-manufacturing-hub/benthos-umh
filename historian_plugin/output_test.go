@@ -78,4 +78,24 @@ data_contract: pump
 	It("wraps the raw location in to_ltree_path on the write path", func() {
 		Expect(tsh.BootstrapSQLForTest("pump")).NotTo(ContainSubstring("$1::ltree"))
 	})
+
+	It("sets fillfactor on the update-churned dimension tables only, not the hypertables", func() {
+		got := tsh.BootstrapSQLForTest("pump")
+		// Exactly the three dimension tables (location, tag, topic) get fillfactor for HOT
+		// upserts; the two insert-mostly hypertables must not (count would be 5 otherwise).
+		Expect(strings.Count(got, "WITH (fillfactor = 90)")).To(Equal(3))
+	})
+
+	It("records the baseline as version 1 via a forward-only migration ledger", func() {
+		got := tsh.BootstrapSQLForTest("pump")
+		Expect(got).To(ContainSubstring("CREATE TABLE IF NOT EXISTS umh.schema_migrations"))
+		// The greenfield baseline is the initial schema version, gated so it applies once.
+		Expect(got).To(ContainSubstring("IF NOT EXISTS (SELECT 1 FROM umh.schema_migrations WHERE version = 1)"))
+		Expect(got).To(ContainSubstring("INSERT INTO umh.schema_migrations (version) VALUES (1)"))
+		Expect(tsh.SchemaVersionForTest()).To(Equal(1))
+		// The migrations section runs inside the bootstrap transaction, before COMMIT.
+		Expect(strings.Index(got, "INSERT INTO umh.schema_migrations (version) VALUES (1)")).
+			To(BeNumerically("<", strings.LastIndex(got, "COMMIT;")))
+		Expect(got).NotTo(ContainSubstring("MIGRATIONS_SLOT")) // placeholder substituted
+	})
 })

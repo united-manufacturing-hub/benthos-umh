@@ -34,21 +34,21 @@ func historianConfig() *service.ConfigSpec {
 		Categories("Services").
 		Summary("Writes a UNS data contract into TimescaleDB using the UMH Historian schema.").
 		Field(service.NewStringField("host").Description("TimescaleDB/Postgres host.")).
-		Field(service.NewIntField("port").Description("Port.").Default(5432)).
-		Field(service.NewStringField("database").Description("Database name.").Default("umh").Advanced()).
-		Field(service.NewStringField("username").Description("Login role.").Default("umh_owner").Advanced()).
 		Field(service.NewStringField("password").Description("Role password (plaintext in config; redacted in logs).").Secret()).
-		Field(service.NewStringField("sslmode").Description("require | disable | verify-full.").Default("require").Examples("require", "disable", "verify-full").Advanced()).
+		Field(service.NewStringField("data_contract").Description("Bare lowercase contract name, e.g. \"pump\".")).
+		Field(service.NewIntField("port").Description("Port.").Default(5432)).
+		Field(service.NewStringField("database").Description("Database name.").Default("umh")).
+		Field(service.NewStringField("username").Description("Login role.").Default("umh_owner")).
+		Field(service.NewStringField("sslmode").Description("require | disable | verify-full.").Default("require").Examples("require", "disable", "verify-full")).
 		Field(service.NewStringField("sslrootcert").Description("CA cert path (inside the umh-core container).").Default("").Advanced()).
 		Field(service.NewStringField("sslcert").Description("Client cert path.").Default("").Advanced()).
 		Field(service.NewStringField("sslkey").Description("Client key path.").Default("").Advanced()).
-		Field(service.NewStringField("data_contract").Description("Bare lowercase contract name, e.g. \"pump\".")).
 		Field(service.NewBoolField("metadata_keys_all").Description("Store all metadata keys except blacklists.").Default(true).Examples(true, false).Advanced()).
 		Field(service.NewStringListField("metadata_keys").Description("Allowlist when metadata_keys_all=false.").Default([]any{}).Advanced()).
 		Field(service.NewStringListField("metadata_keys_exclude").Description("Blacklist applied only when metadata_keys_all=true: drop these metadata keys on top of the built-in structural/high-churn exclusions. Each entry is an exact key name or a trailing-* prefix (e.g. \"opcua_*\"). Ignored in allowlist mode.").Default([]any{}).Examples([]any{"serialNumber"}, []any{"opcua_*", "spb_*"}).Advanced()).
 		Field(service.NewStringField("compress_after").Description("Compress chunks older than this (per contract).").Default("168h").Advanced()).
 		Field(service.NewStringField("retention").Description("Drop chunks older than this; empty = keep forever.").Default("").Advanced()).
-		Field(service.NewBatchPolicyField("batching")).
+		Field(service.NewBatchPolicyField("batching").Advanced()).
 		Field(service.NewIntField("max_in_flight").Description("Max parallel batches in flight.").Default(8).Advanced())
 }
 
@@ -98,14 +98,14 @@ func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*hi
 		return err == nil
 	}
 	str("host", &o.host)
+	str("password", &o.password)
+	str("data_contract", &o.contract)
 	str("database", &o.database)
 	str("username", &o.username)
-	str("password", &o.password)
 	str("sslmode", &o.sslmode)
 	str("sslrootcert", &o.sslrootcert)
 	str("sslcert", &o.sslcert)
 	str("sslkey", &o.sslkey)
-	str("data_contract", &o.contract)
 	if err != nil {
 		return nil, err
 	}
@@ -291,6 +291,38 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 		return nil
 	}
 
+	// Phase 1: resolve each DISTINCT topic to its topic_id, each in its own short-lived
+	// statement (autocommit). This keeps the shared dimension-row write locks -- above all
+	// the single location row every message of a contract upserts -- held only for one tiny
+	// resolution, not for the whole value-write batch. Holding them batch-long serializes
+	// concurrent batches (max_in_flight) on that row, so batching would not scale; releasing
+	// them immediately lets the value writes below run concurrently. See topicResolveSQL.
+	type topicKey struct {
+		loc, contract, vpath, tag string
+		vt                        ValueType
+	}
+	keyOf := func(r *Row) topicKey {
+		return topicKey{r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, r.ValueType}
+	}
+	topicID := make(map[topicKey]int64)
+	for _, r := range rows {
+		k := keyOf(r)
+		if _, ok := topicID[k]; ok {
+			continue
+		}
+		var id int64
+		// QueryRow runs outside an explicit tx, so the dimension upserts commit on their own
+		// and release their row locks at once. A datatype flip still RAISEs here (the tag
+		// upsert's guard), failing the batch before any value is written.
+		if err := pool.QueryRow(ctx, topicResolveSQL, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType)).Scan(&id); err != nil {
+			return fmt.Errorf("topic resolve failed: %w", err)
+		}
+		topicID[k] = id
+	}
+
+	// Phase 2: write values + attributes by topic_id in one transaction. These rows have
+	// distinct (topic_id, ts), so concurrent batches do not contend; the single commit
+	// amortizes across the batch and throughput scales with max_in_flight.
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -301,11 +333,12 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	aq := attributeQueryFor(o.contract)
 	attrCount := 0
 	for _, r := range rows {
-		if _, err := tx.Exec(ctx, vq, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType), r.TS, r.ValueNum, r.ValueText); err != nil {
+		id := topicID[keyOf(r)]
+		if _, err := tx.Exec(ctx, vq, id, r.TS, r.ValueNum, r.ValueText); err != nil {
 			return fmt.Errorf("value write failed: %w", err) // RAISE -> error -> nack -> degraded+stall
 		}
 		if r.EmitMeta {
-			if _, err := tx.Exec(ctx, aq, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType), r.TS, r.MetadataJSON); err != nil {
+			if _, err := tx.Exec(ctx, aq, id, r.TS, r.MetadataJSON); err != nil {
 				return fmt.Errorf("attribute write failed: %w", err)
 			}
 			attrCount++

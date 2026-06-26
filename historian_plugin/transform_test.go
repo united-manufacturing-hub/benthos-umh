@@ -83,18 +83,6 @@ var _ = Describe("redact (password masking in connection errors)", func() {
 	})
 })
 
-var _ = Describe("LocationNormalizesToEmpty", func() {
-	DescribeTable("matches the SQL to_ltree_path NULL condition",
-		func(in string, empty bool) { Expect(tsh.LocationNormalizesToEmpty(in)).To(Equal(empty)) },
-		Entry("normal path", "acme.line1", false),
-		Entry("special chars keep content", "a@b/c", false),
-		Entry("trailing dot keeps content", "a.", false),
-		Entry("all dots", "...", true),
-		Entry("single dot", ".", true),
-		Entry("empty", "", true),
-	)
-})
-
 var _ = Describe("ClassifyValue", func() {
 	ptrF := func(f float64) *float64 { return &f }
 
@@ -187,8 +175,10 @@ var _ = Describe("ParseTimestampMs", func() {
 
 var _ = Describe("Transform", func() {
 	base := func() (map[string]any, map[string]string) {
+		// Topic carries location=acme.line1, contract=_pump_v1, virtual_path=vibration, name=x;
+		// the historian parses it via the canonical parser instead of separate meta fields.
 		return map[string]any{"value": 3.5, "timestamp_ms": float64(0)},
-			map[string]string{"data_contract": "_pump_v1", "location_path": "acme.line1", "tag_name": "x", "virtual_path": "vibration"}
+			map[string]string{"umh_topic": "umh.v1.acme.line1._pump_v1.vibration.x"}
 	}
 	tr := func(p map[string]any, m map[string]string) (*tsh.Row, tsh.DropReason) {
 		return tsh.Transform(p, m, "pump", true, nil, nil, tsh.NewDedupCache().NewBatch())
@@ -238,11 +228,15 @@ var _ = Describe("Transform", func() {
 			Expect(row).To(BeNil())
 			Expect(reason).To(Equal(want))
 		},
-		Entry("non-matching contract", func(_ map[string]any, m map[string]string) { m["data_contract"] = "_other_v1" }, tsh.DropContractMismatch),
-		Entry("missing tag_name", func(_ map[string]any, m map[string]string) { delete(m, "tag_name") }, tsh.DropMissingLocationOrTag),
-		Entry("Root.Objects.Server virtual_path", func(_ map[string]any, m map[string]string) { m["virtual_path"] = "Root.Objects.Server.foo" }, tsh.DropServerVirtualPath),
+		Entry("missing umh_topic", func(_ map[string]any, m map[string]string) { delete(m, "umh_topic") }, tsh.DropInvalidTopic),
+		Entry("malformed umh_topic (consecutive dots)", func(_ map[string]any, m map[string]string) { m["umh_topic"] = "umh.v1.acme..line1._pump.x" }, tsh.DropInvalidTopic),
+		Entry("non-matching contract", func(_ map[string]any, m map[string]string) {
+			m["umh_topic"] = "umh.v1.acme.line1._other_v1.vibration.x"
+		}, tsh.DropContractMismatch),
+		Entry("Root.Objects.Server virtual_path", func(_ map[string]any, m map[string]string) {
+			m["umh_topic"] = "umh.v1.acme.line1._pump_v1.Root.Objects.Server.foo.x"
+		}, tsh.DropServerVirtualPath),
 		Entry("absent value", func(p map[string]any, _ map[string]string) { delete(p, "value") }, tsh.DropMissingValueOrTimestamp),
-		Entry("empty location", func(_ map[string]any, m map[string]string) { m["location_path"] = "..." }, tsh.DropEmptyLocation),
 		Entry("non-finite value", func(p map[string]any, _ map[string]string) { p["value"] = math.Inf(1) }, tsh.DropUnclassifiableValue),
 		Entry("bad timestamp", func(p map[string]any, _ map[string]string) { p["timestamp_ms"] = "not-a-number" }, tsh.DropBadTimestamp),
 	)

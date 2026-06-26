@@ -34,6 +34,8 @@ No JavaScript processor or hand-written `sql_raw` is needed.
 | `metadata_keys_exclude` | no | `[]` | Blacklist applied only when `metadata_keys_all=true`. Each entry is an exact key name or a trailing-`*` prefix (e.g. `opcua_*`); matches are dropped on top of the built-in exclusions. A bare `*` drops everything. Ignored in allowlist mode. |
 | `compress_after` | no | `168h` | Compress chunks older than this. |
 | `retention` | no | `""` | Drop chunks older than this; empty keeps data forever. |
+| `batching` | no | — | benthos batch policy (`count` / `period` / `byte_size`). The whole batch is written in one transaction, so larger batches raise throughput; e.g. `count: 1000`, `period: 1s`. |
+| `max_in_flight` | no | `8` | Batches written to the database concurrently. Throughput scales with this and with batch size (see Throughput below). |
 
 ## What it writes
 
@@ -60,13 +62,30 @@ its `topic_id` for ad-hoc and Grafana queries.
   includes a tag emitting two distinct values within one millisecond, which the millisecond
   UNS timestamp cannot distinguish from a real conflict, so this contract is unsuitable for
   tags that emit distinct values faster than 1 kHz.
-- **Malformed messages are dropped, not nacked.** Wrong `data_contract`, missing
-  `location_path`/`tag_name`, an empty location path, a non-finite number, or an
+- **Malformed messages are dropped, not nacked.** A wrong `data_contract`, an absent or
+  invalid `umh_topic` (validated by the canonical topic parser), a non-finite number, or an
   unparseable timestamp drop the message and increment the `historian_messages_dropped` metric
   (labelled by `reason`), so one bad message never stalls the stream.
 - **Metadata de-duplication.** An attribute row is rewritten only when its key set changes,
   via an in-process, LRU-bounded fingerprint cache. The cache is cleared on restart, so
   each tag re-emits its metadata once after a restart (absorbed idempotently).
+
+## Throughput
+
+Each batch is written in one transaction: the distinct topics are resolved once, then value
+and attribute rows are inserted by `topic_id`. Two knobs scale write throughput, and both help
+independently:
+
+- **`batching`** — a larger batch amortizes the single per-batch commit over more rows. Set a
+  `count` / `period` policy (e.g. `count: 1000`, `period: 1s`); without one the output writes
+  whatever the pipeline delivers per transaction.
+- **`max_in_flight`** — more batches written concurrently. Because topics are resolved in
+  short-lived statements (not held for the whole batch), concurrent batches do not serialize on
+  the shared dimension rows, so throughput scales with this.
+
+The defaults (`max_in_flight: 8` and a `count: 1000` / `period: 1s` batch policy) comfortably
+exceed a typical per-bridge load. Raise `max_in_flight` (and the connection pool with it) or the
+batch size for higher-throughput streams.
 
 ## Metrics
 

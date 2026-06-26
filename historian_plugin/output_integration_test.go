@@ -16,7 +16,9 @@ package historian_plugin_test
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -41,6 +43,9 @@ func mkMsg(value any, tsMs float64, contract string, loc string, tag string, ext
 	m.MetaSet("location_path", loc)
 	m.MetaSet("tag_name", tag)
 	m.MetaSet("virtual_path", "vibration")
+	// The historian now derives location/contract/virtual_path/tag from the canonical
+	// umh_topic, so set it (as the tag_processor would) rather than the loose fields above.
+	m.MetaSet("umh_topic", "umh.v1."+loc+"."+contract+".vibration."+tag)
 	for k, v := range extraMeta {
 		m.MetaSet(k, v)
 	}
@@ -55,7 +60,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 			Skip("set TEST_HISTORIAN=true to run TimescaleDB integration tests")
 		}
 		ctx = context.Background()
-		c, err := postgres.Run(ctx, "timescale/timescaledb:latest-pg16",
+		c, err := postgres.Run(ctx, "timescale/timescaledb:latest-pg18",
 			postgres.WithDatabase("umh"),
 			postgres.WithUsername("umh_owner"),
 			postgres.WithPassword("secret"),
@@ -87,6 +92,117 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(h.Connect(ctx)).To(Succeed())
 	})
 
+	It("records the baseline schema version in the ledger after bootstrap", func() {
+		h := connected("pump")
+		defer h.Close(ctx)
+		// Greenfield baseline is version 1; max(version) reflects it.
+		Expect(h.SchemaVersion(ctx)).To(Equal(1))
+		Expect(h.SchemaVersion(ctx)).To(Equal(tsh.SchemaVersionForTest()))
+		// Re-bootstrapping does not re-apply or duplicate the recorded version.
+		Expect(h.Connect(ctx)).To(Succeed())
+		Expect(h.SchemaVersion(ctx)).To(Equal(1))
+	})
+
+	It("batched writes scale with workers and beat per-message (no batching)", func() {
+		const totalRows = 4000
+		poolDSN := sharedDSN + "&pool_max_conns=16"
+
+		// concurrently runs `work` across `workers` goroutines and returns rows/s. sharedTag
+		// makes every worker hit the SAME tag (max dimension-row contention); false gives each
+		// its own tag. work(w, tag, base) writes totalRows/workers rows for worker w.
+		measure := func(h *tsh.HistorianTestHandle, contract string, workers int, sharedTag bool,
+			work func(w int, tag string, base int)) float64 {
+			perWorker := totalRows / workers
+			var wg sync.WaitGroup
+			start := time.Now()
+			for w := 0; w < workers; w++ {
+				wg.Add(1)
+				go func(w int) {
+					defer GinkgoRecover()
+					defer wg.Done()
+					tag := "x"
+					if !sharedTag {
+						tag = fmt.Sprintf("t%d", w)
+					}
+					work(w, tag, w*perWorker)
+				}(w)
+			}
+			wg.Wait()
+			elapsed := time.Since(start)
+			Expect(h.CountValueRows(ctx, contract)).To(Equal(totalRows))
+			return float64(totalRows) / elapsed.Seconds()
+		}
+
+		// Plugin: the real two-phase WriteBatch, batches of 1000.
+		runPlugin := func(contract string, workers int, sharedTag bool) float64 {
+			h := tsh.NewHistorianTestHandle(poolDSN, contract)
+			Expect(h.Connect(ctx)).To(Succeed())
+			defer h.Close(ctx)
+			full := "_" + contract + "_v1"
+			perWorker := totalRows / workers
+			return measure(h, contract, workers, sharedTag, func(w int, tag string, base int) {
+				const B = 1000
+				for i := 0; i < perWorker; i += B {
+					bsz := B
+					if i+bsz > perWorker {
+						bsz = perWorker - i
+					}
+					batch := make(service.MessageBatch, bsz)
+					for j := 0; j < bsz; j++ {
+						batch[j] = mkMsg(float64(i+j), float64(base+i+j+1), full, "acme.line1", tag, nil)
+					}
+					Expect(h.WriteBatch(ctx, batch)).To(Succeed())
+				}
+			})
+		}
+
+		// No batching: the same write as one combined statement per row, autocommit.
+		runPerMessage := func(contract string, workers int, sharedTag bool) float64 {
+			h := tsh.NewHistorianTestHandle(poolDSN, contract)
+			Expect(h.Connect(ctx)).To(Succeed())
+			defer h.Close(ctx)
+			cn := "_" + contract
+			perWorker := totalRows / workers
+			return measure(h, contract, workers, sharedTag, func(w int, tag string, base int) {
+				for i := 0; i < perWorker; i++ {
+					num := float64(i)
+					ts := time.UnixMilli(int64(base + i + 1)).UTC().Format("2006-01-02T15:04:05.000Z")
+					Expect(h.WritePerMessageValue(ctx, "acme.line1", cn, "vibration", tag, "numeric", ts, &num, nil)).To(Succeed())
+				}
+			})
+		}
+
+		var batchedW1, batchedW8, perMsgW8 float64
+		for di, sharedTag := range []bool{false, true} {
+			label := "distinct-tags"
+			if sharedTag {
+				label = "shared-tag  "
+			}
+			GinkgoWriter.Printf("\n%s (%d rows):\n", label, totalRows)
+			for _, w := range []int{1, 4, 8} {
+				batched := runPlugin(fmt.Sprintf("plug%dw%d", di, w), w, sharedTag)
+				perMsg := runPerMessage(fmt.Sprintf("perm%dw%d", di, w), w, sharedTag)
+				GinkgoWriter.Printf("  workers=%d  batched=%.0f rows/s  per-message=%.0f rows/s  ratio=%.2fx\n",
+					w, batched, perMsg, batched/perMsg)
+				if !sharedTag { // record the distinct-tags case for the guards below
+					switch w {
+					case 1:
+						batchedW1 = batched
+					case 8:
+						batchedW8, perMsgW8 = batched, perMsg
+					}
+				}
+			}
+		}
+		// Regression guards (generous margins vs the ~1.9x / ~3.4x observed, so they assert the
+		// structural property -- batching scales with max_in_flight and beats per-message -- without
+		// being flaky on slower CI hardware).
+		Expect(batchedW8).To(BeNumerically(">", perMsgW8*1.2),
+			"batched must be at least as performant as per-message (no batching) at max_in_flight=8")
+		Expect(batchedW8).To(BeNumerically(">", batchedW1*1.5),
+			"batched throughput must scale with worker count (regression: it was flat before the two-phase write)")
+	})
+
 	It("fails Connect on wrong credentials, then retries cleanly", func() {
 		h := tsh.NewHistorianTestHandle("postgres://umh_owner:wrong@"+hostPort()+"/umh?sslmode=disable", "pump")
 		Expect(h.Connect(ctx)).NotTo(Succeed())
@@ -95,7 +211,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		_ = h.Close(ctx)
 	})
 
-	It("verifies to_ltree_path port + Go empty-boundary agreement", func() {
+	It("verifies the to_ltree_path SQL port (value + NULL boundary)", func() {
 		h := connected("pump")
 		defer h.Close(ctx)
 		type tc struct {
@@ -117,7 +233,6 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 			if !c.wantNull {
 				Expect(val).To(Equal(c.wantSQL), "SQL value for %q", c.in)
 			}
-			Expect(tsh.LocationNormalizesToEmpty(c.in)).To(Equal(c.wantNull), "Go empty-check for %q", c.in)
 		}
 	})
 
@@ -130,6 +245,28 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		// identical replay -> absorbed, no error, still one row
 		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(3.5, 1000, "_flow_v1", "acme.line1", "x", nil)})).To(Succeed())
 		Expect(h.CountValueRows(ctx, "flow")).To(Equal(1))
+	})
+
+	It("locks the documented read query (get_topic_id + time-window select)", func() {
+		h := connected("readq")
+		defer h.Close(ctx)
+		// three numeric points for one tag at 1s, 2s, 3s
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(1.0, 1000, "_readq_v1", "acme.line1", "x", nil),
+			mkMsg(2.0, 2000, "_readq_v1", "acme.line1", "x", nil),
+			mkMsg(3.0, 3000, "_readq_v1", "acme.line1", "x", nil),
+		})).To(Succeed())
+
+		// get_topic_id resolves the tag -- the Grafana / ad-hoc entry point documented in the README.
+		id, ok := h.GetTopicID(ctx, "acme.line1", "vibration", "readq", "x")
+		Expect(ok).To(BeTrue())
+
+		// a [1.5s, 3.5s) window returns only the in-range points, in ts order.
+		Expect(h.ValueWindow(ctx, "readq", id, 1500, 3500)).To(Equal([]float64{2.0, 3.0}))
+
+		// an unknown tag resolves to no topic_id.
+		_, ok = h.GetTopicID(ctx, "acme.line1", "vibration", "readq", "nope")
+		Expect(ok).To(BeFalse())
 	})
 
 	It("RAISEs on a different value at the same (topic_id, ts)", func() {

@@ -22,6 +22,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 )
 
 const (
@@ -76,13 +78,6 @@ func ValidateContract(c string) error {
 		return fmt.Errorf("data_contract %q must not carry a version suffix (\"pump\", not \"pump_v1\")", c)
 	}
 	return nil
-}
-
-// LocationNormalizesToEmpty reports whether umh.to_ltree_path() would return NULL. Only
-// "." is dropped by the split; every other char survives as itself or "_", so the path is
-// empty iff all "."-split segments were empty.
-func LocationNormalizesToEmpty(locationPath string) bool {
-	return strings.ReplaceAll(locationPath, ".", "") == ""
 }
 
 // ClassifyValue routes a value to value_num or value_text. A non-finite number is dropped
@@ -176,36 +171,43 @@ type DropReason string
 
 const (
 	DropNone                    DropReason = ""
+	DropInvalidTopic            DropReason = "invalid_topic"
 	DropContractMismatch        DropReason = "contract_mismatch"
-	DropMissingLocationOrTag    DropReason = "missing_location_or_tag"
 	DropServerVirtualPath       DropReason = "server_virtual_path"
 	DropMissingValueOrTimestamp DropReason = "missing_value_or_timestamp"
-	DropEmptyLocation           DropReason = "empty_location"
 	DropUnclassifiableValue     DropReason = "unclassifiable_value"
 	DropBadTimestamp            DropReason = "bad_timestamp"
 )
 
 // Transform maps one UNS message to a Row, or returns a non-empty DropReason to drop it.
 func Transform(payload map[string]any, meta map[string]string, contract string, allMeta bool, allowlist []string, excl *MetaExcluder, view *BatchView) (*Row, DropReason) {
+	// Parse + validate the canonical umh_topic once via the shared parser instead of
+	// trusting separate location_path/data_contract/tag_name metadata. Benthos pipelines are
+	// composable, so an output must not assume the tag_processor ran: a missing or malformed
+	// topic is dropped here rather than written against derived-from-nothing fields.
+	ut, err := topic.NewUnsTopic(meta["umh_topic"])
+	if err != nil {
+		return nil, DropInvalidTopic
+	}
+	info := ut.Info()
+
 	want := "_" + contract
-	if NormalizeContract(meta["data_contract"]) != want {
+	if NormalizeContract(info.DataContract) != want {
 		return nil, DropContractMismatch
 	}
-	loc := meta["location_path"]
-	tag := meta["tag_name"]
-	if loc == "" || tag == "" {
-		return nil, DropMissingLocationOrTag
-	}
-	if vp := meta["virtual_path"]; strings.HasPrefix(vp, "Root.Objects.Server") {
+	// A valid umh_topic always has a non-empty location and name, and the parser rejects
+	// empty/dotted location segments, so the historian no longer re-checks for an empty or
+	// empty-normalizing location/tag here -- NewUnsTopic above subsumes those checks.
+	loc := info.LocationPath()
+	tag := info.Name
+	vp := info.GetVirtualPath()
+	if strings.HasPrefix(vp, "Root.Objects.Server") {
 		return nil, DropServerVirtualPath
 	}
 	value, hasValue := payload["value"]
 	tsRaw, hasTS := payload["timestamp_ms"]
 	if !hasValue || value == nil || !hasTS || tsRaw == nil {
 		return nil, DropMissingValueOrTimestamp
-	}
-	if LocationNormalizesToEmpty(loc) {
-		return nil, DropEmptyLocation
 	}
 	vt, num, text, ok := ClassifyValue(value)
 	if !ok {
@@ -218,7 +220,7 @@ func Transform(payload map[string]any, meta map[string]string, contract string, 
 	row := &Row{
 		RawLocation:  loc,
 		ContractName: want,
-		VirtualPath:  meta["virtual_path"],
+		VirtualPath:  vp,
 		TagName:      tag,
 		ValueType:    vt,
 		TS:           ts,
@@ -232,7 +234,7 @@ func Transform(payload map[string]any, meta map[string]string, contract string, 
 	if len(md) > 0 {
 		row.churnKeys = HighChurnKeys(md)
 		fp := Fingerprint(md)
-		cacheKey := strings.Join([]string{want, CanonicalLtreePath(loc), meta["virtual_path"], tag}, "\x00")
+		cacheKey := strings.Join([]string{want, CanonicalLtreePath(loc), vp, tag}, "\x00")
 		if view.ShouldEmit(cacheKey, fp) {
 			row.EmitMeta = true
 			row.MetadataJSON = fp
