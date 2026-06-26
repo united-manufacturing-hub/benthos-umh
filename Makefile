@@ -23,6 +23,23 @@ BENTHOS_BIN := tmp/bin/benthos
 LOG_LEVEL ?= INFO
 CONFIG ?= ./config/opcua-hex-test.yaml
 
+# uns_beta pre-build key filter (ENG-5105): a perf-only patch to the official
+# redpanda Connect ordered franz reader that omits records a downstream key
+# filter would drop, before their message is built. We do not fork connect; the
+# diff lives in patches/ and is applied at build time onto a throwaway copy of
+# the pinned module. The replace is written to a SIDE MODFILE (go.patched.mod),
+# NOT the committed go.mod, so the committed go.mod NEVER changes and no commit
+# can ever capture the local replace. Patched build/test runs set
+# GOFLAGS=-modfile=go.patched.mod. `git apply --check` is the drift gate: a
+# Renovate bump that moves the code under the patch fails the build loudly. The
+# copy is git-baselined so the patch can always be regenerated with `git diff`.
+CONNECT_PKG := github.com/redpanda-data/connect/v4
+CONNECT_PATCH := patches/connect-key-filter.patch
+CONNECT_FORWARD_PATCH := patches/connect-redpanda-forward.patch
+CONNECT_VENDOR := .connect-patched
+PATCHED_MODFILE := go.patched.mod
+PATCHED_SUMFILE := go.patched.sum
+
 .PHONY: all
 all: clean build
 
@@ -37,15 +54,63 @@ clean:
 run:
 	go run cmd/benthos/main.go run --log.level $(LOG_LEVEL) $(CONFIG)
 
+# build depends on patch-connect: the shipped binary registers uns_beta, whose
+# template wires key_pattern — a field that only exists on the patched connect
+# reader (ENG-5105). An unpatched binary would fail at runtime when a user
+# configures uns_beta, so every build is patched. The side modfile keeps the
+# committed go.mod clean; the patch-connect drift gate fails the build loudly on
+# a connect bump that moves the patched code.
 .PHONY: build
-build:
+build: patch-connect
 	@mkdir -p $(dir $(BENTHOS_BIN))
-	@go build \
+	@GOFLAGS=-modfile=$(PATCHED_MODFILE) go build \
        -ldflags "-s -w \
        -X github.com/redpanda-data/benthos/v4/internal/cli.Version=temp \
        -X github.com/redpanda-data/benthos/v4/internal/cli.DateBuilt=$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
        -o $(BENTHOS_BIN) \
        cmd/benthos/main.go
+
+.PHONY: patch-connect
+patch-connect:
+	@CONNECT_SRC=$$(go list -m -f '{{.Dir}}' $(CONNECT_PKG)) && \
+	rm -rf $(CONNECT_VENDOR) && mkdir -p $(CONNECT_VENDOR) && \
+	cp -R "$$CONNECT_SRC"/. $(CONNECT_VENDOR)/ && \
+	chmod -R u+w $(CONNECT_VENDOR) && \
+	( cd $(CONNECT_VENDOR) && git init -q && git add -A && \
+	  git -c user.email=patch@umh -c user.name=patch commit -qm base && \
+	  git apply --check -p1 ../$(CONNECT_PATCH) && \
+	  git apply -p1 ../$(CONNECT_PATCH) && \
+	  git apply --check -p1 ../$(CONNECT_FORWARD_PATCH) && \
+	  git apply -p1 ../$(CONNECT_FORWARD_PATCH) ) && \
+	cp go.mod $(PATCHED_MODFILE) && cp go.sum $(PATCHED_SUMFILE) && \
+	go mod edit -replace $(CONNECT_PKG)=./$(CONNECT_VENDOR) $(PATCHED_MODFILE) && \
+	echo "patched $(CONNECT_PKG) -> ./$(CONNECT_VENDOR); committed go.mod untouched." && \
+	echo "build/test patched with: GOFLAGS=-modfile=$(PATCHED_MODFILE) go test -tags connect_patched ./uns_plugin/..."
+
+# Drift gate only: verify the key-filter patch still applies to the pinned
+# module without touching go.mod. Not run by CI; run manually after a
+# connect bump. The forwarder patch is exercised by patch-connect (and the
+# connect_patched test lane), not by this gate.
+.PHONY: check-connect-patch
+check-connect-patch:
+	@CONNECT_SRC=$$(go list -m -f '{{.Dir}}' $(CONNECT_PKG)) && \
+	rm -rf $(CONNECT_VENDOR) && mkdir -p $(CONNECT_VENDOR) && \
+	cp -R "$$CONNECT_SRC"/. $(CONNECT_VENDOR)/ && \
+	chmod -R u+w $(CONNECT_VENDOR) && \
+	( cd $(CONNECT_VENDOR) && git init -q && git apply --check -p1 ../$(CONNECT_PATCH) ) && \
+	echo "connect patch applies cleanly to $$(go list -m -f '{{.Version}}' $(CONNECT_PKG))"
+
+.PHONY: unpatch-connect
+unpatch-connect:
+	@rm -f $(PATCHED_MODFILE) $(PATCHED_SUMFILE) && \
+	rm -rf $(CONNECT_VENDOR) && \
+	echo "removed $(PATCHED_MODFILE)/$(PATCHED_SUMFILE) and $(CONNECT_VENDOR); committed go.mod was never touched"
+
+# Run the uns_beta suite against the patched build (side modfile keeps the
+# committed go.mod clean; connect_patched tag pulls in the alloc-budget gate).
+.PHONY: test-uns-patched
+test-uns-patched: patch-connect
+	@GOFLAGS=-modfile=$(PATCHED_MODFILE) go test -tags connect_patched -count=1 -timeout=900s ./uns_plugin/... -args -ginkgo.label-filter='uns_beta'
 
 .PHONY: lint
 lint: $(LINT)
@@ -82,7 +147,10 @@ update-benthos:
 
 .PHONY: test
 test: setup-test-deps
-	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./...
+	@# uns_beta specs render the key_pattern against the CONNECT-PATCHED binary and
+	@# only pass under the patched lane (test-uns-patched); the unpatched catch-all
+	@# would run them against vanilla connect and fail, so exclude them here.
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='!uns_beta' ./...
 
 .PHONY: test-schema-export
 test-schema-export: $(GOTESTSUM)
@@ -110,13 +178,17 @@ test-unit-opc:
 test-integration-opc:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./opcua_plugin/...
 
+# The uns_beta specs render the template, which wires key_pattern — a field that
+# only exists on the patched connect reader. They therefore run in the patched
+# lane (test-uns-patched); excluding them here keeps the fast unpatched lane for
+# the legacy uns input green.
 .PHONY: test-uns
 test-uns:
-	@$(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='!redpanda' ./uns_plugin/...
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='!redpanda && !uns_beta' ./uns_plugin/...
 
 .PHONY: test-uns-redpanda
 test-uns-redpanda:
-	@$(GINKGO_CMD) $(GINKGO_FLAGS)  ./uns_plugin/...
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='!uns_beta' ./uns_plugin/...
 
 .PHONY: test-s7comm
 test-s7comm:
