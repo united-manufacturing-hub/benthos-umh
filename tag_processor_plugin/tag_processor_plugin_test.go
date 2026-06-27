@@ -2790,9 +2790,10 @@ tag_processor:
 		})
 
 		It("should bump messagesErrored when a defaults JS error aborts the batch", func() {
-			// A defaults program that throws aborts the batch via a fatal
-			// return, but the error is not reflected in metrics. The counter
-			// bump before the batch-fatal return makes it observable.
+			// A defaults program that throws aborts the batch. The error bumps
+			// messages_errored and silently drops the batch via (nil, nil) so
+			// the benthos v2BatchedToV1Processor wrapper does not forward the
+			// original input message to the output.
 			env := service.NewEnvironment()
 
 			var mu sync.Mutex
@@ -2837,15 +2838,166 @@ tag_processor:
 			testMsg.SetStructured("ignored")
 			Expect(msgHandler(ctx, testMsg)).To(Succeed())
 
-			// messages_errored bumps to at least 1: the batch-fatal defaults
+			// messages_errored bumps to exactly 1: the batch-fatal defaults
 			// JS error is now visible in metrics.
 			Eventually(func() int64 {
 				mu.Lock()
 				defer mu.Unlock()
 				return counts["messages_errored"]
-			}, "5s", "50ms").Should(BeNumerically(">=", int64(1)))
+			}, "5s", "50ms").Should(Equal(int64(1)))
+
+			// Batch-fatal silent drop: 0 consumer outputs.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
 
 			// The batch-fatal return skips the processed/dropped accounting.
+			mu.Lock()
+			Expect(counts["messages_processed"]).To(Equal(int64(0)))
+			Expect(counts["messages_dropped"]).To(Equal(int64(0)))
+			mu.Unlock()
+		})
+
+		It("should bump messagesErrored when an advancedProcessing JS error aborts the batch", func() {
+			// An advancedProcessing program that throws aborts the batch. The
+			// error bumps messages_errored and silently drops the batch via
+			// (nil, nil) so the benthos v2BatchedToV1Processor wrapper does not
+			// forward the original input message to the output. A minimal
+			// defaults that returns msg is required so execution reaches the
+			// advanced stage (guarded on advancedProgram != nil).
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    return msg;
+  advancedProcessing: |
+    throw new Error("advanced boom");
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			// messages_errored bumps to exactly 1: the batch-fatal
+			// advancedProcessing JS error is now visible in metrics.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_errored"]
+			}, "5s", "50ms").Should(Equal(int64(1)))
+
+			// Batch-fatal return: 0 consumer outputs.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+
+			// The batch-fatal return skips the processed/dropped accounting.
+			mu.Lock()
+			Expect(counts["messages_processed"]).To(Equal(int64(0)))
+			Expect(counts["messages_dropped"]).To(Equal(int64(0)))
+			mu.Unlock()
+		})
+
+		It("should bump messagesErrored by the batch size when a defaults JS error aborts a multi-message batch", func() {
+			// processMessageBatchWithProgram aborts the whole batch on the
+			// first per-message JS failure, so every message in the batch is
+			// dropped. messages_errored must reflect the full batch size, not
+			// a single Incr(1), otherwise the unprocessed tail vanishes from
+			// all plugin counters.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    throw new Error("defaults boom");
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			const batchSize = 3
+			batch := make(service.MessageBatch, batchSize)
+			for i := range batch {
+				batch[i] = service.NewMessage(nil)
+				batch[i].SetStructured("ignored")
+			}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// messages_errored bumps to the full batch size: the whole batch
+			// is dropped, so all N messages must be counted.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_errored"]
+			}, "5s", "50ms").Should(Equal(int64(batchSize)))
+
+			// Batch-fatal silent drop: 0 consumer outputs.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+
 			mu.Lock()
 			Expect(counts["messages_processed"]).To(Equal(int64(0)))
 			Expect(counts["messages_dropped"]).To(Equal(int64(0)))

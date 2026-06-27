@@ -297,11 +297,23 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 
 	// Process defaults with compiled program (Phase 2 optimization)
 	if p.defaultsProgram != nil {
+		batchSize := len(batch)
 		var err error
 		batch, err = p.processMessageBatchWithProgram(ctx, batch, p.defaultsProgram, "defaults")
 		if err != nil {
-			p.messagesErrored.Incr(1)
-			return nil, fmt.Errorf("error in defaults processing: %w", err)
+			// Bump messages_errored for the whole aborted batch and drop it
+			// silently. Returning (nil, err) would cause the benthos
+			// batch-processor wrapper (v2BatchedToV1Processor) to forward the
+			// original input message to the output despite the fatal error;
+			// returning (nil, nil) drops the batch so no consumer receives the
+			// failed message. Because the wrapper's error branch is skipped,
+			// the stock benthos processor_error metric is NOT bumped for this
+			// path; operators should alert on messages_errored instead.
+			// batchSize is captured before the call because
+			// processMessageBatchWithProgram returns (nil, err) on a
+			// per-message failure, leaving len(batch) == 0 afterward.
+			p.messagesErrored.Incr(int64(batchSize))
+			return nil, nil
 		}
 	}
 
@@ -325,10 +337,23 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 
 	// Process advanced processing with compiled program (Phase 2 optimization)
 	if p.advancedProgram != nil {
+		batchSize := len(batch)
 		var err error
 		batch, err = p.processMessageBatchWithProgram(ctx, batch, p.advancedProgram, "advanced")
 		if err != nil {
-			return nil, fmt.Errorf("error in advanced processing: %w", err)
+			// Bump messages_errored for the whole aborted batch and drop it
+			// silently. Returning (nil, err) would cause the benthos
+			// batch-processor wrapper (v2BatchedToV1Processor) to forward the
+			// original input message to the output despite the fatal error;
+			// returning (nil, nil) drops the batch so no consumer receives the
+			// failed message. Because the wrapper's error branch is skipped,
+			// the stock benthos processor_error metric is NOT bumped for this
+			// path; operators should alert on messages_errored instead.
+			// batchSize is captured before the call because
+			// processMessageBatchWithProgram returns (nil, err) on a
+			// per-message failure, leaving len(batch) == 0 afterward.
+			p.messagesErrored.Incr(int64(batchSize))
+			return nil, nil
 		}
 	}
 
