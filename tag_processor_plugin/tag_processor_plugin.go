@@ -852,8 +852,11 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 			return nil, err
 		}
 
-		// Handle message dropping
-		if messages == nil {
+		// Handle message dropping: a nil return (null/undefined), an empty
+		// array, or an all-nil array all yield 0 outputs and count as one
+		// per-message-entering-stage drop.
+		if len(messages) == 0 {
+			p.messagesDropped.Incr(1)
 			p.putVM(vm)
 			continue
 		}
