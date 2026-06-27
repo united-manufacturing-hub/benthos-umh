@@ -302,6 +302,35 @@ pipeline:
 
 Output: Same as input, with log messages in Benthos logs
 
+9. **Returning an Array (Fan-out)**\
+   A function may return an array of message objects to publish one output message per element. Each element must be a message object (`{payload, meta}`); `null`/`undefined` elements are skipped, and a non-object element errors the batch.
+
+   Input message:
+
+```json
+{
+  "records": [
+    {"id": 1, "temp": 22},
+    {"id": 2, "temp": 23}
+  ]
+}
+```
+
+JavaScript code:
+
+```yaml
+pipeline:
+  processors:
+    - nodered_js:
+        code: |
+          // Publish one message per record, propagating the input's metadata
+          return msg.payload.records.map(r => ({payload: r, meta: msg.meta}));
+```
+
+Output: Two messages — `{id: 1, temp: 22}` and `{id: 2, temp: 23}`, each carrying the input's metadata.
+
+This is the typical pattern for read bridges that fetch a JSON array from an API (e.g. an ERP system) and need one UNS message per record. Returning `null` or `undefined` drops the input (no outputs); returning an empty array `[]` or an all-`null` array `[null, null]` also drops the input and counts as a single drop in the `messages_dropped` metric.
+
 **Performance Comparison**
 
 When choosing between Node-RED JavaScript and Bloblang for message processing, consider the performance implications. Here's a benchmark comparison of both processors performing a simple operation (doubling a number) on 1000 messages:
