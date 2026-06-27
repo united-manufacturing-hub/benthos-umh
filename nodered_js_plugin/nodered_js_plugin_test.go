@@ -635,6 +635,96 @@ nodered_js:
 			}).Should(Equal(int64(1)))
 		})
 
+		It("should fan out one UNS message per ERP record from an array payload end-to-end", func() {
+			// Capstone (R8): Sebastian's actual use case — an ERP API returns a
+			// JSON array of records and the nodered_js function maps each record
+			// to one UNS message, propagating the input's metadata to every
+			// child. This composes R1 (array fan-out) + R2 (nil-skip, latent
+			// here — no nil records) + the per-element payload/meta construction
+			// through the full service.NewStreamBuilder pipeline.
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    return msg.payload.records.map(r => ({payload: r, meta: msg.meta}));
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Input carries the ERP array payload plus metadata that must be
+			// propagated to every fan-out child.
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured(map[string]any{
+				"records": []any{
+					map[string]any{"id": float64(1), "temp": float64(22)},
+					map[string]any{"id": float64(2), "temp": float64(23)},
+					map[string]any{"id": float64(3), "temp": float64(24)},
+				},
+			})
+			testMsg.MetaSet("source", "erp-api")
+			testMsg.MetaSet("location_path", "enterprise.site.area")
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// One input → exactly three consumer outputs, one per record.
+			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
+				return len(messages)
+			}).Should(Equal(3))
+
+			expected := []string{
+				`{"id":1,"temp":22}`,
+				`{"id":2,"temp":23}`,
+				`{"id":3,"temp":24}`,
+			}
+
+			for i, want := range expected {
+				messagesMutex.Lock()
+				msg := messages[i]
+				messagesMutex.Unlock()
+
+				structured, err := msg.AsStructured()
+				Expect(err).NotTo(HaveOccurred())
+				jsonStr, err := json.Marshal(structured)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(string(jsonStr)).To(Equal(want))
+
+				// Each child carries the input's metadata, propagated via the
+				// meta map returned by the function.
+				source, exists := msg.MetaGet("source")
+				Expect(exists).To(BeTrue())
+				Expect(source).To(Equal("erp-api"))
+				loc, exists := msg.MetaGet("location_path")
+				Expect(exists).To(BeTrue())
+				Expect(loc).To(Equal("enterprise.site.area"))
+			}
+		})
+
 		It("should drop messages when returning null", func() {
 			builder := service.NewStreamBuilder()
 
