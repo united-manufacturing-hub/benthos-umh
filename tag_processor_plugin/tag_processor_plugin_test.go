@@ -2652,6 +2652,108 @@ tag_processor:
 			}, "500ms").Should(Equal(int64(0)))
 		})
 
+		It("should bump messagesDropped exactly once when a condition then returns null (no double-count)", func() {
+			// R6 double-count guard: a condition whose `then` returns null drops
+			// the message. The then-action runs via processMessageBatchWithProgram,
+			// whose len==0 guard (R5) bumps messagesDropped once. The conditions
+			// loop must NOT add a second bump. This pins already-correct behavior
+			// (R5 covered it; R6 was vacuous) so a future refactor introducing a
+			// conditions-loop bump is caught.
+			env := service.NewEnvironment()
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+			builder := env.NewStreamBuilder()
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+			Expect(builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.tag_name = "x";
+    return msg;
+  conditions:
+    - if: 'msg.meta.tag_name === "x"'
+      then: |
+        return null;
+`)).To(Succeed())
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			go func() { _ = stream.Run(ctx) }()
+			Expect(msgHandler(ctx, service.NewMessage(nil))).To(Succeed())
+			// 0 consumer outputs (the then returned null → drop).
+			Consistently(func() int64 { return atomic.LoadInt64(&consumerCount) }, "500ms").Should(Equal(int64(0)))
+			// messagesDropped == 1, NOT 2 (no double-count from the conditions loop).
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "5s", "50ms").Should(Equal(int64(1)))
+		})
+
+		It("should not bump messagesDropped when a condition if is false (pass-through)", func() {
+			// R6 pass-through guard: a false `if` is a pass-through, not a drop.
+			// processConditionForMessageWithProgram returns the original message
+			// unchanged (1 output) when the if is false; messagesDropped must
+			// stay 0. Pins that a non-matching condition is NOT mis-counted as a drop.
+			env := service.NewEnvironment()
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+			builder := env.NewStreamBuilder()
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+			Expect(builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temperature";
+    return msg;
+  conditions:
+    - if: 'msg.meta.tag_name === "nonexistent"'
+      then: |
+        return null;
+`)).To(Succeed())
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			go func() { _ = stream.Run(ctx) }()
+			Expect(msgHandler(ctx, service.NewMessage(nil))).To(Succeed())
+			// 1 consumer output (the false-if condition passes the original
+			// message through unchanged, and the required meta fields are set
+			// so it survives validation/constructFinalMessage).
+			Eventually(func() int64 { return atomic.LoadInt64(&consumerCount) }, "5s", "50ms").Should(Equal(int64(1)))
+			// messagesDropped == 0 (false-if is a pass-through, not a drop).
+			Consistently(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "500ms").Should(Equal(int64(0)))
+		})
+
 		It("should bump messagesErrored when a condition then-action throws a JS error", func() {
 			// A condition whose then action throws a JS error is logged and
 			// continued without incrementing messages_errored, so the error
