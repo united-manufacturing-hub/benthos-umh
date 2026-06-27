@@ -300,6 +300,7 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 		var err error
 		batch, err = p.processMessageBatchWithProgram(ctx, batch, p.defaultsProgram, "defaults")
 		if err != nil {
+			p.messagesErrored.Incr(1)
 			return nil, fmt.Errorf("error in defaults processing: %w", err)
 		}
 	}
@@ -311,6 +312,7 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 		for _, msg := range batch {
 			processedMsgs, err := p.processConditionForMessageWithProgram(ctx, i, msg)
 			if err != nil {
+				p.messagesErrored.Incr(1)
 				p.logError(err, "condition evaluation", msg)
 				continue
 			}

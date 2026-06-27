@@ -2651,6 +2651,206 @@ tag_processor:
 				return counts["messages_dropped"]
 			}, "500ms").Should(Equal(int64(0)))
 		})
+
+		It("should bump messagesErrored when a condition then-action throws a JS error", func() {
+			// A condition whose then action throws a JS error is logged and
+			// continued without incrementing messages_errored, so the error
+			// is not visible in metrics. The counter bump makes it observable
+			// while preserving the per-message (non-batch-fatal) continue.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  conditions:
+    - if: 'true'
+      then: |
+        throw new Error("boom");
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			// messages_errored bumps to exactly 1: the condition JS error is
+			// now visible in metrics.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_errored"]
+			}, "5s", "50ms").Should(Equal(int64(1)))
+
+			// The message was swallowed via the conditions-loop continue
+			// (not batch-fatal), so nothing leaked to the consumer and no
+			// message was processed or dropped.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+			mu.Lock()
+			Expect(counts["messages_dropped"]).To(Equal(int64(0)))
+			Expect(counts["messages_processed"]).To(Equal(int64(0)))
+			mu.Unlock()
+		})
+
+		It("should bump messagesErrored when a condition if-expression throws a JS error", func() {
+			// Triangulates the then-action case: the if-expression throw
+			// returns the same error to the conditions-loop bump site, so
+			// messages_errored must rise here too. Guards against a future
+			// refactor that splits the two error returns.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  conditions:
+    - if: |
+        throw new Error("if boom");
+      then: 'return msg;'
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_errored"]
+			}, "5s", "50ms").Should(Equal(int64(1)))
+
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+			mu.Lock()
+			Expect(counts["messages_dropped"]).To(Equal(int64(0)))
+			Expect(counts["messages_processed"]).To(Equal(int64(0)))
+			mu.Unlock()
+		})
+
+		It("should bump messagesErrored when a defaults JS error aborts the batch", func() {
+			// A defaults program that throws aborts the batch via a fatal
+			// return, but the error is not reflected in metrics. The counter
+			// bump before the batch-fatal return makes it observable.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    throw new Error("defaults boom");
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			// messages_errored bumps to at least 1: the batch-fatal defaults
+			// JS error is now visible in metrics.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_errored"]
+			}, "5s", "50ms").Should(BeNumerically(">=", int64(1)))
+
+			// The batch-fatal return skips the processed/dropped accounting.
+			mu.Lock()
+			Expect(counts["messages_processed"]).To(Equal(int64(0)))
+			Expect(counts["messages_dropped"]).To(Equal(int64(0)))
+			mu.Unlock()
+		})
 	})
 })
 
