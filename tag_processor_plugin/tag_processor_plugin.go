@@ -301,19 +301,7 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 		var err error
 		batch, err = p.processMessageBatchWithProgram(ctx, batch, p.defaultsProgram, "defaults")
 		if err != nil {
-			// Bump messages_errored for the whole aborted batch and drop it
-			// silently. Returning (nil, err) would cause the benthos
-			// batch-processor wrapper (v2BatchedToV1Processor) to forward the
-			// original input message to the output despite the fatal error;
-			// returning (nil, nil) drops the batch so no consumer receives the
-			// failed message. Because the wrapper's error branch is skipped,
-			// the stock benthos processor_error metric is NOT bumped for this
-			// path; operators should alert on messages_errored instead.
-			// batchSize is captured before the call because
-			// processMessageBatchWithProgram returns (nil, err) on a
-			// per-message failure, leaving len(batch) == 0 afterward.
-			p.messagesErrored.Incr(int64(batchSize))
-			return nil, nil
+			return nil, p.batchFatalDrop(batchSize)
 		}
 	}
 
@@ -341,19 +329,7 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 		var err error
 		batch, err = p.processMessageBatchWithProgram(ctx, batch, p.advancedProgram, "advanced")
 		if err != nil {
-			// Bump messages_errored for the whole aborted batch and drop it
-			// silently. Returning (nil, err) would cause the benthos
-			// batch-processor wrapper (v2BatchedToV1Processor) to forward the
-			// original input message to the output despite the fatal error;
-			// returning (nil, nil) drops the batch so no consumer receives the
-			// failed message. Because the wrapper's error branch is skipped,
-			// the stock benthos processor_error metric is NOT bumped for this
-			// path; operators should alert on messages_errored instead.
-			// batchSize is captured before the call because
-			// processMessageBatchWithProgram returns (nil, err) on a
-			// per-message failure, leaving len(batch) == 0 afterward.
-			p.messagesErrored.Incr(int64(batchSize))
-			return nil, nil
+			return nil, p.batchFatalDrop(batchSize)
 		}
 	}
 
@@ -843,6 +819,19 @@ func (p *TagProcessor) executeCompiledProgram(vm *goja.Runtime, program *goja.Pr
 	default:
 		return nil, fmt.Errorf("code must return a message object or array of message objects")
 	}
+}
+
+// batchFatalDrop records a batch-fatal stage failure: bumps messages_errored
+// for the whole aborted batch and returns nil so the benthos
+// v2BatchedToV1Processor wrapper does not forward the original input message
+// to the output despite the fatal error. batchSize must be captured BEFORE
+// the failing processMessageBatchWithProgram call, which returns (nil, err)
+// on a per-message failure and leaves len(batch) == 0. Because the wrapper's
+// error branch is skipped, the stock benthos processor_error metric is NOT
+// bumped for this path; operators should alert on messages_errored.
+func (p *TagProcessor) batchFatalDrop(batchSize int) error {
+	p.messagesErrored.Incr(int64(batchSize))
+	return nil
 }
 
 // processMessageBatchWithProgram processes a batch using a compiled program for Phase 2 optimization
