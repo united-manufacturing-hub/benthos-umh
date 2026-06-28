@@ -370,7 +370,7 @@ func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) e
 //
 // null/undefined elements within a returned array are skipped during
 // fan-out. If every element is nil/undefined, or the array is empty,
-// the whole input is treated as a single drop — messagesDropped is
+// the whole input is treated as a single drop: messagesDropped is
 // incremented once and no outputs are produced. Otherwise (>=1
 // surviving output) nil/undefined elements are skipped with no drop
 // bump. Non-object elements still error the batch.
@@ -387,13 +387,13 @@ func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*servic
 	// Fan-out: an array of message objects produces one output per element.
 	if arr, ok := exported.([]interface{}); ok {
 		out := make([]*service.Message, 0, len(arr))
-		for _, el := range arr {
+		for i, el := range arr {
 			if el == nil {
 				continue
 			}
 			msg, err := messageFromReturnValue(el)
 			if err != nil {
-				return nil, fmt.Errorf("array elements must be message objects")
+				return nil, fmt.Errorf("array element %d must be a message object, got %T", i, el)
 			}
 			out = append(out, msg)
 		}
@@ -412,9 +412,9 @@ func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*servic
 
 // messageFromReturnValue builds a service.Message from a single JS return
 // value, which must be a message object (a map with payload/meta).
-// NewMessage(nil) is safe: the air-gap wrapper restores input context onto
-// outputs in production, so Copy()/WithContext() is a no-op (see CLAUDE.md
-// "Output context is restored by the engine, not the plugin").
+// NewMessage(nil) is safe: the engine's v2BatchedToV1Processor wrapper
+// restores the input context onto outputs in production, so
+// Copy()/WithContext() is a no-op.
 func messageFromReturnValue(v interface{}) (*service.Message, error) {
 	returnedMsg, ok := v.(map[string]interface{})
 	if !ok {

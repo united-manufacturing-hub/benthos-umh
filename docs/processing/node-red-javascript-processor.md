@@ -327,7 +327,7 @@ pipeline:
           return msg.payload.records.map(r => ({payload: r, meta: msg.meta}));
 ```
 
-Output: Two messages — `{id: 1, temp: 22}` and `{id: 2, temp: 23}`, each carrying the input's metadata.
+Output: Two messages, `{id: 1, temp: 22}` and `{id: 2, temp: 23}`, each carrying the input's metadata.
 
 This is the typical pattern for read bridges that fetch a JSON array from an API (e.g. an ERP system) and need one UNS message per record. Returning `null` or `undefined` drops the input (no outputs); returning an empty array `[]` or an all-`null` array `[null, null]` also drops the input and counts as a single drop in the `messages_dropped` metric.
 
