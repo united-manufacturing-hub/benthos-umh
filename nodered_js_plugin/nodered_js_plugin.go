@@ -375,10 +375,8 @@ func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) e
 // surviving output) nil/undefined elements are skipped with no drop
 // bump. Non-object elements still error the batch.
 func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*service.Message, error) {
-	// Handle null/undefined returns
+	// Handle null/undefined returns: drop (caller bumps messagesDropped).
 	if result.Equals(goja.Undefined()) || result.Equals(goja.Null()) {
-		u.messagesDropped.Incr(1)
-		u.logger.Debug("Message dropped due to null/undefined return")
 		return nil, nil
 	}
 
@@ -396,9 +394,6 @@ func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*servic
 				return nil, fmt.Errorf("array element %d must be a message object, got %T", i, el)
 			}
 			out = append(out, msg)
-		}
-		if len(out) == 0 {
-			u.messagesDropped.Incr(1)
 		}
 		return out, nil
 	}
@@ -427,6 +422,9 @@ func messageFromReturnValue(v interface{}) (*service.Message, error) {
 	}
 	if meta, exists := returnedMsg["meta"].(map[string]interface{}); exists {
 		for k, val := range meta {
+			if val == nil {
+				continue
+			}
 			newMsg.MetaSet(k, fmt.Sprintf("%v", val))
 		}
 	}
@@ -450,15 +448,33 @@ func FormatConsoleLogMsg(data []any) string {
 // ProcessBatch applies the JavaScript code to each message in the batch.
 func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	var resultBatch service.MessageBatch
+	batchSize := len(batch)
+	droppedCount := 0
 
 	for _, msg := range batch {
 		u.messagesProcessed.Incr(1)
 
-		processedMsgs, err := u.processSingleMessage(ctx, msg)
+		processedMsgs, dropped, err := u.processSingleMessage(ctx, msg)
 		if err != nil {
+			// Batch-fatal: bump messages_errored for the whole aborted batch
+			// (the remaining unprocessed messages + the erroring one). Drops
+			// from earlier in this loop are NOT bumped (deferred below) so
+			// they are not double-counted as both dropped and errored.
+			u.messagesErrored.Incr(int64(batchSize))
 			return nil, err
 		}
+		if dropped {
+			droppedCount++
+		}
 		resultBatch = append(resultBatch, processedMsgs...)
+	}
+
+	// Bump messagesDropped once for all genuine drops in this batch attempt.
+	// Deferred from the loop so a mid-loop batch-fatal error skips the bump
+	// (those messages are counted as errored by the batch-fatal path above,
+	// not as dropped, and the batch is retried).
+	if droppedCount > 0 {
+		u.messagesDropped.Incr(int64(droppedCount))
 	}
 
 	if len(resultBatch) == 0 {
@@ -468,8 +484,13 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 	return []service.MessageBatch{resultBatch}, nil
 }
 
-// processSingleMessage processes a single message using a VM from the pool
-func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *service.Message) ([]*service.Message, error) {
+// processSingleMessage processes a single message using a VM from the pool.
+// Returns (messages, wasDropped, err): wasDropped is true only for a genuine
+// drop (null/undefined/empty/all-nil array return from HandleExecutionResult),
+// not for pre-execution errors (which are swallowed and bump messagesErrored
+// per-message). err is non-nil only for batch-fatal HandleExecutionResult
+// errors (the caller bumps messagesErrored by batchSize).
+func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *service.Message) ([]*service.Message, bool, error) {
 	vm := u.getVM()
 	defer u.putVM(vm)
 
@@ -478,7 +499,7 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 	if err != nil {
 		u.messagesErrored.Incr(1)
 		u.logger.Errorf("%v\nOriginal message: %v", err, msg)
-		return nil, nil
+		return nil, false, nil
 	}
 
 	// Add metadata to the message wrapper
@@ -489,7 +510,7 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 	}); err != nil {
 		u.messagesErrored.Incr(1)
 		u.logger.Errorf("Failed to walk message metadata: %v\nOriginal message: %v", err, msg)
-		return nil, nil
+		return nil, false, nil
 	}
 	jsMsg["meta"] = meta
 
@@ -497,7 +518,7 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 	if err = u.SetupJSEnvironment(ctx, vm, jsMsg); err != nil {
 		u.messagesErrored.Incr(1)
 		u.logger.Errorf("%v\nMessage content: %v", err, jsMsg)
-		return nil, nil
+		return nil, false, nil
 	}
 
 	// Execute the compiled JavaScript program
@@ -505,18 +526,22 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 	if err != nil {
 		u.messagesErrored.Incr(1)
 		u.logJSError(err, jsMsg)
-		return nil, nil
+		return nil, false, nil
 	}
 
 	// Handle the execution result
 	newMsgs, err := u.HandleExecutionResult(result)
 	if err != nil {
-		u.messagesErrored.Incr(1)
 		u.logger.Errorf("%v\nMessage content: %v\nReturned value: %v", err, jsMsg, result.Export())
-		return nil, err
+		return nil, false, err
 	}
 
-	return newMsgs, nil
+	// A nil return with no error is a genuine drop (null/undefined/empty/all-nil).
+	if len(newMsgs) == 0 {
+		return nil, true, nil
+	}
+
+	return newMsgs, false, nil
 }
 
 // Helper function to log JavaScript errors
