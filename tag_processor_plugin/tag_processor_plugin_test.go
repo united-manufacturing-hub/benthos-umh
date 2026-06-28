@@ -2893,9 +2893,9 @@ tag_processor:
 
 		It("should bump messagesErrored when a defaults JS error aborts the batch", func() {
 			// A defaults program that throws aborts the batch. The error bumps
-			// messages_errored and silently drops the batch via (nil, nil) so
-			// the benthos v2BatchedToV1Processor wrapper does not forward the
-			// original input message to the output.
+			// messages_errored and propagates to benthos via (nil, fmt.Errorf),
+			// so the v2BatchedToV1Processor wrapper marks the original input
+			// with SetError and forwards it to the consumer.
 			env := service.NewEnvironment()
 
 			var mu sync.Mutex
@@ -2963,11 +2963,11 @@ tag_processor:
 
 		It("should bump messagesErrored when an advancedProcessing JS error aborts the batch", func() {
 			// An advancedProcessing program that throws aborts the batch. The
-			// error bumps messages_errored and silently drops the batch via
-			// (nil, nil) so the benthos v2BatchedToV1Processor wrapper does not
-			// forward the original input message to the output. A minimal
-			// defaults that returns msg is required so execution reaches the
-			// advanced stage (guarded on advancedProgram != nil).
+			// error bumps messages_errored and propagates to benthos via
+			// (nil, fmt.Errorf), so the v2BatchedToV1Processor wrapper marks
+			// the original input with SetError and forwards it to the consumer.
+			// A minimal defaults that returns msg is required so execution
+			// reaches the advanced stage (guarded on advancedProgram != nil).
 			env := service.NewEnvironment()
 
 			var mu sync.Mutex
