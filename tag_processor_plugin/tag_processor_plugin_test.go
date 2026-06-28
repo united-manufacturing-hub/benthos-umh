@@ -2948,10 +2948,11 @@ tag_processor:
 				return counts["messages_errored"]
 			}, "5s", "50ms").Should(Equal(int64(1)))
 
-			// Batch-fatal silent drop: 0 consumer outputs.
+			// Batch-fatal propagate: the engine wrapper forwards the errored
+			// input to the consumer (marked with SetError), so 1 consumer output.
 			Consistently(func() int64 {
 				return atomic.LoadInt64(&consumerCount)
-			}, "500ms").Should(Equal(int64(0)))
+			}, "500ms").Should(Equal(int64(1)))
 
 			// The batch-fatal return skips the processed/dropped accounting.
 			mu.Lock()
@@ -3021,10 +3022,11 @@ tag_processor:
 				return counts["messages_errored"]
 			}, "5s", "50ms").Should(Equal(int64(1)))
 
-			// Batch-fatal return: 0 consumer outputs.
+			// Batch-fatal propagate: the engine wrapper forwards the errored
+			// input to the consumer (marked with SetError), so 1 consumer output.
 			Consistently(func() int64 {
 				return atomic.LoadInt64(&consumerCount)
-			}, "500ms").Should(Equal(int64(0)))
+			}, "500ms").Should(Equal(int64(1)))
 
 			// The batch-fatal return skips the processed/dropped accounting.
 			mu.Lock()
@@ -3095,10 +3097,12 @@ tag_processor:
 				return counts["messages_errored"]
 			}, "5s", "50ms").Should(Equal(int64(batchSize)))
 
-			// Batch-fatal silent drop: 0 consumer outputs.
+			// Batch-fatal propagate: the engine wrapper forwards every errored
+			// input in the batch to the consumer (marked with SetError), so
+			// consumerCount == batchSize.
 			Consistently(func() int64 {
 				return atomic.LoadInt64(&consumerCount)
-			}, "500ms").Should(Equal(int64(0)))
+			}, "500ms").Should(Equal(int64(batchSize)))
 
 			mu.Lock()
 			Expect(counts["messages_processed"]).To(Equal(int64(0)))
