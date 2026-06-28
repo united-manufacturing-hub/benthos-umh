@@ -301,7 +301,7 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 		var err error
 		batch, err = p.processMessageBatchWithProgram(ctx, batch, p.defaultsProgram, "defaults")
 		if err != nil {
-			return nil, p.batchFatalDrop(batchSize)
+			return nil, p.batchFatalErr("defaults", batchSize, err)
 		}
 	}
 
@@ -329,7 +329,7 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 		var err error
 		batch, err = p.processMessageBatchWithProgram(ctx, batch, p.advancedProgram, "advanced")
 		if err != nil {
-			return nil, p.batchFatalDrop(batchSize)
+			return nil, p.batchFatalErr("advanced", batchSize, err)
 		}
 	}
 
@@ -821,17 +821,14 @@ func (p *TagProcessor) executeCompiledProgram(vm *goja.Runtime, program *goja.Pr
 	}
 }
 
-// batchFatalDrop records a batch-fatal stage failure: bumps messages_errored
-// for the whole aborted batch and returns nil so the benthos
-// v2BatchedToV1Processor wrapper does not forward the original input message
-// to the output despite the fatal error. batchSize must be captured BEFORE
-// the failing processMessageBatchWithProgram call, which returns (nil, err)
-// on a per-message failure and leaves len(batch) == 0. Because the wrapper's
-// error branch is skipped, the stock benthos processor_error metric is NOT
-// bumped for this path; operators should alert on messages_errored.
-func (p *TagProcessor) batchFatalDrop(batchSize int) error {
+// batchFatalErr records a batch-fatal stage failure: bumps messages_errored
+// for the whole aborted batch and returns a wrapped error so the failure
+// propagates to benthos (logged, retried, processor_error). batchSize must
+// be captured BEFORE the failing processMessageBatchWithProgram call, which
+// returns (nil, err) on a per-message failure and leaves len(batch) == 0.
+func (p *TagProcessor) batchFatalErr(stage string, batchSize int, err error) error {
 	p.messagesErrored.Incr(int64(batchSize))
-	return nil
+	return fmt.Errorf("error in %s processing: %w", stage, err)
 }
 
 // processMessageBatchWithProgram processes a batch using a compiled program for Phase 2 optimization
