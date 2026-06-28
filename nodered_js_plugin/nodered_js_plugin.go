@@ -427,9 +427,7 @@ func messageFromReturnValue(v interface{}) (*service.Message, error) {
 	}
 	if meta, exists := returnedMsg["meta"].(map[string]interface{}); exists {
 		for k, val := range meta {
-			if str, ok := val.(string); ok {
-				newMsg.MetaSet(k, str)
-			}
+			newMsg.MetaSet(k, fmt.Sprintf("%v", val))
 		}
 	}
 	return newMsg, nil

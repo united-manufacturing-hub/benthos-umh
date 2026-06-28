@@ -636,12 +636,11 @@ nodered_js:
 		})
 
 		It("should fan out one UNS message per ERP record from an array payload end-to-end", func() {
-			// Capstone (R8): Sebastian's actual use case — an ERP API returns a
-			// JSON array of records and the nodered_js function maps each record
-			// to one UNS message, propagating the input's metadata to every
-			// child. This composes R1 (array fan-out) + R2 (nil-skip, latent
-			// here — no nil records) + the per-element payload/meta construction
-			// through the full service.NewStreamBuilder pipeline.
+			// A real ERP fan-out use case: an ERP API returns a JSON array of
+			// records and the nodered_js function maps each record to one UNS
+			// message, propagating the input's metadata to every child. This
+			// exercises the array fan-out, nil-skip, and per-element payload/meta
+			// construction through the full service.NewStreamBuilder pipeline.
 			builder := service.NewStreamBuilder()
 
 			var msgHandler service.MessageHandlerFunc
