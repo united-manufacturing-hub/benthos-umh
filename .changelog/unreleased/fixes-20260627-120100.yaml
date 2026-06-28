@@ -1,3 +1,3 @@
 kind: fixes
-body: "tag_processor messages_dropped counter now increments on drop returns (null, empty array, all-nil array), and tag_processor JS errors (condition and defaults/advanced stage) now increment messages_errored; nodered_js messages_dropped now also increments on empty/all-nil array returns (ENG-5240)"
+body: "tag_processor messages_dropped counter increments on drop returns (null, empty array, all-null array); tag_processor JavaScript errors increment messages_errored; Node-RED JavaScript processor messages_dropped counter increments on empty/all-null array returns (ENG-5240)"
 time: 2026-06-27T12:01:00+02:00

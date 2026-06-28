@@ -506,7 +506,7 @@ nodered_js:
 			}).Should(BeTrue(), "expected the batch-fatal error to reach the consumer message")
 
 			messagesMutex.Lock()
-			Expect(batchErr).To(MatchError("array elements must be message objects"))
+			Expect(batchErr.Error()).To(ContainSubstring("must be a message object"))
 			messagesMutex.Unlock()
 		})
 

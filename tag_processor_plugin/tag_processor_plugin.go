@@ -803,13 +803,13 @@ func (p *TagProcessor) executeCompiledProgram(vm *goja.Runtime, program *goja.Pr
 	switch v := result.Export().(type) {
 	case []interface{}:
 		messages := make([]map[string]interface{}, 0, len(v))
-		for _, msg := range v {
+		for i, msg := range v {
 			if msg == nil {
 				continue
 			}
 			msgMap, ok := msg.(map[string]interface{})
 			if !ok {
-				return nil, fmt.Errorf("array elements must be message objects")
+				return nil, fmt.Errorf("array element %d must be a message object, got %T", i, msg)
 			}
 			messages = append(messages, msgMap)
 		}
@@ -838,6 +838,7 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 	}
 
 	var resultBatch service.MessageBatch
+	droppedCount := 0
 
 	for _, msg := range batch {
 		// Use VM pool for consistent performance
@@ -867,19 +868,20 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 
 		// Handle message dropping: a nil return (null/undefined), an empty
 		// array, or an all-nil array all yield 0 outputs and count as one
-		// per-message-entering-stage drop.
+		// per-message-entering-stage drop. The bump is deferred to after the
+		// loop so a later message's batch-fatal error doesn't double-count
+		// these drops as both dropped AND errored (and compound on retry).
 		if len(messages) == 0 {
-			p.messagesDropped.Incr(1)
+			droppedCount++
 			p.putVM(vm)
 			continue
 		}
 
 		// Convert results back to Benthos messages
 		for _, resultMsg := range messages {
-			// NewMessage(nil) is safe: the air-gap wrapper restores input
-			// context onto outputs in production, so Copy()/WithContext() is a
-			// no-op (see CLAUDE.md "Output context is restored by the engine,
-			// not the plugin").
+			// NewMessage(nil) is safe: the engine's v2BatchedToV1Processor
+			// wrapper restores the input context onto outputs in production,
+			// so Copy()/WithContext() is a no-op.
 			newMsg := service.NewMessage(nil)
 			// Set metadata from the JS message
 			if meta, ok := resultMsg["meta"].(map[string]interface{}); ok {
@@ -899,6 +901,15 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 
 		// Return VM to pool after processing this message
 		p.putVM(vm)
+	}
+
+	// Bump messagesDropped once for all drops in this stage attempt. Deferred
+	// from the loop so a mid-loop batch-fatal error doesn't double-count drops
+	// as both dropped (here) and errored (batchFatalErr). On batch-fatal, the
+	// loop returns early via `return nil, err` and this bump is skipped; the
+	// caller's batchFatalErr bumps the full batch as errored instead.
+	if droppedCount > 0 {
+		p.messagesDropped.Incr(int64(droppedCount))
 	}
 
 	return resultBatch, nil
