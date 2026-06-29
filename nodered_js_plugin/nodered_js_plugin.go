@@ -474,14 +474,14 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 	droppedCount := 0
 
 	for _, msg := range batch {
-		u.messagesProcessed.Incr(1)
-
 		processedMsgs, dropped, err := u.processSingleMessage(ctx, msg)
 		if err != nil {
 			// Batch-fatal: bump messages_errored for the whole aborted batch
-			// (the remaining unprocessed messages + the erroring one). Drops
-			// from earlier in this loop are NOT bumped (deferred below) so
-			// they are not double-counted as both dropped and errored.
+			// (all batchSize messages, including any already iterated this
+			// attempt, which the engine re-marks as errored). messagesDropped
+			// and messagesProcessed are NOT bumped here (deferred below) so a
+			// mid-loop fatal does not double-count the same messages as both
+			// processed/dropped and errored.
 			u.messagesErrored.Incr(int64(batchSize))
 			return nil, err
 		}
@@ -499,6 +499,15 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 	if droppedCount > 0 {
 		u.messagesDropped.Incr(int64(droppedCount))
 	}
+
+	// messages_processed counts successfully produced outputs, bumped once
+	// after the loop so a mid-loop batch-fatal leaves it at 0 (the whole
+	// batch is errored, not processed; outputs from messages before the
+	// throw are discarded on abort). Matches tag_processor, whose processed
+	// bump sits in the construction stage that never runs when the program
+	// stage aborts the batch. Counts outputs (1 input -> N outputs = N) to
+	// match tag_processor's per-finalMsg bump.
+	u.messagesProcessed.Incr(int64(len(resultBatch)))
 
 	if len(resultBatch) == 0 {
 		return []service.MessageBatch{}, nil
