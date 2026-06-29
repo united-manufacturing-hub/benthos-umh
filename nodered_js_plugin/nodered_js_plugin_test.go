@@ -813,10 +813,100 @@ nodered_js:
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Verify no messages make it through
+			// The errored input is forwarded by the engine wrapper, marked with SetError
 			Consistently(func() int {
 				return len(messages)
-			}, "500ms").Should(Equal(0))
+			}, "500ms").Should(Equal(1))
+		})
+
+		It("should abort the batch and forward errored inputs when a mid-batch message throws", func() {
+			// A 3-message batch [good, bad, good] where "bad" throws. The
+			// batch-fatal path bumps messages_errored by batchSize (3),
+			// skips the deferred messagesDropped bump (no drops), and the
+			// engine wrapper forwards all 3 inputs marked with SetError.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    if (msg.payload === "throw") { throw new Error("boom"); }
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			Expect(builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			// Feed a multi-message batch: [good, bad, good].
+			msg0 := service.NewMessage(nil)
+			msg0.SetStructured("good1")
+			msg1 := service.NewMessage(nil)
+			msg1.SetStructured("throw")
+			msg2 := service.NewMessage(nil)
+			msg2.SetStructured("good2")
+			batch := service.MessageBatch{msg0, msg1, msg2}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// (a) All 3 inputs are forwarded to the consumer (the wrapper
+			// marks all with SetError).
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(3)))
+
+			// (b) messages_errored == 3 (batchSize).
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_errored"]
+			}, "500ms").Should(Equal(int64(3)))
+
+			// (c) messages_dropped == 0 (the error preempts the deferred
+			// drop bump).
+			Consistently(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "500ms").Should(Equal(int64(0)))
+
+			// Every forwarded input carries the batch error.
+			messagesMutex.Lock()
+			for _, m := range messages {
+				Expect(m.GetError()).NotTo(BeNil(), "expected every forwarded input to carry the batch error")
+			}
+			messagesMutex.Unlock()
 		})
 	})
 
@@ -1274,11 +1364,9 @@ nodered_js:
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Wait a bit to see if message gets processed (it shouldn't)
-			time.Sleep(100 * time.Millisecond)
-
-			// Verify no messages were processed due to the strict mode error
-			Expect(messages).To(BeEmpty())
+			// The errored input is forwarded by the engine wrapper, marked with SetError
+			Eventually(func() int { return len(messages) }, "500ms").Should(Equal(1))
+			Expect(messages[0].GetError()).NotTo(BeNil())
 		})
 
 		It("should handle concurrent processing safely", func() {

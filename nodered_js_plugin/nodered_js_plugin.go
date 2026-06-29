@@ -472,7 +472,8 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 	// Bump messagesDropped once for all genuine drops in this batch attempt.
 	// Deferred from the loop so a mid-loop batch-fatal error skips the bump
 	// (those messages are counted as errored by the batch-fatal path above,
-	// not as dropped, and the batch is retried).
+	// not as dropped, and the batch is forwarded with errors marked for
+	// downstream error handling).
 	if droppedCount > 0 {
 		u.messagesDropped.Incr(int64(droppedCount))
 	}
@@ -486,10 +487,14 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 
 // processSingleMessage processes a single message using a VM from the pool.
 // Returns (messages, wasDropped, err): wasDropped is true only for a genuine
-// drop (null/undefined/empty/all-nil array return from HandleExecutionResult),
-// not for pre-execution errors (which are swallowed and bump messagesErrored
-// per-message). err is non-nil only for batch-fatal HandleExecutionResult
-// errors (the caller bumps messagesErrored by batchSize).
+// drop (null/undefined/empty/all-nil array return from HandleExecutionResult).
+// err is non-nil for any batch-fatal error (JS execution failure, conversion
+// failure, or HandleExecutionResult validation error). The caller bumps
+// messagesErrored by batchSize on any err. This matches tag_processor's
+// JS-execution stage (processMessageBatchWithProgram), where stage errors
+// are batch-fatal. tag_processor additionally swallows
+// condition/validation/construction errors per-message, which nodered_js
+// has no equivalent of.
 func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *service.Message) ([]*service.Message, bool, error) {
 	vm := u.getVM()
 	defer u.putVM(vm)
@@ -497,9 +502,8 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 	// Convert message to JS object
 	jsMsg, err := ConvertMessageToJSObject(msg)
 	if err != nil {
-		u.messagesErrored.Incr(1)
 		u.logger.Errorf("%v\nOriginal message: %v", err, msg)
-		return nil, false, nil
+		return nil, false, err
 	}
 
 	// Add metadata to the message wrapper
@@ -508,25 +512,22 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 		meta[key] = value
 		return nil
 	}); err != nil {
-		u.messagesErrored.Incr(1)
 		u.logger.Errorf("Failed to walk message metadata: %v\nOriginal message: %v", err, msg)
-		return nil, false, nil
+		return nil, false, err
 	}
 	jsMsg["meta"] = meta
 
 	// Setup JS environment
 	if err = u.SetupJSEnvironment(ctx, vm, jsMsg); err != nil {
-		u.messagesErrored.Incr(1)
 		u.logger.Errorf("%v\nMessage content: %v", err, jsMsg)
-		return nil, false, nil
+		return nil, false, err
 	}
 
 	// Execute the compiled JavaScript program
 	result, err := vm.RunProgram(u.program)
 	if err != nil {
-		u.messagesErrored.Incr(1)
 		u.logJSError(err, jsMsg)
-		return nil, false, nil
+		return nil, false, err
 	}
 
 	// Handle the execution result
