@@ -132,6 +132,80 @@ tag_processor:
 			Expect(ok).To(BeTrue())
 		})
 
+		It("should not emit literal <nil> or Go-syntax garbage for nested-nil or non-scalar meta", func() {
+			// tag_processor's JS-return meta loop (processMessageBatchWithProgram)
+			// used fmt.Sprintf("%v") on every non-nil meta value, so a nested nil
+			// (meta:{sub:null}) or a non-scalar produced literal <nil> / Go-syntax
+			// garbage in Kafka headers. It must share nodered_js's SetMetaFromJS
+			// so non-scalars serialize as JSON.
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temp";
+    msg.meta.nested = {sub: null};
+    msg.meta.arr = [null, 1];
+    msg.meta.count = 42;
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage([]byte("23.5"))
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
+				return len(messages)
+			}).Should(Equal(1))
+
+			messagesMutex.Lock()
+			msg := messages[0]
+			messagesMutex.Unlock()
+
+			nested, exists := msg.MetaGet("nested")
+			Expect(exists).To(BeTrue())
+			Expect(nested).NotTo(ContainSubstring("<nil>"))
+			Expect(nested).To(Equal(`{"sub":null}`))
+
+			arr, exists := msg.MetaGet("arr")
+			Expect(exists).To(BeTrue())
+			Expect(arr).NotTo(ContainSubstring("<nil>"))
+			Expect(arr).To(Equal(`[null,1]`))
+
+			count, exists := msg.MetaGet("count")
+			Expect(exists).To(BeTrue())
+			Expect(count).To(Equal("42"))
+		})
+
 		It("should process conditions", func() {
 			builder := service.NewStreamBuilder()
 
