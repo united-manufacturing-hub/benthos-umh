@@ -901,6 +901,19 @@ nodered_js:
 				return counts["messages_dropped"]
 			}, "500ms").Should(Equal(int64(0)))
 
+			// (d) messages_processed == 0: the bump is deferred until after
+			// the loop, so a mid-batch fatal leaves it at 0 (the whole batch
+			// is counted as errored, not processed; outputs from messages
+			// before the throw are discarded on batch abort). Matches
+			// tag_processor, where the processed bump sits in the
+			// construction stage that never runs when the program stage
+			// aborts the batch.
+			Consistently(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_processed"]
+			}, "500ms").Should(Equal(int64(0)))
+
 			// Every forwarded input carries the batch error.
 			messagesMutex.Lock()
 			for _, m := range messages {
