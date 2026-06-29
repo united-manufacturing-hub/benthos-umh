@@ -382,7 +382,6 @@ func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*servic
 
 	exported := result.Export()
 
-	// Fan-out: an array of message objects produces one output per element.
 	if arr, ok := exported.([]interface{}); ok {
 		out := make([]*service.Message, 0, len(arr))
 		for i, el := range arr {
@@ -568,7 +567,6 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 		return nil, false, err
 	}
 
-	// A nil return with no error is a genuine drop (null/undefined/empty/all-nil).
 	if len(newMsgs) == 0 {
 		return nil, true, nil
 	}
