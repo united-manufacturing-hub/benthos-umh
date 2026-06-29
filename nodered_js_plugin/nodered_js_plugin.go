@@ -421,14 +421,29 @@ func messageFromReturnValue(v interface{}) (*service.Message, error) {
 		newMsg.SetStructured(payload)
 	}
 	if meta, exists := returnedMsg["meta"].(map[string]interface{}); exists {
-		for k, val := range meta {
-			if val == nil {
-				continue
-			}
+		SetMetaFromJS(newMsg, meta)
+	}
+	return newMsg, nil
+}
+
+// SetMetaFromJS transfers JavaScript-origin meta values onto a
+// service.Message, skipping nil top-level values. Map and slice values are
+// JSON-marshalled so nested nil leaves become valid JSON null instead of
+// Go-syntax "<nil>". All other values are stringified with fmt %v. It is
+// exported so tag_processor can reuse this logic.
+func SetMetaFromJS(newMsg *service.Message, meta map[string]interface{}) {
+	for k, val := range meta {
+		if val == nil {
+			continue
+		}
+		switch val.(type) {
+		case map[string]interface{}, []interface{}:
+			b, _ := json.Marshal(val)
+			newMsg.MetaSet(k, string(b))
+		default:
 			newMsg.MetaSet(k, fmt.Sprintf("%v", val))
 		}
 	}
-	return newMsg, nil
 }
 
 func FormatConsoleLogMsg(data []any) string {
