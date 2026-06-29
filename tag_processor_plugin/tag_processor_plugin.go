@@ -886,14 +886,11 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 			// wrapper restores the input context onto outputs in production,
 			// so Copy()/WithContext() is a no-op.
 			newMsg := service.NewMessage(nil)
-			// Set metadata from the JS message
+			// Set metadata from the JS message. Share nodered_js's SetMetaFromJS
+			// so non-scalar/nested-nil meta serializes as JSON instead of
+			// fmt.Sprintf("%v") Go-syntax (literal <nil> in Kafka headers).
 			if meta, ok := resultMsg["meta"].(map[string]interface{}); ok {
-				for k, v := range meta {
-					if v == nil {
-						continue
-					}
-					newMsg.MetaSet(k, fmt.Sprintf("%v", v))
-				}
+				nodered_js_plugin.SetMetaFromJS(newMsg, meta)
 			}
 			// Set payload
 			if payload, exists := resultMsg["payload"]; exists {
