@@ -297,7 +297,7 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 
 	// Process defaults with compiled program (Phase 2 optimization)
 	if p.defaultsProgram != nil {
-		batchSize := len(batch)
+		batchSize := nonErroredCount(batch)
 		var err error
 		batch, err = p.processMessageBatchWithProgram(ctx, batch, p.defaultsProgram, "defaults")
 		if err != nil {
@@ -337,7 +337,7 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 
 	// Process advanced processing with compiled program (Phase 2 optimization)
 	if p.advancedProgram != nil {
-		batchSize := len(batch)
+		batchSize := nonErroredCount(batch)
 		var err error
 		batch, err = p.processMessageBatchWithProgram(ctx, batch, p.advancedProgram, "advanced")
 		if err != nil {
@@ -853,6 +853,24 @@ func (p *TagProcessor) executeCompiledProgram(vm *goja.Runtime, program *goja.Pr
 func (p *TagProcessor) batchFatalErr(stage string, batchSize int, err error) error {
 	p.messagesErrored.Incr(int64(batchSize))
 	return fmt.Errorf("error in %s processing: %w", stage, err)
+}
+
+// nonErroredCount returns the number of messages in the batch not already
+// carrying an error. batchFatalErr bumps messages_errored by this (not
+// len(batch)) so messages already errored-and-forwarded by an earlier stage
+// (e.g. a condition) are not double-counted when a later stage aborts
+// batch-fatal.
+func nonErroredCount(batch service.MessageBatch) int {
+	n := 0
+	for _, msg := range batch {
+		if msg == nil {
+			continue
+		}
+		if msg.GetError() == nil {
+			n++
+		}
+	}
+	return n
 }
 
 // processMessageBatchWithProgram processes a batch using a compiled program for Phase 2 optimization
