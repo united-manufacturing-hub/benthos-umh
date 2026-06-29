@@ -779,6 +779,7 @@ nodered_js:
 			builder := service.NewStreamBuilder()
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			var msgHandler service.MessageHandlerFunc
 			msgHandler, err := builder.AddProducerFunc()
 			Expect(err).NotTo(HaveOccurred())
@@ -793,7 +794,9 @@ nodered_js:
 			Expect(err).NotTo(HaveOccurred())
 
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -813,10 +816,16 @@ nodered_js:
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
 
-			// The errored input is forwarded by the engine wrapper, marked with SetError
-			Consistently(func() int {
+			// The errored input is forwarded by the engine wrapper, marked
+			// with SetError.
+			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
-			}, "500ms").Should(Equal(1))
+			}, "2s").Should(Equal(1))
+			messagesMutex.Lock()
+			Expect(messages[0].GetError()).NotTo(Succeed(), "expected the forwarded input to carry the error")
+			messagesMutex.Unlock()
 		})
 
 		It("should abort the batch and forward errored inputs when a mid-batch message throws", func() {
@@ -1594,8 +1603,11 @@ nodered_js:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1617,8 +1629,14 @@ nodered_js:
 			Expect(err).NotTo(HaveOccurred())
 
 			// The errored input is forwarded by the engine wrapper, marked with SetError
-			Eventually(func() int { return len(messages) }, "500ms").Should(Equal(1))
+			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
+				return len(messages)
+			}, "2s").Should(Equal(1))
+			messagesMutex.Lock()
 			Expect(messages[0].GetError()).NotTo(Succeed())
+			messagesMutex.Unlock()
 		})
 
 		It("should handle concurrent processing safely", func() {
