@@ -310,10 +310,22 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 		var newBatch service.MessageBatch
 
 		for _, msg := range batch {
+			// A message already errored by an earlier condition skips the
+			// remaining conditions and is forwarded unchanged.
+			if msg.GetError() != nil {
+				newBatch = append(newBatch, msg)
+				continue
+			}
 			processedMsgs, err := p.processConditionForMessageWithProgram(ctx, i, msg)
 			if err != nil {
+				// Forward the errored message instead of swallowing it. The
+				// GetError pass-through checks in later stages (advanced,
+				// construction) keep it unchanged so downstream error
+				// handling/DLQ can act on the original message.
+				msg.SetError(err)
 				p.messagesErrored.Incr(1)
 				p.logError(err, "condition evaluation", msg)
+				newBatch = append(newBatch, msg)
 				continue
 			}
 			// Append all returned messages (could be 0, 1, or multiple)
@@ -337,6 +349,15 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 	var resultBatch service.MessageBatch
 	for _, msg := range batch {
 		if msg == nil {
+			continue
+		}
+
+		// An errored message (e.g. from a condition) is forwarded as-is,
+		// skipping validation and construction so it reaches the consumer
+		// marked errored and unchanged (its original payload preserved for
+		// downstream error handling/DLQ).
+		if msg.GetError() != nil {
+			resultBatch = append(resultBatch, msg)
 			continue
 		}
 
@@ -844,6 +865,12 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 	droppedCount := 0
 
 	for _, msg := range batch {
+		// An errored message (e.g. from a condition) skips this stage and is
+		// forwarded unchanged, matching the batch-fatal path's semantics.
+		if msg.GetError() != nil {
+			resultBatch = append(resultBatch, msg)
+			continue
+		}
 		// Use VM pool for consistent performance
 		vm := p.getVM()
 

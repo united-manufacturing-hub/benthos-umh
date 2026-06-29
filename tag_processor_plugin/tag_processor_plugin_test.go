@@ -206,6 +206,128 @@ tag_processor:
 			Expect(count).To(Equal("42"))
 		})
 
+		It("should forward a condition-error message with SetError, skipping later stages", func() {
+			// A condition `then` that throws must not swallow the message
+			// (silent drop, no forward, no retry). It is forwarded to the
+			// consumer with SetError, UNCHANGED by later stages (remaining
+			// conditions, advanced processing, construction), so downstream
+			// error handling/DLQ can act on the original message. This
+			// matches the batch-fatal path's semantics at per-message
+			// granularity.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			Expect(builder.AddProcessorYAML(strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temp";
+    return msg;
+  conditions:
+    - if: msg.payload === "throw"
+      then: |
+        throw new Error("cond boom");
+    - if: true
+      then: |
+        msg.meta.cond1 = "ran";
+        return msg;
+  advancedProcessing: |
+    msg.payload = "advanced-" + msg.payload;
+    return msg;
+`))).To(Succeed())
+
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			Expect(builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			msgA := service.NewMessage([]byte("keep"))
+			msgB := service.NewMessage([]byte("throw"))
+			batch := service.MessageBatch{msgA, msgB}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// Both messages reach the consumer: the good one transformed,
+			// the condition-error one forwarded with SetError.
+			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
+				return len(messages)
+			}, "2s").Should(Equal(2))
+
+			messagesMutex.Lock()
+			var errored, ok *service.Message
+			for _, m := range messages {
+				if m.GetError() != nil {
+					errored = m
+				} else {
+					ok = m
+				}
+			}
+			messagesMutex.Unlock()
+
+			// msgA: passed both conditions + advanced, payload value-wrapped
+			// by construction into {value, timestamp_ms}.
+			Expect(ok).NotTo(BeNil())
+			okStruct, err := ok.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(okStruct).To(BeAssignableToTypeOf(map[string]interface{}{}))
+			Expect(okStruct.(map[string]interface{})["value"]).To(Equal("advanced-keep"))
+			cond1, exists := ok.MetaGet("cond1")
+			Expect(exists).To(BeTrue())
+			Expect(cond1).To(Equal("ran"))
+
+			// msgB: condition 0 threw. Forwarded with SetError, UNCHANGED by
+			// condition 1 (no cond1 meta), advanced (payload still "throw",
+			// not "advanced-throw"), and construction (payload not value-
+			// wrapped into a JSON object).
+			Expect(errored).NotTo(BeNil())
+			Expect(errored.GetError()).NotTo(Succeed())
+			// Payload is the original "throw" (a structured string set by
+			// defaults): NOT "advanced-throw" (advanced skipped) and NOT a
+			// {value, timestamp_ms} object (construction skipped).
+			errStruct, e := errored.AsStructured()
+			Expect(e).NotTo(HaveOccurred())
+			Expect(errStruct).To(Equal("throw"))
+			_, hasCond1 := errored.MetaGet("cond1")
+			Expect(hasCond1).To(BeFalse(), "errored message must skip later conditions")
+
+			// messages_errored == 1 (one condition error, per-message).
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_errored"]
+			}, "2s").Should(Equal(int64(1)))
+		})
+
 		It("should process conditions", func() {
 			builder := service.NewStreamBuilder()
 
@@ -2829,10 +2951,9 @@ tag_processor:
 		})
 
 		It("should bump messagesErrored when a condition then-action throws a JS error", func() {
-			// A condition whose then action throws a JS error is logged and
-			// continued without incrementing messages_errored, so the error
-			// is not visible in metrics. The counter bump makes it observable
-			// while preserving the per-message (non-batch-fatal) continue.
+			// A condition whose then action throws a JS error is forwarded to
+			// the consumer with SetError (not swallowed), so downstream error
+			// handling/DLQ can act. messages_errored bumps to make it visible.
 			env := service.NewEnvironment()
 
 			var mu sync.Mutex
@@ -2887,12 +3008,11 @@ tag_processor:
 				return counts["messages_errored"]
 			}, "5s", "50ms").Should(Equal(int64(1)))
 
-			// The message was swallowed via the conditions-loop continue
-			// (not batch-fatal), so nothing leaked to the consumer and no
-			// message was processed or dropped.
-			Consistently(func() int64 {
+			// The errored message is forwarded to the consumer with SetError
+			// (not swallowed), so downstream error handling can act.
+			Eventually(func() int64 {
 				return atomic.LoadInt64(&consumerCount)
-			}, "500ms").Should(Equal(int64(0)))
+			}, "2s").Should(Equal(int64(1)))
 			mu.Lock()
 			Expect(counts["messages_dropped"]).To(Equal(int64(0)))
 			Expect(counts["messages_processed"]).To(Equal(int64(0)))
@@ -2956,9 +3076,11 @@ tag_processor:
 				return counts["messages_errored"]
 			}, "5s", "50ms").Should(Equal(int64(1)))
 
-			Consistently(func() int64 {
+			// The errored message is forwarded to the consumer with SetError
+			// (not swallowed), so downstream error handling can act.
+			Eventually(func() int64 {
 				return atomic.LoadInt64(&consumerCount)
-			}, "500ms").Should(Equal(int64(0)))
+			}, "2s").Should(Equal(int64(1)))
 			mu.Lock()
 			Expect(counts["messages_dropped"]).To(Equal(int64(0)))
 			Expect(counts["messages_processed"]).To(Equal(int64(0)))
