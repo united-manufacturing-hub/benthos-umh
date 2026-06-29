@@ -22,6 +22,8 @@ import (
 	"maps"
 	"math"
 	"math/big"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -635,12 +637,15 @@ return msg;`)).
 			Description("Cache backend. 'memory' is in-process and lost on restart. 'persistent' writes to a file on disk and survives restarts.").
 			Default("memory").
 			Examples("memory", "persistent"),
+		service.NewStringField("name").
+			Description("Sharing identifier. Processors with the same backend and name share one cache instance in this benthos process — keys written by one are visible to the others. The default 'shared' means two nodered_js processors with no explicit cache config will already share state; set a different value to isolate groups, or use unique names if you want per-processor caches.").
+			Default("shared"),
 		service.NewStringField("path").
-			Description("File path for the 'persistent' backend. Relative paths resolve against the working directory. Leading '~' expands to the home directory.").
+			Description("File path for the 'persistent' backend. Used by the first processor that opens the cache under a given name; later processors attaching by name may omit it. Relative paths resolve against the directory where the benthos process was started (under UMH Core: the S6 service directory). Use an absolute path to avoid ambiguity. Leading '~' expands to the home directory.").
 			Default("./cache.db"),
 		service.NewDurationField("ttl").
-			Description("Time-to-live for cached entries. After this duration without an overwrite, the entry is removed. Set to 0 to disable expiration.").
-			Default("1h"),
+			Description("Time-to-live for cached entries. 0 (default) keeps entries until explicit delete or restart. Set a positive duration (e.g. '1h') to auto-expire entries N after the last write.").
+			Default("0s"),
 	).
 		Description("Cache configuration for state across messages.").
 		Default(map[string]any{}).
@@ -657,6 +662,11 @@ func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (
 		return nil, fmt.Errorf("parse cache.backend: %w", err)
 	}
 
+	cacheName, err := conf.FieldString("cache", "name")
+	if err != nil {
+		return nil, fmt.Errorf("parse cache.name: %w", err)
+	}
+
 	path, err := conf.FieldString("cache", "path")
 	if err != nil {
 		return nil, fmt.Errorf("parse cache.path: %w", err)
@@ -667,17 +677,9 @@ func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (
 		return nil, fmt.Errorf("parse cache.ttl: %w", err)
 	}
 
-	var store cache.Cache
-	switch backend {
-	case "memory":
-		store = cache.NewMemoryStore(ttl)
-	case "persistent":
-		store, err = cache.NewBboltStore(path, ttl)
-		if err != nil {
-			return nil, fmt.Errorf("open persistent cache: %w", err)
-		}
-	default:
-		return nil, fmt.Errorf("unsupported cache.backend %q (want 'memory' or 'persistent')", backend)
+	store, err := openCacheStore(backend, cacheName, path, ttl)
+	if err != nil {
+		return nil, err
 	}
 
 	wrappedCode := fmt.Sprintf(`
@@ -693,6 +695,50 @@ func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (
 		return nil, err
 	}
 	return processor, nil
+}
+
+func openCacheStore(backend string, name string, path string, ttl time.Duration) (cache.Cache, error) {
+	switch backend {
+	case "memory":
+		if name == "" {
+			return cache.NewMemoryStore(ttl), nil
+		}
+		return cache.Acquire("mem:"+name, func() (cache.Cache, error) {
+			return cache.NewMemoryStore(ttl), nil
+		})
+	case "persistent":
+		var absPath string
+		if path != "" {
+			expanded := path
+			if strings.HasPrefix(expanded, "~") {
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return nil, fmt.Errorf("expand cache.path %q: %w", path, err)
+				}
+				expanded = filepath.Join(home, expanded[1:])
+			}
+			abs, err := filepath.Abs(expanded)
+			if err != nil {
+				return nil, fmt.Errorf("resolve cache.path %q: %w", path, err)
+			}
+			absPath = abs
+		}
+		key := "bbolt:name:" + name
+		if name == "" {
+			if absPath == "" {
+				return nil, fmt.Errorf("cache.path is required when cache.name is empty")
+			}
+			key = "bbolt:path:" + absPath
+		}
+		return cache.Acquire(key, func() (cache.Cache, error) {
+			if absPath == "" {
+				return nil, fmt.Errorf("cache %q has not been opened yet; the first processor that uses this name must define cache.path", name)
+			}
+			return cache.NewBboltStore(absPath, ttl)
+		})
+	default:
+		return nil, fmt.Errorf("unsupported cache.backend %q (want 'memory' or 'persistent')", backend)
+	}
 }
 
 func init() {

@@ -52,9 +52,44 @@ nodered_js:
     ...
   cache:
     backend: persistent
-    path: ./cache.db   # "~" expands to home; relative paths use working dir
-    ttl: 1h            # entry lifetime; 0 disables expiration
+    name: shared       # sharing identifier (default: "shared"); see "Sharing across processors" below
+    path: ./cache.db   # "~" expands to home; relative paths resolve from the benthos process start directory (under UMH Core: the S6 service dir). Prefer absolute paths.
+    ttl: 0s            # entry lifetime; 0 (default) = no expiration. Set e.g. "1h" to auto-expire.
 ```
+
+### Sharing across processors
+
+Two `nodered_js` processors with the same `backend` and `name` share one cache instance within the same benthos process. Keys written by one are visible to the others. The default `name` is `"shared"` — so two processors with no explicit cache config already share state out of the box.
+
+```yaml
+pipeline:
+  processors:
+    - nodered_js:
+        code: |
+          cache.update("count", function(old, exists) {
+            return (exists ? old : 0) + 1;
+          });
+          return msg;
+        # implicit: backend=memory, name=shared
+    - nodered_js:
+        code: |
+          msg.payload.count = cache.get("count");
+          return msg;
+        # same defaults (name=shared) → same cache instance → sees "count" from above
+```
+
+For persistent caches, only the **first** processor needs to define `path`; later processors attaching to the same `name` may omit it:
+
+```yaml
+- nodered_js:
+    cache: { backend: persistent, name: state, path: /var/cache/umh.db }
+- nodered_js:
+    cache: { backend: persistent, name: state }   # attaches to the same store
+```
+
+Isolate groups by giving them different names. For a per-processor cache, set `name: ""` (empty).
+
+Cross-process sharing (two separate benthos PIDs on the same host) is **not** supported — bbolt's file lock blocks the second open. Use an external KV store (Redis, etc.) for that.
 
 ```javascript
 cache.set(key, value)            // Store a value under key (string)
