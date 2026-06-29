@@ -467,46 +467,48 @@ func FormatConsoleLogMsg(data []any) string {
 }
 
 // ProcessBatch applies the JavaScript code to each message in the batch.
+//
+// Per-message errors (a JS throw, a non-object return, a bad array element,
+// or an infrastructural failure like byte conversion or VM setup) are
+// forwarded, not retried: the input is marked with SetError and sent on so
+// the engine logs it and the bridge goes degraded (the UMH dead-letter
+// path), and the rest of the batch continues. A poison message must not
+// stall the partition with an endless retry. A deliberate drop (returning
+// null/undefined/empty/all-nil array) is not an error: it produces no output
+// and bumps messages_dropped.
 func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	var resultBatch service.MessageBatch
-	batchSize := len(batch)
 	droppedCount := 0
+	erroredCount := 0
+	processedCount := 0
 
 	for _, msg := range batch {
 		processedMsgs, dropped, err := u.processSingleMessage(ctx, msg)
 		if err != nil {
-			// Batch-fatal: bump messages_errored for the whole aborted batch
-			// (all batchSize messages, including any already iterated this
-			// attempt, which the engine re-marks as errored). messagesDropped
-			// and messagesProcessed are NOT bumped here (deferred below) so a
-			// mid-loop fatal does not double-count the same messages as both
-			// processed/dropped and errored.
-			u.messagesErrored.Incr(int64(batchSize))
-			return nil, err
+			// Forward-on-error: mark this input and continue the batch. The
+			// engine logs the error and the bridge goes degraded (the UMH
+			// dead-letter path); the offset advances so a poison message
+			// cannot stall the partition.
+			msg.SetError(err)
+			erroredCount++
+			resultBatch = append(resultBatch, msg)
+			continue
 		}
 		if dropped {
 			droppedCount++
+			continue
 		}
 		resultBatch = append(resultBatch, processedMsgs...)
+		processedCount += len(processedMsgs)
 	}
 
-	// Bump messagesDropped once for all genuine drops in this batch attempt.
-	// Deferred from the loop so a mid-loop batch-fatal error skips the bump
-	// (those messages are counted as errored by the batch-fatal path above,
-	// not as dropped, and the batch is forwarded with errors marked for
-	// downstream error handling).
 	if droppedCount > 0 {
 		u.messagesDropped.Incr(int64(droppedCount))
 	}
-
-	// messages_processed counts successfully produced outputs, bumped once
-	// after the loop so a mid-loop batch-fatal leaves it at 0 (the whole
-	// batch is errored, not processed; outputs from messages before the
-	// throw are discarded on abort). Matches tag_processor, whose processed
-	// bump sits in the construction stage that never runs when the program
-	// stage aborts the batch. Counts outputs (1 input -> N outputs = N) to
-	// match tag_processor's per-finalMsg bump.
-	u.messagesProcessed.Incr(int64(len(resultBatch)))
+	if erroredCount > 0 {
+		u.messagesErrored.Incr(int64(erroredCount))
+	}
+	u.messagesProcessed.Incr(int64(processedCount))
 
 	if len(resultBatch) == 0 {
 		return []service.MessageBatch{}, nil
@@ -517,14 +519,10 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 
 // processSingleMessage processes a single message using a VM from the pool.
 // Returns (messages, wasDropped, err): wasDropped is true only for a genuine
-// drop (null/undefined/empty/all-nil array return from HandleExecutionResult).
-// err is non-nil for any batch-fatal error (JS execution failure, conversion
-// failure, or HandleExecutionResult validation error). The caller bumps
-// messagesErrored by batchSize on any err. This matches tag_processor's
-// JS-execution stage (processMessageBatchWithProgram), where stage errors
-// are batch-fatal. tag_processor additionally swallows
-// condition/validation/construction errors per-message, which nodered_js
-// has no equivalent of.
+// drop (null/undefined/empty/all-nil array return). err is non-nil for any
+// per-message failure (JS throw, byte conversion, VM setup, or a non-object
+// return). The caller forwards the errored input with SetError and continues
+// the batch (forward-on-error, not batch-fatal).
 func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *service.Message) ([]*service.Message, bool, error) {
 	vm := u.getVM()
 	defer u.putVM(vm)
