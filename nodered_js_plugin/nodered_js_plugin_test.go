@@ -1015,9 +1015,79 @@ nodered_js:
 
 			// The one forwarded message carries the error.
 			messagesMutex.Lock()
-			Expect(len(messages)).To(Equal(1))
+			Expect(messages).To(HaveLen(1))
 			Expect(messages[0].GetError()).NotTo(Succeed(), "expected the forwarded message to carry the error")
 			messagesMutex.Unlock()
+		})
+
+		It("should bump messages_processed by the output count for a fan-out return", func() {
+			// 1 input -> 2 outputs (array fan-out). messages_processed counts
+			// successfully produced OUTPUTS, so it must be 2, not 1.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    return [
+      {payload: {value: 1}, meta: {tag_name: "a"}},
+      {payload: {value: 2}, meta: {tag_name: "b"}}
+    ];
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			batch := service.MessageBatch{testMsg}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// 2 outputs reach the consumer.
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "2s").Should(Equal(int64(2)))
+
+			// messages_processed == 2 (output count), not 1 (input count).
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_processed"]
+			}, "2s").Should(Equal(int64(2)))
+
+			// No drops, no errors.
+			mu.Lock()
+			Expect(counts["messages_dropped"]).To(Equal(int64(0)))
+			Expect(counts["messages_errored"]).To(Equal(int64(0)))
+			mu.Unlock()
 		})
 	})
 
