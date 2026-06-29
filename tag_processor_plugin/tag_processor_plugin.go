@@ -496,6 +496,9 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 
 	// Copy all metadata to the new message
 	err := msg.MetaWalkMut(func(key string, value any) error {
+		if value == nil {
+			return nil
+		}
 		if str, ok := value.(string); ok {
 			newMsg.MetaSet(key, str)
 		} else if stringer, ok := value.(fmt.Stringer); ok {
@@ -886,6 +889,9 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 			// Set metadata from the JS message
 			if meta, ok := resultMsg["meta"].(map[string]interface{}); ok {
 				for k, v := range meta {
+					if v == nil {
+						continue
+					}
 					newMsg.MetaSet(k, fmt.Sprintf("%v", v))
 				}
 			}
