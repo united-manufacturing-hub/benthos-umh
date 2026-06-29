@@ -427,7 +427,7 @@ func messageFromReturnValue(v interface{}) (*service.Message, error) {
 
 // SetMetaFromJS transfers JavaScript-origin meta values onto a
 // service.Message, skipping nil top-level values. Map and slice values are
-// JSON-marshalled so nested nil leaves become valid JSON null instead of
+// JSON-marshaled so nested nil leaves become valid JSON null instead of
 // Go-syntax "<nil>". All other values are stringified with fmt %v. It is
 // exported so tag_processor can reuse this logic.
 func SetMetaFromJS(newMsg *service.Message, meta map[string]interface{}) {

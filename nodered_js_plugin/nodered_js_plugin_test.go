@@ -1386,7 +1386,6 @@ nodered_js:
 			Expect(exists).To(BeTrue())
 			Expect(arr).NotTo(BeEmpty(), "Infinity nested in a slice meta must not produce an empty header")
 		})
-
 	})
 
 	Context("Performance testing", func() {
