@@ -1126,6 +1126,87 @@ nodered_js:
 			Expect(exists).To(BeTrue())
 			Expect(original).To(Equal("value"))
 		})
+
+		It("should not emit literal <nil> or Go-syntax garbage for nested-nil or non-scalar meta values", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    msg.meta = {nested:{sub:null}, arr:[null,1], count:42, flag:true, name:"x"};
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("test")
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
+				return len(messages)
+			}).Should(Equal(1))
+
+			messagesMutex.Lock()
+			msg := messages[0]
+			messagesMutex.Unlock()
+
+			// (1) nested nil must not produce literal <nil> in the header value.
+			nested, exists := msg.MetaGet("nested")
+			Expect(exists).To(BeTrue())
+			Expect(nested).NotTo(ContainSubstring("<nil>"))
+
+			// (2) nil-in-slice must not produce literal <nil> in the header value.
+			arr, exists := msg.MetaGet("arr")
+			Expect(exists).To(BeTrue())
+			Expect(arr).NotTo(ContainSubstring("<nil>"))
+
+			// (3) number must be stringified (not skipped, not JSON-quoted).
+			count, exists := msg.MetaGet("count")
+			Expect(exists).To(BeTrue())
+			Expect(count).To(Equal("42"))
+
+			// (4) bool must be stringified via strconv, not Go-syntax.
+			flag, exists := msg.MetaGet("flag")
+			Expect(exists).To(BeTrue())
+			Expect(flag).To(Equal("true"))
+
+			// (5) string must pass through unchanged (no JSON quotes).
+			name, exists := msg.MetaGet("name")
+			Expect(exists).To(BeTrue())
+			Expect(name).To(Equal("x"))
+
+			// (6) non-scalar meta must be valid JSON, so nested nil becomes null.
+			Expect(nested).To(Equal(`{"sub":null}`))
+			Expect(arr).To(Equal(`[null,1]`))
+		})
+
 	})
 
 	Context("Performance testing", func() {
