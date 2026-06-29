@@ -50,7 +50,7 @@ jobs:
       gomod: ${{ steps.filter.outputs.gomod }}
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - name: Check if PLC tests should run
         id: plc-check
         run: echo "test_plc=${{ github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.base_ref == 'main') }}" >> "$GITHUB_OUTPUT"
@@ -116,7 +116,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - name: FOSSA Analyze
         uses: fossas/fossa-action@ff70fe9fe17cbd2040648f1c45e8ec4e4884dcf3 # v1
         with:
@@ -135,7 +135,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - name: Install license-eye
         run: make install-license-eye
       - name: License Eye Header
@@ -147,7 +147,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Cache golangci-lint
