@@ -904,7 +904,7 @@ nodered_js:
 			// Every forwarded input carries the batch error.
 			messagesMutex.Lock()
 			for _, m := range messages {
-				Expect(m.GetError()).NotTo(BeNil(), "expected every forwarded input to carry the batch error")
+				Expect(m.GetError()).NotTo(Succeed(), "expected every forwarded input to carry the batch error")
 			}
 			messagesMutex.Unlock()
 		})
@@ -1366,7 +1366,7 @@ nodered_js:
 
 			// The errored input is forwarded by the engine wrapper, marked with SetError
 			Eventually(func() int { return len(messages) }, "500ms").Should(Equal(1))
-			Expect(messages[0].GetError()).NotTo(BeNil())
+			Expect(messages[0].GetError()).NotTo(Succeed())
 		})
 
 		It("should handle concurrent processing safely", func() {
