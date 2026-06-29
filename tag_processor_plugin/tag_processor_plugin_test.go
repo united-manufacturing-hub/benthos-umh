@@ -3326,6 +3326,88 @@ tag_processor:
 			mu.Unlock()
 		})
 
+		It("should not double-count messages_errored when a condition errors and advanced then aborts batch-fatal", func() {
+			// [a, b, c]: condition throws on b (forwarded with SetError,
+			// messages_errored+1), then advanced throws on c (batch-fatal).
+			// advanced's batchFatalErr must bump only the non-errored
+			// messages (a and c), not the already-counted b, so
+			// messages_errored == 3 (distinct), not 4.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			Expect(builder.AddProcessorYAML(strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temp";
+    return msg;
+  conditions:
+    - if: msg.payload === "b"
+      then: |
+        throw new Error("cond boom");
+  advancedProcessing: |
+    if (msg.payload === "c") { throw new Error("adv boom"); }
+    return msg;
+`))).To(Succeed())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			msgA := service.NewMessage([]byte("a"))
+			msgB := service.NewMessage([]byte("b"))
+			msgC := service.NewMessage([]byte("c"))
+			batch := service.MessageBatch{msgA, msgB, msgC}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// All 3 original inputs are forwarded (engine marks them on the
+			// advanced batch-fatal).
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "2s").Should(Equal(int64(3)))
+
+			// messages_errored == 3 (1 from the condition + 2 from advanced's
+			// non-errored-only bump), NOT 4: b is not double-counted.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_errored"]
+			}, "2s").Should(Equal(int64(3)))
+
+			// No drops, no successful outputs (construction never ran).
+			mu.Lock()
+			Expect(counts["messages_dropped"]).To(Equal(int64(0)))
+			Expect(counts["messages_processed"]).To(Equal(int64(0)))
+			mu.Unlock()
+		})
+
 		It("should bump messagesErrored by the batch size when a defaults JS error aborts a multi-message batch", func() {
 			// processMessageBatchWithProgram aborts the whole batch on the
 			// first per-message JS failure, so every message in the batch is
