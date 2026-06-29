@@ -1,0 +1,3 @@
+kind: fixes
+body: A Node-RED JavaScript processor function that throws now fails the whole batch, which is forwarded with errors marked for downstream retry or dead-letter handling, instead of silently dropping only the offending message (ENG-5240)
+time: 2026-06-27T12:02:00+02:00
