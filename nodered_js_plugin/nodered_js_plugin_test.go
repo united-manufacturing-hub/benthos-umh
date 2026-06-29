@@ -1207,6 +1207,69 @@ nodered_js:
 			Expect(arr).To(Equal(`[null,1]`))
 		})
 
+		It("should not emit an empty header when a non-scalar meta value contains NaN or Infinity", func() {
+			// json.Marshal errors on NaN/+Inf nested inside a map or slice; the
+			// helper must fall back to a non-empty value rather than writing an
+			// empty Kafka header (which is indistinguishable from a user setting
+			// the meta to "" and is silent data corruption).
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    msg.meta = {x: 0/0, arr: [1/0]};
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("test")
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
+				return len(messages)
+			}).Should(Equal(1))
+
+			messagesMutex.Lock()
+			msg := messages[0]
+			messagesMutex.Unlock()
+
+			x, exists := msg.MetaGet("x")
+			Expect(exists).To(BeTrue())
+			Expect(x).NotTo(BeEmpty(), "NaN nested in a map meta must not produce an empty header")
+
+			arr, exists := msg.MetaGet("arr")
+			Expect(exists).To(BeTrue())
+			Expect(arr).NotTo(BeEmpty(), "Infinity nested in a slice meta must not produce an empty header")
+		})
+
 	})
 
 	Context("Performance testing", func() {
