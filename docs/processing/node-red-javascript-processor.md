@@ -331,7 +331,7 @@ Output: Two messages, `{id: 1, temp: 22}` and `{id: 2, temp: 23}`, each carrying
 
 This is the typical pattern for read bridges that fetch a JSON array from an API (for example, an ERP system) and need one UNS message per record. Returning `null` or `undefined` drops the input (no outputs); returning an empty array `[]` or an all-`null` array `[null, null]` also drops the input and counts as a single drop in the `messages_dropped` metric.
 
-If the function throws an exception (or returns a value that is not a message object or `null`), the entire batch fails: benthos forwards the batch's input messages marked with the error so downstream retry or dead-letter handling can act on them, and the other messages in the batch do not flow through as successful outputs. Returning `null` or `undefined` is a normal drop, not an error.
+If the function throws an exception (or returns a value that is not a message object or `null`), that message is forwarded marked with the error and the rest of the batch continues to flow through normally; the bridge goes degraded so the operator can see the failure. Returning `null` or `undefined` is a normal drop, not an error.
 
 **Performance Comparison**
 

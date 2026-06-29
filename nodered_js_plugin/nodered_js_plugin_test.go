@@ -828,11 +828,11 @@ nodered_js:
 			messagesMutex.Unlock()
 		})
 
-		It("should abort the batch and forward errored inputs when a mid-batch message throws", func() {
+		It("should forward the errored message and continue the batch when a mid-batch message throws", func() {
 			// A 3-message batch [good, bad, good] where "bad" throws. The
-			// batch-fatal path bumps messages_errored by batchSize (3),
-			// skips the deferred messagesDropped bump (no drops), and the
-			// engine wrapper forwards all 3 inputs marked with SetError.
+			// throwing message is forwarded with SetError (the engine logs
+			// it, the bridge goes degraded) and the two good messages flow
+			// through as normal outputs; the batch is not aborted.
 			env := service.NewEnvironment()
 
 			var mu sync.Mutex
@@ -889,54 +889,50 @@ nodered_js:
 			batch := service.MessageBatch{msg0, msg1, msg2}
 			Expect(batchHandler(ctx, batch)).To(Succeed())
 
-			// (a) All 3 inputs are forwarded to the consumer (the wrapper
-			// marks all with SetError).
+			// (a) All 3 reach the consumer: 2 good outputs + 1 errored input.
 			Eventually(func() int64 {
 				return atomic.LoadInt64(&consumerCount)
-			}, "500ms").Should(Equal(int64(3)))
+			}, "2s").Should(Equal(int64(3)))
 
-			// (b) messages_errored == 3 (batchSize).
+			// (b) messages_errored == 1 (only the throwing message).
 			Eventually(func() int64 {
 				mu.Lock()
 				defer mu.Unlock()
 				return counts["messages_errored"]
-			}, "500ms").Should(Equal(int64(3)))
+			}, "2s").Should(Equal(int64(1)))
 
-			// (c) messages_dropped == 0 (the error preempts the deferred
-			// drop bump).
+			// (c) messages_dropped == 0.
 			Consistently(func() int64 {
 				mu.Lock()
 				defer mu.Unlock()
 				return counts["messages_dropped"]
 			}, "500ms").Should(Equal(int64(0)))
 
-			// (d) messages_processed == 0: the bump is deferred until after
-			// the loop, so a mid-batch fatal leaves it at 0 (the whole batch
-			// is counted as errored, not processed; outputs from messages
-			// before the throw are discarded on batch abort). Matches
-			// tag_processor, where the processed bump sits in the
-			// construction stage that never runs when the program stage
-			// aborts the batch.
+			// (d) messages_processed == 2 (the two good outputs).
 			Consistently(func() int64 {
 				mu.Lock()
 				defer mu.Unlock()
 				return counts["messages_processed"]
-			}, "500ms").Should(Equal(int64(0)))
+			}, "500ms").Should(Equal(int64(2)))
 
-			// Every forwarded input carries the batch error.
+			// (e) Exactly one message carries the error (the throw); the
+			// two good messages flow through clean.
 			messagesMutex.Lock()
+			errored := 0
 			for _, m := range messages {
-				Expect(m.GetError()).NotTo(Succeed(), "expected every forwarded input to carry the batch error")
+				if m.GetError() != nil {
+					errored++
+				}
 			}
+			Expect(errored).To(Equal(1), "exactly one forwarded message should carry the error")
 			messagesMutex.Unlock()
 		})
 
-		It("should reclassify an earlier drop as errored when a later message throws (deferred drop bump)", func() {
-			// [drop, throw]: msg0 returns null (dropped, droppedCount=1),
-			// msg1 throws (batch-fatal). The deferred messagesDropped bump
-			// is skipped by the early return, so the drop is counted as
-			// errored (part of the batchSize bump), not dropped. Pins the
-			// subtlest counter-ownership invariant (commented in ProcessBatch).
+		It("should drop a null-returning message and independently forward a later throwing one", func() {
+			// [drop, throw]: msg0 returns null (a genuine drop, not forwarded)
+			// and msg1 throws (forwarded with SetError). The two outcomes are
+			// independent per message: the drop counts as dropped, the throw
+			// as errored, and only the throwing message reaches the consumer.
 			env := service.NewEnvironment()
 
 			var mu sync.Mutex
@@ -991,25 +987,24 @@ nodered_js:
 			batch := service.MessageBatch{msg0, msg1}
 			Expect(batchHandler(ctx, batch)).To(Succeed())
 
-			// All 2 inputs forwarded with SetError.
+			// Only the throwing message is forwarded (the drop produces no output).
 			Eventually(func() int64 {
 				return atomic.LoadInt64(&consumerCount)
-			}, "500ms").Should(Equal(int64(2)))
+			}, "2s").Should(Equal(int64(1)))
 
-			// messages_errored == batchSize (2): the whole batch is errored.
+			// messages_errored == 1 (the throw).
 			Eventually(func() int64 {
 				mu.Lock()
 				defer mu.Unlock()
 				return counts["messages_errored"]
-			}, "500ms").Should(Equal(int64(2)))
+			}, "2s").Should(Equal(int64(1)))
 
-			// messages_dropped == 0: the deferred bump is skipped on
-			// batch-fatal, so the earlier drop is NOT counted as dropped.
-			Consistently(func() int64 {
+			// messages_dropped == 1 (the null return).
+			Eventually(func() int64 {
 				mu.Lock()
 				defer mu.Unlock()
 				return counts["messages_dropped"]
-			}, "500ms").Should(Equal(int64(0)))
+			}, "2s").Should(Equal(int64(1)))
 
 			// messages_processed == 0: no successful outputs.
 			Consistently(func() int64 {
@@ -1018,11 +1013,10 @@ nodered_js:
 				return counts["messages_processed"]
 			}, "500ms").Should(Equal(int64(0)))
 
-			// Every forwarded input carries the batch error.
+			// The one forwarded message carries the error.
 			messagesMutex.Lock()
-			for _, m := range messages {
-				Expect(m.GetError()).NotTo(Succeed(), "expected every forwarded input to carry the batch error")
-			}
+			Expect(len(messages)).To(Equal(1))
+			Expect(messages[0].GetError()).NotTo(Succeed(), "expected the forwarded message to carry the error")
 			messagesMutex.Unlock()
 		})
 	})
