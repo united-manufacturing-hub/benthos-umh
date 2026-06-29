@@ -1,3 +1,3 @@
 kind: fixes
-body: The tag processor and Node-RED JavaScript processor now increment their messages_dropped and messages_errored counters on message drops and JavaScript errors, so drops and errors are visible in metrics instead of silent (ENG-5240)
+body: Drops and JavaScript errors in the tag processor and Node-RED JavaScript processor now appear in the messages_dropped and messages_errored metrics instead of going unreported (ENG-5240)
 time: 2026-06-27T12:01:00+02:00
