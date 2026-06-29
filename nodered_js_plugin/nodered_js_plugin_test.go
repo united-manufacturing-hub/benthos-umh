@@ -921,6 +921,101 @@ nodered_js:
 			}
 			messagesMutex.Unlock()
 		})
+
+		It("should reclassify an earlier drop as errored when a later message throws (deferred drop bump)", func() {
+			// [drop, throw]: msg0 returns null (dropped, droppedCount=1),
+			// msg1 throws (batch-fatal). The deferred messagesDropped bump
+			// is skipped by the early return, so the drop is counted as
+			// errored (part of the batchSize bump), not dropped. Pins the
+			// subtlest counter-ownership invariant (commented in ProcessBatch).
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    if (msg.payload === "drop") { return null; }
+    if (msg.payload === "throw") { throw new Error("boom"); }
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			Expect(builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			msg0 := service.NewMessage(nil)
+			msg0.SetStructured("drop")
+			msg1 := service.NewMessage(nil)
+			msg1.SetStructured("throw")
+			batch := service.MessageBatch{msg0, msg1}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// All 2 inputs forwarded with SetError.
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(2)))
+
+			// messages_errored == batchSize (2): the whole batch is errored.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_errored"]
+			}, "500ms").Should(Equal(int64(2)))
+
+			// messages_dropped == 0: the deferred bump is skipped on
+			// batch-fatal, so the earlier drop is NOT counted as dropped.
+			Consistently(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "500ms").Should(Equal(int64(0)))
+
+			// messages_processed == 0: no successful outputs.
+			Consistently(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_processed"]
+			}, "500ms").Should(Equal(int64(0)))
+
+			// Every forwarded input carries the batch error.
+			messagesMutex.Lock()
+			for _, m := range messages {
+				Expect(m.GetError()).NotTo(Succeed(), "expected every forwarded input to carry the batch error")
+			}
+			messagesMutex.Unlock()
+		})
 	})
 
 	When("handling different input types", func() {
