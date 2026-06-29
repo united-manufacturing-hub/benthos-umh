@@ -3146,9 +3146,12 @@ tag_processor:
 
 			// Batch-fatal propagate: the engine wrapper forwards the errored
 			// input to the consumer (marked with SetError), so 1 consumer output.
-			Consistently(func() int64 {
+			// Eventually (not Consistently): the wrapper forwards asynchronously
+			// through the stream, so consumerCount may still be 0 right after
+			// messages_errored bumps.
+			Eventually(func() int64 {
 				return atomic.LoadInt64(&consumerCount)
-			}, "500ms").Should(Equal(int64(1)))
+			}, "2s").Should(Equal(int64(1)))
 
 			// The batch-fatal return skips the processed/dropped accounting.
 			mu.Lock()
@@ -3315,9 +3318,12 @@ tag_processor:
 
 			// Batch-fatal propagate: the engine wrapper forwards the errored
 			// input to the consumer (marked with SetError), so 1 consumer output.
-			Consistently(func() int64 {
+			// Eventually (not Consistently): the wrapper forwards asynchronously
+			// through the stream, so consumerCount may still be 0 right after
+			// messages_errored bumps.
+			Eventually(func() int64 {
 				return atomic.LoadInt64(&consumerCount)
-			}, "500ms").Should(Equal(int64(1)))
+			}, "2s").Should(Equal(int64(1)))
 
 			// The batch-fatal return skips the processed/dropped accounting.
 			mu.Lock()
