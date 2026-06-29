@@ -438,7 +438,14 @@ func SetMetaFromJS(newMsg *service.Message, meta map[string]interface{}) {
 		}
 		switch val.(type) {
 		case map[string]interface{}, []interface{}:
-			b, _ := json.Marshal(val)
+			b, err := json.Marshal(val)
+			if err != nil {
+				// json.Marshal errors on NaN/+Inf nested in maps or slices;
+				// fall back to a non-empty value rather than writing an empty
+				// Kafka header (matches tag_processor's autoConvertValue).
+				newMsg.MetaSet(k, fmt.Sprintf("%v", val))
+				continue
+			}
 			newMsg.MetaSet(k, string(b))
 		default:
 			newMsg.MetaSet(k, fmt.Sprintf("%v", val))
