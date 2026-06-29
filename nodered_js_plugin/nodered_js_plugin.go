@@ -469,13 +469,12 @@ func FormatConsoleLogMsg(data []any) string {
 // ProcessBatch applies the JavaScript code to each message in the batch.
 //
 // Per-message errors (a JS throw, a non-object return, a bad array element,
-// or an infrastructural failure like byte conversion or VM setup) are
-// forwarded, not retried: the input is marked with SetError and sent on so
-// the engine logs it and the bridge goes degraded (the UMH dead-letter
-// path), and the rest of the batch continues. A poison message must not
-// stall the partition with an endless retry. A deliberate drop (returning
-// null/undefined/empty/all-nil array) is not an error: it produces no output
-// and bumps messages_dropped.
+// or an infrastructural failure like byte conversion or VM setup) forward the
+// failing input marked as errored and continue the rest of the batch, so one
+// bad message does not discard the good messages produced before it. The
+// error is logged and counted in messages_errored. A deliberate drop
+// (returning null/undefined/empty/all-nil array) is not an error: it produces
+// no output and bumps messages_dropped.
 func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	var resultBatch service.MessageBatch
 	droppedCount := 0
@@ -485,10 +484,9 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 	for _, msg := range batch {
 		processedMsgs, dropped, err := u.processSingleMessage(ctx, msg)
 		if err != nil {
-			// Forward-on-error: mark this input and continue the batch. The
-			// engine logs the error and the bridge goes degraded (the UMH
-			// dead-letter path); the offset advances so a poison message
-			// cannot stall the partition.
+			// Forward-on-error: mark this input and continue, so the good
+			// messages in the batch are preserved. The error is logged and
+			// counted in messages_errored.
 			msg.SetError(err)
 			erroredCount++
 			resultBatch = append(resultBatch, msg)

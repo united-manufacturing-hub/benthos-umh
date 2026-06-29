@@ -1,3 +1,3 @@
 kind: fixes
-body: A Node-RED JavaScript processor function that throws now forwards the errored message (the bridge goes degraded) and continues the rest of the batch, instead of silently dropping only the offending message (ENG-5240)
+body: A Node-RED JavaScript processor function that throws now forwards the errored message and continues the rest of the batch, so one bad message no longer discards the good ones; the error is logged and counted in messages_errored instead of being silently dropped (ENG-5240)
 time: 2026-06-27T12:02:00+02:00
