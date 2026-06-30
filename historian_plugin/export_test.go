@@ -52,13 +52,13 @@ ON CONFLICT (topic_id, ts) DO UPDATE
 
 // WritePerMessageValue writes one value row with no batching: a single combined statement run in
 // autocommit (its own implicit transaction). Concurrency is supplied by the caller. Benchmark-only.
-func (h *HistorianTestHandle) WritePerMessageValue(ctx context.Context, rawLoc, contractName, vpath, tag, vtype, ts string, num *float64, text *string) error {
+func (h *HistorianTestHandle) WritePerMessageValue(ctx context.Context, rawLoc string, contractName string, vpath string, tag string, vtype string, ts string, num *float64, text *string) error {
 	_, err := h.o.pool.Exec(ctx, perMessageValueQueryFor(h.o.contract), rawLoc, contractName, vpath, tag, vtype, ts, num, text)
 	return err
 }
 
 // GetTopicID runs the documented umh.get_topic_id() resolver (the Grafana/ad-hoc entry point).
-func (h *HistorianTestHandle) GetTopicID(ctx context.Context, loc, vpath, contract, tag string) (int64, bool) {
+func (h *HistorianTestHandle) GetTopicID(ctx context.Context, loc string, vpath string, contract string, tag string) (int64, bool) {
 	ExpectWithOffset(1, h.o.pool).NotTo(BeNil(), "Connect must succeed before GetTopicID")
 	var id *int64
 	err := h.o.pool.QueryRow(ctx, "SELECT umh.get_topic_id($1, $2, $3, $4)", loc, vpath, contract, tag).Scan(&id)
@@ -71,7 +71,7 @@ func (h *HistorianTestHandle) GetTopicID(ctx context.Context, loc, vpath, contra
 
 // ValueWindow runs the documented read pattern: filter value_<contract> by topic_id over a
 // [fromMs, toMs) time window, returning the value_num column in ts order.
-func (h *HistorianTestHandle) ValueWindow(ctx context.Context, contract string, topicID, fromMs, toMs int64) []float64 {
+func (h *HistorianTestHandle) ValueWindow(ctx context.Context, contract string, topicID int64, fromMs int64, toMs int64) []float64 {
 	ExpectWithOffset(1, h.o.pool).NotTo(BeNil(), "Connect must succeed before ValueWindow")
 	q := fmt.Sprintf("SELECT value_num FROM umh.value_%s WHERE topic_id = $1 AND ts >= to_timestamp($2/1000.0) AND ts < to_timestamp($3/1000.0) ORDER BY ts", contract)
 	rows, err := h.o.pool.Query(ctx, q, topicID, fromMs, toMs)

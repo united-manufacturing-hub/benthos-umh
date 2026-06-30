@@ -111,7 +111,8 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		// makes every worker hit the SAME tag (max dimension-row contention); false gives each
 		// its own tag. work(w, tag, base) writes totalRows/workers rows for worker w.
 		measure := func(h *tsh.HistorianTestHandle, contract string, workers int, sharedTag bool,
-			work func(w int, tag string, base int)) float64 {
+			work func(w int, tag string, base int),
+		) float64 {
 			perWorker := totalRows / workers
 			var wg sync.WaitGroup
 			start := time.Now()
@@ -140,7 +141,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 			defer h.Close(ctx)
 			full := "_" + contract + "_v1"
 			perWorker := totalRows / workers
-			return measure(h, contract, workers, sharedTag, func(w int, tag string, base int) {
+			return measure(h, contract, workers, sharedTag, func(_ int, tag string, base int) {
 				const B = 1000
 				for i := 0; i < perWorker; i += B {
 					bsz := B
@@ -163,7 +164,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 			defer h.Close(ctx)
 			cn := "_" + contract
 			perWorker := totalRows / workers
-			return measure(h, contract, workers, sharedTag, func(w int, tag string, base int) {
+			return measure(h, contract, workers, sharedTag, func(_ int, tag string, base int) {
 				for i := 0; i < perWorker; i++ {
 					num := float64(i)
 					ts := time.UnixMilli(int64(base + i + 1)).UTC().Format("2006-01-02T15:04:05.000Z")
