@@ -6,7 +6,7 @@
   - [OPC UA (Input)](input/opc-ua-input.md)
   - [Modbus](input/modbus.md)
   - [ifm IO-Link Master / "sensorconnect"](input/ifm-io-link-master-sensorconnect.md)
-  - [Beckhoff ADS (community)](input/beckhoff-ads-community.md)
+  - [Beckhoff ADS](input/beckhoff-ads-input.md)
   - [Siemens S7](input/siemens-s7.md)
   - [Ethernet/IP](input/ethernet-ip.md)
   - [UNS Input](input/uns-input.md)
