@@ -21,7 +21,7 @@ godebug x509negativeserial=1
 
 require (
 	github.com/goccy/go-json v0.10.6
-	github.com/onsi/ginkgo/v2 v2.31.0
+	github.com/onsi/ginkgo/v2 v2.32.0
 	github.com/onsi/gomega v1.42.0
 	github.com/x448/float16 v0.8.4
 )
@@ -40,15 +40,15 @@ require (
 	github.com/gopcua/opcua v0.9.0
 	github.com/grid-x/modbus v0.0.0-20260527064858-ef3bed576432
 	github.com/hashicorp/golang-lru/v2 v2.0.7
-	github.com/kaptinlin/jsonschema v0.8.0
+	github.com/kaptinlin/jsonschema v0.9.2
 	github.com/prometheus/client_golang v1.23.2
-	github.com/redpanda-data/benthos/v4 v4.74.0
-	github.com/redpanda-data/connect/public/bundle/free/v4 v4.96.1
-	github.com/robinson/gos7 v0.0.0-20241205073040-7ea1d6fb9d20
+	github.com/redpanda-data/benthos/v4 v4.75.0
+	github.com/redpanda-data/connect/public/bundle/free/v4 v4.96.3
+	github.com/robinson/gos7 v0.0.0-20260622162611-2d6806f80c8b
 	github.com/snowflakedb/gosnowflake v1.19.1
 	github.com/stretchr/testify v1.11.1
-	github.com/testcontainers/testcontainers-go v0.42.0
-	github.com/testcontainers/testcontainers-go/modules/redpanda v0.42.0
+	github.com/testcontainers/testcontainers-go v0.43.0
+	github.com/testcontainers/testcontainers-go/modules/redpanda v0.43.0
 	github.com/twmb/franz-go v1.21.3
 	github.com/twmb/franz-go/pkg/kadm v1.18.0
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78
@@ -343,7 +343,7 @@ require (
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.2.0 // indirect
-	github.com/moby/moby/api v1.54.1 // indirect
+	github.com/moby/moby/api v1.54.2 // indirect
 	github.com/moby/moby/client v0.4.0 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/sys/sequential v0.6.0 // indirect
@@ -408,7 +408,7 @@ require (
 	github.com/redpanda-data/common-go/authz v0.2.1-0.20260319205134-242ab3c168b8 // indirect
 	github.com/redpanda-data/common-go/license v0.0.0-20260318014216-2bbd72bde0a0 // indirect
 	github.com/redpanda-data/common-go/redpanda-otel-exporter v0.4.0 // indirect
-	github.com/redpanda-data/connect/v4 v4.96.1 // indirect
+	github.com/redpanda-data/connect/v4 v4.96.3 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rickb777/period v1.0.27 // indirect
 	github.com/rickb777/plural v1.4.10 // indirect
@@ -421,7 +421,7 @@ require (
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/segmentio/ksuid v1.0.4 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
-	github.com/shirou/gopsutil/v4 v4.26.3 // indirect
+	github.com/shirou/gopsutil/v4 v4.26.5 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/sijms/go-ora/v2 v2.9.0 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
