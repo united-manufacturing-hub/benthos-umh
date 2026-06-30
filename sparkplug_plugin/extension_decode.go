@@ -38,11 +38,14 @@ const (
 	// resolver cannot satisfy the injected import.
 	extSparkplugImportPath = "proto/sparkplug_b_official.proto"
 	// extPreamble is prepended so the snippet compiles as proto2 and the Sparkplug extendees
-	// resolve. extPreambleLines must track the number of newlines so diagnostics map back to
-	// the customer's line.
-	extPreamble      = `syntax = "proto2"; import "` + extSparkplugImportPath + `";` + "\n"
-	extPreambleLines = 1
+	// resolve.
+	extPreamble = `syntax = "proto2"; import "` + extSparkplugImportPath + `";` + "\n"
 )
+
+// extPreambleLines is the number of lines extPreamble adds ahead of the customer's snippet, so
+// remapCompileError can subtract them and map diagnostics back to the customer's line. Derived
+// from extPreamble so it can't drift if the preamble changes.
+var extPreambleLines = strings.Count(extPreamble, "\n")
 
 // extensionDecoder decodes the proto2 extension bytes a Sparkplug metric carries but the
 // standard decode ignores. It is built once and is read-only afterwards.
@@ -91,10 +94,31 @@ func newExtensionDecoder(snippet string) (*extensionDecoder, error) {
 	}, nil
 }
 
+// carriesExtension reports whether the standard decode left unrecognized bytes on a message
+// decode resolves extensions against. proto2 retains extension fields as unknown bytes, so an
+// empty result means there is definitely nothing to decode. The check is a necessary, not
+// sufficient, condition: any registered extension always lands here, but unrelated unknown
+// fields can too, so decode still confirms before emitting. It must cover the same messages as
+// supportedExtendees.
+func carriesExtension(metric *sparkplugb.Payload_Metric) bool {
+	if md := metric.GetMetadata(); md != nil && len(md.ProtoReflect().GetUnknown()) > 0 {
+		return true
+	}
+	if ve := metric.GetExtensionValue(); ve != nil && len(ve.ProtoReflect().GetUnknown()) > 0 {
+		return true
+	}
+	return false
+}
+
 // decode returns the metric's scalar extensions as leaf->value pairs and the full decoded
 // metric as JSON; present is false when the metric carries no extension. Re-marshaling
 // recovers the extension bytes that proto2 retained through the standard decode.
 func (d *extensionDecoder) decode(metric *sparkplugb.Payload_Metric) (map[string]string, string, bool, error) {
+	// Skip the re-marshal/decode for the common case of a metric with no extension bytes.
+	if !carriesExtension(metric) {
+		return nil, "", false, nil
+	}
+
 	raw, err := proto.Marshal(metric)
 	if err != nil {
 		return nil, "", false, fmt.Errorf("re-marshal metric: %w", err)
@@ -131,6 +155,7 @@ func collectExtensions(m protoreflect.Message, flat map[string]string) bool {
 		if fd.Kind() == protoreflect.MessageKind || fd.Kind() == protoreflect.GroupKind {
 			switch {
 			case fd.IsMap():
+				// Maps don't carry extensions in the Sparkplug schema, so there's nothing to recurse into.
 			case fd.IsList():
 				l := v.List()
 				for i := 0; i < l.Len(); i++ {
@@ -188,18 +213,12 @@ func scalarToString(fd protoreflect.FieldDescriptor, v protoreflect.Value) strin
 	}
 }
 
+// sanitizeExtLeaf maps an extension's leaf field name to the suffix of its spb_ext_* metadata
+// key. It shares sanitizeRunes with sanitizeForTopic but, unlike a topic segment, a flat key
+// keeps no dots — though proto field names are already valid identifiers, so this only guards
+// against unexpected input.
 func sanitizeExtLeaf(name string) string {
-	var b strings.Builder
-	b.Grow(len(name))
-	for _, r := range name {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('_')
-		}
-	}
-	return b.String()
+	return sanitizeRunes(name, isASCIIAlnum)
 }
 
 // validateExtensionSnippet rejects a customer-declared syntax (proto3 is unsupported; the
@@ -247,16 +266,30 @@ func registerMessageExtensions(types *protoregistry.Types, ms protoreflect.Messa
 	return nil
 }
 
-// checkExtensions requires at least one extension and rejects two scalar extensions whose leaf
-// names map to the same spb_ext_* key (message-typed extensions are not flattened, so they
-// never collide).
+// supportedExtendees are the only messages decode resolves extensions against (Payload.MetaData
+// and Payload.MetricValueExtension). An extension of any other message compiles fine but can
+// never produce spb_ext_* or spb_metric_decoded, so checkExtensions ignores those and rejects a
+// schema that targets only unsupported messages. Derived from the descriptors so the FQNs can't
+// drift from the embedded schema.
+var supportedExtendees = map[protoreflect.FullName]struct{}{
+	(&sparkplugb.Payload_MetaData{}).ProtoReflect().Descriptor().FullName():             {},
+	(&sparkplugb.Payload_MetricValueExtension{}).ProtoReflect().Descriptor().FullName(): {},
+}
+
+// checkExtensions requires at least one extension of a supported message and rejects two scalar
+// extensions whose leaf names map to the same spb_ext_* key (message-typed extensions are not
+// flattened, so they never collide).
 func checkExtensions(types *protoregistry.Types) error {
 	count := 0
 	seen := map[string]protoreflect.FullName{}
 	var collisionErr error
 	types.RangeExtensions(func(xt protoreflect.ExtensionType) bool {
-		count++
 		etd := xt.TypeDescriptor()
+		if _, ok := supportedExtendees[etd.ContainingMessage().FullName()]; !ok {
+			// Extends a message decode never walks; it can't yield output, so ignore it.
+			return true
+		}
+		count++
 		if etd.IsList() || etd.IsMap() || !isScalarExtKind(etd.Kind()) {
 			return true
 		}

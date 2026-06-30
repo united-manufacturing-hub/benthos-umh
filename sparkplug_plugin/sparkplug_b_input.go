@@ -1288,28 +1288,29 @@ func (s *sparkplugInput) extractMetricValue(metric *sparkplugb.Payload_Metric) [
 	return jsonBytes
 }
 
-// sanitizeForTopic sanitizes strings for use in UMH topic paths
-// Replaces all non-alphanumeric characters (except dots) with underscores
+// sanitizeForTopic sanitizes strings for use in UMH topic paths: every rune that is not an
+// ASCII letter, digit, or dot becomes '_'. Dots are kept because they separate topic segments.
 func (s *sparkplugInput) sanitizeForTopic(input string) string {
-	if input == "" {
-		return ""
-	}
+	return sanitizeRunes(input, func(r rune) bool { return isASCIIAlnum(r) || r == '.' })
+}
 
-	var result strings.Builder
-	result.Grow(len(input))
+// isASCIIAlnum reports whether r is an ASCII letter or digit.
+func isASCIIAlnum(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+}
 
-	for _, char := range input {
-		if (char >= 'a' && char <= 'z') ||
-			(char >= 'A' && char <= 'Z') ||
-			(char >= '0' && char <= '9') ||
-			char == '.' {
-			result.WriteRune(char)
+// sanitizeRunes replaces every rune for which keep returns false with '_'.
+func sanitizeRunes(s string, keep func(rune) bool) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if keep(r) {
+			b.WriteRune(r)
 		} else {
-			result.WriteRune('_')
+			b.WriteRune('_')
 		}
 	}
-
-	return result.String()
+	return b.String()
 }
 
 // getDataTypeName converts Sparkplug data type ID to human-readable string
