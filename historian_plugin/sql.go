@@ -181,6 +181,7 @@ tp AS (
 //     committed, orphaning a topic row with no value. It is idempotent on retry (the next
 //     attempt reuses the row), so it is wasted rows, not a correctness bug: the template's
 //     dimension+value atomicity is intentionally traded for write concurrency.
+//
 // The trade only pays off at max_in_flight > 1: at max_in_flight = 1 there is no concurrent
 // contention on the shared location row, so the split forgoes atomicity for no benefit.
 const topicResolveSQL = dimensionCTE + `SELECT topic_id FROM tp;`
@@ -276,7 +277,7 @@ func sub(sql string, contract string) string {
 
 // policyBlock generates the compression/retention setup for one hypertable, gated on the
 // migration ledger so it runs exactly once -- at first bootstrap, when the table is empty and
-// has no compressed chunks. Re-running it on every Connect (the previous behaviour) had two
+// has no compressed chunks. Re-running it on every Connect (the previous behavior) had two
 // hazards: ALTER TABLE SET (compress...) errors on TimescaleDB versions that forbid changing
 // compression config while compressed chunks exist (which they do once compress_after elapses),
 // and re-applying retention un-scheduled an operator's manually-added policy on every restart.
@@ -307,7 +308,7 @@ BEGIN
 // a umh hypertable, or NULL when no such policy exists. The scalar subquery always yields exactly
 // one row (never ErrNoRows), so a nil scan means "no policy / catalog unavailable". procName and
 // configKey are internal constants, not user input.
-func policyIntervalSQL(procName, configKey string) string {
+func policyIntervalSQL(procName string, configKey string) string {
 	return fmt.Sprintf(`SELECT (
   SELECT EXTRACT(EPOCH FROM (config->>'%s')::interval)::bigint
     FROM timescaledb_information.jobs
