@@ -1,0 +1,3 @@
+kind: new
+body: Beckhoff ADS input plugin for reading variables from TwinCAT 2 and TwinCAT 3 PLCs over the ADS protocol, with optional automatic route registration (ENG-4538)
+time: 2026-07-01T11:16:30+02:00
