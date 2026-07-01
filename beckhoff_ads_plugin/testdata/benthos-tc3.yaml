@@ -1,0 +1,73 @@
+# Benthos ADS config for TwinCAT 3 PLC (tc3prg)
+# TC3 symbol naming: GVL uses qualified_only (GVL_ProcessData.varName),
+# program locals use program prefix (PRG_Diagnostics.varName)
+#
+# Connection settings use benthos env var interpolation.
+# Set TEST_ADS_TC3_TARGET_IP and TEST_ADS_TC3_TARGET_AMS to run.
+input:
+  ads:
+    targetIP: "${TEST_ADS_TC3_TARGET_IP}"
+    targetAMS: "${TEST_ADS_TC3_TARGET_AMS}"
+    runtimePort: ${TEST_ADS_TC3_RUNTIME_PORT:851}
+    readType: interval
+    intervalTime: 500ms
+    loadSymbols: true
+    username: "${TEST_ADS_TC3_ROUTE_USER:}"
+    password: "${TEST_ADS_TC3_ROUTE_PASS:}"
+    symbols:
+      # section:process_data — GVL counters, strings, enums, reals
+      - "GVL_ProcessData.nMasterCycleCounter"
+      - "GVL_ProcessData.sStatusMessage"
+      - "GVL_ProcessData.eMachineState"
+      - "GVL_ProcessData.fGlobalReal"
+      # section:diagnostics_scalars — basic type counters from PRG_Diagnostics
+      - "PRG_Diagnostics.nInt"
+      - "PRG_Diagnostics.fReal"
+      - "PRG_Diagnostics.bHeartbeat"
+      - "PRG_Diagnostics.nByte"
+      - "PRG_Diagnostics.nSint"
+      - "PRG_Diagnostics.nDint"
+      - "PRG_Diagnostics.nWord"
+      - "PRG_Diagnostics.nFastDint"
+      # section:diagnostics_time — time/date types from PRG_Diagnostics
+      - "PRG_Diagnostics.tTime"
+      - "PRG_Diagnostics.dDate"
+      - "PRG_Diagnostics.dtDateTime"
+      - "PRG_Diagnostics.todTimeOfDay"
+      # section:production_stats — GVL_ProcessData.stProductionStats struct
+      - "GVL_ProcessData.stProductionStats.nPartsProduced"
+      - "GVL_ProcessData.stProductionStats.nPartsRejected"
+      - "GVL_ProcessData.stProductionStats.fYieldPercent"
+      - "GVL_ProcessData.stProductionStats.nBatchNumber"
+      # section:motor — GVL_ProcessData.stMachineStatus.stMotor1 struct
+      - "GVL_ProcessData.stMachineStatus.stMotor1.fSpeed"
+      - "GVL_ProcessData.stMachineStatus.stMotor1.eState"
+      - "GVL_ProcessData.stMachineStatus.stMotor1.bEnabled"
+      - "GVL_ProcessData.stMachineStatus.stMotor1.bError"
+      - "GVL_ProcessData.stMachineStatus.stMotor1.fTorque"
+      # section:temperature — GVL_ProcessData.stMachineStatus.stTemperature struct
+      - "GVL_ProcessData.stMachineStatus.stTemperature.fValue"
+      - "GVL_ProcessData.stMachineStatus.stTemperature.bValid"
+      - "GVL_ProcessData.stMachineStatus.stTemperature.sUnit"
+      # section:machine_name — static string
+      - "GVL_ProcessData.stMachineStatus.sMachineName"
+      # section:counter_array — GVL_ProcessData.anCounters DINT array
+      - "GVL_ProcessData.anCounters[0]"
+      - "GVL_ProcessData.anCounters[1]"
+      - "GVL_ProcessData.anCounters[2]"
+      - "GVL_ProcessData.anCounters[3]"
+      - "GVL_ProcessData.anCounters[4]"
+      # section:measurement_array — GVL_ProcessData.afMeasurements LREAL array
+      - "GVL_ProcessData.afMeasurements[0]"
+      - "GVL_ProcessData.afMeasurements[1]"
+      - "GVL_ProcessData.afMeasurements[2]"
+      # section:sensor_history — PRG_Diagnostics.astSensorHistory array of struct
+      - "PRG_Diagnostics.astSensorHistory[0].fValue"
+      - "PRG_Diagnostics.astSensorHistory[0].sUnit"
+      # section:fb_direct — FB direct access for GVL copy consistency
+      - "PRG_Machine.fbTempSensor.stReading.fValue"
+pipeline:
+  processors:
+    - bloblang: "root = this"
+output:
+  stdout: {}

@@ -15,12 +15,12 @@
 package bundle
 
 import (
-	_ "github.com/united-manufacturing-hub/benthos-umh/beckhoff_ads_plugin"
 	_ "github.com/RuneRoven/benthosAlarm"
 	_ "github.com/RuneRoven/benthosSMTP"
 	// Fix for ENG-752
 	_ "github.com/redpanda-data/connect/public/bundle/free/v4"
 
+	_ "github.com/united-manufacturing-hub/benthos-umh/beckhoff_ads_plugin"
 	_ "github.com/united-manufacturing-hub/benthos-umh/classic_to_core_plugin"
 	_ "github.com/united-manufacturing-hub/benthos-umh/downsampler_plugin"
 	_ "github.com/united-manufacturing-hub/benthos-umh/eip_plugin"
