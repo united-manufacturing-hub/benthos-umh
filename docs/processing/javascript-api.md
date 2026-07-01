@@ -111,7 +111,17 @@ if (cache.exists("counter")) {
 
 ### cache.update — atomic read-modify-write
 
-The pattern `get` then `set` is not atomic across concurrent messages. If two messages run in parallel (Benthos defaults to `pipeline.threads = NumCPU`), both can read the same value, both increment, and one update is lost. Use `cache.update` when the new value depends on the old:
+**`cache.set` on its own is thread-safe** — under the hood every write is serialized behind the store's mutex. The race isn't in `cache.set`; it's in the **three-step JavaScript pattern** users tend to write:
+
+```javascript
+var n = cache.get("count");   // step 1: read
+n = n + 1;                    // step 2: compute in JS (no lock held)
+cache.set("count", n);        // step 3: write
+```
+
+Between steps 1 and 3 another goroutine can run steps 1–3 too. Both read the same value, both compute the same next value, both write it. One increment is silently lost. Benthos defaults to `pipeline.threads = NumCPU`, so this happens on the very first burst of messages — reproducibly.
+
+Use `cache.update` whenever the new value depends on the old:
 
 ```javascript
 cache.update("counter", function(old, exists) {
@@ -124,7 +134,9 @@ cache.update("counter", function(old, exists) {
 - `old` — current value, or `null` if the key is missing
 - `exists` — `true` when the key existed (and was not expired)
 
-Whatever `fn` returns is stored under `key`. The whole sequence (read, run `fn`, write) happens inside one transaction. Concurrent `cache.update` calls on the same key serialize.
+Whatever `fn` returns is stored under `key`. The store holds its write lock for the whole read → run `fn` → write sequence, so concurrent `cache.update` calls on the same key serialize with no lost updates.
+
+**Rule of thumb**: if your code has `cache.get` followed by any compute followed by `cache.set` on the same key, replace all three with one `cache.update`.
 
 > **Warning: don't call cache methods inside `fn`.** The store's write lock is held for the duration of `fn`. Calling `cache.set`, `cache.get`, `cache.exists`, `cache.delete`, or another `cache.update` from inside the callback deadlocks the processor permanently — the goroutine waits for a lock it already holds, every other concurrent cache call blocks behind it, and the pipeline stalls until restart. Use the `old` and `exists` arguments instead; they already reflect the current state for that key.
 >
@@ -143,12 +155,42 @@ Whatever `fn` returns is stored under `key`. The whole sequence (read, run `fn`,
 
 #### When to use which
 
-| Pattern | Use |
+| You want to… | Use |
 |---|---|
-| Overwriting independent of old value (`msg.payload`, latest reading) | `cache.set` |
-| Reading a value (no write) | `cache.exists` + `cache.get` |
-| New value depends on old (counter, append, toggle) | `cache.update` |
-| Removing an entry | `cache.delete` |
+| Store the newest value (overwrite, no dependency on the old value) | `cache.set` |
+| Check if a key exists | `cache.exists` |
+| Read a value (no write) | `cache.get` (guard with `cache.exists`) |
+| Compute a new value from the old one and store it | `cache.update` |
+| Remove a key | `cache.delete` |
+
+##### cache.set is correct when the new value is independent of the old
+
+```javascript
+cache.set("latest_temperature", msg.payload.value);   // newest reading wins
+cache.set("last_seen_at", Date.now());                // newest timestamp wins
+cache.set("device_status", "online");                 // pure flag
+cache.set("config_snapshot", msg.payload);            // full replacement
+```
+
+None of these read the current value. Two goroutines writing at the same instant both succeed; the one that lands second is the one you read afterwards. That's the intended semantic of "latest".
+
+##### cache.set is wrong when you first read the old value
+
+All of the following are races — replace them with `cache.update`:
+
+```javascript
+// counter — depends on old
+cache.set("count", cache.get("count") + 1);
+
+// append to a list — depends on old
+var arr = cache.get("history"); arr.push(x); cache.set("history", arr);
+
+// running maximum — depends on old
+if (msg.payload.v > cache.get("max")) cache.set("max", msg.payload.v);
+
+// toggle — depends on old
+cache.set("flag", !cache.get("flag"));
+```
 
 #### Examples
 
@@ -263,8 +305,8 @@ Benthos defaults to `pipeline.threads = NumCPU`, so multiple messages can run th
 
 ### Limitations
 
-- **Cache scope** — each `nodered_js` processor block has its own cache. Two separate blocks in the same pipeline cannot share a cache; use the UNS to exchange data between flows.
-- **`persistent` backend is single-writer** — bbolt acquires an exclusive file lock. Two processors pointing at the same file (in one process or across processes) fail at startup with a timeout.
+- **Cache scope** — sharing is per benthos process. Two `nodered_js` processors within one process share a cache when their `backend` and `name` match (see [Sharing across processors](#sharing-across-processors)); across separate processes they cannot share. Use the UNS or an external KV to exchange data across processes or flows.
+- **`persistent` backend is single-writer per file** — bbolt acquires an exclusive OS file lock. Multiple processors in one process sharing by `name` are safe (they attach to the same open handle via the internal registry). A second benthos process pointing at the same file fails at startup with a timeout.
 - **No size limits** — the cache grows unboundedly if keys are never deleted. Use `cache.delete` to clean up unused keys, or rely on `ttl` for expiration. A hard cap is planned (ENG-4829).
 - **Cache scope in `tag_processor`** — the cache is shared across all stages (`defaults`, `conditions`, `advancedProcessing`). A value set in `defaults` is visible in `advancedProcessing` within the same message.
 
