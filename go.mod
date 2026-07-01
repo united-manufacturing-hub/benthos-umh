@@ -30,6 +30,7 @@ require (
 	github.com/RuneRoven/benthosADS v1.0.10
 	github.com/RuneRoven/benthosAlarm v1.0.0
 	github.com/RuneRoven/benthosSMTP v0.0.1
+	github.com/bufbuild/protocompile v0.14.1
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/danomagnum/gologix v0.27.2-beta
 	github.com/dop251/goja v0.0.0-20260607120635-348e6bea910d
