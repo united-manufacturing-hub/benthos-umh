@@ -17,6 +17,8 @@ package beckhoff_ads_plugin
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +26,56 @@ import (
 	adsLib "github.com/RuneRoven/go-ads/v2"
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
+
+// benthosLogHandler is a slog.Handler that forwards go-ads v2 log records to a
+// Benthos service.Logger. ADS library verbosity is controlled solely by the
+// benthos pipeline log level (logger.level); there is no plugin-level log
+// config. Trace-level records (per-packet wire/header dumps) are never
+// forwarded — they are not useful inside the pipeline.
+type benthosLogHandler struct {
+	logger *service.Logger
+	attrs  []slog.Attr
+}
+
+func (h *benthosLogHandler) Enabled(_ context.Context, level slog.Level) bool {
+	// Suppress trace (LevelTrace = -8); forward debug and above to benthos,
+	// which then applies its own configured level filter.
+	return level >= slog.LevelDebug
+}
+
+func (h *benthosLogHandler) Handle(_ context.Context, r slog.Record) error {
+	var kvs []any
+	for _, a := range h.attrs {
+		kvs = append(kvs, a.Key, a.Value.Any())
+	}
+	r.Attrs(func(a slog.Attr) bool {
+		kvs = append(kvs, a.Key, a.Value.Any())
+		return true
+	})
+
+	l := h.logger
+	if len(kvs) > 0 {
+		l = l.With(kvs...)
+	}
+
+	switch {
+	case r.Level >= slog.LevelError:
+		l.Errorf("%s", r.Message)
+	case r.Level >= slog.LevelWarn:
+		l.Warnf("%s", r.Message)
+	case r.Level >= slog.LevelInfo:
+		l.Infof("%s", r.Message)
+	default:
+		l.Debugf("%s", r.Message)
+	}
+	return nil
+}
+
+func (h *benthosLogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return &benthosLogHandler{logger: h.logger, attrs: append(h.attrs, attrs...)}
+}
+
+func (h *benthosLogHandler) WithGroup(_ string) slog.Handler { return h }
 
 // PlcSymbol holds the configuration for a single PLC symbol to read.
 type PlcSymbol struct {
@@ -166,6 +218,11 @@ type AdsCommInput struct {
 	symbolNames      map[string]string   // strings.ToLower(configured name) → configured name (TC2 returns uppercase)
 	NotificationChan chan *adsLib.Update // notification channel for PLC data
 	TransmissionMode adsLib.TransMode    // Notification transmission mode
+
+	// pendingInitial holds the initial notification samples captured during Connect's
+	// readiness wait. Flushed by the first ReadBatchNotification so the first value of a
+	// static serverOnChange symbol is not lost (go-ads delivers each sample only once).
+	pendingInitial []*adsLib.Update
 
 	// Shutdown signal - closed to signal goroutines to stop.
 	// Used instead of closing NotificationChan to avoid send-on-closed-channel panics
@@ -379,10 +436,234 @@ func init() {
 	}
 }
 
-// Connect is implemented in the connectivity change (PR2). Stub keeps the
-// package compiling and the input registrable while the stack is built.
-func (g *AdsCommInput) Connect(_ context.Context) error {
-	return service.ErrNotConnected
+func isLikelyContainerIP(ip string) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	p := parsed.To4()
+	if p == nil {
+		return false
+	}
+	// Docker default bridge: 172.17.0.0/16
+	if p[0] == 172 && p[1] >= 17 && p[1] <= 31 {
+		return true
+	}
+	// Common container overlay/pod networks: 10.0.0.0/8
+	if p[0] == 10 {
+		return true
+	}
+	// CGNAT range used by some Kubernetes CNIs: 100.64.0.0/10
+	if p[0] == 100 && p[1] >= 64 && p[1] <= 127 {
+		return true
+	}
+	return false
+}
+
+func (g *AdsCommInput) Connect(ctx context.Context) error {
+	if g.Handler != nil {
+		return nil
+	}
+
+	// Ensure done channel is initialized (may be nil if constructed directly in tests)
+	if g.done == nil {
+		g.done = make(chan struct{})
+	}
+
+	// Build session options — route registration is handled automatically by Session.Connect
+	// when WithRoute is set; no manual AddRemoteRoute call needed.
+	g.Log.Infof("Creating new connection")
+	var err error
+	var connOpts []adsLib.SessionOption
+	// go-ads verbosity is governed by the benthos pipeline log level via this
+	// bridge handler; no global SetDefaultLogger (it would be last-input-wins
+	// across multiple ADS inputs).
+	adsLogger := slog.New(&benthosLogHandler{logger: g.Log})
+	connOpts = append(connOpts, adsLib.WithLogger(adsLogger))
+	if g.Username != "" && g.Password != "" {
+		hostAddr := g.HostIP
+		if hostAddr == "" {
+			// Auto-detect via TCP connect to ADS port — guarantees same source IP
+			// as the actual ADS connection. On multi-homed machines, UDP routing
+			// can pick a different interface, causing the route to be registered
+			// with the wrong IP and accumulating stale routes on the PLC.
+			dialer := net.Dialer{Timeout: 3 * time.Second}
+			tcpConn, dialErr := dialer.DialContext(ctx, "tcp4", net.JoinHostPort(g.TargetIP, strconv.Itoa(g.TargetPort)))
+			if dialErr != nil {
+				// PLC unreachable; fall back to UDP routing lookup (no packet sent)
+				udpConn, udpErr := net.Dial("udp4", net.JoinHostPort(g.TargetIP, "48899"))
+				if udpErr != nil {
+					g.Log.Errorf("Failed to auto-detect local address: %v", dialErr)
+					return dialErr
+				}
+				hostAddr = udpConn.LocalAddr().(*net.UDPAddr).IP.String()
+				udpConn.Close()
+			} else {
+				hostAddr = tcpConn.LocalAddr().(*net.TCPAddr).IP.String()
+				tcpConn.Close()
+			}
+		}
+		if isLikelyContainerIP(hostAddr) {
+			g.Log.Warnf("Auto-detected IP %s looks like a container IP. Set hostIP to the Docker host's IP for route registration to work.", hostAddr)
+		}
+		routeName := fmt.Sprintf("benthosADS-%s", hostAddr)
+		g.Log.Infof("Route will be registered on PLC %s: name=%s, clientIP=%s", g.TargetIP, routeName, hostAddr)
+		connOpts = append(connOpts, adsLib.WithRoute(routeName, g.Username, g.Password))
+		connOpts = append(connOpts, adsLib.WithHostIP(hostAddr))
+	}
+
+	targetAMS, err := adsLib.NewAMSAddress(g.TargetAMS, uint16(g.RuntimePort))
+	if err != nil {
+		g.Log.Errorf("Invalid target AMS %q: %v", g.TargetAMS, err)
+		return err
+	}
+	// "auto" (default) means go-ads derives local AMS from the TCP connection.
+	if g.HostAMS != "" && g.HostAMS != "auto" {
+		localAMS, lerr := adsLib.NewAMSAddress(g.HostAMS, uint16(g.HostPort))
+		if lerr != nil {
+			g.Log.Errorf("Invalid local AMS %q: %v", g.HostAMS, lerr)
+			return lerr
+		}
+		connOpts = append(connOpts, adsLib.WithLocalAMS(localAMS))
+	}
+	if g.RequestTimeout > 0 {
+		connOpts = append(connOpts, adsLib.WithRequestTimeout(g.RequestTimeout))
+	}
+
+	// NewSession ctx is the session-lifetime ctx (cancel → session shutdown).
+	// Benthos passes a per-call ctx to Connect; using it here would tear the
+	// session down as soon as Connect returns. Use Background; teardown is
+	// driven by AdsCommInput.Close → g.Handler.Close().
+	g.Handler, err = adsLib.NewSession(context.Background(), adsLib.AMSEndpoint{
+		IP:   g.TargetIP,
+		Port: g.TargetPort,
+		AMS:  targetAMS,
+	}, connOpts...)
+	if err != nil {
+		g.Log.Errorf("Failed to create connection: %v", err)
+		return err
+	}
+
+	success := false
+	defer func() {
+		if !success && g.Handler != nil {
+			_ = g.Handler.Close()
+			g.Handler = nil
+		}
+	}()
+
+	// Connect; Session handles route registration internally when WithRoute is set
+	g.Log.Infof("Connecting to plc")
+	err = g.Handler.Connect(ctx)
+	if err != nil {
+		g.Log.Errorf("Failed to connect to PLC at %s: %v", g.TargetIP, err)
+		return err
+	}
+
+	// Build symbolNames map (lower-cased key → configured casing).
+	// TC2 returns all symbol names uppercase; this map normalises back to
+	// the casing the user configured.
+	g.symbolNames = make(map[string]string, len(g.Symbols))
+	g.dataTypes = make(map[string]string, len(g.Symbols))
+	g.baseTypes = make(map[string]string, len(g.Symbols))
+	g.dataSizes = make(map[string]uint32, len(g.Symbols))
+	for _, sym := range g.Symbols {
+		g.symbolNames[strings.ToLower(sym.Name)] = sym.Name
+	}
+
+	if g.LoadSymbols {
+		g.Log.Infof("Loading symbol and datatype table from PLC (loadSymbols=true)")
+		if err = g.Handler.LoadSymbols(ctx); err != nil {
+			g.Log.Errorf("LoadSymbols failed: %v", err)
+			return err
+		}
+		g.Log.Infof("Symbol table loaded")
+	}
+
+	if g.ReadType == "notification" {
+		// Build notification configs for batch add
+		configs := make([]adsLib.NotificationConfig, len(g.Symbols))
+		for i, symbol := range g.Symbols {
+			configs[i] = adsLib.NotificationConfig{
+				SymbolName:       symbol.Name,
+				MaxDelay:         symbol.MaxDelay,
+				CycleTime:        symbol.CycleTime,
+				TransmissionMode: g.TransmissionMode,
+			}
+		}
+
+		// Connect() already ensures session is stable; no retry needed here.
+		// If this fails, return error and let Benthos retry Connect().
+		results, err := g.Handler.AddSymbolNotifications(ctx, configs, g.NotificationChan)
+		if err != nil {
+			g.Log.Errorf("Batch add notifications failed: %v", err)
+			return err
+		}
+
+		// AddSymbolNotifications returns nil error even when all symbols fail to
+		// resolve (e.g. PLC ADS not yet ready after route registration reconnect).
+		// Detect this case and return an error so Benthos retries Connect().
+		registered := 0
+		for i, r := range results {
+			switch {
+			case r.Skipped == nil && r.Error == adsLib.ReturnCodeNoErrors:
+				registered++
+			case r.Skipped != nil:
+				g.Log.Errorf("Notification symbol %q skipped (check symbol name): %v", configs[i].SymbolName, r.Skipped)
+			default:
+				g.Log.Errorf("Notification symbol %q rejected by PLC: ADS error 0x%X", configs[i].SymbolName, uint32(r.Error))
+			}
+		}
+		if registered == 0 && len(configs) > 0 {
+			return fmt.Errorf("no symbols registered for notifications (%d symbols all failed to resolve)", len(configs))
+		}
+		g.Log.Infof("Registered %d/%d notification symbols", registered, len(configs))
+
+		// Populate metadata cache from go-ads symbol cache (no extra round-trips).
+		// Without this, makeNotificationMessage reads from empty maps → null metadata.
+		for _, sym := range g.Symbols {
+			key := strings.ToLower(sym.Name)
+			if view, viewErr := g.Handler.GetSymbol(ctx, sym.Name); viewErr == nil {
+				g.dataTypes[key] = view.DataType
+				g.dataSizes[key] = view.Length
+				if bt := view.BaseTypeName(); bt != "" {
+					g.baseTypes[key] = bt
+				}
+			} else {
+				g.Log.Warnf("Failed to populate metadata cache for ADS symbol %q: %v", sym.Name, viewErr)
+			}
+		}
+
+		// Wait for an initial sample from each registered symbol (readiness gate).
+		// Captured samples are buffered in pendingInitial and flushed by the first
+		// ReadBatchNotification so no initial value is lost.
+		g.pendingInitial = nil
+		needed := make(map[string]bool, registered)
+		for i, r := range results {
+			if r.Skipped == nil && r.Error == adsLib.ReturnCodeNoErrors {
+				needed[strings.ToLower(configs[i].SymbolName)] = true
+			}
+		}
+		initialCtx, initialCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer initialCancel()
+		for len(needed) > 0 {
+			select {
+			case update := <-g.NotificationChan:
+				if update != nil {
+					g.pendingInitial = append(g.pendingInitial, update)
+					delete(needed, strings.ToLower(update.Variable))
+				}
+			case <-initialCtx.Done():
+				g.Log.Warnf("Timed out waiting for initial samples; %d symbols not yet received: %v", len(needed), needed)
+				goto doneWaiting
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	doneWaiting:
+	}
+	success = true
+	return nil
 }
 
 // ReadBatch is implemented in the reading change (PR3).
@@ -390,7 +671,25 @@ func (g *AdsCommInput) ReadBatch(_ context.Context) (service.MessageBatch, servi
 	return nil, nil, service.ErrNotConnected
 }
 
-// Close is implemented in the connectivity change (PR2).
-func (g *AdsCommInput) Close(_ context.Context) error {
+// Close shuts down the ADS connection. ctx is required by the service.BatchInput interface;
+// go-ads does not support context cancellation on close, so it is not forwarded.
+//
+//nolint:revive
+func (g *AdsCommInput) Close(ctx context.Context) error {
+	g.Log.Infof("Close called")
+	// Signal shutdown to ReadBatchNotification before closing the handler,
+	// so it stops waiting for notifications.
+	if g.done != nil {
+		close(g.done)
+		g.done = nil
+	}
+	if g.Handler != nil {
+		g.Log.Infof("Closing down, cleaning up PLC handles")
+		if cerr := g.Handler.Close(); cerr != nil {
+			g.Log.Warnf("Handler close error: %v", cerr)
+		}
+		g.Handler = nil
+	}
+
 	return nil
 }
