@@ -22,16 +22,22 @@ import (
 	"maps"
 	"math"
 	"math/big"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dop251/goja"
 	"github.com/redpanda-data/benthos/v4/public/service"
 
 	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin/cache"
 )
+
+// cacheStatsInterval controls how often the cache metrics are sampled.
+const cacheStatsInterval = 30 * time.Second
 
 // NodeREDJSProcessor defines the processor that wraps the JavaScript processor.
 type NodeREDJSProcessor struct {
@@ -45,6 +51,10 @@ type NodeREDJSProcessor struct {
 	messagesDropped   *service.MetricCounter
 	vmPoolHits        *service.MetricCounter
 	vmPoolMisses      *service.MetricCounter
+	cacheKeys         *service.MetricGauge
+	cacheDiskBytes    *service.MetricGauge
+	metricsCancel     context.CancelFunc
+	metricsWG         sync.WaitGroup
 }
 
 // NewNodeREDJSProcessor creates a new NodeREDJSProcessor instance.
@@ -66,7 +76,14 @@ func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service
 		messagesDropped:   metrics.NewCounter("messages_dropped"),
 		vmPoolHits:        metrics.NewCounter("vm_pool_hits"),
 		vmPoolMisses:      metrics.NewCounter("vm_pool_misses"),
+		cacheKeys:         metrics.NewGauge("cache_keys"),
+		cacheDiskBytes:    metrics.NewGauge("cache_disk_bytes"),
 	}
+
+	metricsCtx, cancel := context.WithCancel(context.Background())
+	processor.metricsCancel = cancel
+	processor.metricsWG.Add(1)
+	go processor.getCacheMetrics(metricsCtx)
 
 	return processor, nil
 }
@@ -357,6 +374,23 @@ func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) e
 				u.logger.Errorf("cache.delete failed: %v", err)
 			}
 		},
+		"update": func(key string, fn goja.Value) {
+			callable, ok := goja.AssertFunction(fn)
+			if !ok {
+				u.logger.Errorf("cache.update: second argument must be a function")
+				return
+			}
+			err := u.cache.Update(ctx, key, func(old any, exists bool) (any, error) {
+				result, callErr := callable(goja.Undefined(), vm.ToValue(old), vm.ToValue(exists))
+				if callErr != nil {
+					return nil, callErr
+				}
+				return result.Export(), nil
+			})
+			if err != nil {
+				u.logger.Errorf("cache.update failed: %v", err)
+			}
+		},
 	}
 	return vm.Set("cache", cacheObj)
 }
@@ -512,7 +546,37 @@ Message content: %v`,
 
 // Close gracefully shuts down the processor.
 func (u *NodeREDJSProcessor) Close(_ context.Context) error {
+	if u.metricsCancel != nil {
+		u.metricsCancel()
+	}
+	u.metricsWG.Wait()
 	return u.cache.Close()
+}
+
+// getCacheMetrics periodically samples the cache and updates the gauges. It
+// exits when ctx is canceled by Close.
+func (u *NodeREDJSProcessor) getCacheMetrics(ctx context.Context) {
+	defer u.metricsWG.Done()
+
+	ticker := time.NewTicker(cacheStatsInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			stats, err := u.cache.Stats(ctx)
+			if err != nil {
+				if ctx.Err() == nil {
+					u.logger.Warnf("cache.stats failed: %v", err)
+				}
+				continue
+			}
+			u.cacheKeys.Set(stats.Keys)
+			u.cacheDiskBytes.Set(stats.DiskBytes)
+		}
+	}
 }
 
 // NodeREDJSConfigSpec defines the configuration options for the nodered_js processor.
@@ -567,10 +631,53 @@ if (msg.payload.value <= 100 && alarmed) {
   msg.meta.alarm = "cleared";
   return msg;
 }
-return msg;`))
+return msg;`)).
+	Field(service.NewObjectField("cache",
+		service.NewStringField("backend").
+			Description("Cache backend. 'memory' is in-process and lost on restart. 'persistent' writes to a file on disk and survives restarts.").
+			Default("memory").
+			Examples("memory", "persistent"),
+		service.NewStringField("name").
+			Description("Sharing identifier. Processors with the same backend and name share one cache instance in this benthos process — keys written by one are visible to the others. The default 'shared' means two nodered_js processors with no explicit cache config will already share state; set a different value to isolate groups, or use unique names if you want per-processor caches.").
+			Default("shared"),
+		service.NewStringField("path").
+			Description("File path for the 'persistent' backend. Used by the first processor that opens the cache under a given name; later processors attaching by name may omit it. Relative paths resolve against the directory where the benthos process was started (under UMH Core: the S6 service directory). Use an absolute path to avoid ambiguity. Leading '~' expands to the home directory.").
+			Default("./cache.db"),
+		service.NewDurationField("ttl").
+			Description("Time-to-live for cached entries. 0 (default) keeps entries until explicit delete or restart. Set a positive duration (e.g. '1h') to auto-expire entries N after the last write.").
+			Default("0s"),
+	).
+		Description("Cache configuration for state across messages.").
+		Default(map[string]any{}).
+		Advanced())
 
 func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchProcessor, error) {
 	code, err := conf.FieldString("code")
+	if err != nil {
+		return nil, err
+	}
+
+	backend, err := conf.FieldString("cache", "backend")
+	if err != nil {
+		return nil, fmt.Errorf("parse cache.backend: %w", err)
+	}
+
+	cacheName, err := conf.FieldString("cache", "name")
+	if err != nil {
+		return nil, fmt.Errorf("parse cache.name: %w", err)
+	}
+
+	path, err := conf.FieldString("cache", "path")
+	if err != nil {
+		return nil, fmt.Errorf("parse cache.path: %w", err)
+	}
+
+	ttl, err := conf.FieldDuration("cache", "ttl")
+	if err != nil {
+		return nil, fmt.Errorf("parse cache.ttl: %w", err)
+	}
+
+	store, err := openCacheStore(backend, cacheName, path, ttl)
 	if err != nil {
 		return nil, err
 	}
@@ -582,7 +689,56 @@ func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (
 		})()
 	`, code)
 
-	return NewNodeREDJSProcessor(wrappedCode, mgr.Logger(), mgr.Metrics(), cache.NewMemoryStore(0))
+	processor, err := NewNodeREDJSProcessor(wrappedCode, mgr.Logger(), mgr.Metrics(), store)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	return processor, nil
+}
+
+func openCacheStore(backend string, name string, path string, ttl time.Duration) (cache.Cache, error) {
+	switch backend {
+	case "memory":
+		if name == "" {
+			return cache.NewMemoryStore(ttl), nil
+		}
+		return cache.Acquire("mem:"+name, func() (cache.Cache, error) {
+			return cache.NewMemoryStore(ttl), nil
+		})
+	case "persistent":
+		var absPath string
+		if path != "" {
+			expanded := path
+			if strings.HasPrefix(expanded, "~") {
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return nil, fmt.Errorf("expand cache.path %q: %w", path, err)
+				}
+				expanded = filepath.Join(home, expanded[1:])
+			}
+			abs, err := filepath.Abs(expanded)
+			if err != nil {
+				return nil, fmt.Errorf("resolve cache.path %q: %w", path, err)
+			}
+			absPath = abs
+		}
+		key := "bbolt:name:" + name
+		if name == "" {
+			if absPath == "" {
+				return nil, fmt.Errorf("cache.path is required when cache.name is empty")
+			}
+			key = "bbolt:path:" + absPath
+		}
+		return cache.Acquire(key, func() (cache.Cache, error) {
+			if absPath == "" {
+				return nil, fmt.Errorf("cache %q has not been opened yet; the first processor that uses this name must define cache.path", name)
+			}
+			return cache.NewBboltStore(absPath, ttl)
+		})
+	default:
+		return nil, fmt.Errorf("unsupported cache.backend %q (want 'memory' or 'persistent')", backend)
+	}
 }
 
 func init() {
