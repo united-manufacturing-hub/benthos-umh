@@ -31,6 +31,7 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 
 	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin/cache"
+	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin/protobuf"
 )
 
 // NodeREDJSProcessor defines the processor that wraps the JavaScript processor.
@@ -317,6 +318,11 @@ func (u *NodeREDJSProcessor) SetupJSEnvironment(ctx context.Context, vm *goja.Ru
 		return fmt.Errorf("failed to set cache in JS environment: %w", err)
 	}
 
+	err = u.setupProtobuf(vm)
+	if err != nil {
+		return fmt.Errorf("failed to set protobuf in JS environment: %w", err)
+	}
+
 	return nil
 }
 
@@ -359,6 +365,35 @@ func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) e
 		},
 	}
 	return vm.Set("cache", cacheObj)
+}
+
+// setupProtobuf exposes protobuf.decode/encode to the JS runtime. The functions
+// decode/encode against an inline base64 FileDescriptorSet and throw on error
+// (goja converts the Go (T, error) return into a throwing JS function). The
+// tag_processor shares this environment, so it gets `protobuf` too (ENG-5243).
+func (u *NodeREDJSProcessor) setupProtobuf(vm *goja.Runtime) error {
+	// Recover any panic into an error: the descriptor set and data are untrusted, and
+	// goja does not recover Go panics from native functions, so a panic here would crash
+	// the whole process rather than throw a catchable JS error.
+	protobufObj := map[string]any{
+		"decode": func(dataB64 string, descriptorSetB64 string, msgName string) (_ map[string]any, err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("protobuf.decode panicked: %v", r)
+				}
+			}()
+			return protobuf.Decode(dataB64, descriptorSetB64, msgName)
+		},
+		"encode": func(obj any, descriptorSetB64 string, msgName string) (_ string, err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("protobuf.encode panicked: %v", r)
+				}
+			}()
+			return protobuf.Encode(obj, descriptorSetB64, msgName)
+		},
+	}
+	return vm.Set("protobuf", protobufObj)
 }
 
 // HandleExecutionResult handles JavaScript execution results.

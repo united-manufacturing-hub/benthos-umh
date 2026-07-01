@@ -139,3 +139,27 @@ return msg;
 - **In-memory only** — state is lost when the Benthos process restarts. A persistent backend is planned.
 - **No size limits** — the cache grows unboundedly if keys are never deleted. Use `cache.delete` to clean up unused keys. A memory safeguard (threshold, eviction) is planned.
 - **Cache scope in `tag_processor`** — the cache is shared across all stages (`defaults`, `conditions`, `advancedProcessing`). A value set in `defaults` is visible in `advancedProcessing` within the same message.
+
+## protobuf
+
+Decode and encode protobuf messages inline, against a schema passed as a base64-encoded `FileDescriptorSet` (no files on disk). Useful for reading data the standard inputs don't decode — for example the raw Sparkplug B metric bytes attached by the `sparkplug_b` input's `passthrough_raw_metric` flag, including proto2 extension fields.
+
+```javascript
+protobuf.decode(dataB64, descriptorSetB64, msgName)  // base64 proto bytes -> object
+protobuf.encode(obj, descriptorSetB64, msgName)      // object -> base64 proto bytes
+```
+
+- `descriptorSetB64` — base64 of a self-contained `FileDescriptorSet`. Compile it once with `protoc --include_imports --descriptor_set_out=schema.pb your.proto`, then base64-encode `schema.pb` and paste the string into your script.
+- `msgName` — fully-qualified message name, e.g. `com.example.Payload.Metric` (no leading dot).
+- The decoded object follows protojson conventions: `int64`/`uint64` and `bytes` come back as strings, enums as their names, and **proto2 extensions appear as `[package.extension]` keys**. For `encode`, pass 64-bit integers as strings.
+- Both functions throw on error (invalid base64, unknown message, malformed descriptor set); wrap calls in `try/catch` to handle failures in script.
+
+```javascript
+// Decode the raw Sparkplug metric attached by passthrough_raw_metric, reading an extension field.
+var DESC = "CtIB..."; // base64 FileDescriptorSet, compiled once
+var metric = protobuf.decode(msg.meta.spb_metric_raw, DESC, "com.example.Payload.Metric");
+msg.payload = { value: metric.value, extra: metric["[com.example.my_extension]"] };
+return msg;
+```
+
+Available in both `nodered_js` and `tag_processor` — they share the same JavaScript environment.

@@ -1,0 +1,3 @@
+kind: new
+body: Node-RED JS and tag processor expose a `protobuf` namespace (`protobuf.decode` / `protobuf.encode`) to decode and encode protobuf messages inline using an embedded base64 descriptor set, including proto2 extension fields (ENG-5243)
+time: 2026-06-24T16:08:31.625342+02:00
