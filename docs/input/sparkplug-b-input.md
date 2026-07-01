@@ -180,6 +180,89 @@ Here's how a Sparkplug B message maps to UMH-Core using the Modified Parris Meth
 | `request_birth_on_connect` | `bool` | `true` | Send REBIRTH when DATA arrives from a node with no prior BIRTH on this bridge. Typical after a bridge restart. Ignored under `secondary_passive`. Controls only the discovery path; sequence-gap and unresolved-aliases recovery always run for `secondary_active` and `primary`. |
 | `birth_request_throttle` | `duration` | `"1s"` | Minimum time between REBIRTH commands to the same node, shared across every rebirth reason. Collapses simultaneous discovery, sequence-gap, and unresolved-aliases signals into one broker command per window. Set to `0` to disable throttling. |
 
+### Hierarchy Section
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `include_edge_node_in_location` | `bool` | `false` | Nest device-level data under its Sparkplug edge node. When `true`, device data maps to `location_path = <edge_node>.<device>`; node-level data (no device) is unaffected. |
+
+**When to enable.** The default decode treats `device_id` as the full location path
+(UMH's Modified Parris Method, where `enterprise:site:area` → `enterprise.site.area` and
+the edge node is only a session identity). That is correct for UMH-published streams, but
+a **native / brownfield** Sparkplug producer uses `Group / EdgeNode / Device` as genuine
+nested levels — the `device_id` is just a device name. With the default, such device data
+lands at the top of the hierarchy and identically-named devices on different edge nodes
+collide. Set `include_edge_node_in_location: true` to put each device under the edge node
+that owns it:
+
+```yaml
+input:
+  sparkplug_b:
+    mqtt:
+      urls: ["tcp://localhost:1883"]
+    identity:
+      group_id: "FactoryA"
+    include_edge_node_in_location: true
+```
+
+| Topic | `include_edge_node_in_location: false` (default) | `true` |
+|-------|--------------------------------------------------|--------|
+| `spBv1.0/g/DDATA/Line1/IO Controller` | `IO_Controller` | `Line1.IO_Controller` |
+| `spBv1.0/g/DDATA/Line2/IO Controller` | `IO_Controller` (collides with Line1) | `Line2.IO_Controller` |
+| `spBv1.0/g/NDATA/Line1` (node-level) | `Line1` | `Line1` (unchanged) |
+
+Leave it `false` for Parris-encoded publishers, whose `device_id` already carries the full
+location path — enabling it there would prepend the edge node and corrupt the path.
+
+> **No-rebuild workaround:** on the default template you can achieve the same nesting in the
+> bridge's `tag_processor` by setting `location_path` from `spb_edge_node_id_sanitized` and
+> `virtual_path` from `spb_device_id_sanitized`.
+
+### Extension Decoding
+
+Sparkplug B lets publishers carry custom data in proto2 extensions of two messages:
+`Payload.MetaData` (per-metric metadata) and `Payload.MetricValueExtension` (the metric
+value). The standard decode keeps those bytes but cannot name them, because they are not in
+the built-in schema. Supply the extension definitions and the plugin decodes them per metric.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `decode_extensions.extensions` | `string` | `""` | Inline proto2 schema declaring the extensions to decode. Empty (the default) disables decoding. |
+
+Write only the `package` and `extend` blocks, plus any custom message types or well-known-type
+imports (for example `google/protobuf/timestamp.proto`). The plugin compiles the snippet as
+proto2 and adds the Sparkplug import, so do **not** write a `syntax` line or import the
+Sparkplug schema yourself. The extendees must use these fully-qualified names:
+
+- `org.eclipse.tahu.protobuf.Payload.MetaData`
+- `org.eclipse.tahu.protobuf.Payload.MetricValueExtension`
+
+```yaml
+input:
+  sparkplug_b:
+    mqtt:
+      urls: ["tcp://localhost:1883"]
+    identity:
+      group_id: "DeviceLevelTest"
+    decode_extensions:
+      extensions: |
+        package example;
+        extend org.eclipse.tahu.protobuf.Payload.MetaData {
+          optional int64 extra_value = 9;
+        }
+```
+
+For each metric that carries an extension, the plugin attaches:
+
+- `spb_ext_<field>` — one metadata key per scalar extension (for example, `spb_ext_extra_value`), usable directly in a `tag_processor` with no protobuf handling.
+- `spb_metric_decoded` — the full decoded metric as a JSON string, where extensions appear as `[package.field]` keys. Use it for message-typed extensions: `JSON.parse(msg.meta.spb_metric_decoded)`.
+
+Metrics without an extension are emitted unchanged. The snippet compiles once at startup; an
+unparseable snippet, a snippet with no extensions, or two scalar extensions whose names map to
+the same `spb_ext_*` key fails the bridge at startup with the offending line. Extensions are a
+proto2-only feature, so the snippet must be proto2; the device's own implementation language
+is irrelevant, since the wire format is identical.
+
 ---
 
 ## Technical Details

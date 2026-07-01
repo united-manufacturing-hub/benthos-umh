@@ -474,6 +474,9 @@ To fix: Set required fields (msg.meta.location_path, msg.meta.data_contract, msg
 // constructFinalMessage creates the final message with proper topic and payload structure
 // and filters out internal metadata.
 func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Message, error) {
+	// NewMessage(nil) is safe: the air-gap wrapper restores input context onto
+	// outputs in production, so Copy()/WithContext() is a no-op (see CLAUDE.md
+	// "Output context is restored by the engine, not the plugin").
 	newMsg := service.NewMessage(nil)
 
 	// Clean up metadata values that might stringify to invalid values (e.g., virtual_path = null)
@@ -857,6 +860,10 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 
 		// Convert results back to Benthos messages
 		for _, resultMsg := range messages {
+			// NewMessage(nil) is safe: the air-gap wrapper restores input
+			// context onto outputs in production, so Copy()/WithContext() is a
+			// no-op (see CLAUDE.md "Output context is restored by the engine,
+			// not the plugin").
 			newMsg := service.NewMessage(nil)
 			// Set metadata from the JS message
 			if meta, ok := resultMsg["meta"].(map[string]interface{}); ok {

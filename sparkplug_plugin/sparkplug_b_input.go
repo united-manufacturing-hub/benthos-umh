@@ -128,6 +128,20 @@ Key features:
 			Description("Minimum time between REBIRTH commands to the same node, applied across every rebirth reason. Prevents the alias-recovery storm where DATA arriving in the BIRTH round-trip window fires another rebirth. Set to `0` to disable throttling.").
 			Default("1s").
 			Optional()).
+		Field(service.NewBoolField("include_edge_node_in_location").
+			Description("Nest device-level data under its Sparkplug edge node, so location_path becomes <edge_node>.<device> (e.g. 'Line1.IO_Controller'). Enable for native/brownfield Sparkplug where the edge node is a real hierarchy level and devices on different nodes may share a name. Leave disabled (default) for UMH Parris-encoded publishers where device_id already carries the full location path. Node-level data (no device) is unaffected.").
+			Default(false).
+			Examples(true, false).
+			Advanced()).
+		// Extension Decoding (opt-in, ENG-5229)
+		Field(service.NewObjectField("decode_extensions",
+			service.NewStringField("extensions").
+				Description("Inline proto2 schema declaring extensions of the Sparkplug `Payload.MetaData` and/or `Payload.MetricValueExtension` messages. Write only `package` + `extend` blocks, plus any custom message types or well-known-type imports; the plugin compiles it as proto2 and adds the Sparkplug import (do not write a `syntax` line or import the Sparkplug schema). Scalar extensions are attached per carrying metric as `spb_ext_<field>`; the full decoded metric (including message-typed extensions) as `spb_metric_decoded` JSON. Metrics without an extension are unaffected.").
+				Default("").
+				Optional()).
+			Description("Opt-in decoding of proto2 Sparkplug extension fields that the standard decode retains but ignores.").
+			Advanced().
+			Optional()).
 		// Subscription Configuration
 		Field(service.NewObjectField("subscription",
 			service.NewStringListField("groups").
@@ -199,6 +213,12 @@ type sparkplugInput struct {
 	discoveryRebirths       *service.MetricCounter // REBIRTH requests sent for discovery
 	sequenceGapRebirths     *service.MetricCounter // REBIRTH requests sent because of a sequence number gap
 	aliasRebirths           Counter                // REBIRTH requests sent because DATA aliases were unresolved
+
+	// Extension decoding (ENG-5229); nil when decode_extensions is unset.
+	extDecoder            *extensionDecoder
+	extensionDecodeErrors *service.MetricCounter
+	extDecodeLogMu        sync.Mutex
+	extDecodeLogLast      time.Time
 }
 
 type mqttMessage struct {
@@ -390,10 +410,18 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 	config.RequestBirthOnConnect, _ = conf.FieldBool("request_birth_on_connect")
 	config.BirthRequestThrottle, _ = conf.FieldDuration("birth_request_throttle")
 
+	config.IncludeEdgeNodeInLocation, _ = conf.FieldBool("include_edge_node_in_location")
+
+	// Parse extension decoding (optional)
+	if conf.Contains("decode_extensions") {
+		config.DecodeExtensions, _ = conf.Namespace("decode_extensions").FieldString("extensions")
+	}
+
 	// Parse subscription section using namespace (optional)
 	if conf.Contains("subscription") {
 		subscriptionConf := conf.Namespace("subscription")
-		groups, err := subscriptionConf.FieldStringList("groups")
+		var groups []string
+		groups, err = subscriptionConf.FieldStringList("groups")
 		if err == nil {
 			config.Subscription.Groups = groups
 		}
@@ -406,8 +434,17 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 	// - AutoExtractValues: true (required for UMH-Core format)
 
 	// Validate configuration (this will auto-detect the role)
-	if err := config.Validate(); err != nil {
+	if err = config.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	// Compile the extension schema once at startup (fail fast on a bad snippet).
+	var extDecoder *extensionDecoder
+	if strings.TrimSpace(config.DecodeExtensions) != "" {
+		extDecoder, err = newExtensionDecoder(config.DecodeExtensions)
+		if err != nil {
+			return nil, fmt.Errorf("decode_extensions: %w", err)
+		}
 	}
 
 	si := &sparkplugInput{
@@ -436,6 +473,8 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 		discoveryRebirths:       mgr.Metrics().NewCounter("discovery_rebirths"),
 		sequenceGapRebirths:     mgr.Metrics().NewCounter("sequence_gap_rebirths"),
 		aliasRebirths:           mgr.Metrics().NewCounter("alias_rebirths"),
+		extDecoder:              extDecoder,
+		extensionDecodeErrors:   mgr.Metrics().NewCounter("extension_decode_errors"),
 	}
 
 	return si, nil
@@ -1127,7 +1166,35 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	// Try to add UMH conversion metadata (optional, non-failing)
 	s.tryAddUMHMetadata(msg, metric, payload, topicInfo)
 
+	// Decode proto2 extension fields (opt-in). Additive only: sets new metadata, never the
+	// value or existing keys, and never fails the metric.
+	if s.extDecoder != nil {
+		if flat, decoded, present, err := s.extDecoder.decode(metric); err != nil {
+			s.noteExtDecodeError(metric.GetName(), err)
+		} else if present {
+			for leaf, val := range flat {
+				msg.MetaSet("spb_ext_"+leaf, val)
+			}
+			msg.MetaSet("spb_metric_decoded", decoded)
+		}
+	}
+
 	return msg
+}
+
+// noteExtDecodeError counts the failure and warns at most once per 30s, so a systematic
+// failure (e.g. a mis-declared field type) can't flood the logs.
+func (s *sparkplugInput) noteExtDecodeError(metricName string, err error) {
+	s.extensionDecodeErrors.Incr(1)
+	s.extDecodeLogMu.Lock()
+	now := time.Now()
+	if !s.extDecodeLogLast.IsZero() && now.Sub(s.extDecodeLogLast) < 30*time.Second {
+		s.extDecodeLogMu.Unlock()
+		return
+	}
+	s.extDecodeLogLast = now
+	s.extDecodeLogMu.Unlock()
+	s.logger.Warnf("extension decode failed for metric %q: %v (metric emitted without extension fields; further warnings throttled)", metricName, err)
 }
 
 func (s *sparkplugInput) createDeathEventMessage(msgType MessageType, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
@@ -1221,28 +1288,29 @@ func (s *sparkplugInput) extractMetricValue(metric *sparkplugb.Payload_Metric) [
 	return jsonBytes
 }
 
-// sanitizeForTopic sanitizes strings for use in UMH topic paths
-// Replaces all non-alphanumeric characters (except dots) with underscores
+// sanitizeForTopic sanitizes strings for use in UMH topic paths: every rune that is not an
+// ASCII letter, digit, or dot becomes '_'. Dots are kept because they separate topic segments.
 func (s *sparkplugInput) sanitizeForTopic(input string) string {
-	if input == "" {
-		return ""
-	}
+	return sanitizeRunes(input, func(r rune) bool { return isASCIIAlnum(r) || r == '.' })
+}
 
-	var result strings.Builder
-	result.Grow(len(input))
+// isASCIIAlnum reports whether r is an ASCII letter or digit.
+func isASCIIAlnum(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+}
 
-	for _, char := range input {
-		if (char >= 'a' && char <= 'z') ||
-			(char >= 'A' && char <= 'Z') ||
-			(char >= '0' && char <= '9') ||
-			char == '.' {
-			result.WriteRune(char)
+// sanitizeRunes replaces every rune for which keep returns false with '_'.
+func sanitizeRunes(s string, keep func(rune) bool) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if keep(r) {
+			b.WriteRune(r)
 		} else {
-			result.WriteRune('_')
+			b.WriteRune('_')
 		}
 	}
-
-	return result.String()
+	return b.String()
 }
 
 // getDataTypeName converts Sparkplug data type ID to human-readable string
@@ -1456,6 +1524,16 @@ func ValidateSequenceNumber(lastSeq uint8, currentSeq uint8) bool {
 	return currentSeq == expectedNext
 }
 
+func composeLocationDeviceID(edgeNode string, device string, includeEdgeNode bool) string {
+	if device == "" {
+		return edgeNode
+	}
+	if includeEdgeNode {
+		return edgeNode + ":" + device
+	}
+	return device
+}
+
 // tryAddUMHMetadata attempts to convert Sparkplug B data to UMH format and add UMH metadata.
 // This is a non-failing operation - if conversion fails, it adds status flags and continues.
 func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload, topicInfo *TopicInfo) {
@@ -1500,19 +1578,19 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 	}
 
 	// For NDATA messages (node-level data), use EdgeNode as DeviceID when Device is empty
-	deviceID := topicInfo.Device
-	if deviceID == "" {
-		deviceID = topicInfo.EdgeNode
+	if topicInfo.Device == "" {
 		// Set spb_device_id metadata for consistency (used by Topic Browser and other downstream processors)
 		// Even though this is NDATA (node-level), we're treating EdgeNode as the device identifier
-		msg.MetaSet("spb_device_id", deviceID)
-		msg.MetaSet("spb_device_id_sanitized", s.sanitizeForTopic(deviceID))
+		msg.MetaSet("spb_device_id", topicInfo.EdgeNode)
+		msg.MetaSet("spb_device_id_sanitized", s.sanitizeForTopic(topicInfo.EdgeNode))
 	}
+
+	locationDeviceID := composeLocationDeviceID(topicInfo.EdgeNode, topicInfo.Device, s.config.IncludeEdgeNodeInLocation)
 
 	sparkplugMsg := &SparkplugMessage{
 		GroupID:    topicInfo.Group,
 		EdgeNodeID: topicInfo.EdgeNode,
-		DeviceID:   deviceID,
+		DeviceID:   locationDeviceID,
 		Value:      rawValue,
 		DataType:   dataType,
 		Timestamp:  time.Now(), // Will be overridden below if payload has timestamp
