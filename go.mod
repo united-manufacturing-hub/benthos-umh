@@ -27,9 +27,9 @@ require (
 )
 
 require (
-	github.com/RuneRoven/benthosADS v1.0.10
 	github.com/RuneRoven/benthosAlarm v1.0.0
 	github.com/RuneRoven/benthosSMTP v0.0.1
+	github.com/RuneRoven/go-ads/v2 v2.2.0
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/danomagnum/gologix v0.27.2-beta
 	github.com/dop251/goja v0.0.0-20260607120635-348e6bea910d
@@ -122,7 +122,6 @@ require (
 	github.com/PaesslerAG/jsonpath v0.1.1 // indirect
 	github.com/ProtonMail/go-crypto v1.4.1 // indirect
 	github.com/RoaringBitmap/roaring/v2 v2.15.0 // indirect
-	github.com/RuneRoven/go-ads/v2 v2.2.0 // indirect
 	github.com/andybalholm/brotli v1.2.1 // indirect
 	github.com/apache/arrow-go/v18 v18.6.0 // indirect
 	github.com/apache/arrow/go/arrow v0.0.0-20211112161151-bc219186db40 // indirect
