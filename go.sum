@@ -1537,6 +1537,8 @@ github.com/testcontainers/testcontainers-go/modules/couchbase v0.42.0 h1:95yS9bi
 github.com/testcontainers/testcontainers-go/modules/couchbase v0.42.0/go.mod h1:lAyyMk/tyM6AIKrFQs3lR36/BIf4i0Dr8pqv29G7H9M=
 github.com/testcontainers/testcontainers-go/modules/ollama v0.42.0 h1:7yjib/1W+/y5Tbo4wsUoavMYL7km7U0o79+el0SwIsw=
 github.com/testcontainers/testcontainers-go/modules/ollama v0.42.0/go.mod h1:W0KiFxwaDuSn5TRj4jf0O67UpTpSop81bAQqHHIKkcM=
+github.com/testcontainers/testcontainers-go/modules/postgres v0.43.0 h1:ShNOFYAF4lKHvdIG258hi69bSxC88uXnxJkJvNs/IVs=
+github.com/testcontainers/testcontainers-go/modules/postgres v0.43.0/go.mod h1:vdq5/RqmGfWeefzyfcVI/pID1rzmc1TDvqXa15bPJks=
 github.com/testcontainers/testcontainers-go/modules/qdrant v0.42.0 h1:n+ORvm197trYGepQcDkhIndurBDShV/QhVD6PWEVKd0=
 github.com/testcontainers/testcontainers-go/modules/qdrant v0.42.0/go.mod h1:XGIFTblAOTh5o33OWz35Z2lwN04Hhk4+Y9T4Non8bx0=
 github.com/testcontainers/testcontainers-go/modules/redpanda v0.43.0 h1:fWz4at9inkRxOUsMOesKW89o0YIl7KLzztafel0mksE=
