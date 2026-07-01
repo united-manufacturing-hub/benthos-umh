@@ -46,8 +46,8 @@ func historianConfig() *service.ConfigSpec {
 		Field(service.NewBoolField("metadata_keys_all").Description("Store all metadata keys except blacklists.").Default(true).Examples(true, false).Advanced()).
 		Field(service.NewStringListField("metadata_keys").Description("Allowlist when metadata_keys_all=false.").Default([]any{}).Advanced()).
 		Field(service.NewStringListField("metadata_keys_exclude").Description("Blacklist applied only when metadata_keys_all=true: drop these metadata keys on top of the built-in structural/high-churn exclusions. Each entry is an exact key name or a trailing-* prefix (e.g. \"opcua_*\"). Ignored in allowlist mode.").Default([]any{}).Examples([]any{"serialNumber"}, []any{"opcua_*", "spb_*"}).Advanced()).
-		Field(service.NewStringField("compress_after").Description("Compress chunks older than this (per contract).").Default("168h").Advanced()).
-		Field(service.NewStringField("retention").Description("Drop chunks older than this; empty = keep forever.").Default("").Advanced()).
+		Field(service.NewStringField("compress_after").Description("Compress chunks older than this, as a Go duration; use hours (e.g. \"168h\") -- days are not a valid unit. Applied once at first database bootstrap. Per contract.").Default("168h").Advanced()).
+		Field(service.NewStringField("retention").Description("Drop chunks older than this, as a Go duration; use hours (e.g. \"720h\") -- days are not a valid unit. Empty = keep forever. Applied once at first database bootstrap.").Default("").Advanced()).
 		Field(service.NewBatchPolicyField("batching").Advanced()).
 		Field(service.NewIntField("max_in_flight").Description("Max parallel batches in flight.").Default(8).Advanced())
 }
@@ -62,6 +62,7 @@ type historianOutput struct {
 	metadataExclude                       *MetaExcluder
 	compressAfter, retention              time.Duration
 	retentionSet                          bool
+	maxInFlight                           int
 	dsnOverride                           string // set by tests; empty => build from fields
 
 	logger    *service.Logger
@@ -154,6 +155,9 @@ func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*hi
 		}
 		o.retentionSet = true
 	}
+	if o.maxInFlight, err = conf.FieldInt("max_in_flight"); err != nil {
+		return nil, err
+	}
 	return o, nil
 }
 
@@ -215,6 +219,14 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 			return fmt.Errorf("invalid connection settings: %s", o.redact(err)) // DSN echoes the password
 		}
 		cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec // simple protocol (pgbouncer txn pool)
+		// Each in-flight batch holds a pooled connection for its write transaction, so a pool
+		// smaller than max_in_flight caps effective concurrency below the configured level.
+		// pgxpool defaults to max(4, NumCPU) -- below the default max_in_flight of 8 on small
+		// hosts -- so size the pool to serve every in-flight batch, +1 for the Connect-time
+		// liveness/bootstrap checks. A larger pool_max_conns set in the DSN is left untouched.
+		if want := int32(o.maxInFlight) + 1; cfg.MaxConns < want {
+			cfg.MaxConns = want
+		}
 		pool, err := pgxpool.NewWithConfig(ctx, cfg)
 		if err != nil {
 			return fmt.Errorf("connect failed: %s", o.redact(err))
@@ -248,8 +260,27 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 	if _, err := conn.Exec(bootCtx, o.bootstrapStmt()); err != nil {
 		return fmt.Errorf("schema bootstrap failed: %w", err) // guard stays false -> next Connect retries
 	}
+	o.warnPolicyDrift(bootCtx)
 	o.bootstrapped = true
 	return nil
+}
+
+// warnPolicyDrift warns when the compression/retention policy applied in the database differs
+// from the configured values. Policies are set once at first bootstrap (see policyBlock), so
+// editing compress_after/retention and restarting otherwise has no visible effect; this surfaces
+// that instead of silently ignoring the change. Best-effort: any introspection error is swallowed
+// so a server whose timescaledb_information shape differs never fails Connect. Both hypertables
+// get identical policies, so the value table is representative.
+func (o *historianOutput) warnPolicyDrift(ctx context.Context) {
+	table := "value_" + o.contract
+	var appliedComp, appliedRet *int64
+	if err := o.pool.QueryRow(ctx, policyIntervalSQL("policy_compression", "compress_after"), table).Scan(&appliedComp); err != nil {
+		return
+	}
+	_ = o.pool.QueryRow(ctx, policyIntervalSQL("policy_retention", "drop_after"), table).Scan(&appliedRet)
+	for _, w := range policyDriftWarnings(int64(o.compressAfter.Seconds()), appliedComp, o.retentionSet, int64(o.retention.Seconds()), appliedRet) {
+		o.logger.Warnf("TimescaleDB historian: %s. Policies are set once at first bootstrap and are not re-applied on restart; change them on an existing database via a schema migration.", w)
+	}
 }
 
 func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageBatch) error {
@@ -288,6 +319,13 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	}
 	o.warnHighChurn(churn)
 	if len(rows) == 0 {
+		// A fully-dropped non-empty batch writes zero rows while the connection stays up, so
+		// umh-core would otherwise see a healthy bridge silently discarding all data. Warn at a
+		// level umh-core surfaces as degraded; still return nil (no nack) so a single bad
+		// message never stalls the stream.
+		if len(batch) > 0 {
+			o.logger.Warnf("TimescaleDB historian: dropped all %d message(s) in the batch; nothing written. Check the source data and metadata configuration.", len(batch))
+		}
 		return nil
 	}
 
@@ -335,10 +373,16 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	for _, r := range rows {
 		id := topicID[keyOf(r)]
 		if _, err := tx.Exec(ctx, vq, id, r.TS, r.ValueNum, r.ValueText); err != nil {
-			return fmt.Errorf("value write failed: %w", err) // RAISE -> error -> nack -> degraded+stall
+			// A value conflict (raise_pk_conflict) or any write error halts the bridge
+			// (error -> nack -> retry the same batch -> stall until the source is fixed), the
+			// template's append-only conflict policy. Emit an attributable line first so the
+			// halt names the offending tag rather than relying on benthos to log a bare error.
+			o.logger.Errorf("TimescaleDB historian: value write failed for %s: %v", describeRow(r), err)
+			return fmt.Errorf("value write failed: %w", err)
 		}
 		if r.EmitMeta {
 			if _, err := tx.Exec(ctx, aq, id, r.TS, r.MetadataJSON); err != nil {
+				o.logger.Errorf("TimescaleDB historian: attribute write failed for %s: %v", describeRow(r), err)
 				return fmt.Errorf("attribute write failed: %w", err)
 			}
 			attrCount++
@@ -352,6 +396,12 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	o.valueRows.Incr(int64(len(rows)))
 	o.attrRows.Incr(int64(attrCount))
 	return nil
+}
+
+// describeRow identifies a row for an attributable write-failure log: which tag, at which ts.
+func describeRow(r *Row) string {
+	return fmt.Sprintf("contract=%q location=%q virtual_path=%q tag=%q ts=%v",
+		r.ContractName, r.RawLocation, r.VirtualPath, r.TagName, r.TS)
 }
 
 // recordDrop counts and debug-logs a discarded message, so a misconfigured bridge that
@@ -395,10 +445,6 @@ func (o *historianOutput) Close(_ context.Context) error {
 func init() {
 	err := service.RegisterBatchOutput("historian", historianConfig(),
 		func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchOutput, service.BatchPolicy, int, error) {
-			maxInFlight, err := conf.FieldInt("max_in_flight")
-			if err != nil {
-				return nil, service.BatchPolicy{}, 0, err
-			}
 			batchPolicy, err := conf.FieldBatchPolicy("batching")
 			if err != nil {
 				return nil, service.BatchPolicy{}, 0, err
@@ -407,7 +453,7 @@ func init() {
 			if err != nil {
 				return nil, service.BatchPolicy{}, 0, err
 			}
-			return out, batchPolicy, maxInFlight, nil
+			return out, batchPolicy, out.maxInFlight, nil
 		})
 	if err != nil {
 		panic(err)

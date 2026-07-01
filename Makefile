@@ -122,9 +122,16 @@ test-uns-redpanda:
 test-historian:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='!postgres' ./historian_plugin/...
 
+# Functional TimescaleDB integration tests (testcontainers). Excludes the 'load' throughput
+# test, which is too heavy for CI -- run it on demand with test-historian-load.
 .PHONY: test-historian-postgres
 test-historian-postgres:
-	@TEST_HISTORIAN=true $(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='postgres' ./historian_plugin/...
+	@TEST_HISTORIAN=true $(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='postgres && !load' ./historian_plugin/...
+
+# Heavy throughput test only; run locally when validating write performance, not in CI.
+.PHONY: test-historian-load
+test-historian-load:
+	@TEST_HISTORIAN=true $(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='load' ./historian_plugin/...
 
 .PHONY: test-s7comm
 test-s7comm:

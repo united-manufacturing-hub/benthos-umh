@@ -127,6 +127,7 @@ func NewHistorianTestHandle(dsn string, contract string) *HistorianTestHandle {
 		contract:        contract,
 		metadataKeysAll: true,
 		compressAfter:   168 * time.Hour,
+		maxInFlight:     8,
 		logger:          mgr.Logger(),
 		dropped:         mgr.Metrics().NewCounter("historian_messages_dropped", "reason"),
 		valueRows:       mgr.Metrics().NewCounter("historian_value_rows_written"),
@@ -203,4 +204,9 @@ func (h *HistorianTestHandle) AttributeValue(ctx context.Context, contract strin
 		return "", false
 	}
 	return *v, true
+}
+
+// PolicyDriftWarningsForTest exposes policyDriftWarnings to the external test package.
+func PolicyDriftWarningsForTest(compressWant int64, appliedComp *int64, retentionSet bool, retentionWant int64, appliedRet *int64) []string {
+	return policyDriftWarnings(compressWant, appliedComp, retentionSet, retentionWant, appliedRet)
 }

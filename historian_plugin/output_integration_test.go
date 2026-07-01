@@ -92,6 +92,35 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(h.Connect(ctx)).To(Succeed())
 	})
 
+	It("a fresh handle connects to an already-bootstrapped database and reads/writes (restart path)", func() {
+		// First handle bootstraps the schema and writes one point.
+		h1 := connected("recon")
+		defer h1.Close(ctx)
+		Expect(h1.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(1.0, 1000, "_recon_v1", "acme.line1", "x", nil),
+		})).To(Succeed())
+
+		// A second, independent handle (bootstrapped == false) connects to the SAME database --
+		// the real restart path, not the same-handle early return. Bootstrap runs again and must
+		// be idempotent; the ledger-gated policy block is skipped rather than re-applied.
+		h2 := tsh.NewHistorianTestHandle(sharedDSN, "recon")
+		Expect(h2.Connect(ctx)).To(Succeed())
+		defer h2.Close(ctx)
+
+		// h2 sees the recorded schema version and h1's data through the documented read path...
+		Expect(h2.SchemaVersion(ctx)).To(Equal(1))
+		Expect(h2.CountValueRows(ctx, "recon")).To(Equal(1))
+		id, ok := h2.GetTopicID(ctx, "acme.line1", "vibration", "recon", "x")
+		Expect(ok).To(BeTrue())
+		Expect(h2.ValueWindow(ctx, "recon", id, 0, 2000)).To(Equal([]float64{1.0}))
+
+		// ...and can write further points itself.
+		Expect(h2.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(2.0, 2000, "_recon_v1", "acme.line1", "x", nil),
+		})).To(Succeed())
+		Expect(h2.CountValueRows(ctx, "recon")).To(Equal(2))
+	})
+
 	It("records the baseline schema version in the ledger after bootstrap", func() {
 		h := connected("pump")
 		defer h.Close(ctx)
@@ -103,7 +132,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(h.SchemaVersion(ctx)).To(Equal(1))
 	})
 
-	It("batched writes scale with workers and beat per-message (no batching)", func() {
+	It("batched writes scale with workers and beat per-message (no batching)", Label("load"), func() {
 		const totalRows = 4000
 		poolDSN := sharedDSN + "&pool_max_conns=16"
 

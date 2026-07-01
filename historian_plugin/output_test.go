@@ -98,4 +98,39 @@ data_contract: pump
 			To(BeNumerically("<", strings.LastIndex(got, "COMMIT;")))
 		Expect(got).NotTo(ContainSubstring("MIGRATIONS_SLOT")) // placeholder substituted
 	})
+
+	It("gates compression/retention setup on the ledger so it runs once at first bootstrap", func() {
+		got := tsh.BootstrapSQLForTest("pump")
+		// The policy DO block is wrapped in the version-1 ledger gate, so it never re-runs on
+		// restart: the ALTER can't hit the compressed-chunks error and retention is not stripped.
+		Expect(got).To(ContainSubstring("ALTER TABLE umh.value_pump SET ("))
+		Expect(got).To(ContainSubstring("add_compression_policy('umh.value_pump'"))
+		// Runs only on empty tables, so no remove_* churn on restart.
+		Expect(got).NotTo(ContainSubstring("remove_retention_policy"))
+		Expect(got).NotTo(ContainSubstring("remove_compression_policy"))
+	})
+})
+
+var _ = Describe("policy drift warnings", func() {
+	i := func(v int64) *int64 { return &v }
+
+	It("stays quiet when the compression policy can't be read (catalog unavailable / not bootstrapped)", func() {
+		Expect(tsh.PolicyDriftWarningsForTest(604800, nil, true, 2592000, nil)).To(BeEmpty())
+	})
+	It("stays quiet when config matches the applied policies", func() {
+		Expect(tsh.PolicyDriftWarningsForTest(604800, i(604800), false, 0, nil)).To(BeEmpty())
+		Expect(tsh.PolicyDriftWarningsForTest(604800, i(604800), true, 2592000, i(2592000))).To(BeEmpty())
+	})
+	It("warns when compress_after was changed after bootstrap", func() {
+		Expect(tsh.PolicyDriftWarningsForTest(86400, i(604800), false, 0, nil)).To(HaveLen(1))
+	})
+	It("warns when retention is configured but not applied", func() {
+		Expect(tsh.PolicyDriftWarningsForTest(604800, i(604800), true, 2592000, nil)).To(HaveLen(1))
+	})
+	It("warns when the applied retention differs from config", func() {
+		Expect(tsh.PolicyDriftWarningsForTest(604800, i(604800), true, 2592000, i(1000))).To(HaveLen(1))
+	})
+	It("warns when retention was removed from config but is still applied", func() {
+		Expect(tsh.PolicyDriftWarningsForTest(604800, i(604800), false, 0, i(2592000))).To(HaveLen(1))
+	})
 })

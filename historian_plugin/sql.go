@@ -172,6 +172,17 @@ tp AS (
 // especially -- every row of a contract touches it) release immediately, instead of being
 // held for the whole value-write batch. Holding them batch-long serializes concurrent batches
 // (max_in_flight) on the shared location row, which stops batching from scaling.
+//
+// Two consequences of splitting dimension resolution from the value write, versus the
+// template's single atomic dimension-CTE + INSERT per row:
+//   - ~2N+M round-trips per batch when every message is a distinct topic (vs N+M) -- the cost
+//     of releasing the shared locks early.
+//   - a Phase-2 value RAISE (e.g. raise_pk_conflict) leaves these dimension upserts already
+//     committed, orphaning a topic row with no value. It is idempotent on retry (the next
+//     attempt reuses the row), so it is wasted rows, not a correctness bug: the template's
+//     dimension+value atomicity is intentionally traded for write concurrency.
+// The trade only pays off at max_in_flight > 1: at max_in_flight = 1 there is no concurrent
+// contention on the shared location row, so the split forgoes atomicity for no benefit.
 const topicResolveSQL = dimensionCTE + `SELECT topic_id FROM tp;`
 
 // valueInsert / attributeInsert write one row against an already-resolved topic_id (passed as
@@ -263,24 +274,70 @@ func sub(sql string, contract string) string {
 	return strings.ReplaceAll(sql, "CONTRACT_SLOT", contract)
 }
 
+// policyBlock generates the compression/retention setup for one hypertable, gated on the
+// migration ledger so it runs exactly once -- at first bootstrap, when the table is empty and
+// has no compressed chunks. Re-running it on every Connect (the previous behaviour) had two
+// hazards: ALTER TABLE SET (compress...) errors on TimescaleDB versions that forbid changing
+// compression config while compressed chunks exist (which they do once compress_after elapses),
+// and re-applying retention un-scheduled an operator's manually-added policy on every restart.
+// Running once, before any chunk is compressed, sidesteps both -- so no remove_* calls are
+// needed, since nothing exists yet to remove. Consequence: editing compress_after/retention in
+// config and restarting does NOT re-apply; changing them on an existing database means adding a
+// numbered migration step that re-runs the policy (see schemaMigrations).
 func policyBlock(table string, compressAfter time.Duration, retention time.Duration, retentionSet bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `DO $pol$
 BEGIN
-  PERFORM remove_compression_policy('%[1]s', if_exists => TRUE);
-  ALTER TABLE %[1]s SET (
-    timescaledb.compress,
-    timescaledb.compress_segmentby = 'topic_id',
-    timescaledb.compress_orderby   = 'ts DESC'
-  );
-  PERFORM add_compression_policy('%[1]s', INTERVAL '%[2]d seconds');
-  PERFORM remove_retention_policy('%[1]s', if_exists => TRUE);
+  IF NOT EXISTS (SELECT 1 FROM umh.schema_migrations WHERE version = 1) THEN
+    ALTER TABLE %[1]s SET (
+      timescaledb.compress,
+      timescaledb.compress_segmentby = 'topic_id',
+      timescaledb.compress_orderby   = 'ts DESC'
+    );
+    PERFORM add_compression_policy('%[1]s', INTERVAL '%[2]d seconds');
 `, table, int64(compressAfter.Seconds()))
 	if retentionSet {
-		fmt.Fprintf(&b, "  PERFORM add_retention_policy('%s', INTERVAL '%d seconds');\n", table, int64(retention.Seconds()))
+		fmt.Fprintf(&b, "    PERFORM add_retention_policy('%s', INTERVAL '%d seconds');\n", table, int64(retention.Seconds()))
 	}
-	b.WriteString("END $pol$;")
+	b.WriteString("  END IF;\nEND $pol$;")
 	return b.String()
+}
+
+// policyIntervalSQL returns a query for the interval (in seconds) of a TimescaleDB policy job on
+// a umh hypertable, or NULL when no such policy exists. The scalar subquery always yields exactly
+// one row (never ErrNoRows), so a nil scan means "no policy / catalog unavailable". procName and
+// configKey are internal constants, not user input.
+func policyIntervalSQL(procName, configKey string) string {
+	return fmt.Sprintf(`SELECT (
+  SELECT EXTRACT(EPOCH FROM (config->>'%s')::interval)::bigint
+    FROM timescaledb_information.jobs
+   WHERE proc_name = '%s' AND hypertable_schema = 'umh' AND hypertable_name = $1
+   LIMIT 1)`, configKey, procName)
+}
+
+// policyDriftWarnings compares configured compression/retention intervals against the ones
+// actually applied in the database (in seconds; nil = no such policy) and returns a warning per
+// divergence. appliedComp == nil means the compression policy could not be read -- either the
+// catalog is unavailable on this server or the database was never bootstrapped -- so it returns
+// nothing rather than risk a false warning. Compression always has a policy after bootstrap, so
+// its presence doubles as the "introspection works" probe for the retention checks.
+func policyDriftWarnings(compressWant int64, appliedComp *int64, retentionSet bool, retentionWant int64, appliedRet *int64) []string {
+	if appliedComp == nil {
+		return nil
+	}
+	var warns []string
+	if *appliedComp != compressWant {
+		warns = append(warns, fmt.Sprintf("configured compress_after (%ds) does not match the compression policy applied in the database (%ds)", compressWant, *appliedComp))
+	}
+	switch {
+	case retentionSet && appliedRet == nil:
+		warns = append(warns, fmt.Sprintf("configured retention (%ds) is not applied in the database", retentionWant))
+	case retentionSet && *appliedRet != retentionWant:
+		warns = append(warns, fmt.Sprintf("configured retention (%ds) does not match the retention policy applied in the database (%ds)", retentionWant, *appliedRet))
+	case !retentionSet && appliedRet != nil:
+		warns = append(warns, fmt.Sprintf("retention is unset in config but a retention policy (%ds) is applied in the database", *appliedRet))
+	}
+	return warns
 }
 
 func bootstrapSQL(contract string, compressAfter time.Duration, retention time.Duration, retentionSet bool) string {
