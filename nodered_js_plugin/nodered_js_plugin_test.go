@@ -206,6 +206,524 @@ nodered_js:
 			Expect(string(jsonStr)).To(Equal(`"new message"`))
 		})
 
+		It("should fan out one output per element when the function returns an array", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    return [
+      {payload: {value: 1}, meta: {tag_name: "a"}},
+      {payload: {value: 2}, meta: {tag_name: "b"}}
+    ];
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// The function returned a 2-element array, so exactly two outputs
+			// must reach the consumer, one per element, order preserved.
+			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
+				return len(messages)
+			}).Should(Equal(2))
+
+			// First output: element 0's payload and meta.
+			messagesMutex.Lock()
+			msg0 := messages[0]
+			msg1 := messages[1]
+			messagesMutex.Unlock()
+			structured0, err := msg0.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			jsonStr0, err := json.Marshal(structured0)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(jsonStr0)).To(Equal(`{"value":1}`))
+			tagName0, exists := msg0.MetaGet("tag_name")
+			Expect(exists).To(BeTrue())
+			Expect(tagName0).To(Equal("a"))
+
+			// Second output: element 1's payload and meta.
+			structured1, err := msg1.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			jsonStr1, err := json.Marshal(structured1)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(jsonStr1)).To(Equal(`{"value":2}`))
+			tagName1, exists := msg1.MetaGet("tag_name")
+			Expect(exists).To(BeTrue())
+			Expect(tagName1).To(Equal("b"))
+		})
+
+		It("should skip nil array elements and fan out the rest", func() {
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    return [
+      {payload: {value: 1}, meta: {tag_name: "a"}},
+      null,
+      {payload: {value: 2}, meta: {tag_name: "b"}}
+    ];
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// The null element in the middle is skipped rather than erroring
+			// the batch, so the two non-nil elements survive.
+			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
+				return len(messages)
+			}).Should(Equal(2))
+
+			// A partial-nil array still produces outputs, so the whole-input
+			// drop counter must stay at 0.
+			Consistently(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "500ms").Should(Equal(int64(0)))
+
+			messagesMutex.Lock()
+			msg0 := messages[0]
+			msg1 := messages[1]
+			messagesMutex.Unlock()
+
+			// First output: element 0's payload and meta.
+			structured0, err := msg0.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			jsonStr0, err := json.Marshal(structured0)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(jsonStr0)).To(Equal(`{"value":1}`))
+			tagName0, exists := msg0.MetaGet("tag_name")
+			Expect(exists).To(BeTrue())
+			Expect(tagName0).To(Equal("a"))
+
+			// Second output: element 2's payload and meta (element 1 was nil, skipped).
+			structured1, err := msg1.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			jsonStr1, err := json.Marshal(structured1)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(jsonStr1)).To(Equal(`{"value":2}`))
+			tagName1, exists := msg1.MetaGet("tag_name")
+			Expect(exists).To(BeTrue())
+			Expect(tagName1).To(Equal("b"))
+		})
+
+		It("should skip undefined array elements and fan out the rest", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    return [
+      {payload: {value: 1}, meta: {tag_name: "a"}},
+      undefined,
+      {payload: {value: 2}, meta: {tag_name: "b"}}
+    ];
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// goja exports JS undefined as Go nil, so it hits the same
+			// skip branch as null.
+			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
+				return len(messages)
+			}).Should(Equal(2))
+
+			messagesMutex.Lock()
+			msg0 := messages[0]
+			msg1 := messages[1]
+			messagesMutex.Unlock()
+
+			structured0, err := msg0.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			jsonStr0, err := json.Marshal(structured0)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(jsonStr0)).To(Equal(`{"value":1}`))
+
+			structured1, err := msg1.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			jsonStr1, err := json.Marshal(structured1)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(jsonStr1)).To(Equal(`{"value":2}`))
+		})
+
+		It("should error the batch when an array element is a non-object primitive", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    return [
+      {payload: {value: 1}, meta: {tag_name: "a"}},
+      42,
+      {payload: {value: 2}, meta: {tag_name: "b"}}
+    ];
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// A non-object array element errors the batch atomically: zero
+			// fan-out outputs survive, and the single error-marked input is
+			// passed through to the consumer (HaveLen(1)), observed via GetError().
+			var batchErr error
+			Eventually(func() bool {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
+				if len(messages) == 0 {
+					return false
+				}
+				batchErr = messages[0].GetError()
+				return batchErr != nil
+			}).Should(BeTrue(), "expected the batch-fatal error to reach the consumer message")
+
+			messagesMutex.Lock()
+			Expect(batchErr.Error()).To(ContainSubstring("must be a message object"))
+			messagesMutex.Unlock()
+		})
+
+		It("should drop all messages when returning an all-nil array", func() {
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    return [null, null];
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var count int64
+			err = builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&count, 1)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Every element is nil, so the fan-out produces an empty
+			// batch: no consumer outputs and no error.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&count)
+			}, "500ms").Should(Equal(int64(0)))
+
+			// The whole input was dropped, so messagesDropped is bumped once.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}).Should(Equal(int64(1)))
+		})
+
+		It("should bump messagesDropped once when the function returns an empty array", func() {
+			// An empty array return is a whole-input drop: 0 outputs AND
+			// messagesDropped incremented exactly once.
+			// Default StreamBuilder metrics are no-op, so the counter is
+			// observed via a registered MetricsExporter.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    return [];
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			// (a) 0 consumer outputs: the whole input was dropped.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+
+			// (b) messagesDropped bumped exactly once for the whole input.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}).Should(Equal(int64(1)))
+		})
+
+		It("should fan out one UNS message per ERP record from an array payload end-to-end", func() {
+			// A real ERP fan-out use case: an ERP API returns a JSON array of
+			// records and the nodered_js function maps each record to one UNS
+			// message, propagating the input's metadata to every child. This
+			// exercises the array fan-out, nil-skip, and per-element payload/meta
+			// construction through the full service.NewStreamBuilder pipeline.
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    return msg.payload.records.map(r => ({payload: r, meta: msg.meta}));
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			// Input carries the ERP array payload plus metadata that must be
+			// propagated to every fan-out child.
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured(map[string]any{
+				"records": []any{
+					map[string]any{"id": float64(1), "temp": float64(22)},
+					map[string]any{"id": float64(2), "temp": float64(23)},
+					map[string]any{"id": float64(3), "temp": float64(24)},
+				},
+			})
+			testMsg.MetaSet("source", "erp-api")
+			testMsg.MetaSet("location_path", "enterprise.site.area")
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// One input → exactly three consumer outputs, one per record.
+			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
+				return len(messages)
+			}).Should(Equal(3))
+
+			expected := []string{
+				`{"id":1,"temp":22}`,
+				`{"id":2,"temp":23}`,
+				`{"id":3,"temp":24}`,
+			}
+
+			for i, want := range expected {
+				messagesMutex.Lock()
+				msg := messages[i]
+				messagesMutex.Unlock()
+
+				structured, err := msg.AsStructured()
+				Expect(err).NotTo(HaveOccurred())
+				jsonStr, err := json.Marshal(structured)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(string(jsonStr)).To(Equal(want))
+
+				// Each child carries the input's metadata, propagated via the
+				// meta map returned by the function.
+				source, exists := msg.MetaGet("source")
+				Expect(exists).To(BeTrue())
+				Expect(source).To(Equal("erp-api"))
+				loc, exists := msg.MetaGet("location_path")
+				Expect(exists).To(BeTrue())
+				Expect(loc).To(Equal("enterprise.site.area"))
+			}
+		})
+
 		It("should drop messages when returning null", func() {
 			builder := service.NewStreamBuilder()
 
@@ -261,6 +779,7 @@ nodered_js:
 			builder := service.NewStreamBuilder()
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			var msgHandler service.MessageHandlerFunc
 			msgHandler, err := builder.AddProducerFunc()
 			Expect(err).NotTo(HaveOccurred())
@@ -275,7 +794,9 @@ nodered_js:
 			Expect(err).NotTo(HaveOccurred())
 
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -295,10 +816,278 @@ nodered_js:
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Verify no messages make it through
-			Consistently(func() int {
+			// The errored input is forwarded by the engine wrapper, marked
+			// with SetError.
+			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
-			}, "500ms").Should(Equal(0))
+			}, "2s").Should(Equal(1))
+			messagesMutex.Lock()
+			Expect(messages[0].GetError()).NotTo(Succeed(), "expected the forwarded input to carry the error")
+			messagesMutex.Unlock()
+		})
+
+		It("should forward the errored message and continue the batch when a mid-batch message throws", func() {
+			// A 3-message batch [good, bad, good] where "bad" throws. The
+			// throwing message is forwarded with SetError (the engine logs
+			// it, the bridge goes degraded) and the two good messages flow
+			// through as normal outputs; the batch is not aborted.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    if (msg.payload === "throw") { throw new Error("boom"); }
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			Expect(builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			// Feed a multi-message batch: [good, bad, good].
+			msg0 := service.NewMessage(nil)
+			msg0.SetStructured("good1")
+			msg1 := service.NewMessage(nil)
+			msg1.SetStructured("throw")
+			msg2 := service.NewMessage(nil)
+			msg2.SetStructured("good2")
+			batch := service.MessageBatch{msg0, msg1, msg2}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// (a) All 3 reach the consumer: 2 good outputs + 1 errored input.
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "2s").Should(Equal(int64(3)))
+
+			// (b) messages_errored == 1 (only the throwing message).
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_errored"]
+			}, "2s").Should(Equal(int64(1)))
+
+			// (c) messages_dropped == 0.
+			Consistently(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "500ms").Should(Equal(int64(0)))
+
+			// (d) messages_processed == 2 (the two good outputs).
+			Consistently(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_processed"]
+			}, "500ms").Should(Equal(int64(2)))
+
+			// (e) Exactly one message carries the error (the throw); the
+			// two good messages flow through clean.
+			messagesMutex.Lock()
+			errored := 0
+			for _, m := range messages {
+				if m.GetError() != nil {
+					errored++
+				}
+			}
+			Expect(errored).To(Equal(1), "exactly one forwarded message should carry the error")
+			messagesMutex.Unlock()
+		})
+
+		It("should drop a null-returning message and independently forward a later throwing one", func() {
+			// [drop, throw]: msg0 returns null (a genuine drop, not forwarded)
+			// and msg1 throws (forwarded with SetError). The two outcomes are
+			// independent per message: the drop counts as dropped, the throw
+			// as errored, and only the throwing message reaches the consumer.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    if (msg.payload === "drop") { return null; }
+    if (msg.payload === "throw") { throw new Error("boom"); }
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			Expect(builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			msg0 := service.NewMessage(nil)
+			msg0.SetStructured("drop")
+			msg1 := service.NewMessage(nil)
+			msg1.SetStructured("throw")
+			batch := service.MessageBatch{msg0, msg1}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// Only the throwing message is forwarded (the drop produces no output).
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "2s").Should(Equal(int64(1)))
+
+			// messages_errored == 1 (the throw).
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_errored"]
+			}, "2s").Should(Equal(int64(1)))
+
+			// messages_dropped == 1 (the null return).
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "2s").Should(Equal(int64(1)))
+
+			// messages_processed == 0: no successful outputs.
+			Consistently(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_processed"]
+			}, "500ms").Should(Equal(int64(0)))
+
+			// The one forwarded message carries the error.
+			messagesMutex.Lock()
+			Expect(messages).To(HaveLen(1))
+			Expect(messages[0].GetError()).NotTo(Succeed(), "expected the forwarded message to carry the error")
+			messagesMutex.Unlock()
+		})
+
+		It("should bump messages_processed by the output count for a fan-out return", func() {
+			// 1 input -> 2 outputs (array fan-out). messages_processed counts
+			// successfully produced OUTPUTS, so it must be 2, not 1.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    return [
+      {payload: {value: 1}, meta: {tag_name: "a"}},
+      {payload: {value: 2}, meta: {tag_name: "b"}}
+    ];
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			batch := service.MessageBatch{testMsg}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// 2 outputs reach the consumer.
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "2s").Should(Equal(int64(2)))
+
+			// messages_processed == 2 (output count), not 1 (input count).
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_processed"]
+			}, "2s").Should(Equal(int64(2)))
+
+			// No drops, no errors.
+			mu.Lock()
+			Expect(counts["messages_dropped"]).To(Equal(int64(0)))
+			Expect(counts["messages_errored"]).To(Equal(int64(0)))
+			mu.Unlock()
 		})
 	})
 
@@ -518,6 +1307,149 @@ nodered_js:
 			Expect(exists).To(BeTrue())
 			Expect(original).To(Equal("value"))
 		})
+
+		It("should not emit literal <nil> or Go-syntax garbage for nested-nil or non-scalar meta values", func() {
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    msg.meta = {nested:{sub:null}, arr:[null,1], count:42, flag:true, name:"x"};
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("test")
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
+				return len(messages)
+			}).Should(Equal(1))
+
+			messagesMutex.Lock()
+			msg := messages[0]
+			messagesMutex.Unlock()
+
+			// (1) nested nil must not produce literal <nil> in the header value.
+			nested, exists := msg.MetaGet("nested")
+			Expect(exists).To(BeTrue())
+			Expect(nested).NotTo(ContainSubstring("<nil>"))
+
+			// (2) nil-in-slice must not produce literal <nil> in the header value.
+			arr, exists := msg.MetaGet("arr")
+			Expect(exists).To(BeTrue())
+			Expect(arr).NotTo(ContainSubstring("<nil>"))
+
+			// (3) number must be stringified (not skipped, not JSON-quoted).
+			count, exists := msg.MetaGet("count")
+			Expect(exists).To(BeTrue())
+			Expect(count).To(Equal("42"))
+
+			// (4) bool must be stringified via strconv, not Go-syntax.
+			flag, exists := msg.MetaGet("flag")
+			Expect(exists).To(BeTrue())
+			Expect(flag).To(Equal("true"))
+
+			// (5) string must pass through unchanged (no JSON quotes).
+			name, exists := msg.MetaGet("name")
+			Expect(exists).To(BeTrue())
+			Expect(name).To(Equal("x"))
+
+			// (6) non-scalar meta must be valid JSON, so nested nil becomes null.
+			Expect(nested).To(Equal(`{"sub":null}`))
+			Expect(arr).To(Equal(`[null,1]`))
+		})
+
+		It("should not emit an empty header when a non-scalar meta value contains NaN or Infinity", func() {
+			// json.Marshal errors on NaN/+Inf nested inside a map or slice; the
+			// helper must fall back to a non-empty value rather than writing an
+			// empty Kafka header (which is indistinguishable from a user setting
+			// the meta to "" and is silent data corruption).
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    msg.meta = {x: 0/0, arr: [1/0]};
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("test")
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
+				return len(messages)
+			}).Should(Equal(1))
+
+			messagesMutex.Lock()
+			msg := messages[0]
+			messagesMutex.Unlock()
+
+			x, exists := msg.MetaGet("x")
+			Expect(exists).To(BeTrue())
+			Expect(x).NotTo(BeEmpty(), "NaN nested in a map meta must not produce an empty header")
+
+			arr, exists := msg.MetaGet("arr")
+			Expect(exists).To(BeTrue())
+			Expect(arr).NotTo(BeEmpty(), "Infinity nested in a slice meta must not produce an empty header")
+		})
 	})
 
 	Context("Performance testing", func() {
@@ -734,8 +1666,11 @@ nodered_js:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -756,11 +1691,15 @@ nodered_js:
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Wait a bit to see if message gets processed (it shouldn't)
-			time.Sleep(100 * time.Millisecond)
-
-			// Verify no messages were processed due to the strict mode error
-			Expect(messages).To(BeEmpty())
+			// The errored input is forwarded by the engine wrapper, marked with SetError
+			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
+				return len(messages)
+			}, "2s").Should(Equal(1))
+			messagesMutex.Lock()
+			Expect(messages[0].GetError()).NotTo(Succeed())
+			messagesMutex.Unlock()
 		})
 
 		It("should handle concurrent processing safely", func() {
@@ -1118,6 +2057,52 @@ func indentLines(s string, prefix string) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// counterCaptureMetrics is a service.MetricsExporter that aggregates integer
+// counter increments by counter name, ignoring labels. It is the only public
+// seam (outside the benthos module) to observe processor-level MetricCounter
+// increments such as nodered_js's internal messagesDropped, which is not
+// readable through the default StreamBuilder (its metrics are no-op).
+type counterCaptureMetrics struct {
+	mu     *sync.Mutex
+	counts map[string]int64
+}
+
+func (m *counterCaptureMetrics) NewCounterCtor(name string, _ ...string) service.MetricsExporterCounterCtor {
+	return func(_ ...string) service.MetricsExporterCounter {
+		return &capturedCounter{name: name, mu: m.mu, counts: m.counts}
+	}
+}
+
+func (m *counterCaptureMetrics) NewTimerCtor(string, ...string) service.MetricsExporterTimerCtor {
+	return func(...string) service.MetricsExporterTimer { return noopTimer{} }
+}
+
+func (m *counterCaptureMetrics) NewGaugeCtor(string, ...string) service.MetricsExporterGaugeCtor {
+	return func(...string) service.MetricsExporterGauge { return noopGauge{} }
+}
+
+func (m *counterCaptureMetrics) Close(context.Context) error { return nil }
+
+type capturedCounter struct {
+	name   string
+	mu     *sync.Mutex
+	counts map[string]int64
+}
+
+func (c *capturedCounter) Incr(n int64) {
+	c.mu.Lock()
+	c.counts[c.name] += n
+	c.mu.Unlock()
+}
+
+type noopTimer struct{}
+
+func (noopTimer) Timing(int64) {}
+
+type noopGauge struct{}
+
+func (noopGauge) Set(int64) {}
 
 var _ = Describe("js logmessage", func() {
 	DescribeTable("format",

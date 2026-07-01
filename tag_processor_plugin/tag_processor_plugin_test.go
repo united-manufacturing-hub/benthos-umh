@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -129,6 +130,202 @@ tag_processor:
 
 			_, ok = payload["timestamp_ms"]
 			Expect(ok).To(BeTrue())
+		})
+
+		It("should not emit literal <nil> or Go-syntax garbage for nested-nil or non-scalar meta", func() {
+			// tag_processor's JS-return meta loop (processMessageBatchWithProgram)
+			// used fmt.Sprintf("%v") on every non-nil meta value, so a nested nil
+			// (meta:{sub:null}) or a non-scalar produced literal <nil> / Go-syntax
+			// garbage in Kafka headers. It must share nodered_js's SetMetaFromJS
+			// so non-scalars serialize as JSON.
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temp";
+    msg.meta.nested = {sub: null};
+    msg.meta.arr = [null, 1];
+    msg.meta.count = 42;
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage([]byte("23.5"))
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
+				return len(messages)
+			}).Should(Equal(1))
+
+			messagesMutex.Lock()
+			msg := messages[0]
+			messagesMutex.Unlock()
+
+			nested, exists := msg.MetaGet("nested")
+			Expect(exists).To(BeTrue())
+			Expect(nested).NotTo(ContainSubstring("<nil>"))
+			Expect(nested).To(Equal(`{"sub":null}`))
+
+			arr, exists := msg.MetaGet("arr")
+			Expect(exists).To(BeTrue())
+			Expect(arr).NotTo(ContainSubstring("<nil>"))
+			Expect(arr).To(Equal(`[null,1]`))
+
+			count, exists := msg.MetaGet("count")
+			Expect(exists).To(BeTrue())
+			Expect(count).To(Equal("42"))
+		})
+
+		It("should forward a condition-error message with SetError, skipping later stages", func() {
+			// A condition `then` that throws must not swallow the message
+			// (silent drop, no forward, no retry). It is forwarded to the
+			// consumer with SetError, UNCHANGED by later stages (remaining
+			// conditions, advanced processing, construction), so downstream
+			// error handling/DLQ can act on the original message. This
+			// matches the batch-fatal path's semantics at per-message
+			// granularity.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			Expect(builder.AddProcessorYAML(strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temp";
+    return msg;
+  conditions:
+    - if: msg.payload === "throw"
+      then: |
+        throw new Error("cond boom");
+    - if: true
+      then: |
+        msg.meta.cond1 = "ran";
+        return msg;
+  advancedProcessing: |
+    msg.payload = "advanced-" + msg.payload;
+    return msg;
+`))).To(Succeed())
+
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			Expect(builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			msgA := service.NewMessage([]byte("keep"))
+			msgB := service.NewMessage([]byte("throw"))
+			batch := service.MessageBatch{msgA, msgB}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// Both messages reach the consumer: the good one transformed,
+			// the condition-error one forwarded with SetError.
+			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
+				return len(messages)
+			}, "2s").Should(Equal(2))
+
+			messagesMutex.Lock()
+			var errored, ok *service.Message
+			for _, m := range messages {
+				if m.GetError() != nil {
+					errored = m
+				} else {
+					ok = m
+				}
+			}
+			messagesMutex.Unlock()
+
+			// msgA: passed both conditions + advanced, payload value-wrapped
+			// by construction into {value, timestamp_ms}.
+			Expect(ok).NotTo(BeNil())
+			okStruct, err := ok.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(okStruct).To(BeAssignableToTypeOf(map[string]interface{}{}))
+			Expect(okStruct.(map[string]interface{})["value"]).To(Equal("advanced-keep"))
+			cond1, exists := ok.MetaGet("cond1")
+			Expect(exists).To(BeTrue())
+			Expect(cond1).To(Equal("ran"))
+
+			// msgB: condition 0 threw. Forwarded with SetError, UNCHANGED by
+			// condition 1 (no cond1 meta), advanced (payload still "throw",
+			// not "advanced-throw"), and construction (payload not value-
+			// wrapped into a JSON object).
+			Expect(errored).NotTo(BeNil())
+			Expect(errored.GetError()).NotTo(Succeed())
+			// Payload is the original "throw" (a structured string set by
+			// defaults): NOT "advanced-throw" (advanced skipped) and NOT a
+			// {value, timestamp_ms} object (construction skipped).
+			errStruct, e := errored.AsStructured()
+			Expect(e).NotTo(HaveOccurred())
+			Expect(errStruct).To(Equal("throw"))
+			_, hasCond1 := errored.MetaGet("cond1")
+			Expect(hasCond1).To(BeFalse(), "errored message must skip later conditions")
+
+			// messages_errored == 1 (one condition error, per-message).
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_errored"]
+			}, "2s").Should(Equal(int64(1)))
 		})
 
 		It("should process conditions", func() {
@@ -2254,6 +2451,1043 @@ tag_processor:
 					fmt.Sprintf("Failed for %s precision: %s", tc.precision, tc.rfc3339))
 			}
 		})
+
+		It("should bump messagesDropped once when a defaults function returns null", func() {
+			// A tag_processor stage that yields 0 outputs via an explicit
+			// drop (null return) is a per-message-entering-stage drop: 0
+			// consumer outputs AND messagesDropped incremented exactly
+			// once. tag_processor now increments messagesDropped on a
+			// null-return drop; this test guards that increment against
+			// regression. Default StreamBuilder metrics are no-op, so the
+			// counter is observed via a registered MetricsExporter.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    return null;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			// (a) messagesDropped bumped exactly once for the message
+			// entering the stage that dropped: confirms the drop happened
+			// before asserting no leak, so a slow leak is still caught.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "5s", "50ms").Should(Equal(int64(1)))
+
+			// (b) 0 consumer outputs: the input was dropped and did not
+			// leak to the consumer.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+		})
+
+		It("should bump messagesDropped once when a defaults function returns an empty array", func() {
+			// An empty array return is a per-message-entering-stage drop:
+			// 0 consumer outputs AND messagesDropped incremented exactly once.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    return [];
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			// (a) messagesDropped bumped exactly once for the message
+			// entering the stage that dropped: confirms the drop happened
+			// before asserting no leak, so a slow leak is still caught.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "5s", "50ms").Should(Equal(int64(1)))
+
+			// (b) 0 consumer outputs: the input was dropped and did not
+			// leak to the consumer.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+		})
+
+		It("should bump messagesDropped once when a defaults function returns an all-nil array", func() {
+			// An all-nil array return is a per-message-entering-stage drop:
+			// every element is nil and skipped, yielding 0 consumer outputs
+			// AND messagesDropped incremented exactly once.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    return [null, null];
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			// (a) messagesDropped bumped exactly once for the message
+			// entering the stage that dropped: confirms the drop happened
+			// before asserting no leak, so a slow leak is still caught.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "5s", "50ms").Should(Equal(int64(1)))
+
+			// (b) 0 consumer outputs: every element was nil and dropped,
+			// and nothing leaked to the consumer.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+		})
+
+		It("should bump messagesDropped once per message when a batch of N drops", func() {
+			// messagesDropped is incremented inside the `for _, msg := range batch`
+			// loop, so a single multi-message batch that drops every message must
+			// increment once per dropped message (N), not once per batch or once
+			// total. A single-message drop test cannot distinguish these, so a
+			// 3-message batch pins the per-message semantic.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    return null;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			batch := service.MessageBatch{
+				service.NewMessage(nil),
+				service.NewMessage(nil),
+				service.NewMessage(nil),
+			}
+			for _, m := range batch {
+				m.SetStructured("ignored")
+			}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// (a) messagesDropped bumped once per dropped message (3), not
+			// once per batch or once total.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "5s", "50ms").Should(Equal(int64(3)))
+
+			// (b) 0 consumer outputs: every message dropped, none leaked.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+		})
+
+		It("should not bump messagesDropped when a defaults function returns a partial-nil array", func() {
+			// A partial-nil array (some nil elements, at least one surviving
+			// output) is NOT a drop: the surviving elements fan out and
+			// messagesDropped stays at 0. Guards against an over-broad
+			// regression that treats any-nil-in-array as a drop or increments
+			// once per nil element. Symmetric with the nodered_js partial-nil
+			// fan-out guard.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise.site";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temperature";
+    return [null, msg];
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			// (a) 1 consumer output: the surviving (non-nil) element fanned out.
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "5s", "50ms").Should(Equal(int64(1)))
+
+			// (b) messagesDropped stays at 0: a partial-nil array is not a drop.
+			Consistently(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "500ms").Should(Equal(int64(0)))
+		})
+
+		It("should not bump messagesDropped when a defaults function returns a non-dropping message", func() {
+			// A non-dropping defaults function (return msg) must leave
+			// messagesDropped at 0, guarding against a regression that
+			// increments unconditionally.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise.site";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temperature";
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			// (a) 1 consumer output: the message passed through.
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "5s", "50ms").Should(Equal(int64(1)))
+
+			// (b) messagesDropped stays at 0: no message was dropped.
+			Consistently(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "500ms").Should(Equal(int64(0)))
+		})
+
+		It("should bump messagesDropped exactly once when a condition then returns null (no double-count)", func() {
+			// R6 double-count guard: a condition whose `then` returns null drops
+			// the message. The then-action runs via processMessageBatchWithProgram,
+			// whose len==0 guard (R5) bumps messagesDropped once. The conditions
+			// loop must NOT add a second bump. This pins already-correct behavior
+			// (R5 covered it; R6 was vacuous) so a future refactor introducing a
+			// conditions-loop bump is caught.
+			env := service.NewEnvironment()
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+			builder := env.NewStreamBuilder()
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+			Expect(builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.tag_name = "x";
+    return msg;
+  conditions:
+    - if: 'msg.meta.tag_name === "x"'
+      then: |
+        return null;
+`)).To(Succeed())
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			go func() { _ = stream.Run(ctx) }()
+			Expect(msgHandler(ctx, service.NewMessage(nil))).To(Succeed())
+			// 0 consumer outputs (the then returned null → drop).
+			Consistently(func() int64 { return atomic.LoadInt64(&consumerCount) }, "500ms").Should(Equal(int64(0)))
+			// messagesDropped == 1, NOT 2 (no double-count from the conditions loop).
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "5s", "50ms").Should(Equal(int64(1)))
+		})
+
+		It("should not bump messagesDropped when a condition if is false (pass-through)", func() {
+			// R6 pass-through guard: a false `if` is a pass-through, not a drop.
+			// processConditionForMessageWithProgram returns the original message
+			// unchanged (1 output) when the if is false; messagesDropped must
+			// stay 0. Pins that a non-matching condition is NOT mis-counted as a drop.
+			env := service.NewEnvironment()
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+			builder := env.NewStreamBuilder()
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+			Expect(builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temperature";
+    return msg;
+  conditions:
+    - if: 'msg.meta.tag_name === "nonexistent"'
+      then: |
+        return null;
+`)).To(Succeed())
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			go func() { _ = stream.Run(ctx) }()
+			Expect(msgHandler(ctx, service.NewMessage(nil))).To(Succeed())
+			// 1 consumer output (the false-if condition passes the original
+			// message through unchanged, and the required meta fields are set
+			// so it survives validation/constructFinalMessage).
+			Eventually(func() int64 { return atomic.LoadInt64(&consumerCount) }, "5s", "50ms").Should(Equal(int64(1)))
+			// messagesDropped == 0 (false-if is a pass-through, not a drop).
+			Consistently(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "500ms").Should(Equal(int64(0)))
+		})
+
+		It("should bump messagesErrored when a condition then-action throws a JS error", func() {
+			// A condition whose then action throws a JS error is forwarded to
+			// the consumer with SetError (not swallowed), so downstream error
+			// handling/DLQ can act. messages_errored bumps to make it visible.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  conditions:
+    - if: 'true'
+      then: |
+        throw new Error("boom");
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			// messages_errored bumps to exactly 1: the condition JS error is
+			// now visible in metrics.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_errored"]
+			}, "5s", "50ms").Should(Equal(int64(1)))
+
+			// The errored message is forwarded to the consumer with SetError
+			// (not swallowed), so downstream error handling can act.
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "2s").Should(Equal(int64(1)))
+			mu.Lock()
+			Expect(counts["messages_dropped"]).To(Equal(int64(0)))
+			Expect(counts["messages_processed"]).To(Equal(int64(0)))
+			mu.Unlock()
+		})
+
+		It("should bump messagesErrored when a condition if-expression throws a JS error", func() {
+			// Triangulates the then-action case: the if-expression throw
+			// returns the same error to the conditions-loop bump site, so
+			// messages_errored must rise here too. Guards against a future
+			// refactor that splits the two error returns.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  conditions:
+    - if: |
+        throw new Error("if boom");
+      then: 'return msg;'
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_errored"]
+			}, "5s", "50ms").Should(Equal(int64(1)))
+
+			// The errored message is forwarded to the consumer with SetError
+			// (not swallowed), so downstream error handling can act.
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "2s").Should(Equal(int64(1)))
+			mu.Lock()
+			Expect(counts["messages_dropped"]).To(Equal(int64(0)))
+			Expect(counts["messages_processed"]).To(Equal(int64(0)))
+			mu.Unlock()
+		})
+
+		It("should bump messagesErrored when a defaults JS error aborts the batch", func() {
+			// A defaults program that throws aborts the batch. The error bumps
+			// messages_errored and propagates to benthos via (nil, fmt.Errorf),
+			// so the v2BatchedToV1Processor wrapper marks the original input
+			// with SetError and forwards it to the consumer.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    throw new Error("defaults boom");
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			// messages_errored bumps to exactly 1: the batch-fatal defaults
+			// JS error is now visible in metrics.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_errored"]
+			}, "5s", "50ms").Should(Equal(int64(1)))
+
+			// Batch-fatal propagate: the engine wrapper forwards the errored
+			// input to the consumer (marked with SetError), so 1 consumer output.
+			// Eventually (not Consistently): the wrapper forwards asynchronously
+			// through the stream, so consumerCount may still be 0 right after
+			// messages_errored bumps.
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "2s").Should(Equal(int64(1)))
+
+			// The batch-fatal return skips the processed/dropped accounting.
+			mu.Lock()
+			Expect(counts["messages_processed"]).To(Equal(int64(0)))
+			Expect(counts["messages_dropped"]).To(Equal(int64(0)))
+			mu.Unlock()
+		})
+
+		It("should reclassify an earlier drop as errored when a later defaults message throws (deferred drop bump)", func() {
+			// [drop, throw] in defaults: msg0 returns null (dropped,
+			// droppedCount=1), msg1 throws (batch-fatal). The deferred
+			// messagesDropped bump inside processMessageBatchWithProgram is
+			// skipped by the early return, so the drop is counted as errored
+			// (part of the batchSize bump), not dropped. Pins the symmetric
+			// invariant to nodered_js.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    if (msg.payload === "drop") { return null; }
+    if (msg.payload === "throw") { throw new Error("boom"); }
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			Expect(builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			msg0 := service.NewMessage(nil)
+			msg0.SetStructured("drop")
+			msg1 := service.NewMessage(nil)
+			msg1.SetStructured("throw")
+			batch := service.MessageBatch{msg0, msg1}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// All 2 inputs forwarded with SetError.
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "2s").Should(Equal(int64(2)))
+
+			// messages_errored == batchSize (2).
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_errored"]
+			}, "2s").Should(Equal(int64(2)))
+
+			// messages_dropped == 0: deferred bump skipped on batch-fatal.
+			Consistently(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "500ms").Should(Equal(int64(0)))
+
+			// messages_processed == 0.
+			Consistently(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_processed"]
+			}, "500ms").Should(Equal(int64(0)))
+
+			// Every forwarded input carries the batch error.
+			messagesMutex.Lock()
+			for _, m := range messages {
+				Expect(m.GetError()).NotTo(Succeed(), "expected every forwarded input to carry the batch error")
+			}
+			messagesMutex.Unlock()
+		})
+
+		It("should bump messagesErrored when an advancedProcessing JS error aborts the batch", func() {
+			// An advancedProcessing program that throws aborts the batch. The
+			// error bumps messages_errored and propagates to benthos via
+			// (nil, fmt.Errorf), so the v2BatchedToV1Processor wrapper marks
+			// the original input with SetError and forwards it to the consumer.
+			// A minimal defaults that returns msg is required so execution
+			// reaches the advanced stage (guarded on advancedProgram != nil).
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    return msg;
+  advancedProcessing: |
+    throw new Error("advanced boom");
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			// messages_errored bumps to exactly 1: the batch-fatal
+			// advancedProcessing JS error is now visible in metrics.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_errored"]
+			}, "5s", "50ms").Should(Equal(int64(1)))
+
+			// Batch-fatal propagate: the engine wrapper forwards the errored
+			// input to the consumer (marked with SetError), so 1 consumer output.
+			// Eventually (not Consistently): the wrapper forwards asynchronously
+			// through the stream, so consumerCount may still be 0 right after
+			// messages_errored bumps.
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "2s").Should(Equal(int64(1)))
+
+			// The batch-fatal return skips the processed/dropped accounting.
+			mu.Lock()
+			Expect(counts["messages_processed"]).To(Equal(int64(0)))
+			Expect(counts["messages_dropped"]).To(Equal(int64(0)))
+			mu.Unlock()
+		})
+
+		It("should not double-count messages_errored when a condition errors and advanced then aborts batch-fatal", func() {
+			// [a, b, c]: condition throws on b (forwarded with SetError,
+			// messages_errored+1), then advanced throws on c (batch-fatal).
+			// advanced's batchFatalErr must bump only the non-errored
+			// messages (a and c), not the already-counted b, so
+			// messages_errored == 3 (distinct), not 4.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			Expect(builder.AddProcessorYAML(strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temp";
+    return msg;
+  conditions:
+    - if: msg.payload === "b"
+      then: |
+        throw new Error("cond boom");
+  advancedProcessing: |
+    if (msg.payload === "c") { throw new Error("adv boom"); }
+    return msg;
+`))).To(Succeed())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			msgA := service.NewMessage([]byte("a"))
+			msgB := service.NewMessage([]byte("b"))
+			msgC := service.NewMessage([]byte("c"))
+			batch := service.MessageBatch{msgA, msgB, msgC}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// All 3 original inputs are forwarded (engine marks them on the
+			// advanced batch-fatal).
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "2s").Should(Equal(int64(3)))
+
+			// messages_errored == 3 (1 from the condition + 2 from advanced's
+			// non-errored-only bump), NOT 4: b is not double-counted.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_errored"]
+			}, "2s").Should(Equal(int64(3)))
+
+			// No drops, no successful outputs (construction never ran).
+			mu.Lock()
+			Expect(counts["messages_dropped"]).To(Equal(int64(0)))
+			Expect(counts["messages_processed"]).To(Equal(int64(0)))
+			mu.Unlock()
+		})
+
+		It("should bump messagesErrored by the batch size when a defaults JS error aborts a multi-message batch", func() {
+			// processMessageBatchWithProgram aborts the whole batch on the
+			// first per-message JS failure, so every message in the batch is
+			// dropped. messages_errored must reflect the full batch size, not
+			// a single Incr(1), otherwise the unprocessed tail vanishes from
+			// all plugin counters.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    throw new Error("defaults boom");
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			const batchSize = 3
+			batch := make(service.MessageBatch, batchSize)
+			for i := range batch {
+				batch[i] = service.NewMessage(nil)
+				batch[i].SetStructured("ignored")
+			}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// messages_errored bumps to the full batch size: the whole batch
+			// is dropped, so all N messages must be counted.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_errored"]
+			}, "5s", "50ms").Should(Equal(int64(batchSize)))
+
+			// Batch-fatal propagate: the engine wrapper forwards every errored
+			// input in the batch to the consumer (marked with SetError), so
+			// consumerCount == batchSize.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(batchSize)))
+
+			mu.Lock()
+			Expect(counts["messages_processed"]).To(Equal(int64(0)))
+			Expect(counts["messages_dropped"]).To(Equal(int64(0)))
+			mu.Unlock()
+		})
 	})
 })
 
@@ -2677,3 +3911,49 @@ tag_processor:
 		})
 	})
 })
+
+// counterCaptureMetrics is a service.MetricsExporter that aggregates integer
+// counter increments by counter name, ignoring labels. It is the only public
+// seam (outside the benthos module) to observe processor-level MetricCounter
+// increments such as tag_processor's internal messagesDropped, which is not
+// readable through the default StreamBuilder (its metrics are no-op).
+type counterCaptureMetrics struct {
+	mu     *sync.Mutex
+	counts map[string]int64
+}
+
+func (m *counterCaptureMetrics) NewCounterCtor(name string, _ ...string) service.MetricsExporterCounterCtor {
+	return func(_ ...string) service.MetricsExporterCounter {
+		return &capturedCounter{name: name, mu: m.mu, counts: m.counts}
+	}
+}
+
+func (m *counterCaptureMetrics) NewTimerCtor(string, ...string) service.MetricsExporterTimerCtor {
+	return func(...string) service.MetricsExporterTimer { return noopTimer{} }
+}
+
+func (m *counterCaptureMetrics) NewGaugeCtor(string, ...string) service.MetricsExporterGaugeCtor {
+	return func(...string) service.MetricsExporterGauge { return noopGauge{} }
+}
+
+func (m *counterCaptureMetrics) Close(context.Context) error { return nil }
+
+type capturedCounter struct {
+	name   string
+	mu     *sync.Mutex
+	counts map[string]int64
+}
+
+func (c *capturedCounter) Incr(n int64) {
+	c.mu.Lock()
+	c.counts[c.name] += n
+	c.mu.Unlock()
+}
+
+type noopTimer struct{}
+
+func (noopTimer) Timing(int64) {}
+
+type noopGauge struct{}
+
+func (noopGauge) Set(int64) {}

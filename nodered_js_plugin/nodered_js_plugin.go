@@ -362,37 +362,94 @@ func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) e
 }
 
 // HandleExecutionResult handles JavaScript execution results.
-func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) (*service.Message, bool, error) {
-	// Handle null/undefined returns
+//
+// A function may return:
+//   - null / undefined: the message is dropped,
+//   - a single message object: one output,
+//   - an array of message objects: one output per element (fan-out).
+//
+// null/undefined elements within a returned array are skipped during
+// fan-out. If every element is nil/undefined, or the array is empty,
+// the whole input is treated as a single drop: messagesDropped is
+// incremented once and no outputs are produced. Otherwise (>=1
+// surviving output) nil/undefined elements are skipped with no drop
+// bump. Non-object elements still error the batch.
+func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*service.Message, error) {
+	// Handle null/undefined returns: drop (caller bumps messagesDropped).
 	if result.Equals(goja.Undefined()) || result.Equals(goja.Null()) {
-		u.messagesDropped.Incr(1)
-		u.logger.Debug("Message dropped due to null/undefined return")
-		return service.NewMessage(nil), false, nil
+		return nil, nil
 	}
 
-	// Convert return value to message object
-	returnedMsg, ok := result.Export().(map[string]interface{})
+	exported := result.Export()
+
+	if arr, ok := exported.([]interface{}); ok {
+		out := make([]*service.Message, 0, len(arr))
+		for i, el := range arr {
+			if el == nil {
+				continue
+			}
+			msg, err := messageFromReturnValue(el)
+			if err != nil {
+				return nil, fmt.Errorf("array element %d must be a message object, got %T", i, el)
+			}
+			out = append(out, msg)
+		}
+		return out, nil
+	}
+
+	msg, err := messageFromReturnValue(exported)
+	if err != nil {
+		return nil, err
+	}
+	return []*service.Message{msg}, nil
+}
+
+// messageFromReturnValue builds a service.Message from a single JS return
+// value, which must be a message object (a map with payload/meta).
+// NewMessage(nil) is safe: the engine's v2BatchedToV1Processor wrapper
+// restores the input context onto outputs in production, so
+// Copy()/WithContext() is a no-op.
+func messageFromReturnValue(v interface{}) (*service.Message, error) {
+	returnedMsg, ok := v.(map[string]interface{})
 	if !ok {
-		return service.NewMessage(nil), false, fmt.Errorf("function must return a message object or null")
+		return service.NewMessage(nil), fmt.Errorf("function must return a message object or null")
 	}
 
-	// Create new message with returned content.
-	// NewMessage(nil) is safe: the air-gap wrapper restores input context onto
-	// outputs in production, so Copy()/WithContext() is a no-op (see CLAUDE.md
-	// "Output context is restored by the engine, not the plugin").
 	newMsg := service.NewMessage(nil)
 	if payload, exists := returnedMsg["payload"]; exists {
 		newMsg.SetStructured(payload)
 	}
 	if meta, exists := returnedMsg["meta"].(map[string]interface{}); exists {
-		for k, v := range meta {
-			if str, ok := v.(string); ok {
-				newMsg.MetaSet(k, str)
+		SetMetaFromJS(newMsg, meta)
+	}
+	return newMsg, nil
+}
+
+// SetMetaFromJS transfers JavaScript-origin meta values onto a
+// service.Message, skipping nil top-level values. Map and slice values are
+// JSON-marshaled so nested nil leaves become valid JSON null instead of
+// Go-syntax "<nil>". All other values are stringified with fmt %v. It is
+// exported so tag_processor can reuse this logic.
+func SetMetaFromJS(newMsg *service.Message, meta map[string]interface{}) {
+	for k, val := range meta {
+		if val == nil {
+			continue
+		}
+		switch val.(type) {
+		case map[string]interface{}, []interface{}:
+			b, err := json.Marshal(val)
+			if err != nil {
+				// json.Marshal errors on NaN/+Inf nested in maps or slices;
+				// fall back to a non-empty value rather than writing an empty
+				// Kafka header (matches tag_processor's autoConvertValue).
+				newMsg.MetaSet(k, fmt.Sprintf("%v", val))
+				continue
 			}
+			newMsg.MetaSet(k, string(b))
+		default:
+			newMsg.MetaSet(k, fmt.Sprintf("%v", val))
 		}
 	}
-
-	return newMsg, true, nil
 }
 
 func FormatConsoleLogMsg(data []any) string {
@@ -410,20 +467,46 @@ func FormatConsoleLogMsg(data []any) string {
 }
 
 // ProcessBatch applies the JavaScript code to each message in the batch.
+//
+// Per-message errors (a JS throw, a non-object return, a bad array element,
+// or an infrastructural failure like byte conversion or VM setup) forward the
+// failing input marked as errored and continue the rest of the batch, so one
+// bad message does not discard the good messages produced before it. The
+// error is logged and counted in messages_errored. A deliberate drop
+// (returning null/undefined/empty/all-nil array) is not an error: it produces
+// no output and bumps messages_dropped.
 func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	var resultBatch service.MessageBatch
+	droppedCount := 0
+	erroredCount := 0
+	processedCount := 0
 
 	for _, msg := range batch {
-		u.messagesProcessed.Incr(1)
-
-		processedMsg, shouldKeep, err := u.processSingleMessage(ctx, msg)
+		processedMsgs, dropped, err := u.processSingleMessage(ctx, msg)
 		if err != nil {
-			return nil, err
+			// Forward-on-error: mark this input and continue, so the good
+			// messages in the batch are preserved. The error is logged and
+			// counted in messages_errored.
+			msg.SetError(err)
+			erroredCount++
+			resultBatch = append(resultBatch, msg)
+			continue
 		}
-		if shouldKeep {
-			resultBatch = append(resultBatch, processedMsg)
+		if dropped {
+			droppedCount++
+			continue
 		}
+		resultBatch = append(resultBatch, processedMsgs...)
+		processedCount += len(processedMsgs)
 	}
+
+	if droppedCount > 0 {
+		u.messagesDropped.Incr(int64(droppedCount))
+	}
+	if erroredCount > 0 {
+		u.messagesErrored.Incr(int64(erroredCount))
+	}
+	u.messagesProcessed.Incr(int64(processedCount))
 
 	if len(resultBatch) == 0 {
 		return []service.MessageBatch{}, nil
@@ -432,17 +515,21 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 	return []service.MessageBatch{resultBatch}, nil
 }
 
-// processSingleMessage processes a single message using a VM from the pool
-func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *service.Message) (*service.Message, bool, error) {
+// processSingleMessage processes a single message using a VM from the pool.
+// Returns (messages, wasDropped, err): wasDropped is true only for a genuine
+// drop (null/undefined/empty/all-nil array return). err is non-nil for any
+// per-message failure (JS throw, byte conversion, VM setup, or a non-object
+// return). The caller forwards the errored input with SetError and continues
+// the batch (forward-on-error, not batch-fatal).
+func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *service.Message) ([]*service.Message, bool, error) {
 	vm := u.getVM()
 	defer u.putVM(vm)
 
 	// Convert message to JS object
 	jsMsg, err := ConvertMessageToJSObject(msg)
 	if err != nil {
-		u.messagesErrored.Incr(1)
 		u.logger.Errorf("%v\nOriginal message: %v", err, msg)
-		return nil, false, nil
+		return nil, false, err
 	}
 
 	// Add metadata to the message wrapper
@@ -451,36 +538,36 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 		meta[key] = value
 		return nil
 	}); err != nil {
-		u.messagesErrored.Incr(1)
 		u.logger.Errorf("Failed to walk message metadata: %v\nOriginal message: %v", err, msg)
-		return nil, false, nil
+		return nil, false, err
 	}
 	jsMsg["meta"] = meta
 
 	// Setup JS environment
 	if err = u.SetupJSEnvironment(ctx, vm, jsMsg); err != nil {
-		u.messagesErrored.Incr(1)
 		u.logger.Errorf("%v\nMessage content: %v", err, jsMsg)
-		return nil, false, nil
+		return nil, false, err
 	}
 
 	// Execute the compiled JavaScript program
 	result, err := vm.RunProgram(u.program)
 	if err != nil {
-		u.messagesErrored.Incr(1)
 		u.logJSError(err, jsMsg)
-		return nil, false, nil
+		return nil, false, err
 	}
 
 	// Handle the execution result
-	newMsg, shouldKeep, err := u.HandleExecutionResult(result)
+	newMsgs, err := u.HandleExecutionResult(result)
 	if err != nil {
-		u.messagesErrored.Incr(1)
 		u.logger.Errorf("%v\nMessage content: %v\nReturned value: %v", err, jsMsg, result.Export())
 		return nil, false, err
 	}
 
-	return newMsg, shouldKeep, nil
+	if len(newMsgs) == 0 {
+		return nil, true, nil
+	}
+
+	return newMsgs, false, nil
 }
 
 // Helper function to log JavaScript errors

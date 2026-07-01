@@ -297,10 +297,11 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 
 	// Process defaults with compiled program (Phase 2 optimization)
 	if p.defaultsProgram != nil {
+		batchSize := nonErroredCount(batch)
 		var err error
 		batch, err = p.processMessageBatchWithProgram(ctx, batch, p.defaultsProgram, "defaults")
 		if err != nil {
-			return nil, fmt.Errorf("error in defaults processing: %w", err)
+			return nil, p.batchFatalErr("defaults", batchSize, err)
 		}
 	}
 
@@ -309,9 +310,22 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 		var newBatch service.MessageBatch
 
 		for _, msg := range batch {
+			// A message already errored by an earlier condition skips the
+			// remaining conditions and is forwarded unchanged.
+			if msg.GetError() != nil {
+				newBatch = append(newBatch, msg)
+				continue
+			}
 			processedMsgs, err := p.processConditionForMessageWithProgram(ctx, i, msg)
 			if err != nil {
+				// Forward the errored message instead of swallowing it. The
+				// GetError pass-through checks in later stages (advanced,
+				// construction) keep it unchanged so downstream error
+				// handling/DLQ can act on the original message.
+				msg.SetError(err)
+				p.messagesErrored.Incr(1)
 				p.logError(err, "condition evaluation", msg)
+				newBatch = append(newBatch, msg)
 				continue
 			}
 			// Append all returned messages (could be 0, 1, or multiple)
@@ -323,10 +337,11 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 
 	// Process advanced processing with compiled program (Phase 2 optimization)
 	if p.advancedProgram != nil {
+		batchSize := nonErroredCount(batch)
 		var err error
 		batch, err = p.processMessageBatchWithProgram(ctx, batch, p.advancedProgram, "advanced")
 		if err != nil {
-			return nil, fmt.Errorf("error in advanced processing: %w", err)
+			return nil, p.batchFatalErr("advanced", batchSize, err)
 		}
 	}
 
@@ -334,6 +349,15 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 	var resultBatch service.MessageBatch
 	for _, msg := range batch {
 		if msg == nil {
+			continue
+		}
+
+		// An errored message (e.g. from a condition) is forwarded as-is,
+		// skipping validation and construction so it reaches the consumer
+		// marked errored and unchanged (its original payload preserved for
+		// downstream error handling/DLQ).
+		if msg.GetError() != nil {
+			resultBatch = append(resultBatch, msg)
 			continue
 		}
 
@@ -493,6 +517,9 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 
 	// Copy all metadata to the new message
 	err := msg.MetaWalkMut(func(key string, value any) error {
+		if value == nil {
+			return nil
+		}
 		if str, ok := value.(string); ok {
 			newMsg.MetaSet(key, str)
 		} else if stringer, ok := value.(fmt.Stringer); ok {
@@ -800,13 +827,13 @@ func (p *TagProcessor) executeCompiledProgram(vm *goja.Runtime, program *goja.Pr
 	switch v := result.Export().(type) {
 	case []interface{}:
 		messages := make([]map[string]interface{}, 0, len(v))
-		for _, msg := range v {
+		for i, msg := range v {
 			if msg == nil {
 				continue
 			}
 			msgMap, ok := msg.(map[string]interface{})
 			if !ok {
-				return nil, fmt.Errorf("array elements must be message objects")
+				return nil, fmt.Errorf("array element %d must be a message object, got %T", i, msg)
 			}
 			messages = append(messages, msgMap)
 		}
@@ -818,6 +845,34 @@ func (p *TagProcessor) executeCompiledProgram(vm *goja.Runtime, program *goja.Pr
 	}
 }
 
+// batchFatalErr records a batch-fatal stage failure: bumps messages_errored
+// for the whole aborted batch and returns a wrapped error so the failure
+// propagates to benthos (logged, retried, processor_error). batchSize must
+// be captured BEFORE the failing processMessageBatchWithProgram call, which
+// returns (nil, err) on a per-message failure and leaves len(batch) == 0.
+func (p *TagProcessor) batchFatalErr(stage string, batchSize int, err error) error {
+	p.messagesErrored.Incr(int64(batchSize))
+	return fmt.Errorf("error in %s processing: %w", stage, err)
+}
+
+// nonErroredCount returns the number of messages in the batch not already
+// carrying an error. batchFatalErr bumps messages_errored by this (not
+// len(batch)) so messages already errored-and-forwarded by an earlier stage
+// (e.g. a condition) are not double-counted when a later stage aborts
+// batch-fatal.
+func nonErroredCount(batch service.MessageBatch) int {
+	n := 0
+	for _, msg := range batch {
+		if msg == nil {
+			continue
+		}
+		if msg.GetError() == nil {
+			n++
+		}
+	}
+	return n
+}
+
 // processMessageBatchWithProgram processes a batch using a compiled program for Phase 2 optimization
 func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch service.MessageBatch, program *goja.Program, stageName string) (service.MessageBatch, error) {
 	if program == nil {
@@ -825,8 +880,15 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 	}
 
 	var resultBatch service.MessageBatch
+	droppedCount := 0
 
 	for _, msg := range batch {
+		// An errored message (e.g. from a condition) skips this stage and is
+		// forwarded unchanged, matching the batch-fatal path's semantics.
+		if msg.GetError() != nil {
+			resultBatch = append(resultBatch, msg)
+			continue
+		}
 		// Use VM pool for consistent performance
 		vm := p.getVM()
 
@@ -852,24 +914,28 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 			return nil, err
 		}
 
-		// Handle message dropping
-		if messages == nil {
+		// Handle message dropping: a nil return (null/undefined), an empty
+		// array, or an all-nil array all yield 0 outputs and count as one
+		// per-message-entering-stage drop. The bump is deferred to after the
+		// loop so a later message's batch-fatal error doesn't double-count
+		// these drops as both dropped AND errored (and compound on retry).
+		if len(messages) == 0 {
+			droppedCount++
 			p.putVM(vm)
 			continue
 		}
 
 		// Convert results back to Benthos messages
 		for _, resultMsg := range messages {
-			// NewMessage(nil) is safe: the air-gap wrapper restores input
-			// context onto outputs in production, so Copy()/WithContext() is a
-			// no-op (see CLAUDE.md "Output context is restored by the engine,
-			// not the plugin").
+			// NewMessage(nil) is safe: the engine's v2BatchedToV1Processor
+			// wrapper restores the input context onto outputs in production,
+			// so Copy()/WithContext() is a no-op.
 			newMsg := service.NewMessage(nil)
-			// Set metadata from the JS message
+			// Set metadata from the JS message. Share nodered_js's SetMetaFromJS
+			// so non-scalar/nested-nil meta serializes as JSON instead of
+			// fmt.Sprintf("%v") Go-syntax (literal <nil> in Kafka headers).
 			if meta, ok := resultMsg["meta"].(map[string]interface{}); ok {
-				for k, v := range meta {
-					newMsg.MetaSet(k, fmt.Sprintf("%v", v))
-				}
+				nodered_js_plugin.SetMetaFromJS(newMsg, meta)
 			}
 			// Set payload
 			if payload, exists := resultMsg["payload"]; exists {
@@ -883,6 +949,15 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 
 		// Return VM to pool after processing this message
 		p.putVM(vm)
+	}
+
+	// Bump messagesDropped once for all drops in this stage attempt. Deferred
+	// from the loop so a mid-loop batch-fatal error doesn't double-count drops
+	// as both dropped (here) and errored (batchFatalErr). On batch-fatal, the
+	// loop returns early via `return nil, err` and this bump is skipped; the
+	// caller's batchFatalErr bumps the full batch as errored instead.
+	if droppedCount > 0 {
+		p.messagesDropped.Incr(int64(droppedCount))
 	}
 
 	return resultBatch, nil

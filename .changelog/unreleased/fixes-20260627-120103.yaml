@@ -1,0 +1,3 @@
+kind: fixes
+body: A tag processor condition that throws now forwards the errored message to downstream error handling instead of silently dropping it (ENG-5240)
+time: 2026-06-27T12:03:00+02:00
