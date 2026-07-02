@@ -353,7 +353,7 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 			o.lookupHits.Add(1)
 		case errors.Is(err, pgx.ErrNoRows):
 			o.lookupMisses.Add(1)
-			if err := pool.QueryRow(ctx, topicResolveSQL, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType)).Scan(&id); err != nil {
+			if err = pool.QueryRow(ctx, topicResolveSQL, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType)).Scan(&id); err != nil {
 				return fmt.Errorf("topic resolve failed: %w", err)
 			}
 		default:
