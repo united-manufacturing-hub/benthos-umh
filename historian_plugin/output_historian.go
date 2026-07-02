@@ -16,11 +16,13 @@ package historian_plugin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -35,7 +37,7 @@ func historianConfig() *service.ConfigSpec {
 		Summary("Writes a UNS data contract into TimescaleDB using the UMH Historian schema.").
 		Field(service.NewStringField("host").Description("TimescaleDB/Postgres host.")).
 		Field(service.NewStringField("password").Description("Role password (plaintext in config; redacted in logs).").Secret()).
-		Field(service.NewStringField("data_contract").Description("Bare lowercase contract name, e.g. \"pump\".")).
+		Field(service.NewStringField("data_contract_name").Description("Bare lowercase contract name, e.g. \"pump\"; matches the umh.tag.data_contract_name column.")).
 		Field(service.NewIntField("port").Description("Port.").Default(5432)).
 		Field(service.NewStringField("database").Description("Database name.").Default("umh")).
 		Field(service.NewStringField("username").Description("Login role.").Default("umh_owner")).
@@ -72,6 +74,9 @@ type historianOutput struct {
 	dedupSize *service.MetricGauge   // current dedup-cache entry count
 	dedup     *DedupCache
 
+	lookupHits   atomic.Int64 // topic resolves served by the read-first lookup (no sequence burn)
+	lookupMisses atomic.Int64 // topic resolves that fell through to the guarded upsert (new topic or datatype flip)
+
 	mu           sync.Mutex
 	pool         *pgxpool.Pool
 	bootstrapped bool
@@ -100,7 +105,7 @@ func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*hi
 	}
 	str("host", &o.host)
 	str("password", &o.password)
-	str("data_contract", &o.contract)
+	str("data_contract_name", &o.contract)
 	str("database", &o.database)
 	str("username", &o.username)
 	str("sslmode", &o.sslmode)
@@ -219,11 +224,10 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 			return fmt.Errorf("invalid connection settings: %s", o.redact(err)) // DSN echoes the password
 		}
 		cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec // simple protocol (pgbouncer txn pool)
-		// Each in-flight batch holds a pooled connection for its write transaction, so a pool
-		// smaller than max_in_flight caps effective concurrency below the configured level.
-		// pgxpool defaults to max(4, NumCPU) -- below the default max_in_flight of 8 on small
-		// hosts -- so size the pool to serve every in-flight batch, +1 for the Connect-time
-		// liveness/bootstrap checks. A larger pool_max_conns set in the DSN is left untouched.
+		// Each in-flight batch holds a pooled connection for its write tx, so a pool smaller than
+		// max_in_flight silently caps concurrency. pgxpool defaults to max(4, NumCPU), below the
+		// default 8; size it to max_in_flight+1 (+1 for Connect-time checks). A larger DSN
+		// pool_max_conns wins.
 		if want := int32(o.maxInFlight) + 1; cfg.MaxConns < want {
 			cfg.MaxConns = want
 		}
@@ -248,8 +252,8 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 	if o.bootstrapped {
 		return nil
 	}
-	// Bounded: bootstrap takes an advisory lock and runs DDL, which can contend; a deadline
-	// lets a hung bootstrap fail-and-retry instead of blocking Connect (and WriteBatch via o.mu).
+	// A deadline lets a hung bootstrap (advisory lock + DDL can contend) fail-and-retry instead of
+	// blocking Connect and WriteBatch via o.mu.
 	bootCtx, cancelBoot := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancelBoot()
 	conn, err := o.pool.Acquire(bootCtx)
@@ -265,12 +269,10 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 	return nil
 }
 
-// warnPolicyDrift warns when the compression/retention policy applied in the database differs
-// from the configured values. Policies are set once at first bootstrap (see policyBlock), so
-// editing compress_after/retention and restarting otherwise has no visible effect; this surfaces
-// that instead of silently ignoring the change. Best-effort: any introspection error is swallowed
-// so a server whose timescaledb_information shape differs never fails Connect. Both hypertables
-// get identical policies, so the value table is representative.
+// warnPolicyDrift warns when the applied compression/retention policy differs from config. Policies
+// are set once at first bootstrap, so editing compress_after/retention and restarting otherwise has
+// no visible effect. Best-effort: introspection errors are swallowed so an unexpected catalog shape
+// never fails Connect. Both hypertables get identical policies, so the value table is representative.
 func (o *historianOutput) warnPolicyDrift(ctx context.Context) {
 	table := "value_" + o.contract
 	var appliedComp, appliedRet *int64
@@ -319,22 +321,16 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	}
 	o.warnHighChurn(churn)
 	if len(rows) == 0 {
-		// A fully-dropped non-empty batch writes zero rows while the connection stays up, so
-		// umh-core would otherwise see a healthy bridge silently discarding all data. Warn at a
-		// level umh-core surfaces as degraded; still return nil (no nack) so a single bad
-		// message never stalls the stream.
+		// A fully-dropped batch writes nothing while the connection stays up, so umh-core would
+		// see a healthy bridge silently discarding data. Warn (umh-core surfaces this as
+		// degraded); still return nil so one bad message never stalls the stream.
 		if len(batch) > 0 {
 			o.logger.Warnf("TimescaleDB historian: dropped all %d message(s) in the batch; nothing written. Check the source data and metadata configuration.", len(batch))
 		}
 		return nil
 	}
 
-	// Phase 1: resolve each DISTINCT topic to its topic_id, each in its own short-lived
-	// statement (autocommit). This keeps the shared dimension-row write locks -- above all
-	// the single location row every message of a contract upserts -- held only for one tiny
-	// resolution, not for the whole value-write batch. Holding them batch-long serializes
-	// concurrent batches (max_in_flight) on that row, so batching would not scale; releasing
-	// them immediately lets the value writes below run concurrently. See topicResolveSQL.
+	// Phase 1: resolve each distinct topic to its topic_id (autocommit, one statement each).
 	type topicKey struct {
 		loc, contract, vpath, tag string
 		vt                        ValueType
@@ -349,18 +345,25 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 			continue
 		}
 		var id int64
-		// QueryRow runs outside an explicit tx, so the dimension upserts commit on their own
-		// and release their row locks at once. A datatype flip still RAISEs here (the tag
-		// upsert's guard), failing the batch before any value is written.
-		if err := pool.QueryRow(ctx, topicResolveSQL, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType)).Scan(&id); err != nil {
-			return fmt.Errorf("topic resolve failed: %w", err)
+		// Read-first: an existing topic resolves via a read (no sequence burn); only a genuine
+		// miss (new topic, or a datatype flip) falls to the guarded upsert. See topicLookupSQL.
+		err := pool.QueryRow(ctx, topicLookupSQL, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType)).Scan(&id)
+		switch {
+		case err == nil:
+			o.lookupHits.Add(1)
+		case errors.Is(err, pgx.ErrNoRows):
+			o.lookupMisses.Add(1)
+			if err := pool.QueryRow(ctx, topicResolveSQL, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType)).Scan(&id); err != nil {
+				return fmt.Errorf("topic resolve failed: %w", err)
+			}
+		default:
+			return fmt.Errorf("topic lookup failed: %w", err)
 		}
 		topicID[k] = id
 	}
 
-	// Phase 2: write values + attributes by topic_id in one transaction. These rows have
-	// distinct (topic_id, ts), so concurrent batches do not contend; the single commit
-	// amortizes across the batch and throughput scales with max_in_flight.
+	// Phase 2: write values + attributes by topic_id in one transaction. Rows have distinct
+	// (topic_id, ts), so concurrent batches do not contend and the single commit amortizes.
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -373,10 +376,9 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	for _, r := range rows {
 		id := topicID[keyOf(r)]
 		if _, err := tx.Exec(ctx, vq, id, r.TS, r.ValueNum, r.ValueText); err != nil {
-			// A value conflict (raise_pk_conflict) or any write error halts the bridge
-			// (error -> nack -> retry the same batch -> stall until the source is fixed), the
-			// template's append-only conflict policy. Emit an attributable line first so the
-			// halt names the offending tag rather than relying on benthos to log a bare error.
+			// A value conflict or any write error halts the bridge (error -> nack -> retry ->
+			// stall until fixed): the append-only policy. Log an attributable line first so the
+			// halt names the offending tag.
 			o.logger.Errorf("TimescaleDB historian: value write failed for %s: %v", describeRow(r), err)
 			return fmt.Errorf("value write failed: %w", err)
 		}

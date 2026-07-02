@@ -20,23 +20,17 @@ import (
 	"time"
 )
 
-// Port of the ManagementConsole timescaledb-historian template, with the contract name
-// substituted into the table names and the policies taking their interval from config.
-// All objects live in the umh schema; ltree stays in public (its shared home) so the
-// unqualified LTREE type and ::ltree casts resolve via the default search_path. The write
-// path canonicalizes location through umh.to_ltree_path() so write and read agree.
-// CONTRACT_SLOT is replaced by the validated contract name (^[a-z0-9_]+$, injection-safe).
+// Port of the ManagementConsole timescaledb-historian template. All objects live in the umh
+// schema; ltree stays in public so the unqualified LTREE type and ::ltree casts resolve on the
+// default search_path. CONTRACT_SLOT is replaced by the validated contract name
+// (^[a-z0-9_]+$, injection-safe).
 
 const bootstrapTemplate = `BEGIN;
 SELECT pg_advisory_xact_lock(hashtext('uns_to_timescale_bootstrap'));
 CREATE EXTENSION IF NOT EXISTS ltree WITH SCHEMA public;
 CREATE SCHEMA IF NOT EXISTS umh;
--- Migration ledger: records which numbered schema changes this database has applied.
--- Everything created below is the immutable BASELINE -- never edit a CREATE here to change
--- an existing table/column/constraint, because a database that already ran it will not
--- re-run it. Append schema CHANGES as numbered, forward-only steps in the MIGRATIONS
--- section just before COMMIT (generated from schemaMigrations in sql.go). Query the current
--- version with: SELECT max(version) FROM umh.schema_migrations;
+-- Migration ledger. Everything below is the immutable BASELINE: never edit a CREATE to change an
+-- existing object (a database that ran it will not re-run it); append forward-only steps in MIGRATIONS.
 CREATE TABLE IF NOT EXISTS umh.schema_migrations (
   version    INT PRIMARY KEY,
   applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -46,10 +40,8 @@ BEGIN
   CREATE TYPE umh.value_type AS ENUM ('numeric', 'text');
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
--- Dimension tables use fillfactor 90: the per-message ON CONFLICT DO UPDATE upserts that
--- resolve ids rewrite the same indexed values, so the spare page room keeps those updates
--- HOT (no index churn, dead tuples self-pruned). The value/attribute hypertables are
--- insert-mostly and keep the default fillfactor.
+-- Dimension tables use fillfactor 90: the ON CONFLICT DO UPDATE upserts on the create/flip path
+-- rewrite indexed values in place (HOT, self-pruned). The value/attribute hypertables keep the default.
 CREATE TABLE IF NOT EXISTS umh.location (
   location_id BIGSERIAL PRIMARY KEY,
   path        LTREE NOT NULL,
@@ -139,10 +131,8 @@ AS $fn$
    WHERE l.path = umh.to_ltree_path(p_location_path);
 $fn$;
 -- ===================== MIGRATIONS =====================
--- Forward-only, run-once schema changes applied AFTER the baseline above. Generated from
--- schemaMigrations in sql.go so the version list lives in one place; each step is gated on
--- umh.schema_migrations and runs inside this transaction's advisory lock, so the upgrade is
--- atomic and an older bridge sharing the database can never revert a newer one.
+-- Forward-only, run-once steps applied after the baseline; each is ledger-gated and runs inside
+-- the bootstrap advisory lock, so an older bridge sharing the database can never revert a newer one.
 MIGRATIONS_SLOT
 -- ======================================================
 COMMIT;`
@@ -166,25 +156,26 @@ tp AS (
 )
 `
 
-// topicResolveSQL upserts the location/tag/topic dimension rows and returns the topic_id,
-// WITHOUT touching the per-contract value/attribute tables. It is run once per distinct topic
-// in its own short-lived statement so the shared dimension-row write locks (the location row
-// especially -- every row of a contract touches it) release immediately, instead of being
-// held for the whole value-write batch. Holding them batch-long serializes concurrent batches
-// (max_in_flight) on the shared location row, which stops batching from scaling.
-//
-// Two consequences of splitting dimension resolution from the value write, versus the
-// template's single atomic dimension-CTE + INSERT per row:
-//   - ~2N+M round-trips per batch when every message is a distinct topic (vs N+M) -- the cost
-//     of releasing the shared locks early.
-//   - a Phase-2 value RAISE (e.g. raise_pk_conflict) leaves these dimension upserts already
-//     committed, orphaning a topic row with no value. It is idempotent on retry (the next
-//     attempt reuses the row), so it is wasted rows, not a correctness bug: the template's
-//     dimension+value atomicity is intentionally traded for write concurrency.
-//
-// The trade only pays off at max_in_flight > 1: at max_in_flight = 1 there is no concurrent
-// contention on the shared location row, so the split forgoes atomicity for no benefit.
+// topicResolveSQL upserts the location/tag/topic dimension rows and returns topic_id. Run once
+// per distinct topic in its own autocommit statement so the shared location-row lock releases
+// at once; held for the whole value write it would serialize concurrent batches.
+// A Phase-2 RAISE leaves these upserts committed, orphaning a topic row with no value: wasted
+// rows, reused on retry, not a correctness bug.
 const topicResolveSQL = dimensionCTE + `SELECT topic_id FROM tp;`
+
+// topicLookupSQL resolves an existing topic via a read (no sequence burn); on a miss the caller
+// falls through to topicResolveSQL. value_type is in the WHERE deliberately: a datatype flip
+// misses here and hits the guarded upsert, which RAISEs. A value_type-agnostic lookup would match
+// the natural key and silently bypass tag_value_type_guard.
+const topicLookupSQL = `SELECT t.topic_id
+FROM umh.topic t
+JOIN umh.location l ON l.location_id = t.location_id
+JOIN umh.tag      g ON g.tag_id      = t.tag_id
+WHERE l.path = umh.to_ltree_path($1)
+  AND g.data_contract_name = $2
+  AND g.virtual_path       = $3
+  AND g.name               = $4
+  AND g.value_type         = $5::umh.value_type;`
 
 // valueInsert / attributeInsert write one row against an already-resolved topic_id (passed as
 // $1), so the value-write phase only touches distinct (topic_id, ts) rows and concurrent
@@ -214,38 +205,24 @@ ON CONFLICT (topic_id, ts) DO UPDATE
     ELSE a.attribute
   END;`
 
-// migration is one forward-only schema step. version must be unique and ascending across
-// schemaMigrations. sql is the DDL applied when the step has not yet run on a database, and
-// must itself be idempotent (CREATE/ALTER ... IF NOT EXISTS): a fresh database whose baseline
-// already includes the change still records the version, so the DDL must no-op there. sql may
-// be empty -- version 1 is the baseline created above, recorded without extra DDL.
-// CONTRACT_SLOT in sql is substituted with the contract name like the rest of the bootstrap.
-// The step is wrapped in a DO $mig$ block, so sql must not contain the tag "$mig$".
+// migration is one forward-only schema step. sql must be idempotent (CREATE/ALTER ... IF NOT
+// EXISTS): a fresh database already carrying the change in its baseline still records the version,
+// so the DDL must no-op there. sql must not contain the tag "$mig$" (it is wrapped in DO $mig$).
 type migration struct {
 	version int
 	sql     string
 }
 
-// schemaMigrations is the ordered, forward-only migration ledger. Version 1 IS the baseline
-// above: the umh schema is greenfield (never deployed, and nothing was versioned before it),
-// so its initial form is simply version 1 of a fresh sequence -- the standard "initial schema
-// is a migration" convention (cf. Flyway baseline, Django 0001_initial). The plugin can record
-// a baseline version where the ManagementConsole template leaves the ledger empty because the
-// plugin has a single bootstrap statement, not two writers sharing one ledger.
+// schemaMigrations is the forward-only migration ledger; version 1 is the baseline created above.
+// To evolve the schema, APPEND the next version with idempotent DDL -- never edit a baseline or an
+// existing entry, because a database that already ran it will not re-run it.
 //
-// To evolve the schema, APPEND the next version with its (idempotent) DDL -- never edit a
-// baseline CREATE or an existing entry, because a database that already ran it will not re-run
-// it. "Current version" is SELECT max(version) FROM umh.schema_migrations (1 on a fresh DB).
-//
-// Example next step:
-//
-//	{version: 2, sql: "ALTER TABLE umh.value_CONTRACT_SLOT ADD COLUMN IF NOT EXISTS quality SMALLINT;"},
+// Example: {version: 2, sql: "ALTER TABLE umh.value_CONTRACT_SLOT ADD COLUMN IF NOT EXISTS quality SMALLINT;"}
 var schemaMigrations = []migration{
 	{version: 1}, // baseline above; recorded as the initial schema version
 }
 
-// highestMigrationVersion returns the highest version in schemaMigrations: the schema version
-// a freshly bootstrapped database ends at, and the in-code source of truth for the version.
+// highestMigrationVersion is the schema version a freshly bootstrapped database ends at.
 func highestMigrationVersion() int {
 	v := 0
 	for _, m := range schemaMigrations {
@@ -256,9 +233,8 @@ func highestMigrationVersion() int {
 	return v
 }
 
-// migrationsBlock renders the MIGRATIONS section: each step is gated on umh.schema_migrations
-// so it applies at most once per database and records its version on success. It runs inside
-// the bootstrap's BEGIN/COMMIT and advisory lock, so the whole upgrade is atomic.
+// migrationsBlock renders the MIGRATIONS section: each step is ledger-gated to apply at most once,
+// inside the bootstrap's BEGIN/COMMIT + advisory lock, so the upgrade is atomic.
 func migrationsBlock() string {
 	var b strings.Builder
 	for _, m := range schemaMigrations {
@@ -275,16 +251,11 @@ func sub(sql string, contract string) string {
 	return strings.ReplaceAll(sql, "CONTRACT_SLOT", contract)
 }
 
-// policyBlock generates the compression/retention setup for one hypertable, gated on the
-// migration ledger so it runs exactly once -- at first bootstrap, when the table is empty and
-// has no compressed chunks. Re-running it on every Connect (the previous behavior) had two
-// hazards: ALTER TABLE SET (compress...) errors on TimescaleDB versions that forbid changing
-// compression config while compressed chunks exist (which they do once compress_after elapses),
-// and re-applying retention un-scheduled an operator's manually-added policy on every restart.
-// Running once, before any chunk is compressed, sidesteps both -- so no remove_* calls are
-// needed, since nothing exists yet to remove. Consequence: editing compress_after/retention in
-// config and restarting does NOT re-apply; changing them on an existing database means adding a
-// numbered migration step that re-runs the policy (see schemaMigrations).
+// policyBlock generates the compression/retention setup for one hypertable, ledger-gated to run
+// once at first bootstrap (empty table, no compressed chunks). Running it every Connect broke two
+// ways: ALTER TABLE SET (compress...) errors once compressed chunks exist, and re-applying
+// retention un-scheduled an operator's manual policy. Consequence: editing compress_after/retention
+// needs a new migration step to re-apply.
 func policyBlock(table string, compressAfter time.Duration, retention time.Duration, retentionSet bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `DO $pol$

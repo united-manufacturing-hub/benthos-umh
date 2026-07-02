@@ -132,6 +132,105 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(h.SchemaVersion(ctx)).To(Equal(1))
 	})
 
+	It("does not advance the topic sequence when re-resolving an existing topic", func() {
+		h := connected("noburn")
+		defer h.Close(ctx)
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(1.0, 1000, "_noburn_v1", "acme.line1", "x", nil),
+		})).To(Succeed())
+		seq := h.TopicSeqValue(ctx) // topic now exists; sequence at its id
+		// Re-resolve the same topic across several further batches (distinct ts) -> all lookup
+		// hits -> no sequence burn.
+		for i := 2; i <= 6; i++ {
+			Expect(h.WriteBatch(ctx, service.MessageBatch{
+				mkMsg(float64(i), float64(i*1000), "_noburn_v1", "acme.line1", "x", nil),
+			})).To(Succeed())
+		}
+		Expect(h.TopicSeqValue(ctx)).To(Equal(seq), "re-resolving an existing topic must not burn the sequence")
+		Expect(h.CountValueRows(ctx, "noburn")).To(Equal(6))
+	})
+
+	It("re-warms after restart (fresh handle) without bumping the sequence", func() {
+		h1 := connected("restart2")
+		defer h1.Close(ctx)
+		Expect(h1.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(1.0, 1000, "_restart2_v1", "acme.line1", "a", nil),
+			mkMsg(2.0, 1000, "_restart2_v1", "acme.line1", "b", nil),
+		})).To(Succeed())
+		seq := h1.TopicSeqValue(ctx)
+
+		// A fresh handle == the restart path (no in-process state). Writing the SAME, existing
+		// topics resolves them via lookup with no sequence bump.
+		h2 := tsh.NewHistorianTestHandle(sharedDSN, "restart2")
+		Expect(h2.Connect(ctx)).To(Succeed())
+		defer h2.Close(ctx)
+		Expect(h2.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(3.0, 2000, "_restart2_v1", "acme.line1", "a", nil),
+			mkMsg(4.0, 2000, "_restart2_v1", "acme.line1", "b", nil),
+		})).To(Succeed())
+		Expect(h2.TopicSeqValue(ctx)).To(Equal(seq), "existing topics must resolve via lookup after restart with no sequence bump")
+		Expect(h2.LookupMisses()).To(Equal(int64(0)), "both topics already existed -> no misses")
+	})
+
+	It("advances the topic sequence by exactly one per new topic (serial writer)", func() {
+		h := connected("newone")
+		defer h.Close(ctx)
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(1.0, 1000, "_newone_v1", "acme.line1", "first", nil),
+		})).To(Succeed())
+		seq := h.TopicSeqValue(ctx)
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(1.0, 1000, "_newone_v1", "acme.line1", "second", nil),
+		})).To(Succeed())
+		Expect(h.TopicSeqValue(ctx)).To(Equal(seq+1), "a new topic (serial writer) advances the sequence by exactly one")
+	})
+
+	It("a datatype flip resolves via the lookup-miss path and RAISEs", func() {
+		h := connected("flip2")
+		defer h.Close(ctx)
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(1.0, 1000, "_flip2_v1", "l.a", "t", nil),
+		})).To(Succeed())
+		misses := h.LookupMisses()
+		// Same tag, now text: the value_type-aware lookup MISSES -> guarded upsert -> tag guard
+		// RAISEs. A value_type-agnostic lookup would HIT and silently skip the guard, so this
+		// asserts both the RAISE and that the resolve went through the miss path.
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg("now-text", 2000, "_flip2_v1", "l.a", "t", nil),
+		})).NotTo(Succeed())
+		Expect(h.LookupMisses()).To(Equal(misses+1), "the flip must miss the value_type-aware lookup and fall to the upsert")
+	})
+
+	It("two handles concurrently creating the same new topic converge on one id, no dropped rows", func() {
+		hA := tsh.NewHistorianTestHandle(sharedDSN, "multi")
+		Expect(hA.Connect(ctx)).To(Succeed())
+		defer hA.Close(ctx)
+		hB := tsh.NewHistorianTestHandle(sharedDSN, "multi")
+		Expect(hB.Connect(ctx)).To(Succeed())
+		defer hB.Close(ctx)
+
+		var wg sync.WaitGroup
+		errs := make([]error, 2)
+		wg.Add(2)
+		go func() {
+			defer GinkgoRecover()
+			defer wg.Done()
+			errs[0] = hA.WriteBatch(ctx, service.MessageBatch{mkMsg(1.0, 1000, "_multi_v1", "l.a", "shared", nil)})
+		}()
+		go func() {
+			defer GinkgoRecover()
+			defer wg.Done()
+			errs[1] = hB.WriteBatch(ctx, service.MessageBatch{mkMsg(1.0, 1000, "_multi_v1", "l.a", "shared", nil)})
+		}()
+		wg.Wait()
+		Expect(errs[0]).NotTo(HaveOccurred())
+		Expect(errs[1]).NotTo(HaveOccurred())
+		// Both resolve to one topic; the identical (topic_id, ts, value) write is absorbed once.
+		Expect(hA.CountValueRows(ctx, "multi")).To(Equal(1))
+		_, ok := hA.GetTopicID(ctx, "l.a", "vibration", "multi", "shared")
+		Expect(ok).To(BeTrue())
+	})
+
 	It("batched writes scale with workers and beat per-message (no batching)", Label("load"), func() {
 		const totalRows = 4000
 		poolDSN := sharedDSN + "&pool_max_conns=16"
@@ -276,6 +375,75 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		// identical replay -> absorbed, no error, still one row
 		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(3.5, 1000, "_flow_v1", "acme.line1", "x", nil)})).To(Succeed())
 		Expect(h.CountValueRows(ctx, "flow")).To(Equal(1))
+	})
+
+	It("routes a string to value_text and a bool to value_num (the other column NULL)", func() {
+		h := connected("vland")
+		defer h.Close(ctx)
+		// string -> value_text populated, value_num NULL
+		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg("hello", 1000, "_vland_v1", "acme.line1", "s", nil)})).To(Succeed())
+		idS, ok := h.GetTopicID(ctx, "acme.line1", "vibration", "vland", "s")
+		Expect(ok).To(BeTrue())
+		num, text := h.ValueRow(ctx, "vland", idS)
+		Expect(num).To(BeNil(), "a string must not populate value_num")
+		Expect(text).NotTo(BeNil())
+		Expect(*text).To(Equal("hello"))
+		// bool -> value_num 1, value_text NULL
+		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(true, 1000, "_vland_v1", "acme.line1", "b", nil)})).To(Succeed())
+		idB, ok := h.GetTopicID(ctx, "acme.line1", "vibration", "vland", "b")
+		Expect(ok).To(BeTrue())
+		numB, textB := h.ValueRow(ctx, "vland", idB)
+		Expect(textB).To(BeNil(), "a bool must not populate value_text")
+		Expect(numB).NotTo(BeNil())
+		Expect(*numB).To(Equal(1.0))
+	})
+
+	It("collapses raw location variants to one topic and one merged series", func() {
+		h := connected("vcol")
+		defer h.Close(ctx)
+		// On the write path the only reachable canonicalization is '-' -> '_': the topic parser
+		// restricts location chars to [a-zA-Z0-9._-], so '@', '/', etc. are rejected upstream and
+		// never reach the DB. So the two writable variants of the same location are line-1 and
+		// line_1 (both -> acme.line_1); they must resolve to ONE topic, not split into two.
+		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(1.0, 1000, "_vcol_v1", "acme.line-1", "t", nil)})).To(Succeed())
+		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(2.0, 2000, "_vcol_v1", "acme.line_1", "t", nil)})).To(Succeed())
+
+		id1, ok := h.GetTopicID(ctx, "acme.line-1", "vibration", "vcol", "t")
+		Expect(ok).To(BeTrue())
+		id2, ok := h.GetTopicID(ctx, "acme.line_1", "vibration", "vcol", "t")
+		Expect(ok).To(BeTrue())
+		Expect(id2).To(Equal(id1), "line_1 must resolve to the same topic as line-1")
+
+		// Both points land in the one merged series, in ts order.
+		Expect(h.CountValueRows(ctx, "vcol")).To(Equal(2))
+		Expect(h.ValueWindow(ctx, "vcol", id1, 0, 4000)).To(Equal([]float64{1.0, 2.0}))
+
+		// Read side: get_topic_id accepts arbitrary strings, so a query with an out-of-topic
+		// character (e.g. a Grafana user typing "line@1") still canonicalizes to the same topic.
+		id3, ok := h.GetTopicID(ctx, "acme.line@1", "vibration", "vcol", "t")
+		Expect(ok).To(BeTrue())
+		Expect(id3).To(Equal(id1), "get_topic_id must canonicalize line@1 to the same topic")
+	})
+
+	It("Go CanonicalLtreePath agrees with SQL to_ltree_path over a shared corpus", func() {
+		h := connected("parity")
+		defer h.Close(ctx)
+		// The Go function is the dedup cache key; the SQL function is storage identity. They must
+		// not drift, or dedup keys stop matching DB identity. Feed the same inputs to both.
+		corpus := []string{
+			"acme.line1", "acme.line-1", "acme.line_1", "acme@line/1", "a.b/c",
+			"a...b", "ENTERPRISE.Site.Area", "x-y_z.1-2",
+			"...", ".", "",
+		}
+		for _, in := range corpus {
+			goVal := tsh.CanonicalLtreePath(in)
+			sqlVal, isNull := h.SQLToLtree(ctx, in)
+			if isNull {
+				Expect(goVal).To(Equal(""), "SQL to_ltree_path(%q) is NULL; Go must be empty", in)
+			} else {
+				Expect(goVal).To(Equal(sqlVal), "Go and SQL canonicalization must agree for %q", in)
+			}
+		}
 	})
 
 	It("locks the documented read query (get_topic_id + time-window select)", func() {

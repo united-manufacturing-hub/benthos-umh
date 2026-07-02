@@ -69,13 +69,13 @@ func NormalizeContract(metaContract string) string {
 
 func ValidateContract(c string) error {
 	if !reContract.MatchString(c) {
-		return fmt.Errorf("data_contract %q invalid: use a bare lowercase name (letters, digits, underscores), e.g. \"pump\"", c)
+		return fmt.Errorf("data_contract_name %q invalid: use a bare lowercase name (letters, digits, underscores), e.g. \"pump\"", c)
 	}
 	if c[0] == '_' {
-		return fmt.Errorf("data_contract %q must not have a leading underscore (\"pump\", not \"_pump\")", c)
+		return fmt.Errorf("data_contract_name %q must not have a leading underscore (\"pump\", not \"_pump\")", c)
 	}
 	if reVersionSuffix.MatchString(c) {
-		return fmt.Errorf("data_contract %q must not carry a version suffix (\"pump\", not \"pump_v1\")", c)
+		return fmt.Errorf("data_contract_name %q must not carry a version suffix (\"pump\", not \"pump_v1\")", c)
 	}
 	return nil
 }
@@ -95,6 +95,12 @@ func ClassifyValue(v any) (ValueType, *float64, *string, bool) {
 			return "", nil, nil, false
 		}
 		return ValueNumeric, &tv, nil, true
+	case int64:
+		f := float64(tv)
+		return ValueNumeric, &f, nil, true
+	case int:
+		f := float64(tv)
+		return ValueNumeric, &f, nil, true
 	case json.Number:
 		f, err := tv.Float64()
 		if err != nil || !isFinite(f) {
@@ -129,6 +135,10 @@ func ParseTimestampMs(v any) (string, bool) {
 	switch tv := v.(type) {
 	case float64:
 		ms = tv
+	case int64:
+		ms = float64(tv)
+	case int:
+		ms = float64(tv)
 	case json.Number:
 		f, err := tv.Float64()
 		if err != nil {
@@ -181,10 +191,9 @@ const (
 
 // Transform maps one UNS message to a Row, or returns a non-empty DropReason to drop it.
 func Transform(payload map[string]any, meta map[string]string, contract string, allMeta bool, allowlist []string, excl *MetaExcluder, view *BatchView) (*Row, DropReason) {
-	// Parse + validate the canonical umh_topic once via the shared parser instead of
-	// trusting separate location_path/data_contract/tag_name metadata. Benthos pipelines are
-	// composable, so an output must not assume the tag_processor ran: a missing or malformed
-	// topic is dropped here rather than written against derived-from-nothing fields.
+	// Parse the canonical umh_topic via the shared parser rather than trusting separate
+	// location/contract/tag meta: a pipeline may not have run the tag_processor, so a missing or
+	// malformed topic is dropped here.
 	ut, err := topic.NewUnsTopic(meta["umh_topic"])
 	if err != nil {
 		return nil, DropInvalidTopic
@@ -195,9 +204,7 @@ func Transform(payload map[string]any, meta map[string]string, contract string, 
 	if NormalizeContract(info.DataContract) != want {
 		return nil, DropContractMismatch
 	}
-	// A valid umh_topic always has a non-empty location and name, and the parser rejects
-	// empty/dotted location segments, so the historian no longer re-checks for an empty or
-	// empty-normalizing location/tag here -- NewUnsTopic above subsumes those checks.
+	// NewUnsTopic already rejects empty/dotted location and empty name, so no re-check here.
 	loc := info.LocationPath()
 	tag := info.Name
 	vp := info.GetVirtualPath()

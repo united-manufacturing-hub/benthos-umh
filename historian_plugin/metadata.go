@@ -126,9 +126,9 @@ func BuildMetadata(meta map[string]string, keys []string) map[string]string {
 	return md
 }
 
-// Fingerprint serializes metadata as a JSONB object ({"key":"value"}) — both the stored
-// attribute value and the dedup key. The object shape (not an array) is what makes
-// attribute->>'key' / @> queries resolve. json.Marshal sorts keys, so it is deterministic.
+// Fingerprint serializes metadata as a JSONB object ({"key":"value"}): both the stored attribute
+// value and the dedup key. The object shape (not an array) is what makes attribute->>'key' / @>
+// queries resolve. json.Marshal sorts keys, so it is deterministic.
 func Fingerprint(md map[string]string) string {
 	b, _ := json.Marshal(md)
 	return string(b)

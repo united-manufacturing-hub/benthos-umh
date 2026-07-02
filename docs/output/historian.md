@@ -28,7 +28,7 @@ No JavaScript processor or hand-written `sql_raw` is needed.
 | `password` | yes | — | Role password (plaintext in config; redacted in logs). |
 | `sslmode` | no | `require` | `require` \| `disable` \| `verify-full`. |
 | `sslrootcert` / `sslcert` / `sslkey` | no | `""` | TLS cert paths inside the container. |
-| `data_contract` | yes | — | Bare lowercase contract name, e.g. `pump`; no leading `_`, no `_vN` suffix. |
+| `data_contract_name` | yes | — | Bare lowercase contract name, e.g. `pump`; no leading `_`, no `_vN` suffix. Stored in `umh.tag.data_contract_name` in its UNS form with a leading underscore (`_pump`), matching the topic's data-contract segment. |
 | `metadata_keys_all` | no | `true` | Store every metadata key except structural/high-churn keys and any `metadata_keys_exclude` match. |
 | `metadata_keys` | no | `[]` | Allowlist used only when `metadata_keys_all=false`. |
 | `metadata_keys_exclude` | no | `[]` | Blacklist applied only when `metadata_keys_all=true`. Each entry is an exact key name or a trailing-`*` prefix (e.g. `opcua_*`); matches are dropped on top of the built-in exclusions. A bare `*` drops everything. Ignored in allowlist mode. |
@@ -39,7 +39,7 @@ No JavaScript processor or hand-written `sql_raw` is needed.
 
 ## What it writes
 
-All objects live in a dedicated `umh` schema. For `data_contract: pump`, the plugin creates
+All objects live in a dedicated `umh` schema. For `data_contract_name: pump`, the plugin creates
 and writes two hypertables:
 
 - **`umh.value_pump`** — one row per `(tag, millisecond)`. Numbers and booleans land in
@@ -50,12 +50,19 @@ and writes two hypertables:
 `umh.get_topic_id(location_path, virtual_path, data_contract, tag_name)` resolves a tag to
 its `topic_id` for ad-hoc and Grafana queries.
 
+> **Note on the contract name.** You configure the bare form (`pump`), which is used verbatim
+> in the table names (`umh.value_pump`, `umh.attribute_pump`). The `umh.tag.data_contract_name`
+> *column*, however, stores the UNS form with a leading underscore (`_pump`) to match the
+> topic's data-contract segment. This mirrors the ManagementConsole Historian template, so a
+> database written by either resolves identically through `get_topic_id`.
+
 ## Behavior
 
 - **Startup check.** `Connect()` verifies the server version and bootstraps the schema, so
   an unreachable, too-old, or misconfigured database fails the bridge at startup rather than
   writing to a misconfigured database unnoticed.
 - **Idempotent replays.** An identical value at the same `(tag, ts)` is absorbed.
+- **Topic resolution is read-first.** A topic already in the database is resolved with a lookup that assigns no new id, so the internal surrogate ids advance only when a genuinely new topic is created — not per message, and restarts do not bump them.
 - **Conflict and datatype guards halt the bridge.** A *different* value at the same
   `(tag, ts)`, or a tag whose datatype flips (numeric ↔ text), RAISEs and stops the bridge
   until the source is fixed. This is deliberate: corrupt history is never written. It
@@ -135,7 +142,7 @@ output:
   historian:
     host: timescaledb.example.com
     password: change-me
-    data_contract: pump
+    data_contract_name: pump
 ```
 
 To deploy a bridge against this output from the Management Console, use the

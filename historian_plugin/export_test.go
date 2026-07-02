@@ -87,6 +87,21 @@ func (h *HistorianTestHandle) ValueWindow(ctx context.Context, contract string, 
 	return out
 }
 
+// TopicSeqValue reads the current value of the topic_id sequence. Integration tests assert that
+// re-resolving an existing topic does not advance it (the read-first lookup burns nothing).
+func (h *HistorianTestHandle) TopicSeqValue(ctx context.Context) int64 {
+	ExpectWithOffset(1, h.o.pool).NotTo(BeNil(), "Connect must succeed before TopicSeqValue")
+	var v int64
+	err := h.o.pool.QueryRow(ctx, "SELECT last_value FROM umh.topic_topic_id_seq").Scan(&v)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	return v
+}
+
+// LookupHits / LookupMisses expose the read-first resolve counters (LookupMisses increments when a
+// resolve falls through to the guarded upsert -- a new topic or a datatype flip).
+func (h *HistorianTestHandle) LookupHits() int64   { return h.o.lookupHits.Load() }
+func (h *HistorianTestHandle) LookupMisses() int64 { return h.o.lookupMisses.Load() }
+
 // SchemaVersion reads max(version) from umh.schema_migrations (integration tests).
 func (h *HistorianTestHandle) SchemaVersion(ctx context.Context) int {
 	ExpectWithOffset(1, h.o.pool).NotTo(BeNil(), "Connect must succeed before SchemaVersion")
@@ -174,6 +189,18 @@ func (h *HistorianTestHandle) SQLToLtree(ctx context.Context, path string) (stri
 		return "", true
 	}
 	return *v, false
+}
+
+// ValueRow reads (value_num, value_text) for a topic's single row so tests can verify how a value
+// lands: numerics/bools in value_num, strings/JSON in value_text, with the other column NULL.
+func (h *HistorianTestHandle) ValueRow(ctx context.Context, contract string, topicID int64) (*float64, *string) {
+	ExpectWithOffset(1, h.o.pool).NotTo(BeNil(), "Connect must succeed before ValueRow")
+	var num *float64
+	var text *string
+	q := fmt.Sprintf("SELECT value_num, value_text FROM umh.value_%s WHERE topic_id = $1 ORDER BY ts LIMIT 1", contract)
+	err := h.o.pool.QueryRow(ctx, q, topicID).Scan(&num, &text)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	return num, text
 }
 
 func (h *HistorianTestHandle) CountValueRows(ctx context.Context, contract string) int {

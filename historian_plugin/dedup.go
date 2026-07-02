@@ -46,19 +46,16 @@ type BatchView struct {
 	working map[string]string
 }
 
-// ShouldEmit reports whether (key, fingerprint) needs an attribute write, recording it in
-// the working set so a later same-key call in this batch dedups against it.
+// ShouldEmit reports whether (key, fingerprint) needs an attribute write, recording it in the
+// working set so a later same-key call in this batch dedups against it.
 //
-// Cross-batch dedup is best-effort by design. committed is promoted only after the batch's
-// transaction commits (see Commit), so a rolled-back batch re-emits instead of losing the
-// attribute row. Under max_in_flight > 1 benthos runs WriteBatch concurrently, so two batches
-// carrying the same new (key, fingerprint) can both observe a committed miss before either
-// commits and both emit. The attribute PK is (topic_id, ts) with ts the message timestamp, so
-// ON CONFLICT does not absorb the second row: a metadata change can produce up to
-// max_in_flight redundant -- but valid -- attribute rows before committed settles. This is a
-// bounded, self-healing inefficiency, deliberately not synchronized. A shared in-flight
-// reservation would reintroduce the lost-row-on-rollback hazard that promoting only after
-// commit exists to prevent.
+// Cross-batch dedup is best-effort. committed is promoted only after the batch commits (see
+// Commit), so a rolled-back batch re-emits rather than losing the attribute row. The cost: under
+// max_in_flight > 1 two concurrent batches with the same new (key, fingerprint) can both see a
+// committed miss and both emit; at distinct ts the attribute PK (topic_id, ts) does not absorb
+// them, so a metadata change can leave up to max_in_flight redundant but valid rows before
+// committed settles. Deliberately not synchronized: a shared in-flight reservation would
+// reintroduce the lost-row-on-rollback hazard that commit-time promotion prevents.
 func (v *BatchView) ShouldEmit(key string, fingerprint string) bool {
 	if fp, seen := v.working[key]; seen {
 		v.working[key] = fingerprint

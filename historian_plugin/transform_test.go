@@ -15,6 +15,7 @@
 package historian_plugin_test
 
 import (
+	"encoding/json"
 	"math"
 	"strings"
 
@@ -104,6 +105,19 @@ var _ = Describe("ClassifyValue", func() {
 		Expect(vt).To(Equal(tsh.ValueNumeric))
 		Expect(num).To(Equal(ptrF(3.5)))
 	})
+	It("int64 -> numeric (not JSON-marshaled text)", func() {
+		vt, num, text, ok := tsh.ClassifyValue(int64(42))
+		Expect(ok).To(BeTrue())
+		Expect(vt).To(Equal(tsh.ValueNumeric))
+		Expect(num).To(Equal(ptrF(42)))
+		Expect(text).To(BeNil())
+	})
+	It("int -> numeric", func() {
+		vt, num, _, ok := tsh.ClassifyValue(7)
+		Expect(ok).To(BeTrue())
+		Expect(vt).To(Equal(tsh.ValueNumeric))
+		Expect(num).To(Equal(ptrF(7)))
+	})
 	It("NaN -> dropped", func() {
 		_, _, _, ok := tsh.ClassifyValue(math.NaN())
 		Expect(ok).To(BeFalse())
@@ -171,6 +185,64 @@ var _ = Describe("ParseTimestampMs", func() {
 		Expect(ok).To(BeTrue())
 		Expect(got).To(Equal("1969-12-31T23:59:58.500Z"))
 	})
+	It("accepts a json.Number (AsStructured yields these for JSON integers)", func() {
+		got, ok := tsh.ParseTimestampMs(json.Number("1500"))
+		Expect(ok).To(BeTrue())
+		Expect(got).To(Equal("1970-01-01T00:00:01.500Z"))
+	})
+	// A bloblang integer literal (e.g. `root.timestamp_ms = 1782983057000`) reaches an output as
+	// a Go int64, not a float64; ts_unix_milli() also returns an integer. These must be accepted.
+	It("accepts an int64 (bloblang integer literal / ts_unix_milli output)", func() {
+		got, ok := tsh.ParseTimestampMs(int64(1782983057000))
+		Expect(ok).To(BeTrue())
+		Expect(got).To(Equal("2026-07-02T09:04:17.000Z"))
+	})
+	It("accepts a plain int", func() {
+		got, ok := tsh.ParseTimestampMs(1500)
+		Expect(ok).To(BeTrue())
+		Expect(got).To(Equal("1970-01-01T00:00:01.500Z"))
+	})
+	It("trims surrounding whitespace on a numeric string", func() {
+		got, ok := tsh.ParseTimestampMs("  1500  ")
+		Expect(ok).To(BeTrue())
+		Expect(got).To(Equal("1970-01-01T00:00:01.500Z"))
+	})
+	It("truncates a fractional millisecond toward zero", func() {
+		got, ok := tsh.ParseTimestampMs(float64(1500.9))
+		Expect(ok).To(BeTrue())
+		Expect(got).To(Equal("1970-01-01T00:00:01.500Z"))
+	})
+	It("accepts the in-range boundaries", func() {
+		_, ok := tsh.ParseTimestampMs(float64(8.64e15))
+		Expect(ok).To(BeTrue())
+		_, ok = tsh.ParseTimestampMs(float64(-8.64e15))
+		Expect(ok).To(BeTrue())
+	})
+	It("drops an empty string", func() {
+		_, ok := tsh.ParseTimestampMs("")
+		Expect(ok).To(BeFalse())
+	})
+	It("drops a numeric string carrying a unit suffix", func() {
+		_, ok := tsh.ParseTimestampMs("1782983057ms")
+		Expect(ok).To(BeFalse())
+	})
+	It("drops an unsupported type", func() {
+		_, ok := tsh.ParseTimestampMs(true)
+		Expect(ok).To(BeFalse())
+	})
+	// The field is milliseconds. A 10-digit epoch-seconds value is a valid, in-range number,
+	// so it is not rejected -- it is read as ~1970. A "bad timestamp" seen downstream therefore
+	// comes from the mapping, not from a value of this magnitude.
+	It("reads a 10-digit epoch-seconds value as ms (silently ~1970, not dropped)", func() {
+		got, ok := tsh.ParseTimestampMs(float64(1782983057))
+		Expect(ok).To(BeTrue())
+		Expect(got).To(Equal("1970-01-21T15:16:23.057Z"))
+	})
+	It("reads the same instant correctly once scaled to 13-digit ms", func() {
+		got, ok := tsh.ParseTimestampMs(float64(1782983057000))
+		Expect(ok).To(BeTrue())
+		Expect(got).To(Equal("2026-07-02T09:04:17.000Z"))
+	})
 })
 
 var _ = Describe("Transform", func() {
@@ -218,6 +290,30 @@ var _ = Describe("Transform", func() {
 		row, reason := tr(p, m)
 		Expect(reason).To(Equal(tsh.DropNone))
 		Expect(*row.ValueNum).To(Equal(0.0))
+	})
+	It("accepts a 10-digit epoch-seconds timestamp but records ~1970 (not a drop)", func() {
+		p, m := base()
+		p["timestamp_ms"] = float64(1782983057) // seconds mistaken for ms
+		row, reason := tr(p, m)
+		Expect(reason).To(Equal(tsh.DropNone))
+		Expect(row.TS).To(Equal("1970-01-21T15:16:23.057Z"))
+	})
+	It("records the intended instant when the timestamp is 13-digit ms", func() {
+		p, m := base()
+		p["timestamp_ms"] = float64(1782983057000)
+		row, reason := tr(p, m)
+		Expect(reason).To(Equal(tsh.DropNone))
+		Expect(row.TS).To(Equal("2026-07-02T09:04:17.000Z"))
+	})
+	It("maps an int64 value and int64 timestamp (a bloblang integer pipeline)", func() {
+		p, m := base()
+		p["value"] = int64(42)
+		p["timestamp_ms"] = int64(1782983057000)
+		row, reason := tr(p, m)
+		Expect(reason).To(Equal(tsh.DropNone))
+		Expect(row.ValueType).To(Equal(tsh.ValueNumeric))
+		Expect(*row.ValueNum).To(Equal(42.0))
+		Expect(row.TS).To(Equal("2026-07-02T09:04:17.000Z"))
 	})
 
 	DescribeTable("drops with the right reason",

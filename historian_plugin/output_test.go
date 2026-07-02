@@ -30,7 +30,7 @@ var _ = Describe("config", func() {
 host: db.example.com
 port: 5432
 password: secret
-data_contract: pump
+data_contract_name: pump
 `
 		parsed, err := tsh.HistorianConfig().ParseYAML(yaml, service.NewEnvironment())
 		Expect(err).NotTo(HaveOccurred())
@@ -39,8 +39,8 @@ data_contract: pump
 		Expect(h.BuildDSN()).To(Equal("postgres://umh_owner:secret@db.example.com:5432/umh?sslmode=require"))
 	})
 
-	It("rejects an invalid data_contract at construction", func() {
-		yaml := "host: h\npassword: p\ndata_contract: Pump\n"
+	It("rejects an invalid data_contract_name at construction", func() {
+		yaml := "host: h\npassword: p\ndata_contract_name: Pump\n"
 		parsed, err := tsh.HistorianConfig().ParseYAML(yaml, service.NewEnvironment())
 		Expect(err).NotTo(HaveOccurred())
 		_, err = tsh.NewHistorianForConfig(parsed)
@@ -48,7 +48,7 @@ data_contract: pump
 	})
 
 	It("rejects a sub-second compress_after (would render INTERVAL '0 seconds')", func() {
-		yaml := "host: h\npassword: p\ndata_contract: pump\ncompress_after: 100ms\n"
+		yaml := "host: h\npassword: p\ndata_contract_name: pump\ncompress_after: 100ms\n"
 		parsed, err := tsh.HistorianConfig().ParseYAML(yaml, service.NewEnvironment())
 		Expect(err).NotTo(HaveOccurred())
 		_, err = tsh.NewHistorianForConfig(parsed)
@@ -56,7 +56,7 @@ data_contract: pump
 	})
 
 	It("rejects a sub-second retention when set", func() {
-		yaml := "host: h\npassword: p\ndata_contract: pump\nretention: 0s\n"
+		yaml := "host: h\npassword: p\ndata_contract_name: pump\nretention: 0s\n"
 		parsed, err := tsh.HistorianConfig().ParseYAML(yaml, service.NewEnvironment())
 		Expect(err).NotTo(HaveOccurred())
 		_, err = tsh.NewHistorianForConfig(parsed)
