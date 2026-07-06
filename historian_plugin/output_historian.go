@@ -400,7 +400,7 @@ func (o *historianOutput) resolveTopic(ctx context.Context, pool *pgxpool.Pool, 
 		return id, nil
 	case errors.Is(err, pgx.ErrNoRows):
 		o.lookupMisses.Add(1)
-		if err := pool.QueryRow(ctx, topicResolveSQL, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType)).Scan(&id); err != nil {
+		if err = pool.QueryRow(ctx, topicResolveSQL, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType)).Scan(&id); err != nil {
 			return 0, fmt.Errorf("topic resolve failed: %w", err)
 		}
 		return id, nil

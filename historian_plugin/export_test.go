@@ -166,6 +166,7 @@ func (h *HistorianTestHandle) Connect(ctx context.Context) error { return h.o.Co
 // only the liveness + write-permission checks. Lets a test drive probeWritable as a role that lacks
 // CREATE (so it cannot run bootstrap) but should still be write-checked.
 func (h *HistorianTestHandle) MarkBootstrapped() { h.o.bootstrapped = true }
+
 func (h *HistorianTestHandle) WriteBatch(ctx context.Context, b service.MessageBatch) error {
 	return h.o.WriteBatch(ctx, b)
 }
