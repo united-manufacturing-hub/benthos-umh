@@ -72,6 +72,8 @@ type historianOutput struct {
 	valueRows *service.MetricCounter // value rows upserted (after commit)
 	attrRows  *service.MetricCounter // attribute rows upserted (after commit)
 	dedupSize *service.MetricGauge   // current dedup-cache entry count
+	poisoned  *service.MetricCounter // rows dropped as poison (labels: sqlstate, phase)
+	truncated *service.MetricCounter // value_text values clipped to maxTextRunes
 	dedup     *DedupCache
 
 	lookupHits   atomic.Int64 // topic resolves served by the read-first lookup (no sequence burn)
@@ -83,6 +85,8 @@ type historianOutput struct {
 
 	churnMu     sync.Mutex
 	warnedChurn map[string]struct{} // high-churn keys already warned about
+
+	warnedTruncate atomic.Bool // warn-once guard for truncation
 }
 
 func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*historianOutput, error) {
@@ -92,6 +96,8 @@ func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*hi
 		valueRows:   mgr.Metrics().NewCounter("historian_value_rows_written"),
 		attrRows:    mgr.Metrics().NewCounter("historian_attribute_rows_written"),
 		dedupSize:   mgr.Metrics().NewGauge("historian_dedup_cache_size"),
+		poisoned:    mgr.Metrics().NewCounter("historian_rows_poisoned", "sqlstate", "phase"),
+		truncated:   mgr.Metrics().NewCounter("historian_values_truncated"),
 		dedup:       NewDedupCache(),
 		warnedChurn: map[string]struct{}{},
 	}
@@ -317,6 +323,12 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 		for _, k := range row.churnKeys { // union across the whole batch, not just the first row
 			churn[k] = struct{}{}
 		}
+		if row.Truncated {
+			o.truncated.Incr(1)
+			if o.warnedTruncate.CompareAndSwap(false, true) {
+				o.logger.Warnf("TimescaleDB historian: a value_text exceeded %d runes and was truncated; longer text is silently clipped. Route oversized payloads to a different tag or shorten upstream.", maxTextRunes)
+			}
+		}
 		rows = append(rows, row)
 	}
 	o.warnHighChurn(churn)
@@ -330,7 +342,24 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 		return nil
 	}
 
-	return o.writeBatchFast(ctx, pool, rows, view)
+	err := o.writeBatchFast(ctx, pool, rows, view)
+	if err == nil {
+		return nil
+	}
+	switch classify(err) {
+	case dispDropPoison:
+		// A poison row failed the fast batch. Re-run row-by-row so the good rows land and only
+		// the poison rows are dropped -- otherwise one bad value head-of-line-blocks the stream.
+		o.logger.Warnf("TimescaleDB historian: poison row in batch, isolating good rows: %v", o.redact(err))
+		return o.writeRowsIsolated(ctx, pool, rows)
+	case dispRetryStanding:
+		// Config/resource/unknown: never drop good data. NACK for retry, but loudly -- this will
+		// not clear without an operator (e.g. missing table privilege, disk full).
+		o.logger.Errorf("TimescaleDB historian: write blocked by a standing fault; holding the batch for retry (no data dropped): %v", o.redact(err))
+		return err
+	default: // dispRetryTransient: connection blip etc. -- benthos retries; stay quiet to avoid log spam
+		return err
+	}
 }
 
 // resolveTopic returns the topic_id for one row, read-first: an existing topic resolves via a
@@ -412,6 +441,60 @@ func (o *historianOutput) writeBatchFast(ctx context.Context, pool *pgxpool.Pool
 	o.valueRows.Incr(int64(len(rows)))
 	o.attrRows.Incr(int64(attrCount))
 	return nil
+}
+
+// writeRowsIsolated is the slow path taken only after writeBatchFast fails with a poison error.
+// It writes each row independently (autocommit) so good rows land and poison rows are dropped
+// with a loud, attributable signal instead of head-of-line-blocking the batch. A transient or
+// standing error returns immediately (NACK the whole batch); rows already written this pass are
+// absorbed idempotently on retry. It deliberately does NOT promote the dedup view: after a
+// poison batch each surviving tag re-emits its metadata once (a new attribute row at the next
+// ts), which is cheap and correct, and avoids marking a row emitted when its value was dropped.
+func (o *historianOutput) writeRowsIsolated(ctx context.Context, pool *pgxpool.Pool, rows []*Row) error {
+	vq := valueQueryFor(o.contract)
+	aq := attributeQueryFor(o.contract)
+	var written, attrs int
+	drop := func(err error, phase string, r *Row) {
+		o.poisoned.Incr(1, pgSQLState(err), phase)
+		o.logger.Errorf("TimescaleDB historian: dropped poison row at %s for %s (sqlstate=%s): %v", phase, describeRow(r), pgSQLState(err), o.redact(err))
+	}
+	for _, r := range rows {
+		id, err := o.resolveTopic(ctx, pool, r)
+		if err != nil {
+			if classify(err) == dispDropPoison {
+				drop(err, "resolve", r)
+				continue
+			}
+			o.valueRows.Incr(int64(written))
+			o.attrRows.Incr(int64(attrs))
+			return err
+		}
+		if _, err := pool.Exec(ctx, vq, id, r.TS, r.ValueNum, r.ValueText); err != nil {
+			if classify(err) == dispDropPoison {
+				drop(err, "value", r)
+				continue
+			}
+			o.valueRows.Incr(int64(written))
+			o.attrRows.Incr(int64(attrs))
+			return err
+		}
+		written++
+		if r.EmitMeta {
+			if _, err := pool.Exec(ctx, aq, id, r.TS, r.MetadataJSON); err != nil {
+				if classify(err) == dispDropPoison {
+					drop(err, "attribute", r)
+					continue
+				}
+				o.valueRows.Incr(int64(written))
+				o.attrRows.Incr(int64(attrs))
+				return err
+			}
+			attrs++
+		}
+	}
+	o.valueRows.Incr(int64(written))
+	o.attrRows.Incr(int64(attrs))
+	return nil // ACK: good rows committed, poison rows dropped-with-signal
 }
 
 // describeRow identifies a row for an attributable write-failure log: which tag, at which ts.

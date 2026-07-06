@@ -185,7 +185,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(h.TopicSeqValue(ctx)).To(Equal(seq+1), "a new topic (serial writer) advances the sequence by exactly one")
 	})
 
-	It("a datatype flip resolves via the lookup-miss path and RAISEs", func() {
+	It("a datatype flip goes through the lookup-miss path and is dropped as poison", func() {
 		h := connected("flip2")
 		defer h.Close(ctx)
 		Expect(h.WriteBatch(ctx, service.MessageBatch{
@@ -193,12 +193,15 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		})).To(Succeed())
 		misses := h.LookupMisses()
 		// Same tag, now text: the value_type-aware lookup MISSES -> guarded upsert -> tag guard
-		// RAISEs. A value_type-agnostic lookup would HIT and silently skip the guard, so this
-		// asserts both the RAISE and that the resolve went through the miss path.
+		// RAISEs P0001, which is classified as poison and the row is dropped (ACK). A value_type-
+		// agnostic lookup would HIT and silently skip the guard, so this asserts the resolve went
+		// through the miss path. LookupMisses increases by >=1 (the fast path and the isolated
+		// retry each re-resolve the flip).
 		Expect(h.WriteBatch(ctx, service.MessageBatch{
 			mkMsg("now-text", 2000, "_flip2_v1", "l.a", "t", nil),
-		})).NotTo(Succeed())
-		Expect(h.LookupMisses()).To(Equal(misses+1), "the flip must miss the value_type-aware lookup and fall to the upsert")
+		})).To(Succeed())
+		Expect(h.LookupMisses()).To(BeNumerically(">=", misses+1), "the flip must miss the value_type-aware lookup and fall to the upsert")
+		Expect(h.CountValueRows(ctx, "flip2")).To(Equal(1)) // numeric kept, flip dropped
 	})
 
 	It("two handles concurrently creating the same new topic converge on one id, no dropped rows", func() {
@@ -468,18 +471,44 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(ok).To(BeFalse())
 	})
 
-	It("RAISEs on a different value at the same (topic_id, ts)", func() {
+	It("drops a different value at the same (topic_id, ts) as poison", func() {
 		h := connected("conf")
 		defer h.Close(ctx)
 		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(1.0, 2000, "_conf_v1", "l.a", "t", nil)})).To(Succeed())
-		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(2.0, 2000, "_conf_v1", "l.a", "t", nil)})).NotTo(Succeed())
+		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(2.0, 2000, "_conf_v1", "l.a", "t", nil)})).To(Succeed())
+		Expect(h.CountValueRows(ctx, "conf")).To(Equal(1)) // original kept, conflicting value dropped
 	})
 
-	It("RAISEs on a datatype flip for the same tag", func() {
+	It("drops a datatype flip for the same tag as poison", func() {
 		h := connected("flip")
 		defer h.Close(ctx)
 		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(1.0, 3000, "_flip_v1", "l.a", "t", nil)})).To(Succeed())
-		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg("now-text", 4000, "_flip_v1", "l.a", "t", nil)})).NotTo(Succeed())
+		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg("now-text", 4000, "_flip_v1", "l.a", "t", nil)})).To(Succeed())
+		Expect(h.CountValueRows(ctx, "flip")).To(Equal(1)) // numeric kept, flip dropped
+	})
+
+	It("drops a poison flip row but lands the good co-batched rows (ACK)", func() {
+		h := connected("iso")
+		defer h.Close(ctx)
+		// establish tag t as numeric
+		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(1.0, 1000, "_iso_v1", "l.a", "t", nil)})).To(Succeed())
+		Expect(h.CountValueRows(ctx, "iso")).To(Equal(1))
+		// batch: a brand-new good tag y, plus a datatype flip on t (poison)
+		good := mkMsg(5.0, 2000, "_iso_v1", "l.a", "y", nil)
+		poison := mkMsg("now-text", 3000, "_iso_v1", "l.a", "t", nil)
+		Expect(h.WriteBatch(ctx, service.MessageBatch{good, poison})).To(Succeed()) // ACK: poison isolated
+		// y landed; the flip on t was dropped -> two rows total, t still numeric
+		Expect(h.CountValueRows(ctx, "iso")).To(Equal(2))
+	})
+
+	It("drops a poison same-ts conflict row within a batch, keeps the rest (ACK)", func() {
+		h := connected("iso2")
+		defer h.Close(ctx)
+		good := mkMsg(9.0, 1000, "_iso2_v1", "l.a", "keep", nil)
+		a := mkMsg(1.0, 2000, "_iso2_v1", "l.a", "x", nil)
+		b := mkMsg(2.0, 2000, "_iso2_v1", "l.a", "x", nil) // same (topic,ts), different value -> poison
+		Expect(h.WriteBatch(ctx, service.MessageBatch{good, a, b})).To(Succeed())
+		Expect(h.CountValueRows(ctx, "iso2")).To(Equal(2)) // keep + x@2000(=1.0) land; b dropped
 	})
 
 	It("dedups unchanged metadata across batches", func() {
@@ -519,12 +548,13 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(ok).To(BeFalse())
 	})
 
-	It("intra-batch: same tag+ts with different metadata RAISEs (real conflict)", func() {
+	It("intra-batch: same tag+ts with different metadata isolates the conflicting row (ACK)", func() {
 		h := connected("intra")
 		defer h.Close(ctx)
 		a := mkMsg(1.0, 7000, "_intra_v1", "l.a", "t", map[string]string{"serialNumber": "A"})
 		b := mkMsg(1.0, 7000, "_intra_v1", "l.a", "t", map[string]string{"serialNumber": "B"})
-		Expect(h.WriteBatch(ctx, service.MessageBatch{a, b})).NotTo(Succeed())
+		Expect(h.WriteBatch(ctx, service.MessageBatch{a, b})).To(Succeed())
+		Expect(h.CountValueRows(ctx, "intra")).To(Equal(1)) // one row lands, the conflicting twin drops
 	})
 
 	It("re-emits metadata after a rolled-back batch (dedup view discarded on failure)", func() {
@@ -533,10 +563,10 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		// 1. baseline value + metadata B at ts=8000
 		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(1.0, 8000, "_reemit_v1", "l.a", "t", map[string]string{"serialNumber": "A"})})).To(Succeed())
 		Expect(h.CountAttributeRows(ctx, "reemit")).To(Equal(1))
-		// 2. a conflicting value at the SAME ts carrying NEW metadata B -> the value write
-		//    RAISEs -> the whole batch nacks and rolls back, so B is never committed to the
-		//    dedup cache (and never written).
-		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(2.0, 8000, "_reemit_v1", "l.a", "t", map[string]string{"serialNumber": "B"})})).NotTo(Succeed())
+		// 2. a conflicting value at the SAME ts carrying NEW metadata B -> the value write is
+		//    poison. The batch is isolated (ACK): the conflicting value is dropped and, because
+		//    the isolated path never promotes the dedup view, B is not committed to the cache.
+		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(2.0, 8000, "_reemit_v1", "l.a", "t", map[string]string{"serialNumber": "B"})})).To(Succeed())
 		Expect(h.CountAttributeRows(ctx, "reemit")).To(Equal(1))
 		// 3. a valid write for the same tag with metadata B at a fresh ts must RE-EMIT B,
 		//    because the prior view was discarded on rollback (not silently suppressed).

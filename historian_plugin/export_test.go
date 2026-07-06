@@ -148,6 +148,8 @@ func NewHistorianTestHandle(dsn string, contract string) *HistorianTestHandle {
 		valueRows:       mgr.Metrics().NewCounter("historian_value_rows_written"),
 		attrRows:        mgr.Metrics().NewCounter("historian_attribute_rows_written"),
 		dedupSize:       mgr.Metrics().NewGauge("historian_dedup_cache_size"),
+		poisoned:        mgr.Metrics().NewCounter("historian_rows_poisoned", "sqlstate", "phase"),
+		truncated:       mgr.Metrics().NewCounter("historian_values_truncated"),
 		dedup:           NewDedupCache(),
 	}}
 }
