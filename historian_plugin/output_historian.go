@@ -330,6 +330,34 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 		return nil
 	}
 
+	return o.writeBatchFast(ctx, pool, rows, view)
+}
+
+// resolveTopic returns the topic_id for one row, read-first: an existing topic resolves via a
+// lookup (no sequence burn); a genuine miss (new topic, or a datatype flip that misses the
+// value_type-qualified lookup) falls to the guarded upsert. Errors wrap the underlying
+// pgconn.PgError with %w so classify() can unwrap the SQLSTATE.
+func (o *historianOutput) resolveTopic(ctx context.Context, pool *pgxpool.Pool, r *Row) (int64, error) {
+	var id int64
+	err := pool.QueryRow(ctx, topicLookupSQL, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType)).Scan(&id)
+	switch {
+	case err == nil:
+		o.lookupHits.Add(1)
+		return id, nil
+	case errors.Is(err, pgx.ErrNoRows):
+		o.lookupMisses.Add(1)
+		if err := pool.QueryRow(ctx, topicResolveSQL, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType)).Scan(&id); err != nil {
+			return 0, fmt.Errorf("topic resolve failed: %w", err)
+		}
+		return id, nil
+	default:
+		return 0, fmt.Errorf("topic lookup failed: %w", err)
+	}
+}
+
+// writeBatchFast is the happy path: resolve every distinct topic, then write all values and
+// attributes in one transaction. Returns the first error encountered (the caller classifies it).
+func (o *historianOutput) writeBatchFast(ctx context.Context, pool *pgxpool.Pool, rows []*Row, view *BatchView) error {
 	// Phase 1: resolve each distinct topic to its topic_id (autocommit, one statement each).
 	type topicKey struct {
 		loc, contract, vpath, tag string
@@ -344,20 +372,9 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 		if _, ok := topicID[k]; ok {
 			continue
 		}
-		var id int64
-		// Read-first: an existing topic resolves via a read (no sequence burn); only a genuine
-		// miss (new topic, or a datatype flip) falls to the guarded upsert. See topicLookupSQL.
-		err := pool.QueryRow(ctx, topicLookupSQL, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType)).Scan(&id)
-		switch {
-		case err == nil:
-			o.lookupHits.Add(1)
-		case errors.Is(err, pgx.ErrNoRows):
-			o.lookupMisses.Add(1)
-			if err = pool.QueryRow(ctx, topicResolveSQL, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType)).Scan(&id); err != nil {
-				return fmt.Errorf("topic resolve failed: %w", err)
-			}
-		default:
-			return fmt.Errorf("topic lookup failed: %w", err)
+		id, err := o.resolveTopic(ctx, pool, r)
+		if err != nil {
+			return err
 		}
 		topicID[k] = id
 	}
@@ -376,15 +393,12 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	for _, r := range rows {
 		id := topicID[keyOf(r)]
 		if _, err := tx.Exec(ctx, vq, id, r.TS, r.ValueNum, r.ValueText); err != nil {
-			// A value conflict or any write error halts the bridge (error -> nack -> retry ->
-			// stall until fixed): the append-only policy. Log an attributable line first so the
-			// halt names the offending tag.
-			o.logger.Errorf("TimescaleDB historian: value write failed for %s: %v", describeRow(r), err)
+			o.logger.Errorf("TimescaleDB historian: value write failed for %s: %v", describeRow(r), o.redact(err))
 			return fmt.Errorf("value write failed: %w", err)
 		}
 		if r.EmitMeta {
 			if _, err := tx.Exec(ctx, aq, id, r.TS, r.MetadataJSON); err != nil {
-				o.logger.Errorf("TimescaleDB historian: attribute write failed for %s: %v", describeRow(r), err)
+				o.logger.Errorf("TimescaleDB historian: attribute write failed for %s: %v", describeRow(r), o.redact(err))
 				return fmt.Errorf("attribute write failed: %w", err)
 			}
 			attrCount++
