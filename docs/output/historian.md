@@ -42,8 +42,8 @@ No JavaScript processor or hand-written `sql_raw` is needed.
 All objects live in a dedicated `umh` schema. For `data_contract_name: pump`, the plugin creates
 and writes two hypertables:
 
-- **`umh.value_pump`** — one row per `(tag, millisecond)`. Numbers and booleans land in
-  `value_num`, strings and JSON in `value_text`.
+- **`umh.value_pump`** — one row per `(topic_id, ts)`, where `ts` is a `timestamptz`. Numbers
+  and booleans land in `value_num`, strings and JSON in `value_text`.
 - **`umh.attribute_pump`** — the message metadata as a JSON object, queryable via
   `attribute->>'key'` and `attribute @> '{...}'`.
 
@@ -56,6 +56,74 @@ its `topic_id` for ad-hoc and Grafana queries.
 > topic's data-contract segment. This mirrors the ManagementConsole Historian template, so a
 > database written by either resolves identically through `get_topic_id`.
 
+## Reading the data
+
+The value table stores a surrogate `topic_id`, not the location/tag names. To go from a value
+row back to its identity, join through `umh.topic` to `umh.tag` and `umh.location`:
+
+```
+umh.value_pump (topic_id, ts, value_num, value_text)
+       │ topic_id
+       ▼
+umh.topic (topic_id, location_id, tag_id)
+       │ tag_id            │ location_id
+       ▼                   ▼
+umh.tag (tag_id, name,   umh.location (location_id, path)
+         virtual_path,
+         data_contract_name)
+```
+
+Two things trip up hand-written queries:
+
+- The value timestamp column is **`ts`** (a `timestamptz`), not `timestamp` or `time`.
+- A tag with no virtual path stores `virtual_path` as the **empty string `''`**, never `NULL`.
+  Passing `NULL` to `get_topic_id` matches nothing and returns an empty result silently.
+
+`umh.get_topic_id(location_path, virtual_path, data_contract, tag_name)` hides that join for
+single-tag lookups. Its `data_contract` argument is forgiving — `pump`, `_pump`, and `_pump_v1`
+all resolve to the same tag — so you don't have to remember the exact underscore/version form.
+
+```sql
+-- Latest value of one tag. Use '' (not NULL) when the tag has no virtual path.
+SELECT ts, value_num, value_text
+FROM   umh.value_pump
+WHERE  topic_id = umh.get_topic_id('enterprise.site.area.line', '', 'pump', 'temperature')
+ORDER  BY ts DESC
+LIMIT  1;
+
+-- Values of one tag over a time window (drop-in for a Grafana panel; the
+-- WHERE ts line is what Grafana's $__timeFilter(ts) macro expands to).
+SELECT ts, value_num
+FROM   umh.value_pump
+WHERE  topic_id = umh.get_topic_id('enterprise.site.area.line', '', 'pump', 'temperature')
+  AND  ts BETWEEN now() - INTERVAL '1 hour' AND now()
+ORDER  BY ts;
+
+-- Current value of every tag in the contract, with names resolved.
+SELECT DISTINCT ON (v.topic_id)
+       l.path::text AS location, g.virtual_path, g.name AS tag, v.ts, v.value_num, v.value_text
+FROM   umh.value_pump v
+JOIN   umh.topic    t ON t.topic_id    = v.topic_id
+JOIN   umh.tag      g ON g.tag_id      = t.tag_id
+JOIN   umh.location l ON l.location_id = t.location_id
+ORDER  BY v.topic_id, v.ts DESC;
+
+-- Resolve a tag to its numbers: value row → topic → tag/location.
+SELECT l.path::text AS location, g.name AS tag, v.ts, v.value_num
+FROM   umh.value_pump v
+JOIN   umh.topic    t ON t.topic_id    = v.topic_id
+JOIN   umh.tag      g ON g.tag_id      = t.tag_id
+JOIN   umh.location l ON l.location_id = t.location_id
+WHERE  g.name = 'temperature'
+ORDER  BY v.ts DESC;
+```
+
+> **`DISTINCT ON` and high tag counts.** The "current value of every tag" query above scans the
+> history of every topic to find each one's newest row. That is fine for hundreds of tags but
+> gets expensive as the tag count and history grow. For a dashboard that refreshes it often,
+> back it with a TimescaleDB continuous aggregate holding `last(value_num, ts)` per `topic_id`
+> and query that instead.
+
 ## Behavior
 
 - **Startup check.** `Connect()` verifies the server version and bootstraps the schema, so
@@ -63,12 +131,12 @@ its `topic_id` for ad-hoc and Grafana queries.
   writing to a misconfigured database unnoticed.
 - **Idempotent replays.** An identical value at the same `(tag, ts)` is absorbed.
 - **Topic resolution is read-first.** A topic already in the database is resolved with a lookup that assigns no new id, so the internal surrogate ids advance only when a genuinely new topic is created — not per message, and restarts do not bump them.
-- **Conflict and datatype guards halt the bridge.** A *different* value at the same
-  `(tag, ts)`, or a tag whose datatype flips (numeric ↔ text), RAISEs and stops the bridge
-  until the source is fixed. This is deliberate: corrupt history is never written. It
-  includes a tag emitting two distinct values within one millisecond, which the millisecond
-  UNS timestamp cannot distinguish from a real conflict, so this contract is unsuitable for
-  tags that emit distinct values faster than 1 kHz.
+- **Conflict and datatype guards drop the offending row.** A *different* value at the same
+  `(tag, ts)`, or a tag whose datatype flips (numeric ↔ text), is rejected by the database and
+  the row is dropped rather than overwriting history — the rest of the batch is still written
+  (see [Error handling](#error-handling)). This includes a tag emitting two distinct values
+  within one millisecond, which the millisecond UNS timestamp cannot distinguish from a real
+  conflict, so this contract is unsuitable for tags that emit distinct values faster than 1 kHz.
 - **Malformed messages are dropped, not nacked.** A wrong `data_contract`, an absent or
   invalid `umh_topic` (validated by the canonical topic parser), a non-finite number, or an
   unparseable timestamp drop the message and increment the `historian_messages_dropped` metric
@@ -76,6 +144,75 @@ its `topic_id` for ad-hoc and Grafana queries.
 - **Metadata de-duplication.** An attribute row is rewritten only when its key set changes,
   via an in-process, LRU-bounded fingerprint cache. The cache is cleared on restart, so
   each tag re-emits its metadata once after a restart (absorbed idempotently).
+
+## Error handling
+
+A write failure is handled by *what caused it*, so a single bad tag never stalls the stream:
+
+- **Transient** (connection loss, serialization/deadlock, lock contention, operator
+  intervention, and any error without a SQLSTATE) — the batch is retried until it succeeds.
+  A DB restart mid-stream loses nothing: held messages replay and identical `(topic_id, ts)`
+  rows are absorbed.
+- **Standing fault** (missing table privilege, disk full, an unrecognized error) — retried
+  too (good data is never dropped over a fixable problem), but logged at error level. The
+  bridge does not progress until an operator fixes the cause, then resumes losslessly.
+- **Poison** (a value that can never be written: an append-only conflict, a datatype flip, a
+  constraint violation) — the offending row is dropped and counted on
+  `historian_rows_poisoned` (labelled by `sqlstate` and `phase`), with an error log naming
+  the tag. The rest of the batch is written. Retrying a poison row can never succeed, so
+  dropping it is what keeps every other tag flowing.
+
+Only poison rows are ever dropped on a write error. Oversized text is a separate case: a
+`value_text` longer than the row limit is clipped and counted on `historian_values_truncated`
+(previously silent).
+
+`Connect` also verifies the login role can `INSERT` into the contract's tables (a
+`has_table_privilege` check). A role that reaches the database but cannot write to it fails the
+bridge at startup with a named error, instead of connecting and then stalling on every write.
+
+## Runbook: poisoned tags
+
+**Find them.** A non-zero `historian_rows_poisoned` counter means rows are being dropped.
+The error log names each one: `dropped poison row at <phase> for contract=… location=…
+virtual_path=… tag=… (sqlstate=…)`. `phase=resolve` with `sqlstate=P0001` is almost always a
+**datatype flip**; `phase=value` with `P0001` is an **append-only conflict** (two different
+values at the same millisecond).
+
+**Datatype flip / accidental first type.** A tag's type is fixed by its first stored value:
+one stray string (e.g. `"N/A"`) locks the tag to text, and later numeric readings are then
+rejected. Confirm the established type, then decide:
+
+```sql
+-- what type is this tag locked to?
+SELECT value_type FROM umh.tag
+WHERE name = 'temperature' AND virtual_path = '' AND data_contract_name = '_historian';
+```
+
+To reset a tag that was locked to the wrong type, delete its stored value history and its tag
+row so the next message re-establishes the type (this discards that tag's history for the
+contract — take a copy first if you need it):
+
+```sql
+-- resolve the topic, delete its values, then remove the topic + tag so the type is no longer pinned
+WITH tid AS (SELECT umh.get_topic_id('enterprise.site.area.line', '', 'historian', 'temperature') AS id)
+DELETE FROM umh.value_historian WHERE topic_id = (SELECT id FROM tid);
+-- then delete the matching rows in umh.topic and umh.tag.
+```
+
+**Append-only conflict.** The source emitted two different values at the same millisecond
+timestamp. On bridges the downsampler collapses duplicate timestamps per series before the
+historian sees them; if you hit this, the source is producing faster than 1 kHz on one tag —
+not representable by the millisecond UNS timestamp and unsuitable for this contract.
+
+**Prevention.** Pin the intended type on fixed contracts (don't let an accidental first sample
+define it), and route text or high-precision counters to a text contract rather than mixing
+types on one tag.
+
+> **Generic contracts (`_historian`/`_raw`).** These deliberately don't pin a type, so a type
+> change is a realistic operational event rather than a defect. How the plugin should treat a
+> type change there — reject as poison (today), tolerate both `value_num` and `value_text`, or
+> promote the tag to text — is an open policy decision tracked separately; today it is dropped
+> as poison like any other flip.
 
 ## Throughput
 
