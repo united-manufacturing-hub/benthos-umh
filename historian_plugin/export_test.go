@@ -161,6 +161,11 @@ func (h *HistorianTestHandle) SetMetaExclude(patterns []string) {
 
 func (h *HistorianTestHandle) BuildDSN() string                  { return h.o.buildDSN() }
 func (h *HistorianTestHandle) Connect(ctx context.Context) error { return h.o.Connect(ctx) }
+
+// MarkBootstrapped marks the schema as already bootstrapped so Connect skips the DDL step and runs
+// only the liveness + write-permission checks. Lets a test drive probeWritable as a role that lacks
+// CREATE (so it cannot run bootstrap) but should still be write-checked.
+func (h *HistorianTestHandle) MarkBootstrapped() { h.o.bootstrapped = true }
 func (h *HistorianTestHandle) WriteBatch(ctx context.Context, b service.MessageBatch) error {
 	return h.o.WriteBatch(ctx, b)
 }

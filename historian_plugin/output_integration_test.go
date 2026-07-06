@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -509,6 +510,38 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		b := mkMsg(2.0, 2000, "_iso2_v1", "l.a", "x", nil) // same (topic,ts), different value -> poison
 		Expect(h.WriteBatch(ctx, service.MessageBatch{good, a, b})).To(Succeed())
 		Expect(h.CountValueRows(ctx, "iso2")).To(Equal(2)) // keep + x@2000(=1.0) land; b dropped
+	})
+
+	It("Connect succeeds for the owner role (has INSERT)", func() {
+		h := connected("probe") // connected() asserts Connect succeeded; the owner can write
+		defer h.Close(ctx)
+		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(1.0, 1000, "_probe_v1", "l.a", "t", nil)})).To(Succeed())
+	})
+
+	It("Connect fails visibly for a role lacking INSERT (write probe)", func() {
+		owner := connected("probe") // ensures umh.value_probe / umh.attribute_probe exist
+		defer owner.Close(ctx)
+
+		admin, err := pgx.Connect(ctx, sharedDSN)
+		Expect(err).NotTo(HaveOccurred())
+		defer admin.Close(ctx)
+		for _, stmt := range []string{
+			"DROP ROLE IF EXISTS probe_norights",
+			"CREATE ROLE probe_norights LOGIN PASSWORD 'norights'",
+			"GRANT CONNECT ON DATABASE umh TO probe_norights",
+			"GRANT USAGE ON SCHEMA umh TO probe_norights", // can resolve the table name, still no INSERT
+		} {
+			_, execErr := admin.Exec(ctx, stmt)
+			Expect(execErr).NotTo(HaveOccurred())
+		}
+
+		lim := tsh.NewHistorianTestHandle("postgres://probe_norights:norights@"+hostPort()+"/umh?sslmode=disable", "probe")
+		lim.MarkBootstrapped() // this role has no CREATE; skip bootstrap and go straight to the probe
+		defer lim.Close(ctx)
+		err = lim.Connect(ctx)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("INSERT"))
+		Expect(err.Error()).To(ContainSubstring("umh.value_probe"))
 	})
 
 	It("dedups unchanged metadata across batches", func() {

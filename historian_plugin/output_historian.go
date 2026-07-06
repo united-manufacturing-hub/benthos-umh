@@ -255,23 +255,48 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 		return fmt.Errorf("PostgreSQL 13+ required (ltree must be a trusted extension); got server_version_num=%d", version)
 	}
 
-	if o.bootstrapped {
-		return nil
-	}
 	// A deadline lets a hung bootstrap (advisory lock + DDL can contend) fail-and-retry instead of
 	// blocking Connect and WriteBatch via o.mu.
 	bootCtx, cancelBoot := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancelBoot()
-	conn, err := o.pool.Acquire(bootCtx)
-	if err != nil {
+	if !o.bootstrapped {
+		conn, err := o.pool.Acquire(bootCtx)
+		if err != nil {
+			return err
+		}
+		defer conn.Release()
+		if _, err := conn.Exec(bootCtx, o.bootstrapStmt()); err != nil {
+			return fmt.Errorf("schema bootstrap failed: %w", err) // guard stays false -> next Connect retries
+		}
+		o.warnPolicyDrift(bootCtx)
+		o.bootstrapped = true
+	}
+	// Verify write permission on every Connect (a grant can be revoked between reconnects), so a
+	// permission reject fails Connect -> connection_up never registers -> the bridge fails visibly
+	// instead of stalling on an endless WriteBatch NACK.
+	if err := o.probeWritable(bootCtx); err != nil {
 		return err
 	}
-	defer conn.Release()
-	if _, err := conn.Exec(bootCtx, o.bootstrapStmt()); err != nil {
-		return fmt.Errorf("schema bootstrap failed: %w", err) // guard stays false -> next Connect retries
+	return nil
+}
+
+// probeWritable verifies the login role can INSERT into this contract's tables. Connect otherwise
+// only proves the server is reachable and the schema exists -- and bootstrap runs as the owner, so
+// it passes even when a different login role lacks INSERT. Without this a permission reject shows up
+// only as an endless WriteBatch NACK and the bridge stalls "starting" instead of failing visibly.
+// Read-only catalog lookup, so it is safe on every Connect and under concurrency.
+func (o *historianOutput) probeWritable(ctx context.Context) error {
+	valueTbl := "umh.value_" + o.contract
+	attrTbl := "umh.attribute_" + o.contract
+	var ok bool
+	if err := o.pool.QueryRow(ctx,
+		"SELECT has_table_privilege($1, 'INSERT') AND has_table_privilege($2, 'INSERT')",
+		valueTbl, attrTbl).Scan(&ok); err != nil {
+		return fmt.Errorf("write-permission check failed for %s / %s: %w", valueTbl, attrTbl, err)
 	}
-	o.warnPolicyDrift(bootCtx)
-	o.bootstrapped = true
+	if !ok {
+		return fmt.Errorf("login role %q lacks INSERT on %s or %s; grant it before the bridge can write", o.username, valueTbl, attrTbl)
+	}
 	return nil
 }
 
