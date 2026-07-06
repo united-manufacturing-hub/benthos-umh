@@ -88,65 +88,68 @@ var _ = Describe("ClassifyValue", func() {
 	ptrF := func(f float64) *float64 { return &f }
 
 	It("bool true -> numeric 1", func() {
-		vt, num, text, ok := tsh.ClassifyValue(true)
+		vt, num, text, ok, truncated := tsh.ClassifyValue(true)
 		Expect(ok).To(BeTrue())
 		Expect(vt).To(Equal(tsh.ValueNumeric))
 		Expect(num).To(Equal(ptrF(1)))
 		Expect(text).To(BeNil())
+		Expect(truncated).To(BeFalse())
 	})
 	It("bool false -> numeric 0 (NOT dropped)", func() {
-		_, num, _, ok := tsh.ClassifyValue(false)
+		_, num, _, ok, _ := tsh.ClassifyValue(false)
 		Expect(ok).To(BeTrue())
 		Expect(num).To(Equal(ptrF(0)))
 	})
 	It("finite float -> numeric", func() {
-		vt, num, _, ok := tsh.ClassifyValue(3.5)
+		vt, num, _, ok, _ := tsh.ClassifyValue(3.5)
 		Expect(ok).To(BeTrue())
 		Expect(vt).To(Equal(tsh.ValueNumeric))
 		Expect(num).To(Equal(ptrF(3.5)))
 	})
 	It("int64 -> numeric (not JSON-marshaled text)", func() {
-		vt, num, text, ok := tsh.ClassifyValue(int64(42))
+		vt, num, text, ok, _ := tsh.ClassifyValue(int64(42))
 		Expect(ok).To(BeTrue())
 		Expect(vt).To(Equal(tsh.ValueNumeric))
 		Expect(num).To(Equal(ptrF(42)))
 		Expect(text).To(BeNil())
 	})
 	It("int -> numeric", func() {
-		vt, num, _, ok := tsh.ClassifyValue(7)
+		vt, num, _, ok, _ := tsh.ClassifyValue(7)
 		Expect(ok).To(BeTrue())
 		Expect(vt).To(Equal(tsh.ValueNumeric))
 		Expect(num).To(Equal(ptrF(7)))
 	})
 	It("NaN -> dropped", func() {
-		_, _, _, ok := tsh.ClassifyValue(math.NaN())
+		_, _, _, ok, _ := tsh.ClassifyValue(math.NaN())
 		Expect(ok).To(BeFalse())
 	})
 	It("+Inf -> dropped", func() {
-		_, _, _, ok := tsh.ClassifyValue(math.Inf(1))
+		_, _, _, ok, _ := tsh.ClassifyValue(math.Inf(1))
 		Expect(ok).To(BeFalse())
 	})
-	It("string -> text as-is", func() {
-		vt, num, text, ok := tsh.ClassifyValue("hello")
+	It("string -> text as-is (not truncated)", func() {
+		vt, num, text, ok, truncated := tsh.ClassifyValue("hello")
 		Expect(ok).To(BeTrue())
 		Expect(vt).To(Equal(tsh.ValueText))
 		Expect(num).To(BeNil())
 		Expect(*text).To(Equal("hello"))
+		Expect(truncated).To(BeFalse())
 	})
 	It("empty string -> text (NOT dropped)", func() {
-		_, _, text, ok := tsh.ClassifyValue("")
+		_, _, text, ok, _ := tsh.ClassifyValue("")
 		Expect(ok).To(BeTrue())
 		Expect(*text).To(Equal(""))
 	})
 	It("object -> JSON-encoded text", func() {
-		_, _, text, ok := tsh.ClassifyValue(map[string]any{"a": float64(1)})
+		_, _, text, ok, _ := tsh.ClassifyValue(map[string]any{"a": float64(1)})
 		Expect(ok).To(BeTrue())
 		Expect(*text).To(Equal(`{"a":1}`))
 	})
-	It("oversized text truncated to 8192 runes", func() {
-		_, _, text, ok := tsh.ClassifyValue(strings.Repeat("x", 9000))
+	It("oversized text truncated to 8192 runes and flagged", func() {
+		_, _, text, ok, truncated := tsh.ClassifyValue(strings.Repeat("x", 9000))
 		Expect(ok).To(BeTrue())
 		Expect([]rune(*text)).To(HaveLen(8192))
+		Expect(truncated).To(BeTrue())
 	})
 })
 

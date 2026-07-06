@@ -81,51 +81,55 @@ func ValidateContract(c string) error {
 }
 
 // ClassifyValue routes a value to value_num or value_text. A non-finite number is dropped
-// (ok=false). Exactly one of num/text is non-nil.
-func ClassifyValue(v any) (ValueType, *float64, *string, bool) {
+// (ok=false). Exactly one of num/text is non-nil. truncated is true when a text value was
+// clipped to maxTextRunes (silent corruption otherwise -- the caller surfaces it).
+func ClassifyValue(v any) (ValueType, *float64, *string, bool, bool) {
 	switch tv := v.(type) {
 	case bool:
 		n := 0.0
 		if tv {
 			n = 1.0
 		}
-		return ValueNumeric, &n, nil, true
+		return ValueNumeric, &n, nil, true, false
 	case float64:
 		if !isFinite(tv) {
-			return "", nil, nil, false
+			return "", nil, nil, false, false
 		}
-		return ValueNumeric, &tv, nil, true
+		return ValueNumeric, &tv, nil, true, false
 	case int64:
 		f := float64(tv)
-		return ValueNumeric, &f, nil, true
+		return ValueNumeric, &f, nil, true, false
 	case int:
 		f := float64(tv)
-		return ValueNumeric, &f, nil, true
+		return ValueNumeric, &f, nil, true, false
 	case json.Number:
 		f, err := tv.Float64()
 		if err != nil || !isFinite(f) {
-			return "", nil, nil, false
+			return "", nil, nil, false, false
 		}
-		return ValueNumeric, &f, nil, true
+		return ValueNumeric, &f, nil, true, false
 	case string:
-		return ValueText, nil, truncateRunes(tv), true
+		text, truncated := truncateRunes(tv)
+		return ValueText, nil, text, true, truncated
 	default:
 		b, err := json.Marshal(v)
 		if err != nil {
-			return "", nil, nil, false
+			return "", nil, nil, false, false
 		}
-		return ValueText, nil, truncateRunes(string(b)), true
+		text, truncated := truncateRunes(string(b))
+		return ValueText, nil, text, true, truncated
 	}
 }
 
 func isFinite(f float64) bool { return !math.IsNaN(f) && !math.IsInf(f, 0) }
 
-func truncateRunes(s string) *string {
+func truncateRunes(s string) (*string, bool) {
 	r := []rune(s)
 	if len(r) > maxTextRunes {
 		s = string(r[:maxTextRunes])
+		return &s, true
 	}
-	return &s
+	return &s, false
 }
 
 // ParseTimestampMs returns a UTC ISO-8601 string with milliseconds; ok=false when
@@ -171,6 +175,7 @@ type Row struct {
 	TS           string
 	ValueNum     *float64
 	ValueText    *string
+	Truncated    bool
 	MetadataJSON string
 	EmitMeta     bool
 	churnKeys    []string
@@ -216,7 +221,7 @@ func Transform(payload map[string]any, meta map[string]string, contract string, 
 	if !hasValue || value == nil || !hasTS || tsRaw == nil {
 		return nil, DropMissingValueOrTimestamp
 	}
-	vt, num, text, ok := ClassifyValue(value)
+	vt, num, text, ok, truncated := ClassifyValue(value)
 	if !ok {
 		return nil, DropUnclassifiableValue
 	}
@@ -233,6 +238,7 @@ func Transform(payload map[string]any, meta map[string]string, contract string, 
 		TS:           ts,
 		ValueNum:     num,
 		ValueText:    text,
+		Truncated:    truncated,
 	}
 	keys := SelectMetaKeys(meta, allMeta, allowlist, excl)
 	md := BuildMetadata(meta, keys)
