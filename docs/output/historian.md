@@ -275,8 +275,6 @@ the same tables. To avoid schema drift, a given contract/database must be writte
 input:
   uns:
     umh_topics:
-      # _v pins the contract's version segment so this does not also match sibling
-      # contracts like _pump_warm; it matches _pump_v1, _pump_v2, ...
       - '^umh\.v1\..*\._pump_v.*'
 output:
   historian:
