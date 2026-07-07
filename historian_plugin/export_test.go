@@ -15,8 +15,12 @@
 package historian_plugin
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
+	"sync"
 	"time"
 
 	. "github.com/onsi/gomega"
@@ -166,6 +170,47 @@ func (h *HistorianTestHandle) Connect(ctx context.Context) error { return h.o.Co
 // only the liveness + write-permission checks. Lets a test drive probeWritable as a role that lacks
 // CREATE (so it cannot run bootstrap) but should still be write-checked.
 func (h *HistorianTestHandle) MarkBootstrapped() { h.o.bootstrapped = true }
+
+// syncBuffer is a bytes.Buffer safe for the slog handler to write to while a test reads it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// msgHandler writes each record's formatted message verbatim (one per line), so a test can grep the
+// exact operator-facing text. slog's TextHandler would quote and backslash-escape the message, which
+// mangles substrings like tag="t" -- and that text is precisely what the runbook tells operators to
+// search for.
+type msgHandler struct{ w io.Writer }
+
+func (h msgHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h msgHandler) Handle(_ context.Context, r slog.Record) error {
+	_, err := io.WriteString(h.w, r.Message+"\n")
+	return err
+}
+func (h msgHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h msgHandler) WithGroup(string) slog.Handler      { return h }
+
+// CaptureLogs redirects the handle's logger into an in-memory buffer and returns a reader for the
+// accumulated output. Call it after Connect so bootstrap logs stay out of the captured text; the
+// returned func reads whatever has been logged so far (poison/drop tests read it after WriteBatch).
+func (h *HistorianTestHandle) CaptureLogs() func() string {
+	b := &syncBuffer{}
+	h.o.logger = service.NewLoggerFromSlog(slog.New(msgHandler{w: b}))
+	return b.String
+}
 
 func (h *HistorianTestHandle) WriteBatch(ctx context.Context, b service.MessageBatch) error {
 	return h.o.WriteBatch(ctx, b)

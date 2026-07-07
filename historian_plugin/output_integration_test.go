@@ -476,16 +476,21 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		h := connected("conf")
 		defer h.Close(ctx)
 		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(1.0, 2000, "_conf_v1", "l.a", "t", nil)})).To(Succeed())
+		logs := h.CaptureLogs()
 		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(2.0, 2000, "_conf_v1", "l.a", "t", nil)})).To(Succeed())
 		Expect(h.CountValueRows(ctx, "conf")).To(Equal(1)) // original kept, conflicting value dropped
+		// The runbook signal: the drop is named in the error log, not just silently reflected in the row count.
+		Expect(logs()).To(And(ContainSubstring("dropped poison row"), ContainSubstring(`tag="t"`)))
 	})
 
 	It("drops a datatype flip for the same tag as poison", func() {
 		h := connected("flip")
 		defer h.Close(ctx)
 		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(1.0, 3000, "_flip_v1", "l.a", "t", nil)})).To(Succeed())
+		logs := h.CaptureLogs()
 		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg("now-text", 4000, "_flip_v1", "l.a", "t", nil)})).To(Succeed())
 		Expect(h.CountValueRows(ctx, "flip")).To(Equal(1)) // numeric kept, flip dropped
+		Expect(logs()).To(And(ContainSubstring("dropped poison row"), ContainSubstring(`tag="t"`)))
 	})
 
 	It("drops a poison flip row but lands the good co-batched rows (ACK)", func() {
@@ -497,9 +502,13 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		// batch: a brand-new good tag y, plus a datatype flip on t (poison)
 		good := mkMsg(5.0, 2000, "_iso_v1", "l.a", "y", nil)
 		poison := mkMsg("now-text", 3000, "_iso_v1", "l.a", "t", nil)
+		logs := h.CaptureLogs()
 		Expect(h.WriteBatch(ctx, service.MessageBatch{good, poison})).To(Succeed()) // ACK: poison isolated
 		// y landed; the flip on t was dropped -> two rows total, t still numeric
 		Expect(h.CountValueRows(ctx, "iso")).To(Equal(2))
+		// Only the poison row (t) is named in the log; the co-batched good row (y) is not dropped.
+		Expect(logs()).To(And(ContainSubstring("dropped poison row"), ContainSubstring(`tag="t"`)))
+		Expect(logs()).NotTo(ContainSubstring(`tag="y"`))
 	})
 
 	It("drops a poison same-ts conflict row within a batch, keeps the rest (ACK)", func() {
@@ -508,8 +517,12 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		good := mkMsg(9.0, 1000, "_iso2_v1", "l.a", "keep", nil)
 		a := mkMsg(1.0, 2000, "_iso2_v1", "l.a", "x", nil)
 		b := mkMsg(2.0, 2000, "_iso2_v1", "l.a", "x", nil) // same (topic,ts), different value -> poison
+		logs := h.CaptureLogs()
 		Expect(h.WriteBatch(ctx, service.MessageBatch{good, a, b})).To(Succeed())
 		Expect(h.CountValueRows(ctx, "iso2")).To(Equal(2)) // keep + x@2000(=1.0) land; b dropped
+		// Only the conflicting row (x) is named as poison; the surviving rows are not.
+		Expect(logs()).To(And(ContainSubstring("dropped poison row"), ContainSubstring(`tag="x"`)))
+		Expect(logs()).NotTo(ContainSubstring(`tag="keep"`))
 	})
 
 	It("Connect succeeds for the owner role (has INSERT)", func() {
