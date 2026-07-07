@@ -264,7 +264,12 @@ func (p *TagProcessor) setupMessageForVM(ctx context.Context, vm *goja.Runtime, 
 
 // TODO: Each time there is any execution error, output the code where the error happened as well as the message that caused it (see nodered_js_plugin). Double-check that it is not being outputted twice.
 func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
-	// Store incoming metadata: capture current meta as JSON in _initialMetadata, keys in _incomingKeys.
+	p.jsProcessor.CacheLock()
+	defer p.jsProcessor.CacheUnlock()
+
+	// ───────────────── Store incoming metadata ────────────────────────────────
+	// For each message, capture its current meta fields and store them as JSON
+	// in msg.meta._initialMetadata. Also, record the original keys in _incomingKeys.
 	for _, msg := range batch {
 		if msg == nil {
 			continue

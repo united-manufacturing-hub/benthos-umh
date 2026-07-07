@@ -2221,12 +2221,12 @@ return msg;
 			Expect(payloadFloat(*msgs, 1)).To(Equal(float64(2)))
 		})
 
-		It("update increments counter atomically across concurrent messages", func() {
+		It("plain get+set counter is atomic across concurrent messages (auto-lock)", func() {
 			handler, msgs, cancel := buildStream(`
-cache.update("counter", function(old, exists) {
-  return (exists ? old : 0) + 1;
-});
-msg.payload = cache.get("counter");
+var n = cache.exists("counter") ? cache.get("counter") : 0;
+n = n + 1;
+cache.set("counter", n);
+msg.payload = n;
 return msg;
 `)
 			defer cancel()
@@ -2245,9 +2245,9 @@ return msg;
 
 			Eventually(func() int { return len(*msgs) }).Should(Equal(numMsgs))
 
-			// Final payload reflects the latest counter, which must equal numMsgs
-			// because each update is atomic. Without cache.update, concurrent
-			// get-modify-set would lose increments.
+			// ProcessBatch auto-locks the cache for the whole batch, so plain
+			// get+set is safe under concurrent messages. Max reported counter
+			// must equal numMsgs — no lost increments.
 			maxVal := float64(0)
 			for i := range numMsgs {
 				v := payloadFloat(*msgs, i)

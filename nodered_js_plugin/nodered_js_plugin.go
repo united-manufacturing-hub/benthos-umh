@@ -374,23 +374,6 @@ func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) e
 				u.logger.Errorf("cache.delete failed: %v", err)
 			}
 		},
-		"update": func(key string, fn goja.Value) {
-			callable, ok := goja.AssertFunction(fn)
-			if !ok {
-				u.logger.Errorf("cache.update: second argument must be a function")
-				return
-			}
-			err := u.cache.Update(ctx, key, func(old any, exists bool) (any, error) {
-				result, callErr := callable(goja.Undefined(), vm.ToValue(old), vm.ToValue(exists))
-				if callErr != nil {
-					return nil, callErr
-				}
-				return result.Export(), nil
-			})
-			if err != nil {
-				u.logger.Errorf("cache.update failed: %v", err)
-			}
-		},
 	}
 	return vm.Set("cache", cacheObj)
 }
@@ -527,9 +510,21 @@ func RecordDrop(counter *service.MetricCounter, logger *service.Logger, reason s
 	logger.Warnf("%s: dropped message (reason=%s, umh_topic=%s, stage=%s) %v", plugin, reason, topic, stage, err)
 }
 
+func (u *NodeREDJSProcessor) CacheLock() {
+	u.cache.Lock()
+}
+
+// CacheUnlock releases the mutex acquired by CacheLock.
+func (u *NodeREDJSProcessor) CacheUnlock() {
+	u.cache.Unlock()
+}
+
 // ProcessBatch applies JS to each message. Per-message errors drop via RecordDrop;
 // deliberate drops (null/undefined/empty/all-nil array) bump messages_dropped{reason=deliberate}.
 func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
+	u.CacheLock()
+	defer u.CacheUnlock()
+
 	var resultBatch service.MessageBatch
 	processedCount := 0
 
@@ -732,7 +727,8 @@ if (msg.payload.value <= 100 && alarmed) {
   return msg;
 }
 return msg;`)).
-	Field(service.NewObjectField("cache",
+	Field(service.NewObjectField(
+		"cache",
 		service.NewStringField("backend").
 			Description("Cache backend. 'memory' is in-process and lost on restart. 'persistent' writes to a file on disk and survives restarts.").
 			Default("memory").
@@ -847,7 +843,8 @@ func init() {
 		NodeREDJSConfigSpec,
 		func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchProcessor, error) {
 			return newNodeREDJSProcessor(conf, mgr)
-		})
+		},
+	)
 	if err != nil {
 		panic(err)
 	}

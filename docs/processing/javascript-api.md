@@ -1,6 +1,6 @@
 # JavaScript API Reference
 
-This page documents the global objects available in the JavaScript environment shared by the `nodered_js` and `tag_processor` processors. The engine is goja (ES5.1 with some ES6 features) — no Node.js APIs are available.
+This page documents the global objects available in the JavaScript environment shared by the `nodered_js` and `tag_processor` processors. The engine is goja (ES5.1 with some ES6 features); no Node.js APIs are available.
 
 ## msg
 
@@ -12,9 +12,9 @@ msg.meta       // Metadata key-value pairs (strings)
 ```
 
 **Return behavior:**
-- `return msg;` — pass the message through (modified or not)
-- `return null;` or `return undefined;` — drop the message
-- `return { payload: ..., meta: ... };` — create a new message
+- `return msg;` passes the message through (modified or not)
+- `return null;` or `return undefined;` drops the message
+- `return { payload: ..., meta: ... };` creates a new message
 
 **Example:**
 ```javascript
@@ -43,8 +43,8 @@ Key-value store for maintaining state across messages. Supports any JSON-compati
 
 Two backends:
 
-- `memory` (default) — in-process, lost on restart. No configuration needed.
-- `persistent` — bbolt file on disk, survives restarts. Configure path + TTL.
+- `memory` (default): in-process, lost on restart. No configuration needed.
+- `persistent`: bbolt file on disk, persists across restarts. Configure path + TTL.
 
 ```yaml
 nodered_js:
@@ -53,22 +53,22 @@ nodered_js:
   cache:
     backend: persistent
     name: shared       # sharing identifier (default: "shared"); see "Sharing across processors" below
-    path: ./cache.db   # "~" expands to home; relative paths resolve from the benthos process start directory (under UMH Core: the S6 service dir). Prefer absolute paths.
+    path: ./cache.db   # "~" expands to home; relative paths resolve from benthos start directory. Prefer absolute paths.
     ttl: 0s            # entry lifetime; 0 (default) = no expiration. Set e.g. "1h" to auto-expire.
 ```
 
 ### Sharing across processors
 
-Two `nodered_js` processors with the same `backend` and `name` share one cache instance within the same benthos process. Keys written by one are visible to the others. The default `name` is `"shared"` — so two processors with no explicit cache config already share state out of the box.
+Two `nodered_js` processors with the same `backend` and `name` share one cache instance within the same benthos process. Keys written by one are visible to the others. The default `name` is `"shared"`, so two processors with no explicit cache config already share state out of the box.
 
 ```yaml
 pipeline:
   processors:
     - nodered_js:
         code: |
-          cache.update("count", function(old, exists) {
-            return (exists ? old : 0) + 1;
-          });
+          var n = cache.exists("count") ? cache.get("count") : 0;
+          n = n + 1;
+          cache.set("count", n);
           return msg;
         # implicit: backend=memory, name=shared
     - nodered_js:
@@ -89,14 +89,13 @@ For persistent caches, only the **first** processor needs to define `path`; late
 
 Isolate groups by giving them different names. For a per-processor cache, set `name: ""` (empty).
 
-Cross-process sharing (two separate benthos PIDs on the same host) is **not** supported — bbolt's file lock blocks the second open. Use an external KV store (Redis, etc.) for that.
+Cross-process sharing (two separate benthos PIDs on the same host) is **not** supported: bbolt's file lock blocks the second open. Use an external KV store (Redis, etc.) for that.
 
 ```javascript
 cache.set(key, value)            // Store a value under key (string)
 cache.get(key)                   // Retrieve a value, logs error if key not found
 cache.exists(key)                // Returns true if key exists, false otherwise
 cache.delete(key)                // Remove a key
-cache.update(key, fn)            // Atomic read-modify-write; see below
 ```
 
 Always use `cache.exists(key)` before `cache.get(key)` to avoid error logs on missing keys.
@@ -109,117 +108,19 @@ if (cache.exists("counter")) {
 }
 ```
 
-### cache.update — atomic read-modify-write
+### Thread safety (auto-lock)
 
-**`cache.set` on its own is thread-safe** — under the hood every write is serialized behind the store's mutex. The race isn't in `cache.set`; it's in the **three-step JavaScript pattern** users tend to write:
+Every batch acquires a per-cache mutex for its duration. Same mutex is shared across processors with the same `backend` + `name`. Effect:
 
-```javascript
-var n = cache.get("count");   // step 1: read
-n = n + 1;                    // step 2: compute in JS (no lock held)
-cache.set("count", n);        // step 3: write
-```
+- `cache.get` → compute → `cache.set` in the same message is atomic: no other message can slip in between the get and the set
+- Multiple cache operations in one message run as one uninterrupted block
+- Cross-processor read-modify-write on a shared cache is also atomic
 
-Between steps 1 and 3 another goroutine can run steps 1–3 too. Both read the same value, both compute the same next value, both write it. One increment is silently lost. Benthos defaults to `pipeline.threads = NumCPU`, so this happens on the very first burst of messages — reproducibly.
+Plain `get` / `set` is safe for counters, buffers, alarms, and all stateful patterns below.
 
-Use `cache.update` whenever the new value depends on the old:
+Trade-off: cache operations serialize on a shared mutex. For workloads under 100 msg/s, the cost is negligible.
 
-```javascript
-cache.update("counter", function(old, exists) {
-  return (exists ? old : 0) + 1;
-});
-```
-
-`fn` receives:
-
-- `old` — current value, or `null` if the key is missing
-- `exists` — `true` when the key existed (and was not expired)
-
-Whatever `fn` returns is stored under `key`. The store holds its write lock for the whole read → run `fn` → write sequence, so concurrent `cache.update` calls on the same key serialize with no lost updates.
-
-**Rule of thumb**: if your code has `cache.get` followed by any compute followed by `cache.set` on the same key, replace all three with one `cache.update`.
-
-> **Warning: don't call cache methods inside `fn`.** The store's write lock is held for the duration of `fn`. Calling `cache.set`, `cache.get`, `cache.exists`, `cache.delete`, or another `cache.update` from inside the callback deadlocks the processor permanently — the goroutine waits for a lock it already holds, every other concurrent cache call blocks behind it, and the pipeline stalls until restart. Use the `old` and `exists` arguments instead; they already reflect the current state for that key.
->
-> ```javascript
-> // ❌ deadlocks
-> cache.update("counter", function(old, exists) {
->   if (cache.exists("counter")) { ... }   // nested call — blocks forever
->   return (old || 0) + 1;
-> });
->
-> // ✅ use the arguments
-> cache.update("counter", function(old, exists) {
->   return (exists ? old : 0) + 1;
-> });
-> ```
-
-#### When to use which
-
-| You want to… | Use |
-|---|---|
-| Store the newest value (overwrite, no dependency on the old value) | `cache.set` |
-| Check if a key exists | `cache.exists` |
-| Read a value (no write) | `cache.get` (guard with `cache.exists`) |
-| Compute a new value from the old one and store it | `cache.update` |
-| Remove a key | `cache.delete` |
-
-##### cache.set is correct when the new value is independent of the old
-
-```javascript
-cache.set("latest_temperature", msg.payload.value);   // newest reading wins
-cache.set("last_seen_at", Date.now());                // newest timestamp wins
-cache.set("device_status", "online");                 // pure flag
-cache.set("config_snapshot", msg.payload);            // full replacement
-```
-
-None of these read the current value. Two goroutines writing at the same instant both succeed; the one that lands second is the one you read afterwards. That's the intended semantic of "latest".
-
-##### cache.set is wrong when you first read the old value
-
-All of the following are races — replace them with `cache.update`:
-
-```javascript
-// counter — depends on old
-cache.set("count", cache.get("count") + 1);
-
-// append to a list — depends on old
-var arr = cache.get("history"); arr.push(x); cache.set("history", arr);
-
-// running maximum — depends on old
-if (msg.payload.v > cache.get("max")) cache.set("max", msg.payload.v);
-
-// toggle — depends on old
-cache.set("flag", !cache.get("flag"));
-```
-
-#### Examples
-
-Append to a bounded history list:
-
-```javascript
-cache.update("history", function(old, exists) {
-  var arr = exists ? old : [];
-  arr.push(msg.payload.value);
-  if (arr.length > 10) arr.shift();
-  return arr;
-});
-```
-
-Toggle an alarm flag:
-
-```javascript
-cache.update("alarm", function(old, exists) {
-  return !exists || !old;
-});
-```
-
-Increment per-source counter:
-
-```javascript
-cache.update("count:" + msg.payload.source, function(old, exists) {
-  return (exists ? old : 0) + 1;
-});
-```
+The auto-lock does not guarantee message order. With `pipeline.threads > 1`, messages process out of order; message 5 may arrive before message 3. For strict message order, set `pipeline.threads: 1`.
 
 ### Counter
 
@@ -295,27 +196,18 @@ cache.set("last_event_ms", Date.now());
 return msg;
 ```
 
-### Concurrency
-
-Benthos defaults to `pipeline.threads = NumCPU`, so multiple messages can run through one `nodered_js` processor in parallel.
-
-- `cache.set` / `cache.get` / `cache.exists` / `cache.delete` are each atomic on their own.
-- The `get` → modify → `set` pattern is **not** atomic across threads. Two messages can both read the same value and one overwrite the other. Use `cache.update(key, fn)` for any read-modify-write (counters, lists, toggles).
-- Setting `pipeline.threads: 1` removes parallelism entirely and makes any pattern safe at the cost of throughput.
-
 ### Limitations
 
-- **Cache scope** — sharing is per benthos process. Two `nodered_js` processors within one process share a cache when their `backend` and `name` match (see [Sharing across processors](#sharing-across-processors)); across separate processes they cannot share. Use the UNS or an external KV to exchange data across processes or flows.
-- **`persistent` backend is single-writer per file** — bbolt acquires an exclusive OS file lock. Multiple processors in one process sharing by `name` are safe (they attach to the same open handle via the internal registry). A second benthos process pointing at the same file fails at startup with a timeout.
-- **No size limits** — the cache grows unboundedly if keys are never deleted. Use `cache.delete` to clean up unused keys, or rely on `ttl` for expiration. A hard cap is planned (ENG-4829).
-- **Cache scope in `tag_processor`** — the cache is shared across all stages (`defaults`, `conditions`, `advancedProcessing`). A value set in `defaults` is visible in `advancedProcessing` within the same message.
+- Caches don't cross benthos process boundaries; bbolt's file lock blocks a second opener. Use an external KV to share across processes. See [Sharing across processors](#sharing-across-processors).
+- The cache has no size limit and grows unboundedly if keys are never deleted. Use `cache.delete` or rely on `ttl` for expiration. A hard cap is planned.
+- In `tag_processor`, one cache is shared across all stages (`defaults`, `conditions`, `advancedProcessing`); a value set in `defaults` is visible in `advancedProcessing` within the same message.
 
 ### Metrics
 
-Each processor exposes Benthos metrics for its cache (sampled every 30 s):
+Each processor reports these Benthos metrics for its cache (sampled every 30 s):
 
-- `cache_keys` — number of entries currently stored
-- `cache_disk_bytes` — file size on disk (`0` for the memory backend)
+- `cache_keys`: number of entries currently stored
+- `cache_disk_bytes`: file size on disk (`0` for the memory backend)
 
 ## protobuf
 

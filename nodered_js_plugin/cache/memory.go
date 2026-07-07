@@ -42,6 +42,7 @@ type MemoryStore struct {
 	defaultExpiration time.Duration
 	janitor           *janitor
 	closeOnce         sync.Once
+	serialMu          sync.Mutex
 }
 
 var _ Cache = (*MemoryStore)(nil)
@@ -100,40 +101,12 @@ func (m *MemoryStore) Delete(_ context.Context, key string) error {
 	return nil
 }
 
-func (m *MemoryStore) Update(ctx context.Context, key string, fn func(old any, exists bool) (any, error)) error {
-	err := ctx.Err()
-	if err != nil {
-		return err
-	}
-	if key == "" {
-		return fmt.Errorf("cache: key must not be empty")
-	}
-	if fn == nil {
-		return fmt.Errorf("cache: update fn must not be nil")
-	}
+func (m *MemoryStore) Lock() {
+	m.serialMu.Lock()
+}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	var old any
-	exists := false
-	item, ok := m.items[key]
-	if ok && !item.Expired() {
-		old = item.Value
-		exists = true
-	}
-
-	newVal, err := fn(old, exists)
-	if err != nil {
-		return err
-	}
-
-	var expiration int64
-	if m.defaultExpiration > 0 {
-		expiration = time.Now().Add(m.defaultExpiration).UnixNano()
-	}
-	m.items[key] = Item{Value: newVal, Expiration: expiration}
-	return nil
+func (m *MemoryStore) Unlock() {
+	m.serialMu.Unlock()
 }
 
 func (m *MemoryStore) Stats(_ context.Context) (Stats, error) {

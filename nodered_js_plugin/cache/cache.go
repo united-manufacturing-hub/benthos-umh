@@ -30,10 +30,10 @@ type Cache interface {
 	Get(ctx context.Context, key string) (any, bool)
 	// Delete removes the entry for key. No-op when key does not exist.
 	Delete(ctx context.Context, key string) error
-	// Update atomically reads, transforms, and writes a value under key. Use
-	// when the new value depends on the old (counters, toggles); fn must not
-	// call back into Cache. See docs/processing/javascript-api.md.
-	Update(ctx context.Context, key string, fn func(old any, exists bool) (any, error)) error
+	// Lock holds a per-cache mutex across a multi-step operation.
+	Lock()
+	// Unlock releases the mutex acquired by Lock.
+	Unlock()
 	// Stats reports the current key count and on-disk size.
 	Stats(ctx context.Context) (Stats, error)
 	// Close releases any resources held by the store.
