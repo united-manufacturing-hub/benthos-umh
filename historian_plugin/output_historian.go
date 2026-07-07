@@ -316,6 +316,12 @@ func (o *historianOutput) warnPolicyDrift(ctx context.Context) {
 	}
 }
 
+// WriteBatch is the output entry point benthos calls once per message batch. It works in two
+// steps: first each message is turned into a Row in-process (parse, validate, build metadata),
+// then the surviving rows are written to Postgres in a single transaction (writeBatchFast). A
+// row Postgres can never accept ("poison") demotes the write to a row-by-row pass so the good
+// rows still land. The return value is the benthos ACK/NACK signal: nil ACKs the batch (including
+// a batch where every message was dropped); a returned error NACKs it for retry.
 func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageBatch) error {
 	o.mu.Lock()
 	pool := o.pool
@@ -324,22 +330,26 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 		return service.ErrNotConnected
 	}
 
+	// Step 1: transform every message into a Row. Malformed messages are counted (by reason) and
+	// skipped -- never nacked -- so one bad message can't stall the stream.
 	view := o.dedup.NewBatch()
 	rows := make([]*Row, 0, len(batch))
-	churn := map[string]struct{}{}
+	churn := map[string]struct{}{} // high-churn metadata keys seen anywhere in this batch (see below)
 	for _, msg := range batch {
 		meta := map[string]string{}
 		_ = msg.MetaWalk(func(k, v string) error { meta[k] = v; return nil })
 		structured, err := msg.AsStructured()
 		if err != nil {
-			o.recordDrop("not_structured", meta["umh_topic"])
+			o.recordDrop("not_structured", meta["umh_topic"]) // payload is not decodable JSON
 			continue
 		}
 		payload, ok := structured.(map[string]any)
 		if !ok {
-			o.recordDrop("not_object", meta["umh_topic"])
+			o.recordDrop("not_object", meta["umh_topic"]) // payload is JSON but not a {value, timestamp_ms} object
 			continue
 		}
+		// Transform validates the umh_topic/contract and the value+timestamp, and decides whether
+		// this row also needs to write a metadata (attribute) row. A non-empty reason means drop.
 		row, reason := Transform(payload, meta, o.contract, o.metadataKeysAll, o.metadataKeys, o.metadataExclude, view)
 		if reason != DropNone {
 			o.recordDrop(string(reason), meta["umh_topic"])
@@ -348,6 +358,8 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 		for _, k := range row.churnKeys { // union across the whole batch, not just the first row
 			churn[k] = struct{}{}
 		}
+		// row.Truncated means the value was a string longer than maxTextRunes and got clipped to fit
+		// value_text. That is silent data loss, so count every occurrence and warn once per process.
 		if row.Truncated {
 			o.truncated.Incr(1)
 			if o.warnedTruncate.CompareAndSwap(false, true) {
@@ -356,6 +368,9 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 		}
 		rows = append(rows, row)
 	}
+	// Warn (once per key) about metadata keys that change on nearly every message: they defeat the
+	// attribute de-dup cache and make the attribute table grow per-message, so the operator likely
+	// wants them out of metadata_keys.
 	o.warnHighChurn(churn)
 	if len(rows) == 0 {
 		// A fully-dropped batch writes nothing while the connection stays up, so umh-core would

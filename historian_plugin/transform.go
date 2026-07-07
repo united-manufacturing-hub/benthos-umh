@@ -176,10 +176,10 @@ type Row struct {
 	TS           string
 	ValueNum     *float64
 	ValueText    *string
-	Truncated    bool
-	MetadataJSON string
-	EmitMeta     bool
-	churnKeys    []string
+	Truncated    bool     // value_text was clipped to maxTextRunes (over-long string value)
+	MetadataJSON string   // the metadata to write, set only when EmitMeta is true
+	EmitMeta     bool     // write an attribute row (the metadata key set changed since last seen)
+	churnKeys    []string // metadata keys that change nearly every message (defeat de-dup)
 }
 
 // DropReason labels a dropped message for the metric/log; "" (DropNone) means kept.
