@@ -180,7 +180,9 @@ values at the same millisecond).
 
 **Datatype flip / accidental first type.** A tag's type is fixed by its first stored value:
 one stray string (e.g. `"N/A"`) locks the tag to text, and later numeric readings are then
-rejected. Confirm the established type, then decide:
+rejected. This only arises on generic contracts like `_historian` that carry no upstream type
+validation; a modelled contract validates types before the historian ever sees them. Confirm
+the established type, then decide:
 
 ```sql
 -- what type is this tag locked to?
