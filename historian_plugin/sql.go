@@ -205,6 +205,41 @@ ON CONFLICT (topic_id, ts) DO UPDATE
     ELSE a.attribute
   END;`
 
+// valueInsertBatch / attributeInsertBatch are the fast-path multi-row form: one statement inserts a
+// whole batch by unnesting parallel arrays (fixed 4/3 params regardless of row count, so no 65535
+// parameter cap). The arrays are the natural pgx encodings -- bigint[], text[], double precision[]
+// -- and ts/attribute are cast per row in the SELECT to sidestep text[]->timestamptz[]/jsonb[] array
+// casts. The per-row ON CONFLICT guard is identical to the single-row form; the caller must not pass
+// the same (topic_id, ts) twice (Postgres raises 21000 -- "cannot affect row a second time" -- which
+// the caller classifies as poison and re-runs isolated).
+const valueInsertBatch = `INSERT INTO umh.value_CONTRACT_SLOT AS v (topic_id, ts, value_num, value_text)
+SELECT u.topic_id, u.ts::timestamptz, u.value_num, u.value_text
+  FROM unnest($1::bigint[], $2::text[], $3::double precision[], $4::text[])
+       AS u(topic_id, ts, value_num, value_text)
+ON CONFLICT (topic_id, ts) DO UPDATE
+  SET value_num = CASE
+    WHEN v.value_num  IS DISTINCT FROM EXCLUDED.value_num
+      OR v.value_text IS DISTINCT FROM EXCLUDED.value_text
+    THEN umh.raise_pk_conflict(
+           format('value conflict at topic_id=%s ts=%s: stored (num=%s, text=%s) but received (num=%s, text=%s)',
+                  v.topic_id, v.ts, v.value_num, v.value_text, EXCLUDED.value_num, EXCLUDED.value_text),
+           NULL::double precision)
+    ELSE v.value_num
+  END;`
+
+const attributeInsertBatch = `INSERT INTO umh.attribute_CONTRACT_SLOT AS a (topic_id, ts, attribute)
+SELECT u.topic_id, u.ts::timestamptz, u.attribute::jsonb
+  FROM unnest($1::bigint[], $2::text[], $3::text[]) AS u(topic_id, ts, attribute)
+ON CONFLICT (topic_id, ts) DO UPDATE
+  SET attribute = CASE
+    WHEN a.attribute IS DISTINCT FROM EXCLUDED.attribute
+    THEN umh.raise_pk_conflict(
+           format('attribute conflict at topic_id=%s ts=%s: stored %s but received %s',
+                  a.topic_id, a.ts, a.attribute, EXCLUDED.attribute),
+           NULL::jsonb)
+    ELSE a.attribute
+  END;`
+
 // migration is one forward-only schema step. sql must be idempotent (CREATE/ALTER ... IF NOT
 // EXISTS): a fresh database already carrying the change in its baseline still records the version,
 // so the DDL must no-op there. sql must not contain the tag "$mig$" (it is wrapped in DO $mig$).
@@ -322,3 +357,6 @@ func bootstrapSQL(contract string, compressAfter time.Duration, retention time.D
 
 func valueQueryFor(contract string) string     { return sub(valueInsert, contract) }
 func attributeQueryFor(contract string) string { return sub(attributeInsert, contract) }
+
+func valueBatchQueryFor(contract string) string     { return sub(valueInsertBatch, contract) }
+func attributeBatchQueryFor(contract string) string { return sub(attributeInsertBatch, contract) }

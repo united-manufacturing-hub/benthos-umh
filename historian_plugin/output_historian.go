@@ -440,6 +440,37 @@ func topicKeyOf(r *Row) topicKey {
 	return topicKey{r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, r.ValueType}
 }
 
+// valueKey collapses exact-duplicate value rows within a batch (a harmless in-batch replay): rows
+// sharing it are byte-identical, so only the first is sent to the batched insert. A same-(id, ts)
+// row with a DIFFERENT value has a different key, survives, and trips the insert's 21000 -> poison
+// path so the isolated fallback drops it.
+type valueKey struct {
+	id      int64
+	ts      string
+	num     float64
+	hasNum  bool
+	text    string
+	hasText bool
+}
+
+func valueKeyOf(id int64, r *Row) valueKey {
+	k := valueKey{id: id, ts: r.TS}
+	if r.ValueNum != nil {
+		k.num, k.hasNum = *r.ValueNum, true
+	}
+	if r.ValueText != nil {
+		k.text, k.hasText = *r.ValueText, true
+	}
+	return k
+}
+
+// attrKey collapses exact-duplicate attribute rows within a batch, same rationale as valueKey.
+type attrKey struct {
+	id   int64
+	ts   string
+	attr string
+}
+
 // writeBatchFast is the happy path: resolve every distinct topic, then write all values and
 // attributes in one transaction. Returns the first error encountered (the caller classifies it).
 // resolved is caller-owned so the isolated fallback can reuse the ids resolved here instead of
@@ -458,29 +489,54 @@ func (o *historianOutput) writeBatchFast(ctx context.Context, pool *pgxpool.Pool
 		resolved[k] = id
 	}
 
-	// Phase 2: write values + attributes by topic_id in one transaction. Rows have distinct
-	// (topic_id, ts), so concurrent batches do not contend and the single commit amortizes.
+	// Phase 2: write the whole batch with one batched value insert (and one attribute insert) in a
+	// single transaction. Exact-duplicate (topic_id, ts, value) rows are collapsed first -- a
+	// harmless in-batch replay -- so they don't trip the batched insert's 21000; a same-(topic_id,
+	// ts) row with a DIFFERENT value survives, trips 21000, and is classified poison so the caller
+	// re-runs isolated and drops just the offending row.
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	vq := valueQueryFor(o.contract)
-	aq := attributeQueryFor(o.contract)
-	attrCount := 0
+	vIDs := make([]int64, 0, len(rows))
+	vTS := make([]string, 0, len(rows))
+	vNum := make([]*float64, 0, len(rows))
+	vText := make([]*string, 0, len(rows))
+	seenVal := make(map[valueKey]struct{}, len(rows))
+	var aIDs []int64
+	var aTS, aAttr []string
+	seenAttr := map[attrKey]struct{}{}
 	for _, r := range rows {
 		id := resolved[topicKeyOf(r)]
-		if _, err := tx.Exec(ctx, vq, id, r.TS, r.ValueNum, r.ValueText); err != nil {
-			o.logger.Errorf("TimescaleDB historian: value write failed for %s: %v", describeRow(r), o.redact(err))
-			return fmt.Errorf("value write failed: %w", err)
+		vk := valueKeyOf(id, r)
+		if _, dup := seenVal[vk]; !dup {
+			seenVal[vk] = struct{}{}
+			vIDs = append(vIDs, id)
+			vTS = append(vTS, r.TS)
+			vNum = append(vNum, r.ValueNum)
+			vText = append(vText, r.ValueText)
 		}
 		if r.EmitMeta {
-			if _, err := tx.Exec(ctx, aq, id, r.TS, r.MetadataJSON); err != nil {
-				o.logger.Errorf("TimescaleDB historian: attribute write failed for %s: %v", describeRow(r), o.redact(err))
-				return fmt.Errorf("attribute write failed: %w", err)
+			ak := attrKey{id: id, ts: r.TS, attr: r.MetadataJSON}
+			if _, dup := seenAttr[ak]; !dup {
+				seenAttr[ak] = struct{}{}
+				aIDs = append(aIDs, id)
+				aTS = append(aTS, r.TS)
+				aAttr = append(aAttr, r.MetadataJSON)
 			}
-			attrCount++
+		}
+	}
+
+	if _, err := tx.Exec(ctx, valueBatchQueryFor(o.contract), vIDs, vTS, vNum, vText); err != nil {
+		o.logger.Errorf("TimescaleDB historian: value write failed for %d row(s): %v", len(vIDs), o.redact(err))
+		return fmt.Errorf("value write failed: %w", err)
+	}
+	if len(aIDs) > 0 {
+		if _, err := tx.Exec(ctx, attributeBatchQueryFor(o.contract), aIDs, aTS, aAttr); err != nil {
+			o.logger.Errorf("TimescaleDB historian: attribute write failed for %d row(s): %v", len(aIDs), o.redact(err))
+			return fmt.Errorf("attribute write failed: %w", err)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -488,8 +544,8 @@ func (o *historianOutput) writeBatchFast(ctx context.Context, pool *pgxpool.Pool
 	}
 	view.Commit() // promote dedup entries only after a successful commit
 	o.dedupSize.Set(int64(o.dedup.Len()))
-	o.valueRows.Incr(int64(len(rows)))
-	o.attrRows.Incr(int64(attrCount))
+	o.valueRows.Incr(int64(len(vIDs)))
+	o.attrRows.Incr(int64(len(aIDs)))
 	return nil
 }
 

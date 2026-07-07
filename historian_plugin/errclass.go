@@ -53,6 +53,13 @@ func classify(err error) disposition {
 	if pg.Code == "P0001" { // plpgsql RAISE: the plugin's own append-conflict and datatype-flip guards
 		return dispDropPoison
 	}
+	if pg.Code == "21000" {
+		// cardinality_violation. The only source in this plugin is a batched multi-row insert whose
+		// VALUES held the same (topic_id, ts) twice with differing values -- "ON CONFLICT DO UPDATE
+		// command cannot affect row a second time". That is a genuine intra-batch append-only
+		// conflict, so treat it as poison; the isolated fallback pinpoints and drops the bad row.
+		return dispDropPoison
+	}
 	switch class(pg.Code) {
 	case "22", "23": // data exception / integrity constraint -- deterministic per payload
 		return dispDropPoison

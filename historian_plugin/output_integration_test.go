@@ -526,6 +526,20 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(logs()).NotTo(ContainSubstring(`tag="keep"`))
 	})
 
+	It("absorbs a byte-identical duplicate within a batch on the fast path (no isolation)", func() {
+		h := connected("dup")
+		defer h.Close(ctx)
+		logs := h.CaptureLogs()
+		// Two byte-identical points in one batch. They are collapsed before the batched insert, so
+		// this stays on the fast path (no 21000, no isolation) and lands exactly one row -- unlike a
+		// same-(topic,ts) row with a DIFFERENT value, which is the poison case above.
+		a := mkMsg(7.0, 1000, "_dup_v1", "l.a", "t", nil)
+		b := mkMsg(7.0, 1000, "_dup_v1", "l.a", "t", nil)
+		Expect(h.WriteBatch(ctx, service.MessageBatch{a, b})).To(Succeed())
+		Expect(h.CountValueRows(ctx, "dup")).To(Equal(1))
+		Expect(logs()).NotTo(ContainSubstring("isolating good rows"), "an identical in-batch duplicate must not fall to the isolated path")
+	})
+
 	It("Connect succeeds for the owner role (has INSERT)", func() {
 		h := connected("probe") // connected() asserts Connect succeeded; the owner can write
 		defer h.Close(ctx)
