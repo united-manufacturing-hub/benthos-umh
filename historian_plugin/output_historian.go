@@ -382,7 +382,11 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 		return nil
 	}
 
-	err := o.writeBatchFast(ctx, pool, rows, view)
+	// resolved is the per-batch topic_id cache, shared across both write paths: writeBatchFast
+	// seeds it, and on the poison fallback writeRowsIsolated reuses (and extends) it rather than
+	// re-resolving topics the fast path already resolved.
+	resolved := make(map[topicKey]int64)
+	err := o.writeBatchFast(ctx, pool, rows, view, resolved)
 	if err == nil {
 		return nil
 	}
@@ -391,7 +395,7 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 		// A poison row failed the fast batch. Re-run row-by-row so the good rows land and only
 		// the poison rows are dropped -- otherwise one bad value head-of-line-blocks the stream.
 		o.logger.Warnf("TimescaleDB historian: poison row in batch, isolating good rows: %v", o.redact(err))
-		return o.writeRowsIsolated(ctx, pool, rows)
+		return o.writeRowsIsolated(ctx, pool, rows, resolved)
 	case dispRetryStanding:
 		// Config/resource/unknown: never drop good data. NACK for retry, but loudly -- this will
 		// not clear without an operator (e.g. missing table privilege, disk full).
@@ -424,28 +428,34 @@ func (o *historianOutput) resolveTopic(ctx context.Context, pool *pgxpool.Pool, 
 	}
 }
 
+// topicKey identifies a distinct topic within a batch. value_type is part of the key because
+// resolution is value_type-qualified: a datatype flip is a different key, so it misses any cached
+// entry and falls through to the guarded upsert that rejects it as poison.
+type topicKey struct {
+	loc, contract, vpath, tag string
+	vt                        ValueType
+}
+
+func topicKeyOf(r *Row) topicKey {
+	return topicKey{r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, r.ValueType}
+}
+
 // writeBatchFast is the happy path: resolve every distinct topic, then write all values and
 // attributes in one transaction. Returns the first error encountered (the caller classifies it).
-func (o *historianOutput) writeBatchFast(ctx context.Context, pool *pgxpool.Pool, rows []*Row, view *BatchView) error {
+// resolved is caller-owned so the isolated fallback can reuse the ids resolved here instead of
+// re-resolving them.
+func (o *historianOutput) writeBatchFast(ctx context.Context, pool *pgxpool.Pool, rows []*Row, view *BatchView, resolved map[topicKey]int64) error {
 	// Phase 1: resolve each distinct topic to its topic_id (autocommit, one statement each).
-	type topicKey struct {
-		loc, contract, vpath, tag string
-		vt                        ValueType
-	}
-	keyOf := func(r *Row) topicKey {
-		return topicKey{r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, r.ValueType}
-	}
-	topicID := make(map[topicKey]int64)
 	for _, r := range rows {
-		k := keyOf(r)
-		if _, ok := topicID[k]; ok {
+		k := topicKeyOf(r)
+		if _, ok := resolved[k]; ok {
 			continue
 		}
 		id, err := o.resolveTopic(ctx, pool, r)
 		if err != nil {
-			return err
+			return err // a partial map is fine: the ids already in it are committed and reusable
 		}
-		topicID[k] = id
+		resolved[k] = id
 	}
 
 	// Phase 2: write values + attributes by topic_id in one transaction. Rows have distinct
@@ -460,7 +470,7 @@ func (o *historianOutput) writeBatchFast(ctx context.Context, pool *pgxpool.Pool
 	aq := attributeQueryFor(o.contract)
 	attrCount := 0
 	for _, r := range rows {
-		id := topicID[keyOf(r)]
+		id := resolved[topicKeyOf(r)]
 		if _, err := tx.Exec(ctx, vq, id, r.TS, r.ValueNum, r.ValueText); err != nil {
 			o.logger.Errorf("TimescaleDB historian: value write failed for %s: %v", describeRow(r), o.redact(err))
 			return fmt.Errorf("value write failed: %w", err)
@@ -490,7 +500,7 @@ func (o *historianOutput) writeBatchFast(ctx context.Context, pool *pgxpool.Pool
 // absorbed idempotently on retry. It deliberately does NOT promote the dedup view: after a
 // poison batch each surviving tag re-emits its metadata once (a new attribute row at the next
 // ts), which is cheap and correct, and avoids marking a row emitted when its value was dropped.
-func (o *historianOutput) writeRowsIsolated(ctx context.Context, pool *pgxpool.Pool, rows []*Row) error {
+func (o *historianOutput) writeRowsIsolated(ctx context.Context, pool *pgxpool.Pool, rows []*Row, resolved map[topicKey]int64) error {
 	vq := valueQueryFor(o.contract)
 	aq := attributeQueryFor(o.contract)
 	var written, attrs int
@@ -499,15 +509,24 @@ func (o *historianOutput) writeRowsIsolated(ctx context.Context, pool *pgxpool.P
 		o.logger.Errorf("TimescaleDB historian: dropped poison row at %s for %s (sqlstate=%s): %v", phase, describeRow(r), pgSQLState(err), o.redact(err))
 	}
 	for _, r := range rows {
-		id, err := o.resolveTopic(ctx, pool, r)
-		if err != nil {
-			if classify(err) == dispDropPoison {
-				drop(err, "resolve", r)
-				continue
+		// Reuse a topic_id the fast path (or an earlier row here) already resolved; only a genuinely
+		// unresolved topic hits the DB. A failed resolve (e.g. a datatype flip) is dropped and never
+		// cached.
+		k := topicKeyOf(r)
+		id, ok := resolved[k]
+		if !ok {
+			var err error
+			id, err = o.resolveTopic(ctx, pool, r)
+			if err != nil {
+				if classify(err) == dispDropPoison {
+					drop(err, "resolve", r)
+					continue
+				}
+				o.valueRows.Incr(int64(written))
+				o.attrRows.Incr(int64(attrs))
+				return err
 			}
-			o.valueRows.Incr(int64(written))
-			o.attrRows.Incr(int64(attrs))
-			return err
+			resolved[k] = id
 		}
 		if _, err := pool.Exec(ctx, vq, id, r.TS, r.ValueNum, r.ValueText); err != nil {
 			if classify(err) == dispDropPoison {
