@@ -355,6 +355,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		}
 		corpus := []tc{
 			{"acme.line1", "acme.line1", false},
+			{"acme.line-1", "acme.line-1", false}, // PG16+ ltree keeps hyphens; not folded to _
 			{"acme@line/1", "acme_line_1", false},
 			{"a.b/c", "a.b_c", false},
 			{"a...b", "a.b", false},
@@ -402,13 +403,12 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(*numB).To(Equal(1.0))
 	})
 
-	It("collapses raw location variants to one topic and one merged series", func() {
+	It("keeps hyphen and underscore location variants as distinct topics", func() {
 		h := connected("vcol")
 		defer h.Close(ctx)
-		// On the write path the only reachable canonicalization is '-' -> '_': the topic parser
-		// restricts location chars to [a-zA-Z0-9._-], so '@', '/', etc. are rejected upstream and
-		// never reach the DB. So the two writable variants of the same location are line-1 and
-		// line_1 (both -> acme.line_1); they must resolve to ONE topic, not split into two.
+		// PG16+ ltree accepts hyphens, so '-' is preserved rather than folded to '_'. The topic
+		// parser restricts write-path location chars to [a-zA-Z0-9._-], so line-1 and line_1 are
+		// the two writable variants -- and they now resolve to TWO distinct topics, each its own series.
 		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(1.0, 1000, "_vcol_v1", "acme.line-1", "t", nil)})).To(Succeed())
 		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(2.0, 2000, "_vcol_v1", "acme.line_1", "t", nil)})).To(Succeed())
 
@@ -416,17 +416,18 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(ok).To(BeTrue())
 		id2, ok := h.GetTopicID(ctx, "acme.line_1", "vibration", "vcol", "t")
 		Expect(ok).To(BeTrue())
-		Expect(id2).To(Equal(id1), "line_1 must resolve to the same topic as line-1")
+		Expect(id2).NotTo(Equal(id1), "line-1 and line_1 are distinct ltree paths -> distinct topics")
 
-		// Both points land in the one merged series, in ts order.
+		// Two separate single-point series, not one merged series.
 		Expect(h.CountValueRows(ctx, "vcol")).To(Equal(2))
-		Expect(h.ValueWindow(ctx, "vcol", id1, 0, 4000)).To(Equal([]float64{1.0, 2.0}))
+		Expect(h.ValueWindow(ctx, "vcol", id1, 0, 4000)).To(Equal([]float64{1.0}))
+		Expect(h.ValueWindow(ctx, "vcol", id2, 0, 4000)).To(Equal([]float64{2.0}))
 
-		// Read side: get_topic_id accepts arbitrary strings, so a query with an out-of-topic
-		// character (e.g. a Grafana user typing "line@1") still canonicalizes to the same topic.
+		// Read side: get_topic_id accepts arbitrary strings, so a character outside [A-Za-z0-9_-]
+		// still folds. A Grafana user typing "line@1" canonicalizes '@' -> '_', matching line_1.
 		id3, ok := h.GetTopicID(ctx, "acme.line@1", "vibration", "vcol", "t")
 		Expect(ok).To(BeTrue())
-		Expect(id3).To(Equal(id1), "get_topic_id must canonicalize line@1 to the same topic")
+		Expect(id3).To(Equal(id2), "get_topic_id folds line@1's '@' to '_', matching line_1")
 	})
 
 	It("Go CanonicalLtreePath agrees with SQL to_ltree_path over a shared corpus", func() {

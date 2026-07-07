@@ -251,8 +251,8 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 	if err := o.pool.QueryRow(checkCtx, "SELECT current_setting('server_version_num')::int").Scan(&version); err != nil {
 		return fmt.Errorf("connect check failed: %w", err)
 	}
-	if version < 130000 {
-		return fmt.Errorf("PostgreSQL 13+ required (ltree must be a trusted extension); got server_version_num=%d", version)
+	if version < 160000 {
+		return fmt.Errorf("PostgreSQL 16+ required (ltree labels must accept hyphens); got server_version_num=%d", version)
 	}
 
 	// A deadline lets a hung bootstrap (advisory lock + DDL can contend) fail-and-retry instead of

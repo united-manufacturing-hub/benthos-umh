@@ -7,7 +7,7 @@ No JavaScript processor or hand-written `sql_raw` is needed.
 
 ## Prerequisites
 
-- PostgreSQL 13+ with the TimescaleDB and `ltree` extensions available.
+- PostgreSQL 16+ with the TimescaleDB and `ltree` extensions available (16+ so `ltree` labels accept hyphens).
 - A non-superuser owner role, created once before the bridge starts (the bridge logs in
   as this role and cannot create it itself). It creates and owns the dedicated `umh` schema
   via the database-level grant, so no privilege on `public` is needed:
@@ -250,11 +250,12 @@ contract instead, where the value is stored verbatim in `value_text`.
 
 ## Location identity
 
-The location is canonicalized into an `ltree` path: every character outside `[A-Za-z0-9_]`
-becomes `_`, each label is truncated to 255 characters, and empty labels are dropped. So
-`enterprise.line-1`, `enterprise.line_1`, and `enterprise.line@1` all resolve to the **same**
-`topic_id` and share one time-series. Distinguish sources by their path segments, not by
-punctuation alone.
+The location is canonicalized into an `ltree` path: every character outside `[A-Za-z0-9_-]`
+becomes `_`, each label is truncated to 255 characters, and empty labels are dropped. Hyphens
+are kept (PostgreSQL 16+ `ltree` labels accept them), so `enterprise.line-1` and
+`enterprise.line_1` are **distinct** paths, each with its own `topic_id`. Other punctuation
+still folds: `enterprise.line@1` becomes `enterprise.line_1` and shares its identity. Distinguish
+sources by their path segments, not by punctuation that folds.
 
 ## Schema and compatibility
 

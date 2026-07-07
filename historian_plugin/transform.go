@@ -34,7 +34,7 @@ const (
 var (
 	reVersionSuffix = regexp.MustCompile(`_v\d+$`)
 	reContract      = regexp.MustCompile(`^[a-z0-9_]+$`)
-	reNonLtreeLabel = regexp.MustCompile(`[^A-Za-z0-9_]`)
+	reNonLtreeLabel = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 )
 
 // ValueType is the umh.value_type SQL enum domain.
@@ -46,7 +46,8 @@ const (
 )
 
 // CanonicalLtreePath mirrors the SQL umh.to_ltree_path() so the in-process dedup key
-// shares the DB's topic identity (raw "line-1" and "line_1" both map to "line_1").
+// shares the DB's topic identity. PostgreSQL 16+ ltree labels accept hyphens, so "line-1"
+// and "line_1" are kept distinct; only characters outside [A-Za-z0-9_-] fold to "_".
 func CanonicalLtreePath(loc string) string {
 	segs := strings.Split(loc, ".")
 	out := make([]string, 0, len(segs))

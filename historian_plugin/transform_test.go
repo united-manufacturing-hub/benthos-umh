@@ -58,16 +58,16 @@ var _ = Describe("CanonicalLtreePath", func() {
 		func(in, want string) { Expect(tsh.CanonicalLtreePath(in)).To(Equal(want)) },
 		Entry("plain", "acme.line1", "acme.line1"),
 		Entry("non-word chars become _", "acme@line/1", "acme_line_1"),
-		Entry("dash vs underscore alias", "acme.line-1", "acme.line_1"),
+		Entry("hyphen is preserved (PG16+ ltree)", "acme.line-1", "acme.line-1"),
 		Entry("empty segments dropped", "a...b", "a.b"),
 		Entry("all dots -> empty", "...", ""),
 	)
-	It("collapses dash/underscore/at variants to one identity", func() {
-		a := tsh.CanonicalLtreePath("enterprise.line-1")
-		b := tsh.CanonicalLtreePath("enterprise.line_1")
-		c := tsh.CanonicalLtreePath("enterprise.line@1")
-		Expect(a).To(Equal(b))
-		Expect(b).To(Equal(c))
+	It("keeps hyphen and underscore distinct but folds other punctuation to _", func() {
+		dash := tsh.CanonicalLtreePath("enterprise.line-1")
+		under := tsh.CanonicalLtreePath("enterprise.line_1")
+		at := tsh.CanonicalLtreePath("enterprise.line@1")
+		Expect(dash).NotTo(Equal(under), "PG16+ ltree accepts hyphens; they are no longer aliased to _")
+		Expect(at).To(Equal(under), "characters outside [A-Za-z0-9_-] still fold to _")
 	})
 })
 

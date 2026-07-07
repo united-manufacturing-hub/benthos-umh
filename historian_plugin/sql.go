@@ -108,7 +108,7 @@ RETURNS ltree
 LANGUAGE sql IMMUTABLE
 AS $ltree$
   SELECT string_agg(q.lbl, '.' ORDER BY q.ord)::ltree
-    FROM (SELECT left(regexp_replace(s.seg, '[^A-Za-z0-9_]', '_', 'g'), 255) AS lbl, s.ord
+    FROM (SELECT left(regexp_replace(s.seg, '[^A-Za-z0-9_-]', '_', 'g'), 255) AS lbl, s.ord
             FROM unnest(string_to_array(p_location_path, '.')) WITH ORDINALITY AS s(seg, ord)) q
    WHERE length(q.lbl) > 0;
 $ltree$;
