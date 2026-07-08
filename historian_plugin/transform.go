@@ -68,6 +68,8 @@ func NormalizeContract(metaContract string) string {
 	return reVersionSuffix.ReplaceAllString(metaContract, "")
 }
 
+// ValidateContract checks that data_contract_name is a bare lowercase name (letters, digits,
+// underscores) with no leading underscore and no _vN version suffix.
 func ValidateContract(c string) error {
 	if !reContract.MatchString(c) {
 		return fmt.Errorf("data_contract_name %q invalid: use a bare lowercase name (letters, digits, underscores), e.g. \"pump\"", c)

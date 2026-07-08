@@ -220,6 +220,9 @@ func (o *historianOutput) bootstrapStmt() string {
 	return bootstrapSQL(o.contract, o.compressAfter, o.retention, o.retentionSet)
 }
 
+// Connect opens the pool (once), verifies the server version, bootstraps the schema idempotently on
+// first call, and checks the login role can INSERT. It is the benthos output Connect hook; a
+// returned error keeps the bridge from registering as up.
 func (o *historianOutput) Connect(ctx context.Context) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -686,6 +689,7 @@ func (o *historianOutput) warnHighChurnMetadata(keys map[string]struct{}) {
 	o.logger.Warnf("TimescaleDB historian: archiving high-churn metadata key(s) [%s]. These change on nearly every message, so the attribute table grows per-message and de-duplication does not help. Remove them from metadata_keys unless you specifically need them.", strings.Join(fresh, ", "))
 }
 
+// Close releases the connection pool. It is the benthos output Close hook.
 func (o *historianOutput) Close(_ context.Context) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()

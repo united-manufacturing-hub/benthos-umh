@@ -28,13 +28,16 @@ type DedupCache struct {
 	committed *lru.Cache[string, string]
 }
 
+// NewDedupCache returns an empty, LRU-bounded metadata fingerprint cache.
 func NewDedupCache() *DedupCache {
 	c, _ := lru.New[string, string](dedupCacheSize) // err only on size <= 0
 	return &DedupCache{committed: c}
 }
 
+// Len reports the number of committed cache entries (exposed for the dedup-cache-size metric).
 func (c *DedupCache) Len() int { return c.committed.Len() }
 
+// NewBatch starts a BatchView whose emit decisions are promoted into the cache only on Commit.
 func (c *DedupCache) NewBatch() *BatchView {
 	return &BatchView{parent: c, working: make(map[string]string)}
 }
@@ -66,6 +69,8 @@ func (v *BatchView) ShouldEmit(key string, fingerprint string) bool {
 	return !ok || prior != fingerprint
 }
 
+// Commit promotes this batch's emit decisions into the shared cache. Call it only after the
+// transaction commits, so a rolled-back batch re-emits rather than losing an attribute row.
 func (v *BatchView) Commit() {
 	for k, fp := range v.working {
 		v.parent.committed.Add(k, fp)
