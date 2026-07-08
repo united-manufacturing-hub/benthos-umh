@@ -84,7 +84,7 @@ type historianOutput struct {
 	bootstrapped bool
 
 	churnMu     sync.Mutex
-	warnedChurn map[string]struct{} // high-churn keys already warned about
+	warnedChurn map[string]struct{} // high-churn metadata keys already warned about
 
 	warnedTruncate atomic.Bool // warn-once guard for truncation
 }
@@ -371,7 +371,7 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	// Warn (once per key) about metadata keys that change on nearly every message: they defeat the
 	// attribute de-dup cache and make the attribute table grow per-message, so the operator likely
 	// wants them out of metadata_keys.
-	o.warnHighChurn(churn)
+	o.warnHighChurnMetadata(churn)
 	if len(rows) == 0 {
 		// A fully-dropped batch writes nothing while the connection stays up, so umh-core would
 		// see a healthy bridge silently discarding data. Warn (umh-core surfaces this as
@@ -643,8 +643,11 @@ func (o *historianOutput) recordDrop(reason string, topic string) {
 	o.logger.Debugf("TimescaleDB historian: dropped message (reason=%s, umh_topic=%q)", reason, topic)
 }
 
-// warnHighChurn warns once per distinct high-churn key (re-firing when a new one appears).
-func (o *historianOutput) warnHighChurn(keys map[string]struct{}) {
+// warnHighChurnMetadata warns once per distinct high-churn metadata key (re-firing when a new one
+// appears). A high-churn key is a metadata field whose value changes on nearly every message (a
+// timestamp, sequence number, status code); storing it defeats attribute de-duplication and grows
+// the attribute table per-message. This is about metadata keys, not topics or write failures.
+func (o *historianOutput) warnHighChurnMetadata(keys map[string]struct{}) {
 	if len(keys) == 0 {
 		return
 	}
