@@ -256,6 +256,8 @@ var _ = Describe("ParseModbusAddress", func() {
 				Expect(formatted).To(Equal(addr))
 			},
 			Entry("basic INT16", "temperature.holding.100.INT16"),
+			Entry("nameless basic", "holding.100.INT16"),
+			Entry("nameless with options", "holding.300.INT16:slaveID=55:scale=0.01:output=FLOAT64"),
 			Entry("with slaveID", "tag.holding.100.INT16:slaveID=2"),
 			Entry("STRING with length", "serial.holding.200.STRING:length=10"),
 			Entry("BIT with bit", "flag.discrete.1.BIT:bit=3"),

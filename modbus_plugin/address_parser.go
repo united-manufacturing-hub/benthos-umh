@@ -221,9 +221,11 @@ func ParseModbusAddress(addr string) (ModbusDataItemWithAddress, error) {
 func FormatModbusAddress(item ModbusDataItemWithAddress) string {
 	var b strings.Builder
 
-	// Positional: name.register.address.type
-	b.WriteString(item.Name)
-	b.WriteByte('.')
+	// Positional: [name.]register.address.type — the name is omitted when empty.
+	if item.Name != "" {
+		b.WriteString(item.Name)
+		b.WriteByte('.')
+	}
 	b.WriteString(item.Register)
 	b.WriteByte('.')
 	b.WriteString(strconv.Itoa(int(item.Address)))
