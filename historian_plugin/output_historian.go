@@ -253,6 +253,17 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
+	// Drop DB-derived caches on every (re)connect. The topic_id cache and the dedup fingerprint
+	// cache are only valid for the database currently behind the pool; a reconnect can land on a
+	// restored, recreated, or truncated database that has reassigned topic_ids. topic_id is
+	// deliberately not an FK on the value/attribute hypertables (see sql.go), so a stale cached id
+	// would silently misroute writes with nothing to catch it. Starting cold costs one read-first
+	// lookup per topic and removes that hazard entirely.
+	o.topicCache.Purge()
+	o.dedup.Purge()
+	o.topicCacheSize.Set(0)
+	o.dedupSize.Set(0)
+
 	if o.pool == nil {
 		cfg, err := pgxpool.ParseConfig(o.dsn())
 		if err != nil {

@@ -37,6 +37,12 @@ func NewDedupCache() *DedupCache {
 // Len reports the number of committed cache entries (exposed for the dedup-cache-size metric).
 func (c *DedupCache) Len() int { return c.committed.Len() }
 
+// Purge drops every committed fingerprint. Connect calls it on each (re)connect so a reconnect to a
+// restored or recreated database does not keep suppressing attribute writes against fingerprints
+// tied to the previous database. Safe to call concurrently with an in-flight batch: the LRU is
+// synchronized, and a batch that commits after the purge simply re-adds its own (valid) entries.
+func (c *DedupCache) Purge() { c.committed.Purge() }
+
 // NewBatch starts a BatchView whose emit decisions are promoted into the cache only on Commit.
 func (c *DedupCache) NewBatch() *BatchView {
 	return &BatchView{parent: c, working: make(map[string]string)}

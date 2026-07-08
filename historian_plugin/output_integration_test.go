@@ -172,6 +172,27 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(h.CountValueRows(ctx, "tcache")).To(Equal(5))
 	})
 
+	It("purges the topic cache on reconnect so a cached topic is re-resolved against the DB", func() {
+		h := connected("tcpurge")
+		defer h.Close(ctx)
+		// First write resolves the new topic (one miss -> upsert) and caches its id.
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(1.0, 1000, "_tcpurge_v1", "acme.line1", "x", nil),
+		})).To(Succeed())
+		hits, misses := h.LookupHits(), h.LookupMisses()
+
+		// A reconnect can land on a restored/recreated DB, so Connect purges the caches. After it,
+		// the SAME topic must go back to the DB (a read-first lookup hit) rather than be served from
+		// the now-empty process cache -- otherwise a stale id could misroute writes (no FK catches it).
+		Expect(h.Connect(ctx)).To(Succeed())
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(2.0, 2000, "_tcpurge_v1", "acme.line1", "x", nil),
+		})).To(Succeed())
+		Expect(h.LookupHits()).To(Equal(hits+1), "after a reconnect the cached topic must be re-resolved via a DB lookup")
+		Expect(h.LookupMisses()).To(Equal(misses), "re-resolving an existing topic hits the lookup, it must not fall through to the upsert")
+		Expect(h.CountValueRows(ctx, "tcpurge")).To(Equal(2))
+	})
+
 	It("re-warms after restart (fresh handle) without bumping the sequence", func() {
 		h1 := connected("restart2")
 		defer h1.Close(ctx)
