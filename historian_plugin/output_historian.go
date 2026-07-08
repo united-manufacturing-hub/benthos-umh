@@ -390,6 +390,12 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	if err == nil {
 		return nil
 	}
+	if errors.Is(err, errIntraBatchConflict) {
+		// Two rows in the batch shared (topic_id, ts) with differing values. Re-run row-by-row so
+		// the good rows land and the offending row is dropped with a signal.
+		o.logger.Warnf("TimescaleDB historian: intra-batch (topic_id, ts) conflict, isolating good rows")
+		return o.writeRowsIsolated(ctx, pool, rows, resolved)
+	}
 	switch classify(err) {
 	case dispDropPoison:
 		// A poison row failed the fast batch. Re-run row-by-row so the good rows land and only
@@ -471,6 +477,12 @@ type attrKey struct {
 	attr string
 }
 
+// errIntraBatchConflict marks a batched insert that held the same (topic_id, ts) twice with
+// differing values (Postgres 21000, "cannot affect row a second time"). WriteBatch treats it like
+// poison and re-runs isolated, which attributes and drops just the offending row. Scoping it to
+// this call site keeps a stray 21000 from any future query out of the drop path.
+var errIntraBatchConflict = errors.New("intra-batch (topic_id, ts) conflict")
+
 // writeBatchFast is the happy path: resolve every distinct topic, then write all values and
 // attributes in one transaction. Returns the first error encountered (the caller classifies it).
 // resolved is caller-owned so the isolated fallback can reuse the ids resolved here instead of
@@ -530,11 +542,17 @@ func (o *historianOutput) writeBatchFast(ctx context.Context, pool *pgxpool.Pool
 	}
 
 	if _, err := tx.Exec(ctx, valueBatchQueryFor(o.contract), vIDs, vTS, vNum, vText); err != nil {
+		if pgSQLState(err) == "21000" { // two rows shared (topic_id, ts) with differing values
+			return errIntraBatchConflict
+		}
 		o.logger.Errorf("TimescaleDB historian: value write failed for %d row(s): %v", len(vIDs), o.redact(err))
 		return fmt.Errorf("value write failed: %w", err)
 	}
 	if len(aIDs) > 0 {
 		if _, err := tx.Exec(ctx, attributeBatchQueryFor(o.contract), aIDs, aTS, aAttr); err != nil {
+			if pgSQLState(err) == "21000" {
+				return errIntraBatchConflict
+			}
 			o.logger.Errorf("TimescaleDB historian: attribute write failed for %d row(s): %v", len(aIDs), o.redact(err))
 			return fmt.Errorf("attribute write failed: %w", err)
 		}
