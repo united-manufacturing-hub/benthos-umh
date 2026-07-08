@@ -39,6 +39,26 @@ var _ = Describe("ParseModbusAddress", func() {
 			Expect(item.Output).To(Equal(""))
 		})
 
+		It("should parse a 3-segment nameless address", func() {
+			item, err := ParseModbusAddress("holding.100.INT16")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(item.Name).To(Equal(""))
+			Expect(item.Register).To(Equal("holding"))
+			Expect(item.Address).To(Equal(uint16(100)))
+			Expect(item.Type).To(Equal("INT16"))
+		})
+
+		It("should parse a 3-segment nameless address with options", func() {
+			item, err := ParseModbusAddress("holding.300.INT16:slaveID=55:scale=0.01:output=FLOAT64")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(item.Name).To(Equal(""))
+			Expect(item.Register).To(Equal("holding"))
+			Expect(item.Address).To(Equal(uint16(300)))
+			Expect(item.SlaveID).To(Equal(byte(55)))
+			Expect(item.Scale).To(Equal(0.01))
+			Expect(item.Output).To(Equal("FLOAT64"))
+		})
+
 		It("should parse all register types", func() {
 			for _, reg := range []string{"coil", "discrete", "holding", "input"} {
 				item, err := ParseModbusAddress("tag." + reg + ".0.UINT16")
@@ -207,8 +227,8 @@ var _ = Describe("ParseModbusAddress", func() {
 				}
 			},
 			Entry("empty string", "", "empty address"),
-			Entry("too few segments", "name.holding.100", "exactly 4"),
-			Entry("too many segments", "name.holding.100.INT16.extra", "exactly 4"),
+			Entry("two segments", "holding.100", "3 or 4"),
+			Entry("too many segments", "name.holding.100.INT16.extra", "3 or 4"),
 			Entry("empty name", ".holding.100.INT16", "empty name"),
 			Entry("invalid register", "tag.unknown.100.INT16", "invalid register"),
 			Entry("non-numeric address", "tag.holding.abc.INT16", "invalid address"),

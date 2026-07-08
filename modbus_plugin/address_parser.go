@@ -80,42 +80,52 @@ func ParseModbusAddress(addr string) (ModbusDataItemWithAddress, error) {
 	positional := parts[0]
 	options := parts[1:]
 
-	// Split positional part on '.'
+	// Split positional part on '.'. The name is optional: the canonical form is
+	// "register.address.type" (3 segments); the legacy form "name.register.address.type"
+	// (4 segments) is still accepted. When there is no name it comes from the Tag Name
+	// column downstream.
 	segments := strings.Split(positional, ".")
-	if len(segments) != 4 {
+
+	var name string
+	var regIdx int
+	switch len(segments) {
+	case 3:
+		regIdx = 0
+	case 4:
+		name = segments[0]
+		if name == "" {
+			return ModbusDataItemWithAddress{}, fmt.Errorf("empty name in address %q", addr)
+		}
+		regIdx = 1
+	default:
 		hint := ""
 		if len(segments) > 4 {
 			hint = ". note: the name segment cannot contain dots"
 		}
-		return ModbusDataItemWithAddress{}, fmt.Errorf("expected exactly 4 dot-separated segments (name.register.address.type), got %d%s", len(segments), hint)
-	}
-
-	// 1. Name
-	name := segments[0]
-	if name == "" {
-		return ModbusDataItemWithAddress{}, fmt.Errorf("empty name in address %q", addr)
+		return ModbusDataItemWithAddress{}, fmt.Errorf("expected 3 or 4 dot-separated segments (register.address.type, optionally name.register.address.type), got %d%s", len(segments), hint)
 	}
 	item.Name = name
 
-	// 2. Register
-	register := segments[1]
+	// Register
+	register := segments[regIdx]
 	if !validRegisters[register] {
 		return ModbusDataItemWithAddress{}, fmt.Errorf("invalid register %q, must be one of: coil, discrete, holding, input", register)
 	}
 	item.Register = register
 
-	// 3. Address
-	address, err := strconv.Atoi(segments[2])
+	// Address
+	addrStr := segments[regIdx+1]
+	address, err := strconv.Atoi(addrStr)
 	if err != nil {
-		return ModbusDataItemWithAddress{}, fmt.Errorf("invalid address %q: %w", segments[2], err)
+		return ModbusDataItemWithAddress{}, fmt.Errorf("invalid address %q: %w", addrStr, err)
 	}
 	if address < 0 || address > 65535 {
 		return ModbusDataItemWithAddress{}, fmt.Errorf("address %d out of range (0-65535)", address)
 	}
 	item.Address = uint16(address)
 
-	// 4. Type
-	typeName := segments[3]
+	// Type
+	typeName := segments[regIdx+2]
 	if !validTypes[typeName] {
 		return ModbusDataItemWithAddress{}, fmt.Errorf("invalid type %q", typeName)
 	}
