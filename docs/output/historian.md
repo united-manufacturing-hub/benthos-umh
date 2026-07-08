@@ -32,8 +32,8 @@ No JavaScript processor or hand-written `sql_raw` is needed.
 | `metadata_keys_all` | no | `true` | Store every metadata key except structural/high-churn keys and any `metadata_keys_exclude` match. |
 | `metadata_keys` | no | `[]` | Allowlist used only when `metadata_keys_all=false`. |
 | `metadata_keys_exclude` | no | `[]` | Blacklist applied only when `metadata_keys_all=true`. Each entry is an exact key name or a trailing-`*` prefix (e.g. `opcua_*`); matches are dropped on top of the built-in exclusions. A bare `*` drops everything. Ignored in allowlist mode. |
-| `compress_after` | no | `168h` | Compress chunks older than this. |
-| `retention` | no | `""` | Drop chunks older than this; empty keeps data forever. |
+| `compress_after` | no | `168h` | Compress chunks older than this. **Applied once at first bootstrap** — changing it in the bridge afterward has no effect (see [Changing compression or retention](#changing-compression-or-retention)). |
+| `retention` | no | `""` | Drop chunks older than this; empty keeps data forever. **Applied once at first bootstrap** — changing it in the bridge afterward has no effect (see [Changing compression or retention](#changing-compression-or-retention)). |
 | `batching` | no | — | benthos batch policy (`count` / `period` / `byte_size`). The whole batch is written in one transaction, so larger batches raise throughput; e.g. `count: 1000`, `period: 1s`. |
 | `max_in_flight` | no | `8` | Batches written to the database concurrently. Throughput scales with this and with batch size (see Throughput below). |
 
@@ -270,6 +270,35 @@ its conventional shared home.)
 The baseline is a port of the Management Console TimescaleDB Historian template and writes
 the same tables. To avoid schema drift, a given contract/database must be written by exactly
 **one** writer type — the plugin **or** the template, never both.
+
+## Changing compression or retention
+
+`compress_after` and `retention` are applied **once, at first bootstrap**, and are deliberately
+not re-applied when the bridge restarts. Editing them in the bridge config therefore has **no
+effect** on a database that already has the tables. This is intentional: a config edit (or a form
+change in the Management Console) should not silently change how production history is compressed
+or — for retention — **deleted**. On restart the bridge logs a warning if the applied policy
+differs from the config, so drift stays visible, but it does not act on it.
+
+To change them on an existing database, update the TimescaleDB policies directly, on **both**
+hypertables for the contract. For a contract named `pump`:
+
+```sql
+-- retention: keep 30 days (repeat for umh.attribute_pump)
+SELECT remove_retention_policy('umh.value_pump', if_exists => true);
+SELECT add_retention_policy('umh.value_pump', INTERVAL '30 days');
+
+-- compression: compress chunks older than 7 days (repeat for umh.attribute_pump)
+SELECT remove_compression_policy('umh.value_pump', if_exists => true);
+SELECT add_compression_policy('umh.value_pump', INTERVAL '7 days');
+```
+
+To stop dropping data entirely (the `retention: ""` default), remove the retention policy and do
+not re-add it. Changing either policy takes effect immediately and never needs a bridge restart.
+
+After changing a policy on the database, set the **same** value in the bridge config too. The
+config value is still what a fresh bootstrap of a new database uses, and matching it silences the
+drift warning on restart.
 
 ## Quick example
 

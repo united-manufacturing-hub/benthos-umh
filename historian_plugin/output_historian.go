@@ -312,7 +312,7 @@ func (o *historianOutput) warnPolicyDrift(ctx context.Context) {
 	}
 	_ = o.pool.QueryRow(ctx, policyIntervalSQL("policy_retention", "drop_after"), table).Scan(&appliedRet)
 	for _, w := range policyDriftWarnings(int64(o.compressAfter.Seconds()), appliedComp, o.retentionSet, int64(o.retention.Seconds()), appliedRet) {
-		o.logger.Warnf("TimescaleDB historian: %s. Policies are set once at first bootstrap and are not re-applied on restart; change them on an existing database via a schema migration.", w)
+		o.logger.Warnf("TimescaleDB historian: %s. Policies are applied once at first bootstrap and not re-applied on restart, so a config change alone does not update them. Change them on the database directly with the TimescaleDB policy functions (remove_/add_compression_policy, remove_/add_retention_policy) on umh.value_%s and umh.attribute_%s, then set the same value in the bridge config to silence this warning.", w, o.contract, o.contract)
 	}
 }
 
