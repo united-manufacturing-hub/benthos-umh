@@ -5,44 +5,133 @@ This input only supports symbols and not direct addresses.
 
 This plugin is community supported only. If you encounter any issues, check out the [original repository](https://github.com/RuneRoven/benthosADS) for more information, or ask around in our Discord.
 
+## Minimal Example — TwinCAT 3, automatic route registration (Docker)
+
 ```yaml
 input:
   ads:
-    cycleTime: 1000                   # Optional, default: 1000
-    hostAMS: auto                     # Optional, default: auto
-    intervalTime: 1000                # Optional, default: 1000
-    logLevel: disabled                # Optional, default: disabled
-    maxDelay: 100                     # Optional, default: 100
-    readType: notification            # Optional, default: notification
-    routeHostAddress: 192.168.1.123   # Optional, auto detected. Usually required when using docker.
-    routePassword: "1"                # Optional, default: "". Required if using automatic UDP route registration on the PLC
-    routeUsername: Administrator      # Optional, default: "". Required if using automatic UDP route registration on the PLC
-    runtimePort: 801                  # Optional, default: 801 for old TwinCAT 2
+    targetIP: '192.168.1.100'
+    targetAMS: '192.168.1.100.1.1'
+    runtimePort: 851
+    hostAMS: 'auto'
+    routeUsername: 'Administrator'
+    routePassword: '1'
+    routeHostAddress: '192.168.1.50'   # Docker host IP on PLC network
     symbols:
-      - MAIN.MYTRIGGER:0:10           # variable in the main program with 0ms max delay and 10ms cycle time
-      - MAIN.myInt                    # variable in the main program, uses default maxDelay and cycleTime
-      - ".superDuperInt"              # global variable (must start with `.`)
-    targetAMS: 5.3.12.111.1.1         # Required, AMS net ID of the target.
-    targetIP: 192.168.3.70            # Required, IP address of the Beckhoff PLC
-    targetPort: 48898                 # Optional, default: 48898
-    transmissionMode: serverOnChange  # Optional, default: serverOnChange
-    upperCase: true                   # Optional, default: true
-```
-```yaml
+      - "MAIN.MyVariable"
+      - "GVL_ProcessData.nCounter"
 pipeline:
   processors:
     - tag_processor:
         defaults: |-
-          // Minimal example
           msg.meta.location_path = "beckhoff.twincat.plc";
           msg.meta.data_contract = "_historian";
           msg.meta.tag_name      = msg.meta.symbol_name;
-          // tag_processor now auto-creates msg.meta.umh_topic
           return msg;
-```
-```yaml
 output:
   uns: {}
+```
+
+## Minimal Example — TwinCAT 3, static route (no auto-registration)
+
+```yaml
+input:
+  ads:
+    targetIP: '192.168.1.100'
+    targetAMS: '192.168.1.100.1.1'
+    runtimePort: 851
+    hostAMS: '192.168.1.50.1.1'        # Must match static route on PLC
+    symbols:
+      - "MAIN.MyVariable"
+      - "GVL_ProcessData.nCounter"
+pipeline:
+  processors:
+    - tag_processor:
+        defaults: |-
+          msg.meta.location_path = "beckhoff.twincat.plc";
+          msg.meta.data_contract = "_historian";
+          msg.meta.tag_name      = msg.meta.symbol_name;
+          return msg;
+output:
+  uns: {}
+```
+
+## Minimal Example — TwinCAT 2, automatic route registration (Docker)
+
+```yaml
+input:
+  ads:
+    targetIP: '192.168.1.100'
+    targetAMS: '192.168.1.100.1.1'
+    runtimePort: 801
+    hostAMS: 'auto'
+    routeUsername: 'Administrator'
+    routePassword: '1'
+    routeHostAddress: '192.168.1.50'   # Docker host IP on PLC network
+    symbols:
+      - ".myVariable"                  # TC2 global variable (dot prefix)
+      - ".nCounter"
+pipeline:
+  processors:
+    - tag_processor:
+        defaults: |-
+          msg.meta.location_path = "beckhoff.twincat.plc";
+          msg.meta.data_contract = "_historian";
+          msg.meta.tag_name      = msg.meta.symbol_name;
+          return msg;
+output:
+  uns: {}
+```
+
+## Minimal Example — TwinCAT 2, static route (no auto-registration)
+
+```yaml
+input:
+  ads:
+    targetIP: '192.168.1.100'
+    targetAMS: '192.168.1.100.1.1'
+    runtimePort: 801
+    hostAMS: '192.168.1.50.1.1'        # Must match static route on PLC
+    symbols:
+      - ".myVariable"                  # TC2 global variable (dot prefix)
+      - ".nCounter"
+pipeline:
+  processors:
+    - tag_processor:
+        defaults: |-
+          msg.meta.location_path = "beckhoff.twincat.plc";
+          msg.meta.data_contract = "_historian";
+          msg.meta.tag_name      = msg.meta.symbol_name;
+          return msg;
+output:
+  uns: {}
+```
+
+## Full Config Reference
+
+```yaml
+input:
+  ads:
+    targetIP: 192.168.3.70            # Required
+    targetAMS: 5.3.12.111.1.1         # Required
+    targetPort: 48898                 # Optional, default: 48898
+    runtimePort: 851                  # Optional, default: 801. Use 851 for TC3, 801 for TC2
+    hostAMS: auto                     # Optional, default: auto
+    hostPort: 10500                   # Optional, default: 10500
+    readType: notification            # Optional, default: notification
+    maxDelay: 100                     # Optional, default: 100
+    cycleTime: 1000                   # Optional, default: 1000
+    intervalTime: 1000                # Optional, default: 1000
+    transmissionMode: serverOnChange  # Optional, default: serverOnChange
+    loadSymbols: false                # Optional, default: false. Required for whole struct/array symbols
+    logLevel: disabled                # Optional, default: disabled
+    routeUsername: ""                 # Optional. If set, triggers automatic UDP route registration
+    routePassword: ""                 # Optional
+    routeHostAddress: ""              # Optional. Usually required in Docker bridge networking
+    symbols:
+      - MAIN.MYTRIGGER:0:10           # 0ms max delay, 10ms cycle time
+      - MAIN.myInt                    # uses plugin-level defaults
+      - ".superDuperInt"              # TC2 global variable (must start with `.`)
 ```
 
 ## Connection to ADS
@@ -140,7 +229,7 @@ input:
 | **intervalTime** | No | `1000` | Interval time between reads in ms (only used when `readType` is `interval`) |
 | **requestTimeout** | No | `5000` | Timeout for individual ADS requests in ms. Increase for slow PLCs or large symbol tables |
 | **transmissionMode** | No | `serverOnChange` | Notification transmission mode. Only applies when `readType` is `notification`. Options: `serverOnChange`, `serverCycle`, `serverOnChange2`, `serverCycle2` (see [Transmission Modes](#transmission-modes)) |
-| **upperCase** | No | `true` | Convert symbol names to all uppercase. Often necessary for TwinCAT 2 PLCs |
+| **loadSymbols** | No | `false` | Download the full symbol and datatype table from the PLC on connect. Required for subscribing to whole struct or array symbols. May cause brief real-time jitter on the PLC during initial connection. See [Struct and Array Symbols](#struct-and-array-symbols) |
 | **logLevel** | No | `disabled` | Log level for ADS connection (`disabled`, `error`, `warn`, `info`, `debug`, `trace`). At `debug`/`trace`, ADS error codes show human-readable descriptions |
 | **routeUsername** | No | `""` | Username for automatic UDP route registration on the PLC. If set, a route is registered before connecting (see [Route Registration](#route-registration)) |
 | **routePassword** | No | `""` | Password for automatic UDP route registration on the PLC |
@@ -148,10 +237,71 @@ input:
 
 ##### Symbols Format
 
-Symbols are specified in the format `function.variable:maxDelay:cycleTime`:
+Symbols are specified as `name[:opt1[:opt2...]]`. Options are positional integers or `key=value` pairs.
+
+| Format | maxDelay | cycleTime |
+|--------|----------|-----------|
+| `MAIN.var` | default | default |
+| `MAIN.var:50:100` | 50 | 100 |
+| `MAIN.var:50` | 50 | default |
+| `MAIN.var::100` | default | 100 |
+| `MAIN.var:cycleTime=100` | default | 100 |
+| `MAIN.var:maxDelay=50` | 50 | default |
+
 - `MAIN.MYBOOL` — variable in the main program, uses default maxDelay and cycleTime
-- `MAIN.MYTRIGGER:0:10` — variable in the main program with 0ms max delay and 10ms cycle time
+- `MAIN.MYTRIGGER:0:10` — variable with 0ms max delay and 10ms cycle time
+- `MAIN.MYTRIGGER::10` — default max delay, 10ms cycle time
 - `.superDuperInt` — global variable (must start with `.`)
+
+**TwinCAT 3** uses GVL-prefixed symbols: `GVL_ProcessData.nCounter`, `MAIN.MyVariable`
+
+**TwinCAT 2** uses a flat namespace with dot prefix: `.nCounter`, `.myVariable`
+
+##### Struct and Array Symbols
+
+Two approaches for reading structured PLC data:
+
+**Option A — Dot-notation (recommended, no extra config)**
+
+Subscribe to individual primitive members using their full dot-path:
+
+```yaml
+symbols:
+  - "MAIN.MachineStatus.Motor1.fSpeed"
+  - "MAIN.MachineStatus.Motor1.bRunning"
+  - "MAIN.MachineStatus.Pressure.fValue"
+```
+
+Each symbol fires independently on change and returns a primitive value. No `loadSymbols` needed.
+
+**Option B — Whole struct subscription (requires `loadSymbols: true`)**
+
+Subscribe to the struct symbol directly — returns a nested JSON object:
+
+```yaml
+input:
+  ads:
+    targetIP: "192.168.1.10"
+    targetAMS: "5.1.2.3.1.1"
+    loadSymbols: true
+    symbols:
+      - "MAIN.MachineStatus"
+```
+
+Output:
+
+```json
+{
+  "Motor1": { "fSpeed": 1450.5, "bRunning": true },
+  "Pressure": { "fValue": 3.2 }
+}
+```
+
+| | Option A (dot-notation) | Option B (whole struct) |
+|---|---|---|
+| `loadSymbols` required | No | Yes |
+| Output per change | One primitive per field | Whole struct as JSON |
+| PLC jitter risk | None | Brief on connect |
 
 
 #### Transmission Modes
