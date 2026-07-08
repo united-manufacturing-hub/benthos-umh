@@ -874,6 +874,17 @@ func (m *ModbusInput) readSlaveData(ctx context.Context, slaveID byte, requests 
 	return m.gatherTags(ctx, requests)
 }
 
+// modbusTagName returns the tag label for a message: the authored name, or the
+// unified address locator when the address carries no name. The nameless case
+// mirrors s7comm using s7_address as its fallback tag name — the real name is
+// supplied downstream from the Tag Name column.
+func modbusTagName(tag modbusTag) string {
+	if tag.name != "" {
+		return tag.name
+	}
+	return tag.unifiedAddress
+}
+
 func (m *ModbusInput) createMessageFromValue(item modbusTag, rawValue []byte, registerName string) *service.Message {
 	value := item.converter(rawValue)
 
@@ -935,9 +946,11 @@ func (m *ModbusInput) createMessageFromValue(item modbusTag, rawValue []byte, re
 	// Store the original datatype as metadata
 	originalDataType := reflect.TypeOf(value).String()
 
+	tagName := modbusTagName(item)
+
 	message := service.NewMessage(b)
-	message.MetaSet("modbus_tag_name", sanitize(item.name))                    // This is the tag name without special characters
-	message.MetaSet("modbus_tag_name_original", item.name)                     // This is the tag name without any changes
+	message.MetaSet("modbus_tag_name", sanitize(tagName))                       // This is the tag name without special characters
+	message.MetaSet("modbus_tag_name_original", tagName)                        // This is the tag name without any changes
 	message.MetaSet("modbus_tag_datatype", originalDataType)                   // This is the original data type in Modbus
 	message.MetaSet("modbus_tag_datatype_json", tagType)                       // This is the data type for JSONs. Either number, bool or string
 	message.MetaSet("modbus_tag_address", strconv.Itoa(int(item.address)))     // This is the address of the tag
