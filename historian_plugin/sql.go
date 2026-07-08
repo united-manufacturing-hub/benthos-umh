@@ -328,7 +328,10 @@ func policyIntervalSQL(procName string, configKey string) string {
 // catalog is unavailable on this server or the database was never bootstrapped -- so it returns
 // nothing rather than risk a false warning. Compression always has a policy after bootstrap, so
 // its presence doubles as the "introspection works" probe for the retention checks.
-func policyDriftWarnings(compressWant int64, appliedComp *int64, retentionSet bool, retentionWant int64, appliedRet *int64) []string {
+// retentionWant is nil when retention is unset in config (keep forever); appliedRet is nil when no
+// retention policy is scheduled in the database. Both compression and retention use the same nil-able
+// representation for "not set".
+func policyDriftWarnings(compressWant int64, appliedComp *int64, retentionWant *int64, appliedRet *int64) []string {
 	if appliedComp == nil {
 		return nil
 	}
@@ -337,11 +340,11 @@ func policyDriftWarnings(compressWant int64, appliedComp *int64, retentionSet bo
 		warns = append(warns, fmt.Sprintf("configured compress_after (%ds) does not match the compression policy applied in the database (%ds)", compressWant, *appliedComp))
 	}
 	switch {
-	case retentionSet && appliedRet == nil:
-		warns = append(warns, fmt.Sprintf("configured retention (%ds) is not applied in the database", retentionWant))
-	case retentionSet && *appliedRet != retentionWant:
-		warns = append(warns, fmt.Sprintf("configured retention (%ds) does not match the retention policy applied in the database (%ds)", retentionWant, *appliedRet))
-	case !retentionSet && appliedRet != nil:
+	case retentionWant != nil && appliedRet == nil:
+		warns = append(warns, fmt.Sprintf("configured retention (%ds) is not applied in the database", *retentionWant))
+	case retentionWant != nil && *appliedRet != *retentionWant:
+		warns = append(warns, fmt.Sprintf("configured retention (%ds) does not match the retention policy applied in the database (%ds)", *retentionWant, *appliedRet))
+	case retentionWant == nil && appliedRet != nil:
 		warns = append(warns, fmt.Sprintf("retention is unset in config but a retention policy (%ds) is applied in the database", *appliedRet))
 	}
 	return warns

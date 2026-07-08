@@ -287,6 +287,6 @@ func (h *HistorianTestHandle) AttributeValue(ctx context.Context, contract strin
 }
 
 // PolicyDriftWarningsForTest exposes policyDriftWarnings to the external test package.
-func PolicyDriftWarningsForTest(compressWant int64, appliedComp *int64, retentionSet bool, retentionWant int64, appliedRet *int64) []string {
-	return policyDriftWarnings(compressWant, appliedComp, retentionSet, retentionWant, appliedRet)
+func PolicyDriftWarningsForTest(compressWant int64, appliedComp *int64, retentionWant *int64, appliedRet *int64) []string {
+	return policyDriftWarnings(compressWant, appliedComp, retentionWant, appliedRet)
 }

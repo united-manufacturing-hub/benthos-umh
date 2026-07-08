@@ -112,25 +112,23 @@ data_contract_name: pump
 })
 
 var _ = Describe("policy drift warnings", func() {
-	i := func(v int64) *int64 { return &v }
+	const (
+		sevenDays  = int64(7 * 24 * 60 * 60) // the compress_after default (168h)
+		thirtyDays = int64(30 * 24 * 60 * 60)
+		oneDay     = int64(24 * 60 * 60)
+	)
+	sec := func(v int64) *int64 { return &v } // nil = "not set" (config unset / no policy applied)
 
-	It("stays quiet when the compression policy can't be read (catalog unavailable / not bootstrapped)", func() {
-		Expect(tsh.PolicyDriftWarningsForTest(604800, nil, true, 2592000, nil)).To(BeEmpty())
-	})
-	It("stays quiet when config matches the applied policies", func() {
-		Expect(tsh.PolicyDriftWarningsForTest(604800, i(604800), false, 0, nil)).To(BeEmpty())
-		Expect(tsh.PolicyDriftWarningsForTest(604800, i(604800), true, 2592000, i(2592000))).To(BeEmpty())
-	})
-	It("warns when compress_after was changed after bootstrap", func() {
-		Expect(tsh.PolicyDriftWarningsForTest(86400, i(604800), false, 0, nil)).To(HaveLen(1))
-	})
-	It("warns when retention is configured but not applied", func() {
-		Expect(tsh.PolicyDriftWarningsForTest(604800, i(604800), true, 2592000, nil)).To(HaveLen(1))
-	})
-	It("warns when the applied retention differs from config", func() {
-		Expect(tsh.PolicyDriftWarningsForTest(604800, i(604800), true, 2592000, i(1000))).To(HaveLen(1))
-	})
-	It("warns when retention was removed from config but is still applied", func() {
-		Expect(tsh.PolicyDriftWarningsForTest(604800, i(604800), false, 0, i(2592000))).To(HaveLen(1))
-	})
+	DescribeTable("flags drift between the configured and the applied policies",
+		func(compressWant int64, appliedComp *int64, retentionWant *int64, appliedRet *int64, wantWarns int) {
+			Expect(tsh.PolicyDriftWarningsForTest(compressWant, appliedComp, retentionWant, appliedRet)).To(HaveLen(wantWarns))
+		},
+		Entry("quiet: compression not readable yet (not bootstrapped)", sevenDays, nil, sec(thirtyDays), nil, 0),
+		Entry("quiet: compression matches, no retention configured", sevenDays, sec(sevenDays), nil, nil, 0),
+		Entry("quiet: compression and retention both match", sevenDays, sec(sevenDays), sec(thirtyDays), sec(thirtyDays), 0),
+		Entry("warn: compress_after changed after bootstrap", oneDay, sec(sevenDays), nil, nil, 1),
+		Entry("warn: retention configured but not applied", sevenDays, sec(sevenDays), sec(thirtyDays), nil, 1),
+		Entry("warn: applied retention differs from config", sevenDays, sec(sevenDays), sec(thirtyDays), sec(oneDay), 1),
+		Entry("warn: retention removed from config but still applied", sevenDays, sec(sevenDays), nil, sec(thirtyDays), 1),
+	)
 })
