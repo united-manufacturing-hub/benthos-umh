@@ -1,0 +1,3 @@
+kind: improvements
+body: Modbus `unifiedAddresses` no longer need a name segment. The tag name comes from the Tag Name column, and existing `name.register.address.type` addresses still work (ENG-5086)
+time: 2026-07-08T17:00:00.000000+02:00
