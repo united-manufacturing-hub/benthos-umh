@@ -1,5 +1,16 @@
 # Changelog
 
+## [v0.13.1]
+
+### New
+
+- Node-RED JS and tag processor expose a `protobuf` namespace (`protobuf.decode` / `protobuf.encode`) to decode and encode protobuf messages inline using an embedded base64 descriptor set, including proto2 extension fields (ENG-5243)
+- Sparkplug B input decodes proto2 extension fields from an inline schema, exposing them per metric as `spb_ext_*` and `spb_metric_decoded` metadata (ENG-5229)
+
+### Fixes
+
+- Sparkplug B input can nest device data under its edge node via include_edge_node_in_location, so identically-named devices on different edge nodes no longer collide at the top of the hierarchy (ENG-5175)
+
 ## [v0.13.0]
 
 ### Improvements
