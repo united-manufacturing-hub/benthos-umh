@@ -300,17 +300,31 @@ func (o *historianOutput) probeWritable(ctx context.Context) error {
 	return nil
 }
 
-// warnPolicyDrift warns when the applied compression/retention policy differs from config. Policies
-// are set once at first bootstrap, so editing compress_after/retention and restarting otherwise has
-// no visible effect. Best-effort: introspection errors are swallowed so an unexpected catalog shape
-// never fails Connect. Both hypertables get identical policies, so the value table is representative.
-func (o *historianOutput) warnPolicyDrift(ctx context.Context) {
+// readAppliedPolicies reads the compression/retention intervals (in seconds) TimescaleDB currently
+// has applied for this contract, as nil-able pointers (nil = no such policy scheduled). Both
+// hypertables get identical policies, so the value table is representative. It returns an error only
+// if the compression lookup itself fails (an unexpected catalog shape); the retention lookup is
+// best-effort. This is the I/O read half of warnPolicyDrift, split out so the drift check reads as
+// read -> compare (pure policyDriftWarnings) -> log.
+func (o *historianOutput) readAppliedPolicies(ctx context.Context) (*int64, *int64, error) {
 	table := "value_" + o.contract
 	var appliedComp, appliedRet *int64
 	if err := o.pool.QueryRow(ctx, policyIntervalSQL("policy_compression", "compress_after"), table).Scan(&appliedComp); err != nil {
-		return
+		return nil, nil, err
 	}
 	_ = o.pool.QueryRow(ctx, policyIntervalSQL("policy_retention", "drop_after"), table).Scan(&appliedRet)
+	return appliedComp, appliedRet, nil
+}
+
+// warnPolicyDrift warns when the applied compression/retention policy differs from config. Policies
+// are set once at first bootstrap, so editing compress_after/retention and restarting otherwise has
+// no visible effect. Best-effort: introspection errors are swallowed so an unexpected catalog shape
+// never fails Connect.
+func (o *historianOutput) warnPolicyDrift(ctx context.Context) {
+	appliedComp, appliedRet, err := o.readAppliedPolicies(ctx)
+	if err != nil {
+		return
+	}
 	for _, w := range policyDriftWarnings(int64(o.compressAfter.Seconds()), appliedComp, o.retentionSet, int64(o.retention.Seconds()), appliedRet) {
 		o.logger.Warnf("TimescaleDB historian: %s. Policies are applied once at first bootstrap and not re-applied on restart, so a config change alone does not update them. Change them on the database directly with the TimescaleDB policy functions (remove_/add_compression_policy, remove_/add_retention_policy) on umh.value_%s and umh.attribute_%s, then set the same value in the bridge config to silence this warning.", w, o.contract, o.contract)
 	}
