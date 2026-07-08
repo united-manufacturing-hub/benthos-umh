@@ -405,7 +405,7 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	case dispRetryStanding:
 		// Config/resource/unknown: never drop good data. NACK for retry, but loudly -- this will
 		// not clear without an operator (e.g. missing table privilege, disk full).
-		o.logger.Errorf("TimescaleDB historian: write blocked by a standing fault; holding the batch for retry (no data dropped): %v", o.redact(err))
+		o.logger.Errorf("TimescaleDB historian: write blocked by a standing fault; this requires operator intervention in the database and will NOT clear on its own. Holding the batch for retry (no data dropped); it resumes automatically once the cause is fixed in the database (e.g. grant the missing table privilege, free disk space): %v", o.redact(err))
 		return err
 	default: // dispRetryTransient: connection blip etc. -- benthos retries; stay quiet to avoid log spam
 		return err
