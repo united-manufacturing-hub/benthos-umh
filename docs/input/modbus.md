@@ -256,14 +256,17 @@ input:
 The preferred way to configure Modbus addresses is using the unified `unifiedAddresses` string list. Each address is a single string with the format:
 
 ```
-name.register.address.type[:key=value]*
+register.address.type[:key=value]*
 ```
 
+The tag name is **not** part of the address — it comes from the Management Console's Tag Name column (or the tag processor downstream). The legacy `name.register.address.type` form is still accepted; the leading name segment is optional.
+
 **Required positional segments** (dot-separated):
-1. `name` — tag name (no dots allowed)
-2. `register` — one of: `coil`, `discrete`, `holding`, `input`
-3. `address` — numeric 0–65535
-4. `type` — one of: `BIT`, `INT8L`, `INT8H`, `UINT8L`, `UINT8H`, `INT16`, `UINT16`, `INT32`, `UINT32`, `INT64`, `UINT64`, `FLOAT16`, `FLOAT32`, `FLOAT64`, `STRING`
+1. `register` — one of: `coil`, `discrete`, `holding`, `input`
+2. `address` — numeric 0–65535
+3. `type` — one of: `BIT`, `INT8L`, `INT8H`, `UINT8L`, `UINT8H`, `INT16`, `UINT16`, `INT32`, `UINT32`, `INT64`, `UINT64`, `FLOAT16`, `FLOAT32`, `FLOAT64`, `STRING`
+
+A `name` segment may optionally be prepended (`name.register.address.type`, no dots in the name) for backward compatibility. When present it sets `modbus_tag_name`; when absent, `modbus_tag_name` falls back to the address locator.
 
 **Optional key-value pairs** (colon-separated):
 - `slaveID=<0-255>` — restrict to specific slave ID (default: 0 = all)
@@ -278,10 +281,10 @@ input:
     controller: 'tcp://localhost:502'
     slaveIDs: [1]
     unifiedAddresses:
-      - "temperature.holding.100.INT16"
-      - "motor_status.discrete.1.BIT:bit=3"
-      - "serial_number.holding.200.STRING:length=10"
-      - "pressure.holding.300.FLOAT32:scale=0.1:output=FLOAT64:slaveID=2"
+      - "holding.100.INT16"
+      - "discrete.1.BIT:bit=3"
+      - "holding.200.STRING:length=10"
+      - "holding.300.FLOAT32:scale=0.1:output=FLOAT64:slaveID=2"
 ```
 
 **Migration from `addresses` to `unifiedAddresses`**
