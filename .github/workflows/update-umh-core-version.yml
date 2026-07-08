@@ -39,6 +39,7 @@ jobs:
       - name: Checkout united-manufacturing-hub Repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          persist-credentials: false
           repository: united-manufacturing-hub/united-manufacturing-hub
           ref: staging
           token: ${{ steps.generate-token.outputs.token }}
@@ -94,6 +95,7 @@ jobs:
       - name: Checkout benthos-umh repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          persist-credentials: false
           ref: ${{ env.VERSION }}
 
       - name: Setup Go
@@ -107,6 +109,7 @@ jobs:
       - name: Checkout ManagementConsole
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          persist-credentials: false
           repository: united-manufacturing-hub/ManagementConsole
           token: ${{ steps.generate-token.outputs.token }}
           path: ManagementConsole
