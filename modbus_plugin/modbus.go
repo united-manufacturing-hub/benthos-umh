@@ -187,12 +187,14 @@ var ModbusConfigSpec = service.NewConfigSpec().
 		service.NewDurationField("timeBetweenRequests").Description("TimeBetweenRequests is the time between two requests to the same device. Useful to avoid flooding the device. Not to be confused with TimeBetweenReads.").Default("0s")).
 		Description("Modbus workarounds. Required by some devices to work correctly. Should be left alone by default and must not be changed unless necessary.").Advanced()).
 	Field(service.NewStringListField("unifiedAddresses").
-		Description("Unified address strings. Format: 'name.register.address.type[:key=value]*'. "+
+		Description("Unified address strings. Format: 'register.address.type[:key=value]*' — the tag "+
+			"name comes from the Tag Name column / tag processor. The legacy "+
+			"'name.register.address.type' form is still accepted. "+
 			"Mutually exclusive with 'addresses'; providing both will result in an error.").
 		Examples(
-			[]string{"temperature.holding.100.INT16"},
-			[]string{"motor_status.discrete.1.BIT:bit=3"},
-			[]string{"pressure.holding.300.FLOAT32:scale=0.1:output=FLOAT64:slaveID=2"},
+			[]string{"holding.100.INT16"},
+			[]string{"discrete.1.BIT:bit=3"},
+			[]string{"holding.300.FLOAT32:scale=0.1:output=FLOAT64:slaveID=2"},
 		).
 		Default([]string{}).
 		Optional()).
@@ -874,11 +876,11 @@ func (m *ModbusInput) readSlaveData(ctx context.Context, slaveID byte, requests 
 	return m.gatherTags(ctx, requests)
 }
 
-// modbusTagName returns the tag label for a message: the authored name, or the
+// getModbusTagName returns the tag label for a message: the authored name, or the
 // unified address locator when the address carries no name. The nameless case
 // mirrors s7comm using s7_address as its fallback tag name — the real name is
 // supplied downstream from the Tag Name column.
-func modbusTagName(tag modbusTag) string {
+func getModbusTagName(tag modbusTag) string {
 	if tag.name != "" {
 		return tag.name
 	}
@@ -946,11 +948,11 @@ func (m *ModbusInput) createMessageFromValue(item modbusTag, rawValue []byte, re
 	// Store the original datatype as metadata
 	originalDataType := reflect.TypeOf(value).String()
 
-	tagName := modbusTagName(item)
+	tagName := getModbusTagName(item)
 
 	message := service.NewMessage(b)
-	message.MetaSet("modbus_tag_name", sanitize(tagName))                       // This is the tag name without special characters
-	message.MetaSet("modbus_tag_name_original", tagName)                        // This is the tag name without any changes
+	message.MetaSet("modbus_tag_name", sanitize(tagName))                      // This is the tag name without special characters
+	message.MetaSet("modbus_tag_name_original", tagName)                       // This is the tag name without any changes
 	message.MetaSet("modbus_tag_datatype", originalDataType)                   // This is the original data type in Modbus
 	message.MetaSet("modbus_tag_datatype_json", tagType)                       // This is the data type for JSONs. Either number, bool or string
 	message.MetaSet("modbus_tag_address", strconv.Itoa(int(item.address)))     // This is the address of the tag

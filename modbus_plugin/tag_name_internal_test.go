@@ -12,16 +12,57 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Internal (white-box) tests for the tag-name fallback. Placed in package
+// modbus_plugin so they can reach the unexported modbusTagName helper and
+// createMessageFromValue; the suite's single RunSpecs picks these specs up.
 package modbus_plugin
 
-import "testing"
+import (
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+)
 
-func TestModbusTagNameFallsBackToLocator(t *testing.T) {
-	if got := modbusTagName(modbusTag{name: "", unifiedAddress: "holding.100.INT16"}); got != "holding.100.INT16" {
-		t.Fatalf("nameless: got %q, want %q", got, "holding.100.INT16")
+var _ = Describe("modbusTagName", func() {
+	It("falls back to the locator when the address is nameless", func() {
+		Expect(getModbusTagName(modbusTag{name: "", unifiedAddress: "holding.100.INT16"})).To(Equal("holding.100.INT16"))
+	})
+
+	It("prefers the authored name when present", func() {
+		Expect(getModbusTagName(modbusTag{name: "temperature", unifiedAddress: "temperature.holding.100.INT16"})).To(Equal("temperature"))
+	})
+})
+
+var _ = Describe("createMessageFromValue tag-name metadata", func() {
+	makeItem := func(name, unified string) modbusTag {
+		return modbusTag{
+			name:           name,
+			unifiedAddress: unified,
+			length:         1,
+			converter:      func([]byte) interface{} { return uint16(42) },
+		}
 	}
 
-	if got := modbusTagName(modbusTag{name: "temperature", unifiedAddress: "temperature.holding.100.INT16"}); got != "temperature" {
-		t.Fatalf("named: got %q, want %q", got, "temperature")
-	}
-}
+	It("sets modbus_tag_name to the locator for a nameless item", func() {
+		m := &ModbusInput{}
+		msg := m.createMessageFromValue(makeItem("", "holding.100.INT16"), []byte{0x00, 0x2a}, "holding")
+		Expect(msg).NotTo(BeNil())
+
+		// modbus_tag_name is sanitized (dots -> underscores); the raw locator is
+		// preserved in modbus_tag_name_original.
+		name, ok := msg.MetaGet("modbus_tag_name")
+		Expect(ok).To(BeTrue())
+		Expect(name).To(Equal("holding_100_INT16"))
+
+		orig, _ := msg.MetaGet("modbus_tag_name_original")
+		Expect(orig).To(Equal("holding.100.INT16"))
+	})
+
+	It("sets modbus_tag_name to the sanitized name for a named item", func() {
+		m := &ModbusInput{}
+		msg := m.createMessageFromValue(makeItem("temperature", "temperature.holding.100.INT16"), []byte{0x00, 0x2a}, "holding")
+		Expect(msg).NotTo(BeNil())
+
+		name, _ := msg.MetaGet("modbus_tag_name")
+		Expect(name).To(Equal("temperature"))
+	})
+})
