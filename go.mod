@@ -22,7 +22,7 @@ godebug x509negativeserial=1
 require (
 	github.com/goccy/go-json v0.10.6
 	github.com/onsi/ginkgo/v2 v2.32.0
-	github.com/onsi/gomega v1.42.0
+	github.com/onsi/gomega v1.42.1
 	github.com/x448/float16 v0.8.4
 )
 
@@ -43,14 +43,14 @@ require (
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/kaptinlin/jsonschema v0.9.2
 	github.com/prometheus/client_golang v1.23.2
-	github.com/redpanda-data/benthos/v4 v4.75.0
-	github.com/redpanda-data/connect/public/bundle/free/v4 v4.96.3
+	github.com/redpanda-data/benthos/v4 v4.76.0
+	github.com/redpanda-data/connect/public/bundle/free/v4 v4.98.0
 	github.com/robinson/gos7 v0.0.0-20260622162611-2d6806f80c8b
 	github.com/snowflakedb/gosnowflake v1.19.1
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.43.0
 	github.com/testcontainers/testcontainers-go/modules/redpanda v0.43.0
-	github.com/twmb/franz-go v1.21.3
+	github.com/twmb/franz-go v1.21.5
 	github.com/twmb/franz-go/pkg/kadm v1.18.0
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78
 	golang.org/x/crypto v0.53.0
@@ -240,7 +240,7 @@ require (
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
 	github.com/generikvault/gvalstrings v0.0.0-20180926130504-471f38f0112a // indirect
-	github.com/getsentry/sentry-go v0.44.1 // indirect
+	github.com/getsentry/sentry-go v0.47.0 // indirect
 	github.com/go-faker/faker/v4 v4.7.0 // indirect
 	github.com/go-faster/city v1.0.1 // indirect
 	github.com/go-faster/errors v0.7.1 // indirect
@@ -381,7 +381,7 @@ require (
 	github.com/petermattis/goid v0.0.0-20260226131333-17d1149c6ac6 // indirect
 	github.com/pgvector/pgvector-go v0.3.0 // indirect
 	github.com/pierrec/lz4 v2.6.1+incompatible // indirect
-	github.com/pierrec/lz4/v4 v4.1.26 // indirect
+	github.com/pierrec/lz4/v4 v4.1.27 // indirect
 	github.com/pinecone-io/go-pinecone v1.1.1 // indirect
 	github.com/pingcap/errors v0.11.5-0.20250523034308-74f78ae071ee // indirect
 	github.com/pingcap/failpoint v0.0.0-20251231045439-91d91e123837 // indirect
@@ -409,7 +409,7 @@ require (
 	github.com/redpanda-data/common-go/authz v0.2.1-0.20260319205134-242ab3c168b8 // indirect
 	github.com/redpanda-data/common-go/license v0.0.0-20260318014216-2bbd72bde0a0 // indirect
 	github.com/redpanda-data/common-go/redpanda-otel-exporter v0.4.0 // indirect
-	github.com/redpanda-data/connect/v4 v4.96.3 // indirect
+	github.com/redpanda-data/connect/v4 v4.98.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rickb777/period v1.0.27 // indirect
 	github.com/rickb777/plural v1.4.10 // indirect
@@ -495,7 +495,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
 	golang.org/x/mod v0.36.0 // indirect
-	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260508192327-42602be52be6 // indirect
