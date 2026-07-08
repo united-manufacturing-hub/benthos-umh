@@ -100,7 +100,7 @@ func benchPool(tb testing.TB, dsn string) *pgxpool.Pool {
 }
 
 // benchSetup bootstraps a contract's tables and resolves `topics` topic_ids to write against.
-func benchSetup(tb testing.TB, ctx context.Context, pool *pgxpool.Pool, contract string, topics int) []int64 {
+func benchSetup(ctx context.Context, tb testing.TB, pool *pgxpool.Pool, contract string, topics int) []int64 {
 	tb.Helper()
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
@@ -120,13 +120,13 @@ func benchSetup(tb testing.TB, ctx context.Context, pool *pgxpool.Pool, contract
 	return ids
 }
 
-func benchWrite(ctx context.Context, pool *pgxpool.Pool, strat, vq, vbq string, ids []int64, tss []string, nums []*float64, texts []*string) error {
+func benchWrite(ctx context.Context, pool *pgxpool.Pool, strategy string, vq string, vbq string, ids []int64, tss []string, nums []*float64, texts []*string) error {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	switch strat {
+	switch strategy {
 	case "perrow":
 		for j := range ids {
 			if _, err := tx.Exec(ctx, vq, ids[j], tss[j], nums[j], texts[j]); err != nil {
@@ -166,12 +166,12 @@ func BenchmarkValueInserts(b *testing.B) {
 
 	const topics = 50
 	for _, n := range []int{100, 1000, 5000} {
-		for _, strat := range []string{"perrow", "pgxbatch", "unnest"} {
-			contract := fmt.Sprintf("bench%s%d", strat, n)
-			ids := benchSetup(b, ctx, pool, contract, topics)
+		for _, strategy := range []string{"perrow", "pgxbatch", "unnest"} {
+			contract := fmt.Sprintf("bench%s%d", strategy, n)
+			ids := benchSetup(ctx, b, pool, contract, topics)
 			vq := valueQueryFor(contract)
 			vbq := valueBatchQueryFor(contract)
-			b.Run(fmt.Sprintf("%s/n=%d", strat, n), func(b *testing.B) {
+			b.Run(fmt.Sprintf("%s/n=%d", strategy, n), func(b *testing.B) {
 				var counter int64
 				for i := 0; i < b.N; i++ {
 					b.StopTimer()
@@ -188,7 +188,7 @@ func BenchmarkValueInserts(b *testing.B) {
 						vText[j] = nil
 					}
 					b.StartTimer()
-					if err := benchWrite(ctx, pool, strat, vq, vbq, vIDs, vTS, vNum, vText); err != nil {
+					if err := benchWrite(ctx, pool, strategy, vq, vbq, vIDs, vTS, vNum, vText); err != nil {
 						b.Fatal(err)
 					}
 				}
