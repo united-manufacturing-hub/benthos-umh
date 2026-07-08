@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Internal (white-box) tests for the tag-name fallback. Placed in package
-// modbus_plugin so they can reach the unexported modbusTagName helper and
+// modbus_plugin so they can reach the unexported getModbusTagName helper and
 // createMessageFromValue; the suite's single RunSpecs picks these specs up.
 package modbus_plugin
 
@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = Describe("modbusTagName", func() {
+var _ = Describe("getModbusTagName", func() {
 	It("falls back to the locator when the address is nameless", func() {
 		Expect(getModbusTagName(modbusTag{name: "", unifiedAddress: "holding.100.INT16"})).To(Equal("holding.100.INT16"))
 	})
