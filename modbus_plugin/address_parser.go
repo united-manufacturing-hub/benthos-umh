@@ -109,7 +109,11 @@ func ParseModbusAddress(addr string) (ModbusDataItemWithAddress, error) {
 	// Register
 	register := segments[regIdx]
 	if !validRegisters[register] {
-		return ModbusDataItemWithAddress{}, fmt.Errorf("invalid register %q, must be one of: coil, discrete, holding, input", register)
+		hint := ""
+		if len(segments) == 3 {
+			hint = " (note: the tag name is no longer part of the address — set it in the Tag Name column)"
+		}
+		return ModbusDataItemWithAddress{}, fmt.Errorf("invalid register %q, must be one of: coil, discrete, holding, input%s", register, hint)
 	}
 	item.Register = register
 

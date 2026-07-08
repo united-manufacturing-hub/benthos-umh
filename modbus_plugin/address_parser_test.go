@@ -247,6 +247,22 @@ var _ = Describe("ParseModbusAddress", func() {
 		)
 	})
 
+	Context("migration hint", func() {
+		It("should hint that the name moved to the Tag Name column when a 3-segment address has an invalid register", func() {
+			_, err := ParseModbusAddress("temperature.holding.100")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("invalid register"))
+			Expect(err.Error()).To(ContainSubstring("Tag Name column"))
+		})
+
+		It("should not add the hint for a 4-segment address with an invalid register", func() {
+			_, err := ParseModbusAddress("temperature.badregister.100.INT16")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("invalid register"))
+			Expect(err.Error()).NotTo(ContainSubstring("Tag Name column"))
+		})
+	})
+
 	Context("roundtrip", func() {
 		DescribeTable("FormatModbusAddress(ParseModbusAddress(s)) == s",
 			func(addr string) {
