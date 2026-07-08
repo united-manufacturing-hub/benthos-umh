@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -51,7 +52,8 @@ func historianConfig() *service.ConfigSpec {
 		Field(service.NewStringField("compress_after").Description("Compress chunks older than this, as a Go duration; use hours (e.g. \"168h\") -- days are not a valid unit. Applied once at first database bootstrap. Per contract.").Default("168h").Advanced()).
 		Field(service.NewStringField("retention").Description("Drop chunks older than this, as a Go duration; use hours (e.g. \"720h\") -- days are not a valid unit. Empty = keep forever. Applied once at first database bootstrap.").Default("").Advanced()).
 		Field(service.NewBatchPolicyField("batching").Advanced()).
-		Field(service.NewIntField("max_in_flight").Description("Max parallel batches in flight.").Default(8).Advanced())
+		Field(service.NewIntField("max_in_flight").Description("Max parallel batches in flight.").Default(8).Advanced()).
+		Field(service.NewStringField("write_timeout").Description("Per-batch write timeout as a Go duration (e.g. \"30s\"). Empty or \"0s\" = no timeout (a write that hangs on a lock or half-open connection blocks until the context is cancelled). When set, a timed-out batch is held for retry (NACK), never dropped. Set it above the largest expected batch commit time.").Default("").Advanced())
 }
 
 type historianOutput struct {
@@ -65,7 +67,8 @@ type historianOutput struct {
 	compressAfter, retention              time.Duration
 	retentionSet                          bool
 	maxInFlight                           int
-	dsnOverride                           string // set by tests; empty => build from fields
+	writeTimeout                          time.Duration // 0 => unbounded (per-batch write deadline)
+	dsnOverride                           string        // set by tests; empty => build from fields
 
 	logger    *service.Logger
 	dropped   *service.MetricCounter // labeled by drop reason
@@ -75,6 +78,9 @@ type historianOutput struct {
 	poisoned  *service.MetricCounter // rows dropped as poison (labels: sqlstate, phase)
 	truncated *service.MetricCounter // value_text values clipped to maxTextRunes
 	dedup     *DedupCache
+
+	topicCache     *lru.Cache[topicKey, int64] // process-wide topic_id memo (topic_id is immutable per key)
+	topicCacheSize *service.MetricGauge        // current topic-id cache entry count
 
 	lookupHits   atomic.Int64 // topic resolves served by the read-first lookup (no sequence burn)
 	lookupMisses atomic.Int64 // topic resolves that fell through to the guarded upsert (new topic or datatype flip)
@@ -91,15 +97,17 @@ type historianOutput struct {
 
 func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*historianOutput, error) {
 	o := &historianOutput{
-		logger:      mgr.Logger(),
-		dropped:     mgr.Metrics().NewCounter("historian_messages_dropped", "reason"),
-		valueRows:   mgr.Metrics().NewCounter("historian_value_rows_written"),
-		attrRows:    mgr.Metrics().NewCounter("historian_attribute_rows_written"),
-		dedupSize:   mgr.Metrics().NewGauge("historian_dedup_cache_size"),
-		poisoned:    mgr.Metrics().NewCounter("historian_rows_poisoned", "sqlstate", "phase"),
-		truncated:   mgr.Metrics().NewCounter("historian_values_truncated"),
-		dedup:       NewDedupCache(),
-		warnedChurn: map[string]struct{}{},
+		logger:         mgr.Logger(),
+		dropped:        mgr.Metrics().NewCounter("historian_messages_dropped", "reason"),
+		valueRows:      mgr.Metrics().NewCounter("historian_value_rows_written"),
+		attrRows:       mgr.Metrics().NewCounter("historian_attribute_rows_written"),
+		dedupSize:      mgr.Metrics().NewGauge("historian_dedup_cache_size"),
+		poisoned:       mgr.Metrics().NewCounter("historian_rows_poisoned", "sqlstate", "phase"),
+		truncated:      mgr.Metrics().NewCounter("historian_values_truncated"),
+		dedup:          NewDedupCache(),
+		topicCache:     newTopicCache(),
+		topicCacheSize: mgr.Metrics().NewGauge("historian_topic_cache_size"),
+		warnedChurn:    map[string]struct{}{},
 	}
 	var err error
 	str := func(field string, dst *string) bool {
@@ -169,6 +177,18 @@ func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*hi
 	if o.maxInFlight, err = conf.FieldInt("max_in_flight"); err != nil {
 		return nil, err
 	}
+	wtStr, err := conf.FieldString("write_timeout")
+	if err != nil {
+		return nil, err
+	}
+	if wtStr != "" {
+		if o.writeTimeout, err = time.ParseDuration(wtStr); err != nil {
+			return nil, fmt.Errorf("write_timeout: %w", err)
+		}
+		if o.writeTimeout < 0 {
+			return nil, fmt.Errorf("write_timeout must not be negative, got %q", wtStr)
+		}
+	}
 	return o, nil
 }
 
@@ -223,6 +243,12 @@ func (o *historianOutput) bootstrapStmt() string {
 // Connect opens the pool (once), verifies the server version, bootstraps the schema idempotently on
 // first call, and checks the login role can INSERT. It is the benthos output Connect hook; a
 // returned error keeps the bridge from registering as up.
+//
+// The login role is assumed to be able to run the (idempotent) bootstrap DDL -- the owner
+// (umh_owner) or an equivalent. Either way a role that cannot write fails Connect visibly, just at
+// different steps: on a first connect a role lacking the DDL rights fails at the bootstrap; on a
+// reconnect (bootstrapped already true in this process) the DDL is skipped and probeWritable is the
+// front-line check -- which is also where a grant revoked between reconnects is caught.
 func (o *historianOutput) Connect(ctx context.Context) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -352,6 +378,15 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 		return service.ErrNotConnected
 	}
 
+	// Bound the write when configured, so a batch that hangs (lock wait, half-open connection)
+	// eventually frees its in-flight slot. A deadline surfaces as a no-SQLSTATE error ->
+	// dispRetryTransient -> NACK, so the batch is held for retry, never dropped.
+	if o.writeTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, o.writeTimeout)
+		defer cancel()
+	}
+
 	// Step 1: transform every message into a Row. Malformed messages are counted (by reason) and
 	// skipped -- never nacked -- so one bad message can't stall the stream.
 	view := o.dedup.NewBatch()
@@ -456,6 +491,33 @@ func (o *historianOutput) resolveTopic(ctx context.Context, pool *pgxpool.Pool, 
 	}
 }
 
+// topicCacheCap bounds the process-wide topic_id cache. Eviction is safe: a missed entry costs one
+// read-first DB lookup (no sequence burn), exactly like a cold start.
+const topicCacheCap = 100_000
+
+func newTopicCache() *lru.Cache[topicKey, int64] {
+	c, _ := lru.New[topicKey, int64](topicCacheCap) // err only on cap <= 0
+	return c
+}
+
+// resolveTopicCached returns the topic_id for a row, consulting the process-wide cache before the
+// DB. topic_id is immutable for a given topicKey (value_type included), so a cached id is always
+// valid; a datatype flip is a different key, misses the cache, and still reaches the guarded upsert
+// that rejects it. Failed resolves are never cached. Out-of-band deletion of a topic row is
+// unsupported (the schema is append-only), so a stale entry cannot arise in normal operation.
+func (o *historianOutput) resolveTopicCached(ctx context.Context, pool *pgxpool.Pool, r *Row) (int64, error) {
+	k := topicKeyOf(r)
+	if id, ok := o.topicCache.Get(k); ok {
+		return id, nil
+	}
+	id, err := o.resolveTopic(ctx, pool, r)
+	if err != nil {
+		return 0, err
+	}
+	o.topicCache.Add(k, id)
+	return id, nil
+}
+
 // topicKey identifies a distinct topic within a batch. value_type is part of the key because
 // resolution is value_type-qualified: a datatype flip is a different key, so it misses any cached
 // entry and falls through to the guarded upsert that rejects it as poison.
@@ -510,13 +572,14 @@ var errIntraBatchConflict = errors.New("intra-batch (topic_id, ts) conflict")
 // resolved is caller-owned so the isolated fallback can reuse the ids resolved here instead of
 // re-resolving them.
 func (o *historianOutput) writeBatchFast(ctx context.Context, pool *pgxpool.Pool, rows []*Row, view *BatchView, resolved map[topicKey]int64) error {
-	// Phase 1: resolve each distinct topic to its topic_id (autocommit, one statement each).
+	// Phase 1: resolve each distinct topic to its topic_id. A process-wide cache serves repeat
+	// topics with no DB round-trip; only a cache miss issues an autocommit lookup/upsert.
 	for _, r := range rows {
 		k := topicKeyOf(r)
 		if _, ok := resolved[k]; ok {
 			continue
 		}
-		id, err := o.resolveTopic(ctx, pool, r)
+		id, err := o.resolveTopicCached(ctx, pool, r)
 		if err != nil {
 			return err // a partial map is fine: the ids already in it are committed and reusable
 		}
@@ -584,6 +647,7 @@ func (o *historianOutput) writeBatchFast(ctx context.Context, pool *pgxpool.Pool
 	}
 	view.Commit() // promote dedup entries only after a successful commit
 	o.dedupSize.Set(int64(o.dedup.Len()))
+	o.topicCacheSize.Set(int64(o.topicCache.Len()))
 	o.valueRows.Incr(int64(len(vIDs)))
 	o.attrRows.Incr(int64(len(aIDs)))
 	return nil
@@ -593,7 +657,9 @@ func (o *historianOutput) writeBatchFast(ctx context.Context, pool *pgxpool.Pool
 // It writes each row independently (autocommit) so good rows land and poison rows are dropped
 // with a loud, attributable signal instead of head-of-line-blocking the batch. A transient or
 // standing error returns immediately (NACK the whole batch); rows already written this pass are
-// absorbed idempotently on retry. It deliberately does NOT promote the dedup view: after a
+// absorbed idempotently on retry. Value/attribute row-count metrics are incremented only on the
+// ACK path: a NACK'd batch re-runs and is counted by the fast path on the successful retry, so
+// counting partial progress here would double-count. It deliberately does NOT promote the dedup view: after a
 // poison batch each surviving tag re-emits its metadata once (a new attribute row at the next
 // ts), which is cheap and correct, and avoids marking a row emitted when its value was dropped.
 func (o *historianOutput) writeRowsIsolated(ctx context.Context, pool *pgxpool.Pool, rows []*Row, resolved map[topicKey]int64) error {
@@ -612,15 +678,13 @@ func (o *historianOutput) writeRowsIsolated(ctx context.Context, pool *pgxpool.P
 		id, ok := resolved[k]
 		if !ok {
 			var err error
-			id, err = o.resolveTopic(ctx, pool, r)
+			id, err = o.resolveTopicCached(ctx, pool, r)
 			if err != nil {
 				if classify(err) == dispDropPoison {
 					drop(err, "resolve", r)
 					continue
 				}
-				o.valueRows.Incr(int64(written))
-				o.attrRows.Incr(int64(attrs))
-				return err
+				return err // NACK: don't count; the successful retry re-counts via the fast path
 			}
 			resolved[k] = id
 		}
@@ -629,8 +693,6 @@ func (o *historianOutput) writeRowsIsolated(ctx context.Context, pool *pgxpool.P
 				drop(err, "value", r)
 				continue
 			}
-			o.valueRows.Incr(int64(written))
-			o.attrRows.Incr(int64(attrs))
 			return err
 		}
 		written++
@@ -640,13 +702,12 @@ func (o *historianOutput) writeRowsIsolated(ctx context.Context, pool *pgxpool.P
 					drop(err, "attribute", r)
 					continue
 				}
-				o.valueRows.Incr(int64(written))
-				o.attrRows.Incr(int64(attrs))
 				return err
 			}
 			attrs++
 		}
 	}
+	o.topicCacheSize.Set(int64(o.topicCache.Len()))
 	o.valueRows.Incr(int64(written))
 	o.attrRows.Incr(int64(attrs))
 	return nil // ACK: good rows committed, poison rows dropped-with-signal

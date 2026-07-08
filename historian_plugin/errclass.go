@@ -50,7 +50,13 @@ func classify(err error) disposition {
 	if !errors.As(err, &pg) {
 		return dispRetryTransient // no SQLSTATE: network reset, ctx deadline, pool timeout, ErrNotConnected
 	}
-	if pg.Code == "P0001" { // plpgsql RAISE: the plugin's own append-conflict and datatype-flip guards
+	// P0001 (plpgsql RAISE) is treated as poison because the ONLY sanctioned sources are the
+	// plugin's own deterministic guards -- raise_pk_conflict (append-only value/attribute conflict)
+	// and tag_value_type_guard (datatype flip), both defined in sql.go. INVARIANT: no schema object
+	// this plugin installs may RAISE P0001 for a retryable/operational reason (a new trigger,
+	// migration, or function must signal those via a proper SQLSTATE), or that data would be
+	// silently dropped here instead of held for retry.
+	if pg.Code == "P0001" {
 		return dispDropPoison
 	}
 	// Note: 21000 (cardinality_violation) is NOT mapped here. Its only expected source is the batched

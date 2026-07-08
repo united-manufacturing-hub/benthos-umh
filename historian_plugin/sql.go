@@ -69,6 +69,10 @@ DROP TRIGGER IF EXISTS trg_tag_value_type_guard ON umh.tag;
 CREATE TRIGGER trg_tag_value_type_guard
   BEFORE UPDATE ON umh.tag
   FOR EACH ROW EXECUTE FUNCTION umh.tag_value_type_guard();
+-- raise_pk_conflict and tag_value_type_guard (above) are the ONLY objects here permitted to RAISE
+-- (SQLSTATE P0001). The plugin classifies P0001 as poison and drops the offending row, so any new
+-- trigger/function/migration that needs to signal a *retryable* fault must use a proper SQLSTATE,
+-- never a bare RAISE -- see the P0001 invariant in errclass.go.
 CREATE OR REPLACE FUNCTION umh.raise_pk_conflict(p_msg text, p_ret anyelement)
 RETURNS anyelement LANGUAGE plpgsql AS $rpc$
 BEGIN

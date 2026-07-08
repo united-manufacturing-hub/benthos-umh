@@ -155,12 +155,22 @@ func NewHistorianTestHandle(dsn string, contract string) *HistorianTestHandle {
 		poisoned:        mgr.Metrics().NewCounter("historian_rows_poisoned", "sqlstate", "phase"),
 		truncated:       mgr.Metrics().NewCounter("historian_values_truncated"),
 		dedup:           NewDedupCache(),
+		topicCache:      newTopicCache(),
+		topicCacheSize:  mgr.Metrics().NewGauge("historian_topic_cache_size"),
+		warnedChurn:     map[string]struct{}{},
 	}}
 }
 
 // SetMetaExclude configures the metadata blacklist (all-keys mode) for integration tests.
 func (h *HistorianTestHandle) SetMetaExclude(patterns []string) {
 	h.o.metadataExclude = NewMetaExcluder(patterns)
+}
+
+// SetMetadataAllowlist switches the handle to allowlist mode with the given keys (integration
+// tests); allowlist mode is the only path that stores a known high-churn key.
+func (h *HistorianTestHandle) SetMetadataAllowlist(keys []string) {
+	h.o.metadataKeysAll = false
+	h.o.metadataKeys = keys
 }
 
 func (h *HistorianTestHandle) BuildDSN() string                  { return h.o.buildDSN() }

@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -149,6 +150,26 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		}
 		Expect(h.TopicSeqValue(ctx)).To(Equal(seq), "re-resolving an existing topic must not burn the sequence")
 		Expect(h.CountValueRows(ctx, "noburn")).To(Equal(6))
+	})
+
+	It("serves a repeat topic from the process cache with no further DB resolve", func() {
+		h := connected("tcache")
+		defer h.Close(ctx)
+		// First write resolves the new topic and caches its id.
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(1.0, 1000, "_tcache_v1", "acme.line1", "x", nil),
+		})).To(Succeed())
+		hits, misses := h.LookupHits(), h.LookupMisses()
+		// Subsequent batches for the SAME topic are served from the process cache: no read-first
+		// lookup and no fall-through to the upsert, so neither DB-resolve counter advances.
+		for i := 2; i <= 5; i++ {
+			Expect(h.WriteBatch(ctx, service.MessageBatch{
+				mkMsg(float64(i), float64(i*1000), "_tcache_v1", "acme.line1", "x", nil),
+			})).To(Succeed())
+		}
+		Expect(h.LookupHits()).To(Equal(hits), "a cached topic must not issue a read-first DB lookup")
+		Expect(h.LookupMisses()).To(Equal(misses), "a cached topic must not fall through to the upsert")
+		Expect(h.CountValueRows(ctx, "tcache")).To(Equal(5))
 	})
 
 	It("re-warms after restart (fresh handle) without bumping the sequence", func() {
@@ -337,6 +358,36 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 			"batched throughput must scale with worker count (regression: it was flat before the two-phase write)")
 	})
 
+	It("resolves a high-cardinality batch, then serves the warm batch entirely from the topic cache", Label("load"), func() {
+		h := connected("hicard")
+		defer h.Close(ctx)
+		const topics = 1000
+		mkBatch := func(baseTS int) service.MessageBatch {
+			b := make(service.MessageBatch, topics)
+			for i := 0; i < topics; i++ {
+				b[i] = mkMsg(float64(i), float64(baseTS+i), "_hicard_v1", "acme.line1", fmt.Sprintf("tag%d", i), nil)
+			}
+			return b
+		}
+		// Cold: every one of the 1000 topics is new -> read-first lookup misses -> guarded upsert.
+		t0 := time.Now()
+		Expect(h.WriteBatch(ctx, mkBatch(1_000_000))).To(Succeed())
+		cold := time.Since(t0)
+		Expect(h.CountValueRows(ctx, "hicard")).To(Equal(topics))
+		misses, hits := h.LookupMisses(), h.LookupHits()
+		Expect(misses).To(Equal(int64(topics)), "cold batch resolves every distinct topic via the DB")
+
+		// Warm: the same 1000 topics at a new ts. Every resolve is served from the process cache, so
+		// Phase 1 issues zero DB round-trips -- neither the miss nor the read-first-hit counter moves.
+		t1 := time.Now()
+		Expect(h.WriteBatch(ctx, mkBatch(2_000_000))).To(Succeed())
+		warm := time.Since(t1)
+		Expect(h.CountValueRows(ctx, "hicard")).To(Equal(2 * topics))
+		Expect(h.LookupMisses()).To(Equal(misses), "warm batch must not fall through to the upsert")
+		Expect(h.LookupHits()).To(Equal(hits), "warm batch must not issue a read-first DB lookup (served from cache)")
+		GinkgoWriter.Printf("\nhigh-cardinality %d topics: cold=%s  warm=%s\n", topics, cold, warm)
+	})
+
 	It("fails Connect on wrong credentials, then retries cleanly", func() {
 		h := tsh.NewHistorianTestHandle("postgres://umh_owner:wrong@"+hostPort()+"/umh?sslmode=disable", "pump")
 		Expect(h.Connect(ctx)).NotTo(Succeed())
@@ -401,6 +452,53 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(textB).To(BeNil(), "a bool must not populate value_text")
 		Expect(numB).NotTo(BeNil())
 		Expect(*numB).To(Equal(1.0))
+	})
+
+	It("writes a mixed numeric+text batch through the unnest fast path (interleaved NULL arrays)", func() {
+		h := connected("mixed")
+		defer h.Close(ctx)
+		f := func(v float64) *float64 { return &v }
+		s := func(v string) *string { return &v }
+		logs := h.CaptureLogs()
+		// One batch, four distinct tags alternating numeric/text, so the unnest value insert gets
+		// value_num = {1.5, NULL, 3.5, NULL} and value_text = {NULL, "a", NULL, "b"} -- NULLs
+		// interleaved at several positions, the pgx array-encoding case a single-type batch (all
+		// numeric or all text) never reaches under the simple protocol.
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(1.5, 1000, "_mixed_v1", "acme.line1", "n1", nil),
+			mkMsg("a", 1000, "_mixed_v1", "acme.line1", "s1", nil),
+			mkMsg(3.5, 1000, "_mixed_v1", "acme.line1", "n2", nil),
+			mkMsg("b", 1000, "_mixed_v1", "acme.line1", "s2", nil),
+		})).To(Succeed())
+		Expect(h.CountValueRows(ctx, "mixed")).To(Equal(4))
+		Expect(logs()).NotTo(ContainSubstring("isolating good rows"), "a mixed-type batch must stay on the fast path")
+
+		for _, tc := range []struct {
+			tag  string
+			num  *float64
+			text *string
+		}{
+			{"n1", f(1.5), nil},
+			{"s1", nil, s("a")},
+			{"n2", f(3.5), nil},
+			{"s2", nil, s("b")},
+		} {
+			id, ok := h.GetTopicID(ctx, "acme.line1", "vibration", "mixed", tc.tag)
+			Expect(ok).To(BeTrue(), "topic %s", tc.tag)
+			num, text := h.ValueRow(ctx, "mixed", id)
+			if tc.num == nil {
+				Expect(num).To(BeNil(), "%s value_num", tc.tag)
+			} else {
+				Expect(num).NotTo(BeNil(), "%s value_num", tc.tag)
+				Expect(*num).To(Equal(*tc.num))
+			}
+			if tc.text == nil {
+				Expect(text).To(BeNil(), "%s value_text", tc.tag)
+			} else {
+				Expect(text).NotTo(BeNil(), "%s value_text", tc.tag)
+				Expect(*text).To(Equal(*tc.text))
+			}
+		}
 	})
 
 	It("keeps hyphen and underscore location variants as distinct topics", func() {
@@ -563,13 +661,68 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 			Expect(execErr).NotTo(HaveOccurred())
 		}
 
+		// MarkBootstrapped models the reconnect / already-provisioned path (bootstrapped already true
+		// in-process), where the DDL is skipped and probeWritable is the front-line check -- so this
+		// pins the exact "lacks INSERT" diagnostic. On a cold first connect a no-INSERT role that also
+		// lacks DDL rights instead fails at the bootstrap step; either way Connect fails visibly.
 		lim := tsh.NewHistorianTestHandle("postgres://probe_norights:norights@"+hostPort()+"/umh?sslmode=disable", "probe")
-		lim.MarkBootstrapped() // this role has no CREATE; skip bootstrap and go straight to the probe
+		lim.MarkBootstrapped()
 		defer lim.Close(ctx)
 		err = lim.Connect(ctx)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("INSERT"))
 		Expect(err.Error()).To(ContainSubstring("umh.value_probe"))
+	})
+
+	It("NACKs and drops zero rows on a standing write fault (never a silent drop)", func() {
+		// The core safety property: an error that is NOT poison (here a permission revoke, a class-42
+		// standing fault) must hold the batch for retry -- return an error so benthos NACKs -- and
+		// drop no good rows, unlike the poison path which drops the offending row and ACKs.
+		owner := connected("standing")
+		defer owner.Close(ctx)
+		Expect(owner.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(1.0, 1000, "_standing_v1", "l.a", "t", nil),
+		})).To(Succeed())
+		Expect(owner.CountValueRows(ctx, "standing")).To(Equal(1))
+
+		admin, err := pgx.Connect(ctx, sharedDSN)
+		Expect(err).NotTo(HaveOccurred())
+		defer admin.Close(ctx)
+		for _, stmt := range []string{
+			"DROP ROLE IF EXISTS standing_rw",
+			"CREATE ROLE standing_rw LOGIN PASSWORD 'rw'",
+			"GRANT CONNECT ON DATABASE umh TO standing_rw",
+			"GRANT USAGE ON SCHEMA umh TO standing_rw",
+			"GRANT SELECT ON ALL TABLES IN SCHEMA umh TO standing_rw", // resolve the topic via lookup
+			"GRANT INSERT, UPDATE ON umh.value_standing, umh.attribute_standing TO standing_rw",
+		} {
+			_, execErr := admin.Exec(ctx, stmt)
+			Expect(execErr).NotTo(HaveOccurred())
+		}
+
+		rw := tsh.NewHistorianTestHandle("postgres://standing_rw:rw@"+hostPort()+"/umh?sslmode=disable", "standing")
+		rw.MarkBootstrapped() // no CREATE; skip DDL, it can still resolve + INSERT
+		Expect(rw.Connect(ctx)).To(Succeed())
+		defer rw.Close(ctx)
+		// Warm the process topic cache with a successful write, so the failing write below fails on
+		// the value INSERT (the standing fault) rather than on an earlier resolve.
+		Expect(rw.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(2.0, 2000, "_standing_v1", "l.a", "t", nil),
+		})).To(Succeed())
+		Expect(owner.CountValueRows(ctx, "standing")).To(Equal(2))
+
+		// Standing fault: the role can no longer INSERT. The next (good) row cannot land.
+		_, err = admin.Exec(ctx, "REVOKE INSERT ON umh.value_standing FROM standing_rw")
+		Expect(err).NotTo(HaveOccurred())
+
+		logs := rw.CaptureLogs()
+		err = rw.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(3.0, 3000, "_standing_v1", "l.a", "t", nil),
+		})
+		Expect(err).To(HaveOccurred(), "a standing (non-poison) fault must NACK, not ACK")
+		Expect(logs()).To(ContainSubstring("standing fault"), "a permission fault is classified standing (loud), not poison")
+		Expect(logs()).NotTo(ContainSubstring("dropped poison row"), "a standing fault must never drop a row")
+		Expect(owner.CountValueRows(ctx, "standing")).To(Equal(2), "the held row must not be dropped; the table is unchanged")
 	})
 
 	It("dedups unchanged metadata across batches", func() {
@@ -633,6 +786,48 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		//    because the prior view was discarded on rollback (not silently suppressed).
 		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(3.0, 9000, "_reemit_v1", "l.a", "t", map[string]string{"serialNumber": "B"})})).To(Succeed())
 		Expect(h.CountAttributeRows(ctx, "reemit")).To(Equal(2))
+	})
+
+	// The metric counters (historian_messages_dropped, _values_truncated) are not readable through
+	// benthos's mock harness (it backs metrics with a no-op), so these specs pin the co-located
+	// operator-facing log lines instead -- the same signal umh-core's log regex surfaces as degraded,
+	// and the guard against a regression that stops counting/logging a drop or truncation.
+	It("logs a dropped message by reason and warns when a whole batch is dropped", func() {
+		h := connected("drops")
+		defer h.Close(ctx)
+		logs := h.CaptureLogs()
+		bad := mkMsg(1.0, 1000, "_other_v1", "acme.line1", "t", nil) // contract mismatch vs "drops"
+		Expect(h.WriteBatch(ctx, service.MessageBatch{bad})).To(Succeed())
+		Expect(h.CountValueRows(ctx, "drops")).To(Equal(0))
+		Expect(logs()).To(ContainSubstring("reason=contract_mismatch"), "the per-drop log must name the reason")
+		Expect(logs()).To(ContainSubstring("dropped all 1 message(s)"), "a 100%-dropped non-empty batch must warn (degraded, not silent)")
+	})
+
+	It("truncates an over-long value_text and warns exactly once", func() {
+		h := connected("trunc")
+		defer h.Close(ctx)
+		logs := h.CaptureLogs()
+		long := strings.Repeat("x", 9000)
+		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(long, 1000, "_trunc_v1", "acme.line1", "t", nil)})).To(Succeed())
+		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(long, 2000, "_trunc_v1", "acme.line1", "t2", nil)})).To(Succeed())
+		Expect(h.CountValueRows(ctx, "trunc")).To(Equal(2))
+		id, ok := h.GetTopicID(ctx, "acme.line1", "vibration", "trunc", "t")
+		Expect(ok).To(BeTrue())
+		_, text := h.ValueRow(ctx, "trunc", id)
+		Expect(text).NotTo(BeNil())
+		Expect([]rune(*text)).To(HaveLen(8192), "clipped to maxTextRunes")
+		Expect(strings.Count(logs(), "was truncated")).To(Equal(1), "truncation warns once per process, not per message")
+	})
+
+	It("warns about a stored high-churn metadata key (allowlist mode)", func() {
+		h := connected("churn")
+		defer h.Close(ctx)
+		h.SetMetadataAllowlist([]string{"opcua_source_timestamp"}) // known high-churn key, explicitly allowed
+		logs := h.CaptureLogs()
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(1.0, 1000, "_churn_v1", "acme.line1", "t", map[string]string{"opcua_source_timestamp": "123"}),
+		})).To(Succeed())
+		Expect(logs()).To(ContainSubstring("high-churn metadata key"))
 	})
 })
 

@@ -36,6 +36,7 @@ No JavaScript processor or hand-written `sql_raw` is needed.
 | `retention` | no | `""` | Drop chunks older than this; empty keeps data forever. **Applied once at first bootstrap** — changing it in the bridge afterward has no effect (see [Changing compression or retention](#changing-compression-or-retention)). |
 | `batching` | no | — | benthos batch policy (`count` / `period` / `byte_size`). The whole batch is written in one transaction, so larger batches raise throughput; e.g. `count: 1000`, `period: 1s`. |
 | `max_in_flight` | no | `8` | Batches written to the database concurrently. Throughput scales with this and with batch size (see Throughput below). |
+| `write_timeout` | no | `""` | Per-batch write timeout as a Go duration (e.g. `30s`). Empty/`0s` means no timeout (a write hung on a lock or half-open connection blocks until the context is cancelled). When set, a timed-out batch is held for retry (NACK), never dropped; set it above the largest expected batch commit time. |
 
 ## What it writes
 
