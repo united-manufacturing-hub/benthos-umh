@@ -1,0 +1,3 @@
+kind: new
+body: TimescaleDB Historian output that saves a UNS data contract into TimescaleDB under a dedicated umh schema. By default every metadata key is stored; `metadata_keys_exclude` drops selected keys by exact name or `prefix_*` while keeping the rest (ENG-5181)
+time: 2026-06-19T14:56:52.008709+02:00
