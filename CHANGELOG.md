@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.13.2]
+
+### New
+
+- TimescaleDB Historian output that saves a UNS data contract into TimescaleDB under a dedicated umh schema. By default every metadata key is stored; `metadata_keys_exclude` drops selected keys by exact name or `prefix_*` while keeping the rest (ENG-5181)
+
 ## [v0.13.1]
 
 ### New
