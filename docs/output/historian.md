@@ -143,8 +143,10 @@ ORDER  BY v.ts DESC;
   unparseable timestamp drop the message and increment the `historian_messages_dropped` metric
   (labelled by `reason`), so one bad message never stalls the stream.
 - **Metadata de-duplication.** An attribute row is rewritten only when its key set changes,
-  via an in-process, LRU-bounded fingerprint cache. The cache is cleared on restart, so
-  each tag re-emits its metadata once after a restart (absorbed idempotently).
+  via an in-process, LRU-bounded fingerprint cache. The cache is process-local and cleared on
+  restart, so the plugin re-emits at most one attribute row per topic per restart: the first
+  post-restart message lands at a new timestamp, so its identical-metadata row is written as a
+  new `(topic_id, ts)` row rather than being absorbed by the conflict guard.
 
 ## Error handling
 

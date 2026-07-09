@@ -19,7 +19,8 @@ import (
 )
 
 // dedupCacheSize bounds the per-process fingerprint cache. Eviction is safe: an evicted
-// entry just re-emits one attribute row, which the SQL ON CONFLICT re-deduplicates.
+// entry re-emits at most one extra attribute row for that tag (at the next message's ts) --
+// content-identical and harmless, not a conflict.
 const dedupCacheSize = 100_000
 
 // DedupCache is the per-process metadata fingerprint cache (key -> fingerprint). A batch
