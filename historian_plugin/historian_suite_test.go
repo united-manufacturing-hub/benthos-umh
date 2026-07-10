@@ -1,4 +1,4 @@
-// Copyright 2025 UMH Systems GmbH
+// Copyright 2026 UMH Systems GmbH
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package topic_browser_plugin
+package historian_plugin_test
 
 import (
-	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic/proto"
+	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-// LocationPath returns the full location path by joining level0 with all location sublevels.
-//
-// Deprecated: use the canonical (*proto.TopicInfo).LocationPath() method directly. This thin
-// wrapper remains so existing call sites keep compiling; it delegates to the canonical method.
-func LocationPath(t *proto.TopicInfo) string {
-	return t.LocationPath()
+func TestHistorian(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "TimescaleDB Historian Suite")
 }
