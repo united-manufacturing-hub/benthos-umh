@@ -1,6 +1,6 @@
 module github.com/united-manufacturing-hub/benthos-umh
 
-go 1.26.4
+go 1.26.5
 
 // to compile it on go 1.23
 replace github.com/parquet-go/parquet-go => github.com/parquet-go/parquet-go v0.30.1
@@ -33,19 +33,19 @@ require (
 	github.com/bufbuild/protocompile v0.14.1
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/danomagnum/gologix v0.27.2-beta
-	github.com/dop251/goja v0.0.0-20260607120635-348e6bea910d
+	github.com/dop251/goja v0.0.0-20260701091749-b07b74453ea9
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/gofrs/uuid/v5 v5.4.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/gopcua/opcua v0.9.0
-	github.com/grid-x/modbus v0.0.0-20260527064858-ef3bed576432
+	github.com/grid-x/modbus v0.0.0-20260701064235-82e41c9acfb6
 	github.com/hashicorp/golang-lru/v2 v2.0.7
-	github.com/jackc/pgx/v5 v5.9.2
-	github.com/kaptinlin/jsonschema v0.9.2
+	github.com/jackc/pgx/v5 v5.10.0
+	github.com/kaptinlin/jsonschema v0.9.3
 	github.com/prometheus/client_golang v1.23.2
 	github.com/redpanda-data/benthos/v4 v4.76.0
-	github.com/redpanda-data/connect/public/bundle/free/v4 v4.98.0
+	github.com/redpanda-data/connect/public/bundle/free/v4 v4.99.0
 	github.com/robinson/gos7 v0.0.0-20260622162611-2d6806f80c8b
 	github.com/snowflakedb/gosnowflake v1.19.1
 	github.com/stretchr/testify v1.11.1
@@ -56,7 +56,7 @@ require (
 	github.com/twmb/franz-go/pkg/kadm v1.18.0
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78
 	golang.org/x/crypto v0.53.0
-	golang.org/x/sys v0.46.0
+	golang.org/x/sys v0.47.0
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af
 	k8s.io/apimachinery v0.36.2
 )
@@ -250,7 +250,7 @@ require (
 	github.com/go-git/go-billy/v5 v5.9.0 // indirect
 	github.com/go-git/go-git/v5 v5.19.1 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
-	github.com/go-json-experiment/json v0.0.0-20260601182631-00ed12fed2a6 // indirect
+	github.com/go-json-experiment/json v0.0.0-20260623181947-01eb4420fa68 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-mysql-org/go-mysql v1.14.0 // indirect
@@ -314,7 +314,7 @@ require (
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/jzelinskie/stringz v0.0.3 // indirect
-	github.com/kaptinlin/jsonpointer v0.4.26 // indirect
+	github.com/kaptinlin/jsonpointer v0.4.27 // indirect
 	github.com/kevinburke/ssh_config v1.6.0 // indirect
 	github.com/klauspost/asmfmt v1.3.2 // indirect
 	github.com/klauspost/compress v1.18.6 // indirect
@@ -410,7 +410,7 @@ require (
 	github.com/redpanda-data/common-go/authz v0.2.1-0.20260319205134-242ab3c168b8 // indirect
 	github.com/redpanda-data/common-go/license v0.0.0-20260318014216-2bbd72bde0a0 // indirect
 	github.com/redpanda-data/common-go/redpanda-otel-exporter v0.4.0 // indirect
-	github.com/redpanda-data/connect/v4 v4.98.0 // indirect
+	github.com/redpanda-data/connect/v4 v4.99.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rickb777/period v1.0.27 // indirect
 	github.com/rickb777/plural v1.4.10 // indirect
