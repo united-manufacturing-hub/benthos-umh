@@ -2059,18 +2059,35 @@ func indentLines(s string, prefix string) string {
 }
 
 // counterCaptureMetrics is a service.MetricsExporter that aggregates integer
-// counter increments by counter name, ignoring labels. It is the only public
+// counter increments by counter name and label values. It is the only public
 // seam (outside the benthos module) to observe processor-level MetricCounter
 // increments such as nodered_js's internal messagesDropped, which is not
 // readable through the default StreamBuilder (its metrics are no-op).
+//
+// counts holds the total per counter name (summed across all label values),
+// preserving backward compatibility with existing assertions. labeledCounts
+// holds per-(counter name, label-values) counts so tests can assert the
+// reason label on messages_dropped.
 type counterCaptureMetrics struct {
-	mu     *sync.Mutex
-	counts map[string]int64
+	mu            *sync.Mutex
+	counts        map[string]int64
+	labeledCounts map[string]map[string]int64
 }
 
 func (m *counterCaptureMetrics) NewCounterCtor(name string, _ ...string) service.MetricsExporterCounterCtor {
-	return func(_ ...string) service.MetricsExporterCounter {
-		return &capturedCounter{name: name, mu: m.mu, counts: m.counts}
+	m.mu.Lock()
+	if m.labeledCounts == nil {
+		m.labeledCounts = make(map[string]map[string]int64)
+	}
+	m.mu.Unlock()
+	return func(labelValues ...string) service.MetricsExporterCounter {
+		return &capturedCounter{
+			name:          name,
+			labelValues:   labelValues,
+			mu:            m.mu,
+			counts:        m.counts,
+			labeledCounts: m.labeledCounts,
+		}
 	}
 }
 
@@ -2084,15 +2101,38 @@ func (m *counterCaptureMetrics) NewGaugeCtor(string, ...string) service.MetricsE
 
 func (m *counterCaptureMetrics) Close(context.Context) error { return nil }
 
+// labeledValue returns the captured count for the given counter name and
+// label values. Returns 0 if the counter or label combination was never
+// incremented.
+func (m *counterCaptureMetrics) labeledValue(name string, labelValues ...string) int64 {
+	key := strings.Join(labelValues, ",")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inner := m.labeledCounts[name]
+	if inner == nil {
+		return 0
+	}
+	return inner[key]
+}
+
 type capturedCounter struct {
-	name   string
-	mu     *sync.Mutex
-	counts map[string]int64
+	name          string
+	labelValues   []string
+	mu            *sync.Mutex
+	counts        map[string]int64
+	labeledCounts map[string]map[string]int64
 }
 
 func (c *capturedCounter) Incr(n int64) {
+	key := strings.Join(c.labelValues, ",")
 	c.mu.Lock()
 	c.counts[c.name] += n
+	if c.labeledCounts != nil {
+		if c.labeledCounts[c.name] == nil {
+			c.labeledCounts[c.name] = make(map[string]int64)
+		}
+		c.labeledCounts[c.name][key] += n
+	}
 	c.mu.Unlock()
 }
 
@@ -2190,4 +2230,68 @@ var _ = Describe("ConvertMessageToJSObject", func() {
 		Entry(`json string with value as array`, `{"foo":[1,2,3]}`, map[string]any{"foo": []any{float64(1), float64(2), float64(3)}}),
 		Entry(`json array with numbers as float array`, `[1,2,3]`, []any{float64(1), float64(2), float64(3)}),
 	)
+})
+
+var _ = Describe("counterCaptureMetrics labeled capture", func() {
+	It("should capture the label value when a labeled counter is incremented", func() {
+		var mu sync.Mutex
+		counts := map[string]int64{}
+		labeledCounts := map[string]map[string]int64{}
+		exporter := &counterCaptureMetrics{
+			mu:            &mu,
+			counts:        counts,
+			labeledCounts: labeledCounts,
+		}
+
+		// Simulate the framework call chain:
+		//   metrics.NewCounter("messages_dropped", "reason")  -> NewCounterCtor
+		//   counter.Incr(1, "js_throw")                        -> ctor("js_throw").Incr(1)
+		ctor := exporter.NewCounterCtor("messages_dropped", "reason")
+		counter := ctor("js_throw")
+		counter.Incr(1)
+
+		// Backward compat: total still captured
+		Expect(counts["messages_dropped"]).To(Equal(int64(1)))
+
+		// Label-specific capture
+		Expect(exporter.labeledValue("messages_dropped", "js_throw")).To(Equal(int64(1)))
+	})
+
+	It("should distinguish increments with different label values", func() {
+		var mu sync.Mutex
+		counts := map[string]int64{}
+		labeledCounts := map[string]map[string]int64{}
+		exporter := &counterCaptureMetrics{
+			mu:            &mu,
+			counts:        counts,
+			labeledCounts: labeledCounts,
+		}
+
+		ctor := exporter.NewCounterCtor("messages_dropped", "reason")
+		ctor("js_throw").Incr(1)
+		ctor("infra_failed").Incr(1)
+		ctor("js_throw").Incr(1)
+
+		Expect(counts["messages_dropped"]).To(Equal(int64(3)))
+		Expect(exporter.labeledValue("messages_dropped", "js_throw")).To(Equal(int64(2)))
+		Expect(exporter.labeledValue("messages_dropped", "infra_failed")).To(Equal(int64(1)))
+	})
+
+	It("should handle unlabeled counters", func() {
+		var mu sync.Mutex
+		counts := map[string]int64{}
+		labeledCounts := map[string]map[string]int64{}
+		exporter := &counterCaptureMetrics{
+			mu:            &mu,
+			counts:        counts,
+			labeledCounts: labeledCounts,
+		}
+
+		ctor := exporter.NewCounterCtor("messages_processed")
+		counter := ctor()
+		counter.Incr(5)
+
+		Expect(counts["messages_processed"]).To(Equal(int64(5)))
+		Expect(exporter.labeledValue("messages_processed")).To(Equal(int64(5)))
+	})
 })
