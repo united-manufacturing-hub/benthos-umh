@@ -62,6 +62,7 @@ jobs:
         id: filter
         with:
           initial-fetch-depth: 30
+          predicate-quantifier: every
           filters: |
             opcua:
               - 'opcua_plugin/**'
