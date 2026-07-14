@@ -326,6 +326,21 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 		v.debugf("Validator.Validate: Schema validation failed for subject '%s': %s", subjectName, strings.Join(validationErrors, "; "))
 	}
 
+	// For existing tag, but a different type we want a datatype-mismatch error here
+	if lastError != nil {
+		mismatch := v.datatypeMismatchError(schemas, version, contractName, virtualPath, classifyPayloadType(payload))
+		if mismatch != nil {
+			v.debugf("Validator.Validate: datatype mismatch for '%s': %v", virtualPath, mismatch)
+			return &ValidationResult{
+				SchemaCheckPassed:   false,
+				SchemaCheckBypassed: false,
+				ContractName:        contractName,
+				ContractVersion:     version,
+				Error:               mismatch,
+			}
+		}
+	}
+
 	// None of the schemas matched
 	v.debugf("Validator.Validate: FAILED! No schemas matched for contract '%s' version %d. Last error: %v", contractName, version, lastError)
 	return &ValidationResult{
@@ -719,6 +734,107 @@ func (v *Validator) evictOldestEntries() {
 	}
 }
 
+// virtualPathInfo for mismatch-check e.g. timeseries-number vs timeseries-string
+type virtualPathInfo struct {
+	path       string
+	schemaType string
+}
+
+// schemaBytesFor prefers the locally cached schema and falls back to a registry fetch.
+func (v *Validator) schemaBytesFor(schema *Schema, subjectName string, version uint64) []byte {
+	local := schema.GetRawSchemaBytes(version)
+	if local != nil {
+		return local
+	}
+
+	fetched, _, _ := v.fetchLatestSchemaFromRegistry(subjectName)
+	return fetched
+}
+
+// Used to flatten a tag into one (path, datatype) list.
+func (v *Validator) collectValidPaths(schemas map[string]*Schema, version uint64) []virtualPathInfo {
+	var allValidPaths []virtualPathInfo
+
+	for currentSubjectName, schema := range schemas {
+		if schema == nil {
+			continue
+		}
+
+		schemaBytes := v.schemaBytesFor(schema, currentSubjectName, version)
+		if schemaBytes == nil {
+			continue
+		}
+
+		validPaths := extractValidVirtualPaths(schemaBytes)
+		if len(validPaths) == 0 {
+			continue
+		}
+
+		schemaType := extractSchemaTypeFromSubject(currentSubjectName)
+		for _, path := range validPaths {
+			allValidPaths = append(allValidPaths, virtualPathInfo{path: path, schemaType: schemaType})
+		}
+	}
+
+	return allValidPaths
+}
+
+// classifyPayloadType names the datatype actually sent, so a mismatch can report got-vs-want.
+func classifyPayloadType(payload []byte) string {
+	var fields struct {
+		Value json.RawMessage `json:"value"`
+	}
+	err := json.Unmarshal(payload, &fields)
+	if err != nil || len(fields.Value) == 0 {
+		return ""
+	}
+
+	var value any
+	err = json.Unmarshal(fields.Value, &value)
+	if err != nil {
+		return ""
+	}
+
+	switch value.(type) {
+	case bool:
+		return "timeseries-boolean"
+	case float64:
+		return "timeseries-number"
+	default:
+		return "timeseries-string"
+	}
+}
+
+// datatypeMismatchError replaces the confusing "path is both valid and invalid" error with a clear got-vs-want line.
+func (v *Validator) datatypeMismatchError(schemas map[string]*Schema, version uint64, contractName string, virtualPath string, payloadType string) error {
+	if payloadType == "" {
+		return nil
+	}
+
+	var registered []string
+	seen := map[string]bool{}
+	for _, info := range v.collectValidPaths(schemas, version) {
+		if info.path != virtualPath {
+			continue
+		}
+		if info.schemaType == payloadType {
+			return nil
+		}
+		if !seen[info.schemaType] {
+			seen[info.schemaType] = true
+			registered = append(registered, info.schemaType)
+		}
+	}
+
+	if len(registered) == 0 {
+		return nil
+	}
+
+	sort.Strings(registered)
+	return fmt.Errorf("datatype mismatch for '%s' in %s_v%d: want %s, got %s",
+		virtualPath, contractName, version, strings.Join(registered, ", "), payloadType)
+}
+
 // extractValidVirtualPaths extracts valid virtual_path enum values from a JSON schema
 func extractValidVirtualPaths(schemaBytes []byte) []string {
 	var schema map[string]interface{}
@@ -753,44 +869,7 @@ func (v *Validator) enhanceVirtualPathError(originalError error, _ string, schem
 
 	// Check if the error is about virtual_path validation
 	if strings.Contains(errorMsg, "virtual_path") && (strings.Contains(errorMsg, "does not match") || strings.Contains(errorMsg, "do not match")) {
-		// Collect all valid virtual_path values from all schemas with their types
-		type virtualPathInfo struct {
-			path       string
-			schemaType string
-		}
-
-		var allValidPaths []virtualPathInfo
-
-		// Extract virtual_path values from all schemas
-		for currentSubjectName, schema := range schemas {
-			if schema == nil {
-				continue
-			}
-
-			var schemaBytes []byte
-			// First try to get schema bytes from the locally stored schema
-			if rawSchema := schema.GetRawSchemaBytes(version); rawSchema != nil {
-				schemaBytes = rawSchema
-			} else {
-				// If no local schema bytes, try to fetch from registry
-				schemaBytes, _, _ = v.fetchLatestSchemaFromRegistry(currentSubjectName)
-			}
-
-			if schemaBytes != nil {
-				validPaths := extractValidVirtualPaths(schemaBytes)
-				if len(validPaths) > 0 {
-					// Extract schema type from subject name (e.g., "timeseries-number" from "_sensor_data_v1-timeseries-number")
-					schemaType := extractSchemaTypeFromSubject(currentSubjectName)
-
-					for _, path := range validPaths {
-						allValidPaths = append(allValidPaths, virtualPathInfo{
-							path:       path,
-							schemaType: schemaType,
-						})
-					}
-				}
-			}
-		}
+		allValidPaths := v.collectValidPaths(schemas, version)
 
 		if len(allValidPaths) > 0 {
 			// Sort alphabetically by path name

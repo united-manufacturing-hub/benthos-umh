@@ -616,7 +616,7 @@ var _ = Describe("Validator", func() {
 		It("should validate against the correct schema based on payload type", func() {
 			// Load multiple schemas for the same contract+version
 			schemas := map[string][]byte{
-				"_pump_data_v1_timeseries-number": []byte(`{
+				"_pump_data_v1-timeseries-number": []byte(`{
 					"type": "object",
 					"properties": {
 						"virtual_path": {
@@ -636,7 +636,7 @@ var _ = Describe("Validator", func() {
 					"required": ["virtual_path", "fields"],
 					"additionalProperties": false
 				}`),
-				"_pump_data_v1_timeseries-string": []byte(`{
+				"_pump_data_v1-timeseries-string": []byte(`{
 					"type": "object",
 					"properties": {
 						"virtual_path": {
@@ -695,12 +695,14 @@ var _ = Describe("Validator", func() {
 			Expect(result.Error).To(HaveOccurred())
 			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
 
-			// Test wrong data type for number field (should fail)
+			// Test wrong data type for number field: a string sent to a number-typed tag is a datatype mismatch, not an invalid path.
 			result = validator.Validate(numberTopic, stringPayload)
 			Expect(result.SchemaCheckPassed).To(BeFalse())
 			Expect(result.SchemaCheckBypassed).To(BeFalse())
 			Expect(result.Error).To(HaveOccurred())
-			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
+			Expect(result.Error.Error()).To(ContainSubstring("datatype mismatch"))
+			Expect(result.Error.Error()).To(ContainSubstring("want timeseries-number"))
+			Expect(result.Error.Error()).To(ContainSubstring("got timeseries-string"))
 		})
 	})
 
@@ -974,6 +976,61 @@ var _ = Describe("Validator", func() {
 			errorMsg := result.Error.Error()
 			Expect(errorMsg).To(ContainSubstring("Valid virtual_paths is: [temperature (timeseries-number)]"))
 			Expect(errorMsg).To(ContainSubstring("Your virtual_path is: invalid_path"))
+		})
+
+		It("should report a datatype mismatch when the tag exists only under a different type", func() {
+			// Test.Temperature is registered as timeseries-string; sending a number must be reported as a
+			// datatype mismatch, not as an invalid virtual_path that is simultaneously listed as valid (ENG-5347).
+			schemas := map[string][]byte{
+				"_example_contract_v1-timeseries-string": []byte(`{
+					"type": "object",
+					"properties": {
+						"virtual_path": {"type": "string", "enum": ["Test.Temperature", "Test.Level"]},
+						"fields": {
+							"type": "object",
+							"properties": {"timestamp_ms": {"type": "number"}, "value": {"type": "string"}},
+							"required": ["timestamp_ms", "value"],
+							"additionalProperties": false
+						}
+					},
+					"required": ["virtual_path", "fields"],
+					"additionalProperties": false
+				}`),
+				"_example_contract_v1-timeseries-boolean": []byte(`{
+					"type": "object",
+					"properties": {
+						"virtual_path": {"type": "string", "enum": ["Test.Active"]},
+						"fields": {
+							"type": "object",
+							"properties": {"timestamp_ms": {"type": "number"}, "value": {"type": "boolean"}},
+							"required": ["timestamp_ms", "value"],
+							"additionalProperties": false
+						}
+					},
+					"required": ["virtual_path", "fields"],
+					"additionalProperties": false
+				}`),
+			}
+
+			err := validator.LoadSchemas("_example_contract", 1, schemas)
+			Expect(err).ToNot(HaveOccurred())
+
+			unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._example_contract_v1.Test.Temperature")
+			Expect(err).ToNot(HaveOccurred())
+
+			payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
+
+			result := validator.Validate(unsTopic, payload)
+			Expect(result.SchemaCheckPassed).To(BeFalse())
+			Expect(result.SchemaCheckBypassed).To(BeFalse())
+			Expect(result.Error).To(HaveOccurred())
+
+			errorMsg := result.Error.Error()
+			Expect(errorMsg).To(ContainSubstring("Test.Temperature"))
+			Expect(errorMsg).To(ContainSubstring("timeseries-number"))
+			Expect(errorMsg).To(ContainSubstring("timeseries-string"))
+			Expect(errorMsg).To(ContainSubstring("datatype mismatch"))
+			Expect(errorMsg).ToNot(ContainSubstring("Valid virtual_paths"))
 		})
 	})
 })
