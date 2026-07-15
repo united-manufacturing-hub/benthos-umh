@@ -447,7 +447,7 @@ func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*servic
 func messageFromReturnValue(v interface{}) (*service.Message, error) {
 	returnedMsg, ok := v.(map[string]interface{})
 	if !ok {
-		return service.NewMessage(nil), fmt.Errorf("function must return a message object or null")
+		return nil, fmt.Errorf("function must return a message object or null")
 	}
 
 	newMsg := service.NewMessage(nil)
