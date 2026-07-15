@@ -1170,6 +1170,103 @@ nodered_js:
 			}
 			messagesMutex.Unlock()
 		})
+
+		It("capstone: [good, boom, good] through nodered_js + key-guard stub (keyless→nack poison-pill)", func() {
+			// End-to-end capstone for the standalone nodered_js → uns case.
+			// Unlike tag_processor, nodered_js does NOT construct umh_topic:
+			// the user's JS must set msg.meta.umh_topic on good messages. A
+			// forwarded errored message is keyless → uns nacks → poison pill.
+			//
+			// Under drop-loudly: the boom msg is dropped at the processor
+			// (never reaches the output), the 2 good msgs are written with
+			// umh_topic, 0 keyless-nacks, 1 messages_dropped{reason=js_throw}.
+			//
+			// Mutant (spec property 5): flipping ProcessBatch's drop site
+			// back to SetError+append (forward-on-error) makes the test go
+			// RED: the forwarded boom msg is keyless (JS threw before
+			// setting umh_topic) → key-guard stub nacks → "0 keyless-nacks"
+			// fails (1 instead of 0).
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			labeledCounts := map[string]map[string]int64{}
+			exporter := &counterCaptureMetrics{
+				mu:            &mu,
+				counts:        counts,
+				labeledCounts: labeledCounts,
+			}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			// nodered_js sets umh_topic on good messages; throws on "boom".
+			// The JS must set umh_topic BEFORE the throw point, otherwise the
+			// errored message (if forwarded) is keyless → poison pill.
+			Expect(builder.AddProcessorYAML(strings.TrimSpace(`
+nodered_js:
+  code: |
+    if (msg.payload === 'boom') { throw new Error('boom'); }
+    msg.meta.umh_topic = "umh.v1.enterprise._raw.tag";
+    return msg;
+`))).To(Succeed())
+
+			// Key-guard stub output: mirrors uns_output.go:403-404.
+			// Messages with umh_topic are written; keyless messages are
+			// counted as nacks (returns nil to avoid benthos retry loops;
+			// the count is the signal, not the error return).
+			var writtenCount int64
+			var keylessCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				topic, exists := msg.MetaGet("umh_topic")
+				if !exists || topic == "" || topic == "null" {
+					atomic.AddInt64(&keylessCount, 1)
+					return nil
+				}
+				atomic.AddInt64(&writtenCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			// [good, boom, good]
+			msg0 := service.NewMessage([]byte("good1"))
+			msg1 := service.NewMessage([]byte("boom"))
+			msg2 := service.NewMessage([]byte("good2"))
+			batch := service.MessageBatch{msg0, msg1, msg2}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// Exactly 2 messages written (the good ones), both with umh_topic.
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&writtenCount)
+			}, "2s").Should(Equal(int64(2)))
+
+			// 0 keyless messages reached the output (no nack / poison pill).
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&keylessCount)
+			}, "500ms").Should(Equal(int64(0)))
+
+			// Exactly 1 messages_dropped{reason=js_throw} (the boom one).
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "js_throw")
+			}, "2s").Should(Equal(int64(1)))
+		})
 	})
 
 	When("handling different input types", func() {
