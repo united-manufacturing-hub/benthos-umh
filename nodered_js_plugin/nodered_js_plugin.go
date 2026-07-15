@@ -571,6 +571,7 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 	defer u.putVM(vm)
 
 	// Convert message to JS object
+	// defensive: AsBytes never errors as of benthos v4.74.0 (TODO upstream); kept for future-proofing
 	jsMsg, err := ConvertMessageToJSObject(msg)
 	if err != nil {
 		u.logger.Errorf("%v\nOriginal message: %v", err, msg)
@@ -578,6 +579,7 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 	}
 
 	// Add metadata to the message wrapper
+	// defensive: MetaWalkMut callback never errors; kept for future-proofing
 	meta := make(map[string]interface{})
 	if err = msg.MetaWalkMut(func(key string, value any) error {
 		meta[key] = value
@@ -589,6 +591,7 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 	jsMsg["meta"] = meta
 
 	// Setup JS environment
+	// defensive: vm.Set unreachable from normal messages; kept for future-proofing
 	if err = u.SetupJSEnvironment(ctx, vm, jsMsg); err != nil {
 		u.logger.Errorf("%v\nMessage content: %v", err, jsMsg)
 		return nil, false, "infra_failed", err

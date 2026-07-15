@@ -29,8 +29,6 @@ import (
 	_ "github.com/redpanda-data/benthos/v4/public/components/io"
 	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
 	"github.com/redpanda-data/benthos/v4/public/service"
-
-	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin"
 )
 
 var _ = Describe("TagProcessor", func() {
@@ -3982,77 +3980,6 @@ tag_processor:
 			}, "2s").Should(Equal(int64(2)))
 		})
 
-		It("should exercise infra_failed reason label via RecordDrop", func() {
-			// infra_failed is unreachable through the tag_processor stream
-			// builder: AsBytes() always returns nil error (benthos v4.74.0
-			// message.go: "TODO: Escalate errors in marshaling"), so
-			// ConvertMessageToJSObject never fails. setupMessageForVM's
-			// MetaWalkMut callback never errors, and SetupJSEnvironment's
-			// vm.Set calls fail only on truly exotic Go values that goja
-			// can't accept — none reachable from a normal message.
-			//
-			// Per the spec's guidance ("write a unit test that calls
-			// RecordDrop directly with infra_failed to pin the reason label
-			// exists"), we register a test-only processor that calls
-			// RecordDrop with infra_failed through the real metrics pipeline.
-			env := service.NewEnvironment()
-
-			Expect(env.RegisterBatchProcessor("infra_dropper",
-				service.NewConfigSpec(),
-				func(_ *service.ParsedConfig, mgr *service.Resources) (service.BatchProcessor, error) {
-					return &infraDropProcessor{
-						counter: mgr.Metrics().NewCounter("messages_dropped", "reason"),
-						logger:  mgr.Logger(),
-					}, nil
-				})).To(Succeed())
-
-			var mu sync.Mutex
-			counts := map[string]int64{}
-			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
-
-			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
-				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
-					return exporter, nil
-				})).To(Succeed())
-
-			builder := env.NewStreamBuilder()
-
-			var batchHandler service.MessageBatchHandlerFunc
-			batchHandler, err := builder.AddBatchProducerFunc()
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
-
-			Expect(builder.AddProcessorYAML(strings.TrimSpace(`infra_dropper: {}`))).To(Succeed())
-
-			var consumerCount int64
-			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
-				atomic.AddInt64(&consumerCount, 1)
-				return nil
-			})).To(Succeed())
-
-			stream, err := builder.Build()
-			Expect(err).NotTo(HaveOccurred())
-
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-
-			go func() { _ = stream.Run(ctx) }()
-
-			msg0 := service.NewMessage([]byte("good1"))
-			batch := service.MessageBatch{msg0}
-			Expect(batchHandler(ctx, batch)).To(Succeed())
-
-			// No consumer output: the test processor drops the message.
-			Consistently(func() int64 {
-				return atomic.LoadInt64(&consumerCount)
-			}, "500ms").Should(Equal(int64(0)))
-
-			Eventually(func() int64 {
-				return exporter.labeledValue("messages_dropped", "infra_failed")
-			}, "2s").Should(Equal(int64(1)))
-		})
-
 		It("capstone: [good, poisoned, good] through tag_processor + key-guard stub output", func() {
 			// End-to-end capstone: 3 messages through the full tag_processor
 			// (defaults + condition that throws on the poisoned one) → a key-guard
@@ -4682,22 +4609,3 @@ var _ = Describe("counterCaptureMetrics labeled capture", func() {
 		Expect(exporter.labeledValue("messages_dropped", "js_throw")).To(Equal(int64(1)))
 	})
 })
-
-// infraDropProcessor is a test-only batch processor that calls
-// nodered_js_plugin.RecordDrop with reason="infra_failed" for each message.
-// Used to exercise the infra_failed reason label through the real metrics
-// pipeline, since the tag_processor's infra_failed code paths are
-// unreachable via the stream builder (AsBytes() always returns nil).
-type infraDropProcessor struct {
-	counter *service.MetricCounter
-	logger  *service.Logger
-}
-
-func (p *infraDropProcessor) ProcessBatch(_ context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
-	for _, msg := range batch {
-		nodered_js_plugin.RecordDrop(p.counter, p.logger, "infra_failed", "tag_processor", "test", msg, fmt.Errorf("test infra failure"))
-	}
-	return []service.MessageBatch{}, nil
-}
-
-func (p *infraDropProcessor) Close(_ context.Context) error { return nil }

@@ -832,6 +832,7 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 		vm := p.getVM()
 
 		// Convert message to JS object
+		// defensive: AsBytes never errors as of benthos v4.74.0 (TODO upstream); kept for future-proofing
 		jsMsg, err := nodered_js_plugin.ConvertMessageToJSObject(msg)
 		if err != nil {
 			nodered_js_plugin.RecordDrop(p.messagesDropped, p.logger, "infra_failed", "tag_processor", stageName, msg, err)
@@ -840,6 +841,7 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 		}
 
 		// Setup VM environment
+		// defensive: MetaWalkMut callback + vm.Set unreachable from normal messages; kept for future-proofing
 		if err = p.setupMessageForVM(ctx, vm, msg, jsMsg); err != nil {
 			nodered_js_plugin.RecordDrop(p.messagesDropped, p.logger, "infra_failed", "tag_processor", stageName, msg, err)
 			p.putVM(vm)
@@ -901,12 +903,14 @@ func (p *TagProcessor) processConditionForMessageWithProgram(ctx context.Context
 	defer p.putVM(vm)
 
 	// Convert message to JS object for condition check
+	// defensive: AsBytes never errors as of benthos v4.74.0 (TODO upstream); kept for future-proofing
 	jsMsg, err := nodered_js_plugin.ConvertMessageToJSObject(msg)
 	if err != nil {
 		return nil, "infra_failed", "condition-if", fmt.Errorf("message conversion failed: %w", err)
 	}
 
 	// Setup VM environment using optimized helper method
+	// defensive: MetaWalkMut callback + vm.Set unreachable from normal messages; kept for future-proofing
 	if err = p.setupMessageForVM(ctx, vm, msg, jsMsg); err != nil {
 		return nil, "infra_failed", "condition-if", fmt.Errorf("JS environment setup failed: %w", err)
 	}
