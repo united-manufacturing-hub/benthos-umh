@@ -271,6 +271,9 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 	// For each message, capture its current meta fields and store them as JSON
 	// in msg.meta._initialMetadata. Also, record the original keys in _incomingKeys.
 	for _, msg := range batch {
+		if msg == nil {
+			continue
+		}
 		// Only store if not already set (for example, in case of multiple processing steps).
 		if _, exists := msg.MetaGet("_initialMetadata"); !exists {
 			originalMeta := make(map[string]string)
@@ -305,6 +308,9 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 		var newBatch service.MessageBatch
 
 		for _, msg := range batch {
+			if msg == nil {
+				continue
+			}
 			processedMsgs, reason, stage, err := p.processConditionForMessageWithProgram(ctx, i, msg)
 			if err != nil {
 				// Drop-loudly: the poisoned message is absent from the output
@@ -828,6 +834,9 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 	var resultBatch service.MessageBatch
 
 	for _, msg := range batch {
+		if msg == nil {
+			continue
+		}
 		// Use VM pool for consistent performance
 		vm := p.getVM()
 

@@ -536,6 +536,9 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 	processedCount := 0
 
 	for _, msg := range batch {
+		if msg == nil {
+			continue
+		}
 		processedMsgs, dropped, reason, err := u.processSingleMessage(ctx, msg)
 		if err != nil {
 			// Drop-loudly: the poisoned message is absent from the output
