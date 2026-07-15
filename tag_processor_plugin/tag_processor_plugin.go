@@ -336,12 +336,8 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 			continue
 		}
 
-		finalMsg, err := p.constructFinalMessage(msg)
+		finalMsg, reason, err := p.constructFinalMessage(msg)
 		if err != nil {
-			reason := "value_convert_failed"
-			if strings.Contains(err.Error(), "construct UMH topic") || strings.Contains(err.Error(), "build UMH topic") {
-				reason = "topic_build_failed"
-			}
 			nodered_js_plugin.RecordDrop(p.messagesDropped, p.logger, reason, "tag_processor", "final", msg, err)
 			continue
 		}
@@ -468,8 +464,10 @@ To fix: Set required fields (msg.meta.location_path, msg.meta.data_contract, msg
 }
 
 // constructFinalMessage creates the final message with proper topic and payload structure
-// and filters out internal metadata.
-func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Message, error) {
+// and filters out internal metadata. The returned string is the drop reason at the
+// error site ("value_convert_failed" or "topic_build_failed"), set for the caller
+// to pass to RecordDrop without string-matching the error.
+func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Message, string, error) {
 	// NewMessage(nil) is safe: the air-gap wrapper restores input context onto
 	// outputs in production, so Copy()/WithContext() is a no-op (see CLAUDE.md
 	// "Output context is restored by the engine, not the plugin").
@@ -502,18 +500,18 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to copy metadata: %w", err)
+		return nil, "value_convert_failed", fmt.Errorf("failed to copy metadata: %w", err)
 	}
 
 	// Get the structured payload from the original message
 	structured, err := msg.AsStructured()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get structured payload: %w", err)
+		return nil, "value_convert_failed", fmt.Errorf("failed to get structured payload: %w", err)
 	}
 	datatype, _ := msg.MetaGet("datatype")
 	value, err := p.convertValue(structured, datatype)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert value: %w", err)
+		return nil, "value_convert_failed", fmt.Errorf("failed to convert value: %w", err)
 	}
 
 	// Determine timestamp - use metadata timestamp_ms if available, otherwise current time
@@ -535,12 +533,12 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 	// Set the topic in the new message metadata
 	topic, err := p.constructUMHTopic(msg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to construct UMH topic: %w", err)
+		return nil, "topic_build_failed", fmt.Errorf("failed to construct UMH topic: %w", err)
 	}
 	newMsg.MetaSet("topic", topic) // topic is deprecated, use umh_topic instead for easy to understand difference between MQTT Topic, Kafka Topic and UMH Topic
 	newMsg.MetaSet("umh_topic", topic)
 
-	return newMsg, nil
+	return newMsg, "", nil
 }
 
 // parseTimestamp attempts to parse timestamp from metadata in specific order.
