@@ -297,12 +297,7 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 
 	// Process defaults with compiled program (Phase 2 optimization)
 	if p.defaultsProgram != nil {
-		batchSize := nonErroredCount(batch)
-		var err error
-		batch, err = p.processMessageBatchWithProgram(ctx, batch, p.defaultsProgram, "defaults")
-		if err != nil {
-			return nil, p.batchFatalErr("defaults", batchSize, err)
-		}
+		batch, _ = p.processMessageBatchWithProgram(ctx, batch, p.defaultsProgram, "defaults")
 	}
 
 	// Process conditions with compiled programs (Phase 2 optimization)
@@ -326,12 +321,7 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 
 	// Process advanced processing with compiled program (Phase 2 optimization)
 	if p.advancedProgram != nil {
-		batchSize := nonErroredCount(batch)
-		var err error
-		batch, err = p.processMessageBatchWithProgram(ctx, batch, p.advancedProgram, "advanced")
-		if err != nil {
-			return nil, p.batchFatalErr("advanced", batchSize, err)
-		}
+		batch, _ = p.processMessageBatchWithProgram(ctx, batch, p.advancedProgram, "advanced")
 	}
 
 	// Validate and construct final messages
@@ -787,10 +777,12 @@ func (p *TagProcessor) compilePrograms() error {
 	return nil
 }
 
-// executeCompiledProgram executes a pre-compiled JavaScript program for optimal performance
-func (p *TagProcessor) executeCompiledProgram(vm *goja.Runtime, program *goja.Program, jsMsg map[string]interface{}, stageName string) ([]map[string]interface{}, error) {
+// executeCompiledProgram executes a pre-compiled JavaScript program for optimal performance.
+// Returns (messages, reason, err): reason is the drop taxonomy label when err != nil
+// (js_throw, bad_return, bad_array_element); empty for deliberate drops (null/undefined).
+func (p *TagProcessor) executeCompiledProgram(vm *goja.Runtime, program *goja.Program, jsMsg map[string]interface{}, stageName string) ([]map[string]interface{}, string, error) {
 	if program == nil {
-		return nil, nil
+		return nil, "", nil
 	}
 
 	result, err := vm.RunProgram(program)
@@ -806,11 +798,11 @@ func (p *TagProcessor) executeCompiledProgram(vm *goja.Runtime, program *goja.Pr
 			originalCode = fmt.Sprintf("compiled program: %s", stageName)
 		}
 		p.logJSError(err, originalCode, jsMsg)
-		return nil, fmt.Errorf("JavaScript error in %s: %w", stageName, err)
+		return nil, "js_throw", fmt.Errorf("JavaScript error in %s: %w", stageName, err)
 	}
 
 	if result == nil || goja.IsNull(result) || goja.IsUndefined(result) {
-		return nil, nil
+		return nil, "", nil
 	}
 
 	switch v := result.Export().(type) {
@@ -822,94 +814,60 @@ func (p *TagProcessor) executeCompiledProgram(vm *goja.Runtime, program *goja.Pr
 			}
 			msgMap, ok := msg.(map[string]interface{})
 			if !ok {
-				return nil, fmt.Errorf("array element %d must be a message object, got %T", i, msg)
+				return nil, "bad_array_element", fmt.Errorf("array element %d must be a message object, got %T", i, msg)
 			}
 			messages = append(messages, msgMap)
 		}
-		return messages, nil
+		return messages, "", nil
 	case map[string]interface{}:
-		return []map[string]interface{}{v}, nil
+		return []map[string]interface{}{v}, "", nil
 	default:
-		return nil, fmt.Errorf("code must return a message object or array of message objects")
+		return nil, "bad_return", fmt.Errorf("code must return a message object or array of message objects")
 	}
 }
 
-// batchFatalErr records a batch-fatal stage failure: bumps messages_errored
-// for the whole aborted batch and returns a wrapped error so the failure
-// propagates to benthos (logged, retried, processor_error). batchSize must
-// be captured BEFORE the failing processMessageBatchWithProgram call, which
-// returns (nil, err) on a per-message failure and leaves len(batch) == 0.
-func (p *TagProcessor) batchFatalErr(stage string, batchSize int, err error) error {
-	p.messagesErrored.Incr(int64(batchSize))
-	return fmt.Errorf("error in %s processing: %w", stage, err)
-}
-
-// nonErroredCount returns the number of messages in the batch not already
-// carrying an error. batchFatalErr bumps messages_errored by this (not
-// len(batch)) so messages already errored-and-forwarded by an earlier stage
-// (e.g. a condition) are not double-counted when a later stage aborts
-// batch-fatal.
-func nonErroredCount(batch service.MessageBatch) int {
-	n := 0
-	for _, msg := range batch {
-		if msg == nil {
-			continue
-		}
-		if msg.GetError() == nil {
-			n++
-		}
-	}
-	return n
-}
-
-// processMessageBatchWithProgram processes a batch using a compiled program for Phase 2 optimization
+// processMessageBatchWithProgram processes a batch using a compiled program.
+// Per-message errors are dropped loudly via RecordDrop (the message is omitted
+// from the output batch); the function never returns a non-nil error.
 func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch service.MessageBatch, program *goja.Program, stageName string) (service.MessageBatch, error) {
 	if program == nil {
 		return batch, nil
 	}
 
 	var resultBatch service.MessageBatch
-	droppedCount := 0
 
 	for _, msg := range batch {
-		// An errored message (e.g. from a condition) skips this stage and is
-		// forwarded unchanged, matching the batch-fatal path's semantics.
-		if msg.GetError() != nil {
-			resultBatch = append(resultBatch, msg)
-			continue
-		}
 		// Use VM pool for consistent performance
 		vm := p.getVM()
 
 		// Convert message to JS object
 		jsMsg, err := nodered_js_plugin.ConvertMessageToJSObject(msg)
 		if err != nil {
-			p.logError(err, "message conversion", msg)
+			nodered_js_plugin.RecordDrop(p.messagesDropped, p.logger, "infra_failed", "tag_processor", stageName, msg, err)
 			p.putVM(vm)
-			return nil, fmt.Errorf("failed to convert message to JavaScript object: %w", err)
+			continue
 		}
 
 		// Setup VM environment
 		if err = p.setupMessageForVM(ctx, vm, msg, jsMsg); err != nil {
-			p.logError(err, "JS environment setup", jsMsg)
+			nodered_js_plugin.RecordDrop(p.messagesDropped, p.logger, "infra_failed", "tag_processor", stageName, msg, err)
 			p.putVM(vm)
-			return nil, fmt.Errorf("failed to setup JavaScript environment: %w", err)
+			continue
 		}
 
 		// Execute compiled program for maximum performance
-		messages, err := p.executeCompiledProgram(vm, program, jsMsg, stageName)
+		messages, reason, err := p.executeCompiledProgram(vm, program, jsMsg, stageName)
 		if err != nil {
+			nodered_js_plugin.RecordDrop(p.messagesDropped, p.logger, reason, "tag_processor", stageName, msg, err)
 			p.putVM(vm)
-			return nil, err
+			continue
 		}
 
 		// Handle message dropping: a nil return (null/undefined), an empty
-		// array, or an all-nil array all yield 0 outputs and count as one
-		// per-message-entering-stage drop. The bump is deferred to after the
-		// loop so a later message's batch-fatal error doesn't double-count
-		// these drops as both dropped AND errored (and compound on retry).
+		// array, or an all-nil array all yield 0 outputs and count as a
+		// deliberate per-message drop.
 		if len(messages) == 0 {
-			droppedCount++
+			p.messagesDropped.Incr(1, "deliberate")
 			p.putVM(vm)
 			continue
 		}
@@ -938,15 +896,6 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 
 		// Return VM to pool after processing this message
 		p.putVM(vm)
-	}
-
-	// Bump messagesDropped once for all drops in this stage attempt. Deferred
-	// from the loop so a mid-loop batch-fatal error doesn't double-count drops
-	// as both dropped (here) and errored (batchFatalErr). On batch-fatal, the
-	// loop returns early via `return nil, err` and this bump is skipped; the
-	// caller's batchFatalErr bumps the full batch as errored instead.
-	if droppedCount > 0 {
-		p.messagesDropped.Incr(int64(droppedCount))
 	}
 
 	return resultBatch, nil
@@ -980,14 +929,11 @@ func (p *TagProcessor) processConditionForMessageWithProgram(ctx context.Context
 
 	// If condition is true, process the message with the compiled condition action
 	if ifResult.ToBoolean() {
-		conditionBatch, err := p.processMessageBatchWithProgram(
+		conditionBatch, _ := p.processMessageBatchWithProgram(
 			ctx,
 			service.MessageBatch{msg},
 			p.conditionThenPrograms[conditionIndex],
-			fmt.Sprintf("condition-%d-then", conditionIndex))
-		if err != nil {
-			return nil, "js_throw", "condition-then", fmt.Errorf("condition processing failed: %w", err)
-		}
+			"condition-then")
 		// Return all messages produced by the condition action (could be 0, 1, or multiple)
 		return conditionBatch, "", "", nil
 	}
