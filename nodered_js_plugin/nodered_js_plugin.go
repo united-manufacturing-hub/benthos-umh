@@ -64,7 +64,7 @@ func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service
 		cache:             c,
 		messagesProcessed: metrics.NewCounter("messages_processed"),
 		messagesErrored:   metrics.NewCounter("messages_errored"),
-		messagesDropped:   metrics.NewCounter("messages_dropped"),
+		messagesDropped:   metrics.NewCounter("messages_dropped", "reason"),
 		vmPoolHits:        metrics.NewCounter("vm_pool_hits"),
 		vmPoolMisses:      metrics.NewCounter("vm_pool_misses"),
 	}
@@ -409,10 +409,10 @@ func (u *NodeREDJSProcessor) setupProtobuf(vm *goja.Runtime) error {
 // incremented once and no outputs are produced. Otherwise (>=1
 // surviving output) nil/undefined elements are skipped with no drop
 // bump. Non-object elements still error the batch.
-func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*service.Message, error) {
+func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*service.Message, string, error) {
 	// Handle null/undefined returns: drop (caller bumps messagesDropped).
 	if result.Equals(goja.Undefined()) || result.Equals(goja.Null()) {
-		return nil, nil
+		return nil, "", nil
 	}
 
 	exported := result.Export()
@@ -425,18 +425,18 @@ func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*servic
 			}
 			msg, err := messageFromReturnValue(el)
 			if err != nil {
-				return nil, fmt.Errorf("array element %d must be a message object, got %T", i, el)
+				return nil, "bad_array_element", fmt.Errorf("array element %d must be a message object, got %T", i, el)
 			}
 			out = append(out, msg)
 		}
-		return out, nil
+		return out, "", nil
 	}
 
 	msg, err := messageFromReturnValue(exported)
 	if err != nil {
-		return nil, err
+		return nil, "bad_return", err
 	}
-	return []*service.Message{msg}, nil
+	return []*service.Message{msg}, "", nil
 }
 
 // messageFromReturnValue builds a service.Message from a single JS return
@@ -501,46 +501,53 @@ func FormatConsoleLogMsg(data []any) string {
 	return strings.Join(buf, " ")
 }
 
+// RecordDrop drops a poisoned message loudly: bumps messages_dropped with the
+// reason label and emits a Warn log. It must not error or panic (hot path).
+// Both nodered_js and tag_processor call it; tag_processor already imports
+// nodered_js_plugin for SetMetaFromJS/ConvertMessageToJSObject.
+//
+// Dropping (not forwarding) is intentional: the uns output mandates umh_topic,
+// and an errored message lacks it, so forwarding would nack the entire batch
+// and stall the polling input (retry-forever → back-pressure → PLC stalls).
+func RecordDrop(counter *service.MetricCounter, logger *service.Logger, reason string, msg *service.Message, err error) {
+	counter.Incr(1, reason)
+
+	topic, exists := msg.MetaGet("umh_topic")
+	if !exists || topic == "" {
+		topic = "<none>"
+	}
+
+	logger.Warnf("nodered_js: dropped message (reason=%s, umh_topic=%s, stage=processSingleMessage) %v", reason, topic, err)
+}
+
 // ProcessBatch applies the JavaScript code to each message in the batch.
 //
 // Per-message errors (a JS throw, a non-object return, a bad array element,
-// or an infrastructural failure like byte conversion or VM setup) forward the
-// failing input marked as errored and continue the rest of the batch, so one
-// bad message does not discard the good messages produced before it. The
-// error is logged and counted in messages_errored. A deliberate drop
-// (returning null/undefined/empty/all-nil array) is not an error: it produces
-// no output and bumps messages_dropped.
+// or an infrastructural failure like byte conversion or VM setup) cause the
+// message to be dropped via RecordDrop (bumps messages_dropped{reason} +
+// Warn log) and the rest of the batch continues. A deliberate drop (returning
+// null/undefined/empty/all-nil array) is not an error: it produces no output
+// and bumps messages_dropped{reason=deliberate}.
 func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	var resultBatch service.MessageBatch
-	droppedCount := 0
-	erroredCount := 0
 	processedCount := 0
 
 	for _, msg := range batch {
-		processedMsgs, dropped, err := u.processSingleMessage(ctx, msg)
+		processedMsgs, dropped, reason, err := u.processSingleMessage(ctx, msg)
 		if err != nil {
-			// Forward-on-error: mark this input and continue, so the good
-			// messages in the batch are preserved. The error is logged and
-			// counted in messages_errored.
-			msg.SetError(err)
-			erroredCount++
-			resultBatch = append(resultBatch, msg)
+			// Drop-loudly: the poisoned message is absent from the output
+			// batch. The good messages flow.
+			RecordDrop(u.messagesDropped, u.logger, reason, msg, err)
 			continue
 		}
 		if dropped {
-			droppedCount++
+			u.messagesDropped.Incr(1, "deliberate")
 			continue
 		}
 		resultBatch = append(resultBatch, processedMsgs...)
 		processedCount += len(processedMsgs)
 	}
 
-	if droppedCount > 0 {
-		u.messagesDropped.Incr(int64(droppedCount))
-	}
-	if erroredCount > 0 {
-		u.messagesErrored.Incr(int64(erroredCount))
-	}
 	u.messagesProcessed.Incr(int64(processedCount))
 
 	if len(resultBatch) == 0 {
@@ -551,12 +558,12 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 }
 
 // processSingleMessage processes a single message using a VM from the pool.
-// Returns (messages, wasDropped, err): wasDropped is true only for a genuine
-// drop (null/undefined/empty/all-nil array return). err is non-nil for any
-// per-message failure (JS throw, byte conversion, VM setup, or a non-object
-// return). The caller forwards the errored input with SetError and continues
-// the batch (forward-on-error, not batch-fatal).
-func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *service.Message) ([]*service.Message, bool, error) {
+// Returns (messages, wasDropped, err, reason): wasDropped is true only for a
+// genuine drop (null/undefined/empty/all-nil array return). err is non-nil
+// for any per-message failure (JS throw, byte conversion, VM setup, or a
+// non-object return). reason is the drop taxonomy label for the error site
+// (js_throw, infra_failed, bad_return, bad_array_element); empty for drops.
+func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *service.Message) ([]*service.Message, bool, string, error) {
 	vm := u.getVM()
 	defer u.putVM(vm)
 
@@ -564,7 +571,7 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 	jsMsg, err := ConvertMessageToJSObject(msg)
 	if err != nil {
 		u.logger.Errorf("%v\nOriginal message: %v", err, msg)
-		return nil, false, err
+		return nil, false, "infra_failed", err
 	}
 
 	// Add metadata to the message wrapper
@@ -574,35 +581,35 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 		return nil
 	}); err != nil {
 		u.logger.Errorf("Failed to walk message metadata: %v\nOriginal message: %v", err, msg)
-		return nil, false, err
+		return nil, false, "infra_failed", err
 	}
 	jsMsg["meta"] = meta
 
 	// Setup JS environment
 	if err = u.SetupJSEnvironment(ctx, vm, jsMsg); err != nil {
 		u.logger.Errorf("%v\nMessage content: %v", err, jsMsg)
-		return nil, false, err
+		return nil, false, "infra_failed", err
 	}
 
 	// Execute the compiled JavaScript program
 	result, err := vm.RunProgram(u.program)
 	if err != nil {
 		u.logJSError(err, jsMsg)
-		return nil, false, err
+		return nil, false, "js_throw", err
 	}
 
 	// Handle the execution result
-	newMsgs, err := u.HandleExecutionResult(result)
+	newMsgs, reason, err := u.HandleExecutionResult(result)
 	if err != nil {
 		u.logger.Errorf("%v\nMessage content: %v\nReturned value: %v", err, jsMsg, result.Export())
-		return nil, false, err
+		return nil, false, reason, err
 	}
 
 	if len(newMsgs) == 0 {
-		return nil, true, nil
+		return nil, true, "", nil
 	}
 
-	return newMsgs, false, nil
+	return newMsgs, false, "", nil
 }
 
 // Helper function to log JavaScript errors
