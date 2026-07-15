@@ -33,11 +33,8 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 )
 
-// sentinelNoTimestamp is used to indicate that no valid timestamp was found
-// We use math.MinInt64 instead of 0 or -1 because:
-// - 0 is valid (Unix epoch: 1970-01-01T00:00:00Z)
-// - -1 is technically valid (1969-12-31T23:59:59.999Z)
-// - math.MinInt64 represents a date ~292 billion years in the past (impossible)
+// sentinelNoTimestamp indicates no valid timestamp was found. MinInt64 is used because
+// 0 and -1 are valid Unix timestamps; MinInt64 (~292B years in the past) is not.
 const sentinelNoTimestamp = math.MinInt64
 
 type TagProcessorConfig struct {
@@ -267,9 +264,7 @@ func (p *TagProcessor) setupMessageForVM(ctx context.Context, vm *goja.Runtime, 
 
 // TODO: Each time there is any execution error, output the code where the error happened as well as the message that caused it (see nodered_js_plugin). Double-check that it is not being outputted twice.
 func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
-	// ───────────────── Store incoming metadata ────────────────────────────────
-	// For each message, capture its current meta fields and store them as JSON
-	// in msg.meta._initialMetadata. Also, record the original keys in _incomingKeys.
+	// Store incoming metadata: capture current meta as JSON in _initialMetadata, keys in _incomingKeys.
 	for _, msg := range batch {
 		if msg == nil {
 			continue
@@ -296,9 +291,8 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 			msg.MetaSet("_incomingKeys", strings.Join(keys, ","))
 		}
 	}
-	// ─────────────────────────────────────────────────────────────────────────────
 
-	// Process defaults with compiled program (Phase 2 optimization)
+	// Process defaults with compiled program
 	if p.defaultsProgram != nil {
 		batch, _ = p.processMessageBatchWithProgram(ctx, batch, p.defaultsProgram, "defaults")
 	}
@@ -469,14 +463,10 @@ To fix: Set required fields (msg.meta.location_path, msg.meta.data_contract, msg
 	return nil
 }
 
-// constructFinalMessage creates the final message with proper topic and payload structure
-// and filters out internal metadata. The returned string is the drop reason at the
-// error site ("value_convert_failed" or "topic_build_failed"), set for the caller
-// to pass to RecordDrop without string-matching the error.
+// constructFinalMessage builds the final message (topic + payload), filtering internal metadata.
+// Returns drop reason ("value_convert_failed"/"topic_build_failed") for RecordDrop.
 func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Message, string, error) {
-	// NewMessage(nil) is safe: the air-gap wrapper restores input context onto
-	// outputs in production, so Copy()/WithContext() is a no-op (see CLAUDE.md
-	// "Output context is restored by the engine, not the plugin").
+	// NewMessage(nil) is safe: the engine restores input context (see CLAUDE.md).
 	newMsg := service.NewMessage(nil)
 
 	// Clean up metadata values that might stringify to invalid values (e.g., virtual_path = null)
@@ -547,9 +537,7 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 	return newMsg, "", nil
 }
 
-// parseTimestamp attempts to parse timestamp from metadata in specific order.
-// Returns: parsed timestamp in Unix milliseconds, or sentinelNoTimestamp if parsing failed.
-// Fallback order: timestamp_ms → timestamp → sentinelNoTimestamp
+// parseTimestamp extracts a timestamp from metadata (timestamp_ms → timestamp → sentinel).
 func (p *TagProcessor) parseTimestamp(msg *service.Message) int64 {
 	timestampMsStr, exists := msg.MetaGet("timestamp_ms")
 	if exists && timestampMsStr != "" {
@@ -572,11 +560,8 @@ func (p *TagProcessor) parseTimestamp(msg *service.Message) int64 {
 	return sentinelNoTimestamp
 }
 
-// parseTimestampToRFC3339Nano parses a timestamp value to Unix milliseconds.
-// Supports two formats:
-// 1. Unix milliseconds as string (e.g., "1640995200000")
-// 2. RFC3339Nano format (e.g., "2022-01-01T00:00:00.000Z")
-// Returns: parsed timestamp in milliseconds, or sentinelNoTimestamp on failure.
+// parseTimestampToRFC3339Nano parses Unix-ms strings or RFC3339Nano into milliseconds.
+// Returns sentinelNoTimestamp on failure.
 func (p *TagProcessor) parseTimestampToRFC3339Nano(value string) int64 {
 	if parsedMs, err := strconv.ParseInt(value, 10, 64); err == nil {
 		return parsedMs
@@ -774,9 +759,8 @@ func (p *TagProcessor) compilePrograms() error {
 	return nil
 }
 
-// executeCompiledProgram executes a pre-compiled JavaScript program for optimal performance.
-// Returns (messages, reason, err): reason is the drop taxonomy label when err != nil
-// (js_throw, bad_return, bad_array_element); empty for deliberate drops (null/undefined).
+// executeCompiledProgram runs a pre-compiled JS program. Returns (messages, reason, err).
+// reason is the drop label when err != nil; empty for deliberate drops (null/undefined).
 func (p *TagProcessor) executeCompiledProgram(vm *goja.Runtime, program *goja.Program, jsMsg map[string]interface{}, stageName string) ([]map[string]interface{}, string, error) {
 	if program == nil {
 		return nil, "", nil
@@ -823,9 +807,8 @@ func (p *TagProcessor) executeCompiledProgram(vm *goja.Runtime, program *goja.Pr
 	}
 }
 
-// processMessageBatchWithProgram processes a batch using a compiled program.
-// Per-message errors are dropped loudly via RecordDrop (the message is omitted
-// from the output batch); the function never returns a non-nil error.
+// processMessageBatchWithProgram runs a compiled program over a batch.
+// Per-message errors drop via RecordDrop; never returns a non-nil error.
 func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch service.MessageBatch, program *goja.Program, stageName string) (service.MessageBatch, error) {
 	if program == nil {
 		return batch, nil
@@ -865,9 +848,7 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 			continue
 		}
 
-		// Handle message dropping: a nil return (null/undefined), an empty
-		// array, or an all-nil array all yield 0 outputs and count as a
-		// deliberate per-message drop.
+		// 0 outputs (null/undefined/empty/all-nil array) = deliberate drop.
 		if len(messages) == 0 {
 			p.messagesDropped.Incr(1, "deliberate")
 			p.putVM(vm)
@@ -876,13 +857,9 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 
 		// Convert results back to Benthos messages
 		for _, resultMsg := range messages {
-			// NewMessage(nil) is safe: the engine's v2BatchedToV1Processor
-			// wrapper restores the input context onto outputs in production,
-			// so Copy()/WithContext() is a no-op.
+			// NewMessage(nil) is safe: the engine restores input context (see CLAUDE.md).
 			newMsg := service.NewMessage(nil)
-			// Set metadata from the JS message. Share nodered_js's SetMetaFromJS
-			// so non-scalar/nested-nil meta serializes as JSON instead of
-			// fmt.Sprintf("%v") Go-syntax (literal <nil> in Kafka headers).
+			// Share nodered_js's SetMetaFromJS so nested-nil meta serializes as JSON, not Go <nil>.
 			if meta, ok := resultMsg["meta"].(map[string]interface{}); ok {
 				nodered_js_plugin.SetMetaFromJS(newMsg, meta)
 			}
@@ -903,9 +880,8 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 	return resultBatch, nil
 }
 
-// processConditionForMessageWithProgram evaluates a condition using compiled programs (Phase 2 optimization).
-// Returns (batch, reason, stage, err): reason and stage are populated when err != nil,
-// for the caller to pass to RecordDrop.
+// processConditionForMessageWithProgram evaluates a condition with compiled programs.
+// Returns (batch, reason, stage, err); reason/stage populated for RecordDrop on error.
 func (p *TagProcessor) processConditionForMessageWithProgram(ctx context.Context, conditionIndex int, msg *service.Message) (service.MessageBatch, string, string, error) {
 	// Get VM from pool and ensure it's returned
 	vm := p.getVM()

@@ -147,9 +147,7 @@ func escapeKey(k string) string {
 	return k
 }
 
-// Escape a given string for printing within logs and optimized
-// for being embedded in JSON by using single quotes rather than
-// double quotes.
+// escapeString escapes a string for log output, using single quotes for JSON embeddability.
 func escapeString(data string) string {
 	var builder strings.Builder
 	builder.Grow(len(data) + 2 + len(data)/5) // string length + 2 slots for quotes + 20% headroom for escaped characters to avoid additional allocation
@@ -178,9 +176,7 @@ func escapeString(data string) string {
 	return builder.String()
 }
 
-// Prints any object in a string format that is close to how the NodeJS console.log
-// implementation formats objects. This format is optimized to have as few escaped
-// characters as possible when it is embedded within a JSON payload.
+// stringify formats objects like NodeJS console.log, optimized for JSON embedding.
 func stringify(data any, depth uint8) (string, error) {
 	depth++
 	if depth == math.MaxUint8 {
@@ -396,19 +392,8 @@ func (u *NodeREDJSProcessor) setupProtobuf(vm *goja.Runtime) error {
 	return vm.Set("protobuf", protobufObj)
 }
 
-// HandleExecutionResult handles JavaScript execution results.
-//
-// A function may return:
-//   - null / undefined: the message is dropped,
-//   - a single message object: one output,
-//   - an array of message objects: one output per element (fan-out).
-//
-// null/undefined elements within a returned array are skipped during
-// fan-out. If every element is nil/undefined, or the array is empty,
-// the whole input is treated as a single drop: messagesDropped is
-// incremented once and no outputs are produced. Otherwise (>=1
-// surviving output) nil/undefined elements are skipped with no drop
-// bump. Non-object elements still error the batch.
+// HandleExecutionResult converts a JS return value into output messages.
+// null/undefined drops; an array fans out (nil elements skipped, all-nil = drop).
 func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*service.Message, string, error) {
 	// Handle null/undefined returns: drop (caller bumps messagesDropped).
 	if result.Equals(goja.Undefined()) || result.Equals(goja.Null()) {
@@ -439,11 +424,8 @@ func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*servic
 	return []*service.Message{msg}, "", nil
 }
 
-// messageFromReturnValue builds a service.Message from a single JS return
-// value, which must be a message object (a map with payload/meta).
-// NewMessage(nil) is safe: the engine's v2BatchedToV1Processor wrapper
-// restores the input context onto outputs in production, so
-// Copy()/WithContext() is a no-op.
+// messageFromReturnValue builds a service.Message from a JS return value (map with payload/meta).
+// NewMessage(nil) is safe: the engine restores input context onto outputs (see CLAUDE.md).
 func messageFromReturnValue(v interface{}) (*service.Message, error) {
 	returnedMsg, ok := v.(map[string]interface{})
 	if !ok {
@@ -460,11 +442,8 @@ func messageFromReturnValue(v interface{}) (*service.Message, error) {
 	return newMsg, nil
 }
 
-// SetMetaFromJS transfers JavaScript-origin meta values onto a
-// service.Message, skipping nil top-level values. Map and slice values are
-// JSON-marshaled so nested nil leaves become valid JSON null instead of
-// Go-syntax "<nil>". All other values are stringified with fmt %v. It is
-// exported so tag_processor can reuse this logic.
+// SetMetaFromJS copies JS meta values onto a service.Message, skipping nil top-level values.
+// Maps/slices are JSON-marshaled; other values use fmt %v. Exported for tag_processor reuse.
 func SetMetaFromJS(newMsg *service.Message, meta map[string]interface{}) {
 	for k, val := range meta {
 		if val == nil {
@@ -474,9 +453,7 @@ func SetMetaFromJS(newMsg *service.Message, meta map[string]interface{}) {
 		case map[string]interface{}, []interface{}:
 			b, err := json.Marshal(val)
 			if err != nil {
-				// json.Marshal errors on NaN/+Inf nested in maps or slices;
-				// fall back to a non-empty value rather than writing an empty
-				// Kafka header (matches tag_processor's autoConvertValue).
+				// json.Marshal errors on NaN/+Inf; fall back to %v to avoid an empty Kafka header.
 				newMsg.MetaSet(k, fmt.Sprintf("%v", val))
 				continue
 			}
@@ -501,17 +478,8 @@ func FormatConsoleLogMsg(data []any) string {
 	return strings.Join(buf, " ")
 }
 
-// RecordDrop drops a poisoned message loudly: bumps messages_dropped with the
-// reason label and emits a Warn log. It must not error or panic (hot path).
-// Both nodered_js and tag_processor call it; tag_processor already imports
-// nodered_js_plugin for SetMetaFromJS/ConvertMessageToJSObject. plugin and
-// stage parameterize the Warn log so each call site identifies itself
-// (nodered_js uses "nodered_js"/"processSingleMessage"; tag_processor uses
-// "tag_processor" with stage ∈ {defaults,condition-if,condition-then,advanced,final}).
-//
-// Dropping (not forwarding) is intentional: the uns output mandates umh_topic,
-// and an errored message lacks it, so forwarding would nack the entire batch
-// and stall the polling input (retry-forever → back-pressure → PLC stalls).
+// RecordDrop drops a poisoned message loudly (bumps messages_dropped + Warn log); never errors or panics.
+// Dropping (not forwarding) is intentional: errored messages lack umh_topic, so forwarding would nack the batch.
 func RecordDrop(counter *service.MetricCounter, logger *service.Logger, reason string, plugin string, stage string, msg *service.Message, err error) {
 	counter.Incr(1, reason)
 
@@ -523,14 +491,8 @@ func RecordDrop(counter *service.MetricCounter, logger *service.Logger, reason s
 	logger.Warnf("%s: dropped message (reason=%s, umh_topic=%s, stage=%s) %v", plugin, reason, topic, stage, err)
 }
 
-// ProcessBatch applies the JavaScript code to each message in the batch.
-//
-// Per-message errors (a JS throw, a non-object return, a bad array element,
-// or an infrastructural failure like byte conversion or VM setup) cause the
-// message to be dropped via RecordDrop (bumps messages_dropped{reason} +
-// Warn log) and the rest of the batch continues. A deliberate drop (returning
-// null/undefined/empty/all-nil array) is not an error: it produces no output
-// and bumps messages_dropped{reason=deliberate}.
+// ProcessBatch applies JS to each message. Per-message errors drop via RecordDrop;
+// deliberate drops (null/undefined/empty/all-nil array) bump messages_dropped{reason=deliberate}.
 func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	var resultBatch service.MessageBatch
 	processedCount := 0
@@ -563,12 +525,8 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 	return []service.MessageBatch{resultBatch}, nil
 }
 
-// processSingleMessage processes a single message using a VM from the pool.
-// Returns (messages, wasDropped, err, reason): wasDropped is true only for a
-// genuine drop (null/undefined/empty/all-nil array return). err is non-nil
-// for any per-message failure (JS throw, byte conversion, VM setup, or a
-// non-object return). reason is the drop taxonomy label for the error site
-// (js_throw, infra_failed, bad_return, bad_array_element); empty for drops.
+// processSingleMessage runs JS on one message. Returns (messages, wasDropped, err, reason).
+// wasDropped=true for null/undefined/empty returns; err non-nil for JS throw/infra/bad-return.
 func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *service.Message) ([]*service.Message, bool, string, error) {
 	vm := u.getVM()
 	defer u.putVM(vm)
