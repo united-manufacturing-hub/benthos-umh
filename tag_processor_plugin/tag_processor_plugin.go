@@ -234,14 +234,14 @@ func (p *TagProcessor) clearVMState(vm *goja.Runtime) error {
 }
 
 // setupMessageForVM prepares a VM with message data for execution
-func (p *TagProcessor) setupMessageForVM(ctx context.Context, vm *goja.Runtime, msg *service.Message, jsMsg map[string]interface{}) error {
+func (p *TagProcessor) setupMessageForVM(ctx context.Context, vm *goja.Runtime, msg *service.Message, jsMsg map[string]any) error {
 	// Initialize meta if it doesn't exist
 	if _, exists := jsMsg["meta"]; !exists {
-		jsMsg["meta"] = make(map[string]interface{})
+		jsMsg["meta"] = make(map[string]any)
 	}
 
 	// Add existing metadata to jsMsg.meta
-	meta := jsMsg["meta"].(map[string]interface{})
+	meta := jsMsg["meta"].(map[string]any)
 	if err := msg.MetaWalkMut(func(key string, value any) error {
 		meta[key] = value
 		return nil
@@ -356,7 +356,7 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 }
 
 // logJSError logs JavaScript execution errors with code context
-func (p *TagProcessor) logJSError(err error, code string, jsMsg map[string]interface{}) {
+func (p *TagProcessor) logJSError(err error, code string, jsMsg map[string]any) {
 	jsErr := &goja.Exception{}
 	if errors.As(err, &jsErr) {
 		stack := jsErr.String()
@@ -383,7 +383,7 @@ Message content: %v`,
 }
 
 // logError logs general processing errors with message context
-func (p *TagProcessor) logError(err error, stage string, msg interface{}) {
+func (p *TagProcessor) logError(err error, stage string, msg any) {
 	p.logger.Errorf(`Processing failed at stage '%s':
 Error: %v
 Message content: %v`,
@@ -519,7 +519,7 @@ func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Mes
 	}
 
 	// Build the final payload object
-	finalPayload := map[string]interface{}{
+	finalPayload := map[string]any{
 		"value":        value,
 		"timestamp_ms": timestamp,
 	}
@@ -761,7 +761,7 @@ func (p *TagProcessor) compilePrograms() error {
 
 // executeCompiledProgram runs a pre-compiled JS program. Returns (messages, reason, err).
 // reason is the drop label when err != nil; empty for deliberate drops (null/undefined).
-func (p *TagProcessor) executeCompiledProgram(vm *goja.Runtime, program *goja.Program, jsMsg map[string]interface{}, stageName string) ([]map[string]interface{}, string, error) {
+func (p *TagProcessor) executeCompiledProgram(vm *goja.Runtime, program *goja.Program, jsMsg map[string]any, stageName string) ([]map[string]any, string, error) {
 	if program == nil {
 		return nil, "", nil
 	}
@@ -787,21 +787,21 @@ func (p *TagProcessor) executeCompiledProgram(vm *goja.Runtime, program *goja.Pr
 	}
 
 	switch v := result.Export().(type) {
-	case []interface{}:
-		messages := make([]map[string]interface{}, 0, len(v))
+	case []any:
+		messages := make([]map[string]any, 0, len(v))
 		for i, msg := range v {
 			if msg == nil {
 				continue
 			}
-			msgMap, ok := msg.(map[string]interface{})
+			msgMap, ok := msg.(map[string]any)
 			if !ok {
 				return nil, "bad_array_element", fmt.Errorf("array element %d must be a message object, got %T", i, msg)
 			}
 			messages = append(messages, msgMap)
 		}
 		return messages, "", nil
-	case map[string]interface{}:
-		return []map[string]interface{}{v}, "", nil
+	case map[string]any:
+		return []map[string]any{v}, "", nil
 	default:
 		return nil, "bad_return", fmt.Errorf("code must return a message object or array of message objects")
 	}
@@ -860,7 +860,7 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 			// NewMessage(nil) is safe: the engine restores input context (see CLAUDE.md).
 			newMsg := service.NewMessage(nil)
 			// Share nodered_js's SetMetaFromJS so nested-nil meta serializes as JSON, not Go <nil>.
-			if meta, ok := resultMsg["meta"].(map[string]interface{}); ok {
+			if meta, ok := resultMsg["meta"].(map[string]any); ok {
 				nodered_js_plugin.SetMetaFromJS(newMsg, meta)
 			}
 			// Set payload

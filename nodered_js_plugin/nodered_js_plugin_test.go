@@ -767,7 +767,7 @@ nodered_js:
 			testMsg := service.NewMessage(nil)
 			testMsg.SetStructured("test")
 
-			for i := 0; i < 5; i++ {
+			for range 5 {
 				err = msgHandler(ctx, testMsg)
 				Expect(err).NotTo(HaveOccurred())
 			}
@@ -1667,10 +1667,10 @@ nodered_js:
 			}()
 
 			// Run JavaScript measurement 5 times
-			for i := 0; i < 5; i++ {
+			for range 5 {
 				jsMessages = nil // Reset messages slice
 				experiment.MeasureDuration("JavaScript processing", func() {
-					for j := 0; j < 1000; j++ {
+					for j := range 1000 {
 						testMsg := service.NewMessage(nil)
 						testMsg.SetStructured(j)
 						err = jsMsgHandler(ctx, testMsg)
@@ -1709,10 +1709,10 @@ bloblang: 'root = this * 2'
 			}()
 
 			// Run Bloblang measurement 5 times
-			for i := 0; i < 5; i++ {
+			for range 5 {
 				bloblangMessages = nil // Reset messages slice
 				experiment.MeasureDuration("Bloblang processing", func() {
-					for j := 0; j < 1000; j++ {
+					for j := range 1000 {
 						testMsg := service.NewMessage(nil)
 						testMsg.SetStructured(j)
 						err = bloblangMsgHandler(ctx, testMsg)
@@ -1916,7 +1916,7 @@ nodered_js:
 			const numMessages = 20
 			var wg sync.WaitGroup
 
-			for i := 0; i < numMessages; i++ {
+			for i := range numMessages {
 				wg.Add(1)
 				go func(index int) {
 					defer wg.Done()
@@ -2076,7 +2076,7 @@ return msg;
 			defer cancel()
 
 			ctx := context.Background()
-			for i := 0; i < 3; i++ {
+			for range 3 {
 				err := handler(ctx, newMsg("tick"))
 				Expect(err).NotTo(HaveOccurred())
 			}
@@ -2113,7 +2113,7 @@ return msg;
 			ctx := context.Background()
 			var wg sync.WaitGroup
 			wg.Add(numMsgs)
-			for i := 0; i < numMsgs; i++ {
+			for range numMsgs {
 				go func() {
 					defer wg.Done()
 					_ = handler(ctx, newMsg("concurrent"))
@@ -2136,7 +2136,7 @@ return msg;
 			defer cancel()
 
 			ctx := context.Background()
-			for i := 0; i < 5; i++ {
+			for range 5 {
 				err := handler(ctx, newMsg("x"))
 				Expect(err).NotTo(HaveOccurred())
 			}
@@ -2174,7 +2174,7 @@ return msg;
 			defer cancel()
 
 			ctx := context.Background()
-			for i := 0; i < 2; i++ {
+			for range 2 {
 				err := handler(ctx, newMsg("tick"))
 				Expect(err).NotTo(HaveOccurred())
 			}

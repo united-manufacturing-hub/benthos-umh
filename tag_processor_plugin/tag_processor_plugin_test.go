@@ -114,7 +114,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			value, ok := payload["value"]
@@ -288,8 +288,8 @@ tag_processor:
 			Expect(ok).NotTo(BeNil())
 			okStruct, err := ok.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			Expect(okStruct).To(BeAssignableToTypeOf(map[string]interface{}{}))
-			Expect(okStruct.(map[string]interface{})["value"]).To(Equal("advanced-keep"))
+			Expect(okStruct).To(BeAssignableToTypeOf(map[string]any{}))
+			Expect(okStruct.(map[string]any)["value"]).To(Equal("advanced-keep"))
 			cond1, exists := ok.MetaGet("cond1")
 			Expect(exists).To(BeTrue())
 			Expect(cond1).To(Equal("ran"))
@@ -384,7 +384,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			value, ok := payload["value"]
@@ -474,7 +474,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			value, ok := payload["value"]
@@ -621,7 +621,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			value, ok := payload["value"]
@@ -680,7 +680,7 @@ tag_processor:
 			}()
 
 			// Create and send test message with work order data
-			testPayload := map[string]interface{}{
+			testPayload := map[string]any{
 				"work_order_id": "WO123",
 			}
 			testMsg := service.NewMessage(nil)
@@ -712,7 +712,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			workOrderID, ok := payload["work_order_id"]
@@ -800,7 +800,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			value, ok := payload["value"]
@@ -938,7 +938,7 @@ tag_processor:
 			msg := messages[0]
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			Expect(payload["value"]).To(Equal(json.Number("23.5")))
 
@@ -946,7 +946,7 @@ tag_processor:
 			msg = messages[1]
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			Expect(payload["value"]).To(Equal(json.Number("23.5")))
 		})
@@ -1029,7 +1029,7 @@ tag_processor:
 			Expect(location_path).To(Equal("enterprise.production"))
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			Expect(payload["value"]).To(Equal(json.Number("23.5")))
 
@@ -1043,7 +1043,7 @@ tag_processor:
 			Expect(location_path).To(Equal("enterprise.production"))
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			Expect(payload["value"]).To(Equal(json.Number("47")))
 		})
@@ -1140,7 +1140,7 @@ tag_processor:
 			Expect(virtual_path).To(Equal("processed"))
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			Expect(payload["value"]).To(Equal(json.Number("23.5")))
 
@@ -1157,7 +1157,7 @@ tag_processor:
 			Expect(virtual_path).To(Equal("raw_data"))
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			Expect(payload["value"]).To(Equal(json.Number("47")))
 		})
@@ -1228,31 +1228,31 @@ tag_processor:
 
 			// Test string array (should be JSON serialized)
 			testMsg = service.NewMessage(nil)
-			testMsg.SetStructured([]interface{}{"a", "b", "c"})
+			testMsg.SetStructured([]any{"a", "b", "c"})
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Test integer array (should be JSON serialized)
 			testMsg = service.NewMessage(nil)
-			testMsg.SetStructured([]interface{}{1, 2, 3})
+			testMsg.SetStructured([]any{1, 2, 3})
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Test mixed type array (should be JSON serialized)
 			testMsg = service.NewMessage(nil)
-			testMsg.SetStructured([]interface{}{"text", 42, true})
+			testMsg.SetStructured([]any{"text", 42, true})
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Test float string array
 			testMsg = service.NewMessage(nil)
-			testMsg.SetStructured([]interface{}{"1.23", "2.34", "3.45"})
+			testMsg.SetStructured([]any{"1.23", "2.34", "3.45"})
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Test object (should be preserved as object)
 			testMsg = service.NewMessage(nil)
-			testMsg.SetStructured(map[string]interface{}{
+			testMsg.SetStructured(map[string]any{
 				"key1": "value1",
 				"key2": 42,
 			})
@@ -1268,7 +1268,7 @@ tag_processor:
 			msg := messages[0]
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			value, ok := payload["value"]
 			Expect(ok).To(BeTrue())
@@ -1280,7 +1280,7 @@ tag_processor:
 			msg = messages[1]
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			value, ok = payload["value"]
 			Expect(ok).To(BeTrue())
@@ -1292,7 +1292,7 @@ tag_processor:
 			msg = messages[2]
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			value, ok = payload["value"]
 			Expect(ok).To(BeTrue())
@@ -1306,7 +1306,7 @@ tag_processor:
 			msg = messages[3]
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			value, ok = payload["value"]
 			Expect(ok).To(BeTrue())
@@ -1320,7 +1320,7 @@ tag_processor:
 			msg = messages[4]
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			value, ok = payload["value"]
 			Expect(ok).To(BeTrue())
@@ -1334,7 +1334,7 @@ tag_processor:
 			msg = messages[5]
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			value, ok = payload["value"]
 			Expect(ok).To(BeTrue())
@@ -1346,7 +1346,7 @@ tag_processor:
 			msg = messages[6]
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			value, ok = payload["value"]
 			Expect(ok).To(BeTrue())
@@ -1358,7 +1358,7 @@ tag_processor:
 			msg = messages[7]
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			value, ok = payload["value"]
 			Expect(ok).To(BeTrue())
@@ -1370,7 +1370,7 @@ tag_processor:
 			msg = messages[8]
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			value, ok = payload["value"]
 			Expect(ok).To(BeTrue())
@@ -1382,7 +1382,7 @@ tag_processor:
 			msg = messages[9]
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			value, ok = payload["value"]
 			GinkgoWriter.Printf("payload: %v \n", payload)
@@ -1472,7 +1472,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			value, ok := payload["value"]
@@ -1704,7 +1704,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -1763,7 +1763,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -1823,7 +1823,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -1879,7 +1879,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -1935,7 +1935,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -1993,7 +1993,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -2049,7 +2049,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -2106,7 +2106,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -2169,7 +2169,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -2227,7 +2227,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -2286,7 +2286,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -2344,7 +2344,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -2417,7 +2417,7 @@ tag_processor:
 				structured, err := msg.AsStructured()
 				Expect(err).NotTo(HaveOccurred())
 
-				payload, ok := structured.(map[string]interface{})
+				payload, ok := structured.(map[string]any)
 				Expect(ok).To(BeTrue())
 
 				timestamp_ms, ok := payload["timestamp_ms"]
@@ -3649,7 +3649,7 @@ tag_processor:
 			go func() { _ = stream.Run(ctx) }()
 
 			var batch service.MessageBatch
-			for i := 0; i < 10; i++ {
+			for i := range 10 {
 				m := service.NewMessage([]byte("good"))
 				if i == 2 {
 					m = service.NewMessage([]byte("throw"))
@@ -4225,7 +4225,7 @@ tag_processor:
 			}()
 
 			// Send multiple messages to test VM reuse with complex operations
-			for i := 0; i < 5; i++ {
+			for range 5 {
 				testMsg := service.NewMessage([]byte("42.5"))
 				err = msgHandler(ctx, testMsg)
 				Expect(err).NotTo(HaveOccurred())
@@ -4253,7 +4253,7 @@ tag_processor:
 				complex_result, exists := msg.MetaGet("complex_result")
 				Expect(exists).To(BeTrue())
 
-				var result map[string]interface{}
+				var result map[string]any
 				err := json.Unmarshal([]byte(complex_result), &result)
 				Expect(err).NotTo(HaveOccurred())
 
@@ -4309,7 +4309,7 @@ tag_processor:
 
 			// Send many messages concurrently to stress VM pool
 			const numMessages = 20
-			for i := 0; i < numMessages; i++ {
+			for i := range numMessages {
 				testMsg := service.NewMessage([]byte(`{"test": "data"}`))
 				testMsg.MetaSet("message_id", strings.TrimSpace(string(rune('A'+i))))
 				err = msgHandler(ctx, testMsg)

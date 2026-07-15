@@ -298,7 +298,7 @@ func stringify(data any, depth uint8) (string, error) {
 }
 
 // SetupJSEnvironment sets up the JavaScript VM environment.
-func (u *NodeREDJSProcessor) SetupJSEnvironment(ctx context.Context, vm *goja.Runtime, jsMsg map[string]interface{}) error {
+func (u *NodeREDJSProcessor) SetupJSEnvironment(ctx context.Context, vm *goja.Runtime, jsMsg map[string]any) error {
 	err := vm.Set("msg", jsMsg)
 	if err != nil {
 		return fmt.Errorf("failed to set message in JS environment: %w", err)
@@ -402,7 +402,7 @@ func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*servic
 
 	exported := result.Export()
 
-	if arr, ok := exported.([]interface{}); ok {
+	if arr, ok := exported.([]any); ok {
 		out := make([]*service.Message, 0, len(arr))
 		for i, el := range arr {
 			if el == nil {
@@ -426,8 +426,8 @@ func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*servic
 
 // messageFromReturnValue builds a service.Message from a JS return value (map with payload/meta).
 // NewMessage(nil) is safe: the engine restores input context onto outputs (see CLAUDE.md).
-func messageFromReturnValue(v interface{}) (*service.Message, error) {
-	returnedMsg, ok := v.(map[string]interface{})
+func messageFromReturnValue(v any) (*service.Message, error) {
+	returnedMsg, ok := v.(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("function must return a message object or null")
 	}
@@ -436,7 +436,7 @@ func messageFromReturnValue(v interface{}) (*service.Message, error) {
 	if payload, exists := returnedMsg["payload"]; exists {
 		newMsg.SetStructured(payload)
 	}
-	if meta, exists := returnedMsg["meta"].(map[string]interface{}); exists {
+	if meta, exists := returnedMsg["meta"].(map[string]any); exists {
 		SetMetaFromJS(newMsg, meta)
 	}
 	return newMsg, nil
@@ -444,13 +444,13 @@ func messageFromReturnValue(v interface{}) (*service.Message, error) {
 
 // SetMetaFromJS copies JS meta values onto a service.Message, skipping nil top-level values.
 // Maps/slices are JSON-marshaled; other values use fmt %v. Exported for tag_processor reuse.
-func SetMetaFromJS(newMsg *service.Message, meta map[string]interface{}) {
+func SetMetaFromJS(newMsg *service.Message, meta map[string]any) {
 	for k, val := range meta {
 		if val == nil {
 			continue
 		}
 		switch val.(type) {
-		case map[string]interface{}, []interface{}:
+		case map[string]any, []any:
 			b, err := json.Marshal(val)
 			if err != nil {
 				// json.Marshal errors on NaN/+Inf; fall back to %v to avoid an empty Kafka header.
@@ -541,7 +541,7 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 
 	// Add metadata to the message wrapper
 	// defensive: MetaWalkMut callback never errors; kept for future-proofing
-	meta := make(map[string]interface{})
+	meta := make(map[string]any)
 	if err = msg.MetaWalkMut(func(key string, value any) error {
 		meta[key] = value
 		return nil
@@ -580,7 +580,7 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 }
 
 // Helper function to log JavaScript errors
-func (u *NodeREDJSProcessor) logJSError(err error, jsMsg interface{}) {
+func (u *NodeREDJSProcessor) logJSError(err error, jsMsg any) {
 	jsErr := &goja.Exception{}
 	if errors.As(err, &jsErr) {
 		stack := jsErr.String()
