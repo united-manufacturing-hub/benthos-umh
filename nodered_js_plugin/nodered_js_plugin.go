@@ -535,7 +535,7 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 	// defensive: AsBytes never errors as of benthos v4.74.0 (TODO upstream); kept for future-proofing
 	jsMsg, err := ConvertMessageToJSObject(msg)
 	if err != nil {
-		u.logger.Errorf("%v\nOriginal message: %v", err, msg)
+		u.logger.Warnf("%v\nOriginal message: %v", err, msg)
 		return nil, false, "infra_failed", err
 	}
 
@@ -546,7 +546,7 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 		meta[key] = value
 		return nil
 	}); err != nil {
-		u.logger.Errorf("Failed to walk message metadata: %v\nOriginal message: %v", err, msg)
+		u.logger.Warnf("Failed to walk message metadata: %v\nOriginal message: %v", err, msg)
 		return nil, false, "infra_failed", err
 	}
 	jsMsg["meta"] = meta
@@ -554,7 +554,7 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 	// Setup JS environment
 	// defensive: vm.Set unreachable from normal messages; kept for future-proofing
 	if err = u.SetupJSEnvironment(ctx, vm, jsMsg); err != nil {
-		u.logger.Errorf("%v\nMessage content: %v", err, jsMsg)
+		u.logger.Warnf("%v\nMessage content: %v", err, jsMsg)
 		return nil, false, "infra_failed", err
 	}
 
@@ -568,7 +568,7 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 	// Handle the execution result
 	newMsgs, reason, err := u.HandleExecutionResult(result)
 	if err != nil {
-		u.logger.Errorf("%v\nMessage content: %v\nReturned value: %v", err, jsMsg, result.Export())
+		u.logger.Warnf("%v\nMessage content: %v\nReturned value: %v", err, jsMsg, result.Export())
 		return nil, false, reason, err
 	}
 
@@ -579,12 +579,14 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 	return newMsgs, false, "", nil
 }
 
-// Helper function to log JavaScript errors
+// logJSError logs JavaScript execution errors with code context at Warn level.
+// Warn (not Error) because umh-core's benthos FSM treats Error-level logs as deploy-blocking;
+// a routine JS throw drops the message (RecordDrop Warns) but must not block the deploy.
 func (u *NodeREDJSProcessor) logJSError(err error, jsMsg any) {
 	jsErr := &goja.Exception{}
 	if errors.As(err, &jsErr) {
 		stack := jsErr.String()
-		u.logger.Errorf(`JavaScript execution failed:
+		u.logger.Warnf(`JavaScript execution failed:
 Error: %v
 Stack: %v
 Code:
@@ -595,7 +597,7 @@ Message content: %v`,
 			u.originalCode,
 			jsMsg)
 	} else {
-		u.logger.Errorf(`JavaScript execution failed:
+		u.logger.Warnf(`JavaScript execution failed:
 Error: %v
 Code:
 %v

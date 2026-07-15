@@ -355,12 +355,14 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 	return []service.MessageBatch{resultBatch}, nil
 }
 
-// logJSError logs JavaScript execution errors with code context
+// logJSError logs JavaScript execution errors with code context at Warn level.
+// Warn (not Error) because umh-core's benthos FSM treats Error-level logs as deploy-blocking;
+// a routine JS throw drops the message (RecordDrop Warns) but must not block the deploy.
 func (p *TagProcessor) logJSError(err error, code string, jsMsg map[string]any) {
 	jsErr := &goja.Exception{}
 	if errors.As(err, &jsErr) {
 		stack := jsErr.String()
-		p.logger.Errorf(`JavaScript execution failed:
+		p.logger.Warnf(`JavaScript execution failed:
 Error: %v
 Stack: %v
 Code:
@@ -371,7 +373,7 @@ Message content: %v`,
 			code,
 			jsMsg)
 	} else {
-		p.logger.Errorf(`JavaScript execution failed:
+		p.logger.Warnf(`JavaScript execution failed:
 Error: %v
 Code:
 %v
@@ -382,9 +384,11 @@ Message content: %v`,
 	}
 }
 
-// logError logs general processing errors with message context
+// logError logs general processing errors with message context at Warn level.
+// Warn (not Error) because umh-core's benthos FSM treats Error-level logs as deploy-blocking;
+// a routine validation failure drops the message (RecordDrop Warns) but must not block the deploy.
 func (p *TagProcessor) logError(err error, stage string, msg any) {
-	p.logger.Errorf(`Processing failed at stage '%s':
+	p.logger.Warnf(`Processing failed at stage '%s':
 Error: %v
 Message content: %v`,
 		stage,
@@ -668,7 +672,7 @@ func (p *TagProcessor) constructUMHTopic(msg *service.Message) (string, error) {
 	// Build the topic string
 	topicStr, err := builder.BuildString()
 	if err != nil {
-		p.logger.Errorf("Failed to build UMH topic: %v (locationPath: %s, dataContract: %s, virtualPath: %s, tagName: %s)", err, locationPath, dataContract, virtualPath, tagName)
+		p.logger.Warnf("Failed to build UMH topic: %v (locationPath: %s, dataContract: %s, virtualPath: %s, tagName: %s)", err, locationPath, dataContract, virtualPath, tagName)
 		return "", fmt.Errorf("failed to build UMH topic: %w", err)
 	}
 
