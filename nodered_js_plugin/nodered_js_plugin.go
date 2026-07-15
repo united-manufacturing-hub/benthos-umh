@@ -504,12 +504,15 @@ func FormatConsoleLogMsg(data []any) string {
 // RecordDrop drops a poisoned message loudly: bumps messages_dropped with the
 // reason label and emits a Warn log. It must not error or panic (hot path).
 // Both nodered_js and tag_processor call it; tag_processor already imports
-// nodered_js_plugin for SetMetaFromJS/ConvertMessageToJSObject.
+// nodered_js_plugin for SetMetaFromJS/ConvertMessageToJSObject. plugin and
+// stage parameterize the Warn log so each call site identifies itself
+// (nodered_js uses "nodered_js"/"processSingleMessage"; tag_processor uses
+// "tag_processor" with stage ∈ {defaults,condition-if,condition-then,advanced,final}).
 //
 // Dropping (not forwarding) is intentional: the uns output mandates umh_topic,
 // and an errored message lacks it, so forwarding would nack the entire batch
 // and stall the polling input (retry-forever → back-pressure → PLC stalls).
-func RecordDrop(counter *service.MetricCounter, logger *service.Logger, reason string, msg *service.Message, err error) {
+func RecordDrop(counter *service.MetricCounter, logger *service.Logger, reason string, plugin string, stage string, msg *service.Message, err error) {
 	counter.Incr(1, reason)
 
 	topic, exists := msg.MetaGet("umh_topic")
@@ -517,7 +520,7 @@ func RecordDrop(counter *service.MetricCounter, logger *service.Logger, reason s
 		topic = "<none>"
 	}
 
-	logger.Warnf("nodered_js: dropped message (reason=%s, umh_topic=%s, stage=processSingleMessage) %v", reason, topic, err)
+	logger.Warnf("%s: dropped message (reason=%s, umh_topic=%s, stage=%s) %v", plugin, reason, topic, stage, err)
 }
 
 // ProcessBatch applies the JavaScript code to each message in the batch.
@@ -537,7 +540,7 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		if err != nil {
 			// Drop-loudly: the poisoned message is absent from the output
 			// batch. The good messages flow.
-			RecordDrop(u.messagesDropped, u.logger, reason, msg, err)
+			RecordDrop(u.messagesDropped, u.logger, reason, "nodered_js", "processSingleMessage", msg, err)
 			continue
 		}
 		if dropped {
