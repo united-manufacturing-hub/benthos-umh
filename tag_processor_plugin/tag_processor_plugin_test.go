@@ -4052,6 +4052,91 @@ tag_processor:
 				return exporter.labeledValue("messages_dropped", "infra_failed")
 			}, "2s").Should(Equal(int64(1)))
 		})
+
+		It("capstone: [good, poisoned, good] through tag_processor + key-guard stub output", func() {
+			// End-to-end capstone: 3 messages through the full tag_processor
+			// (defaults + condition that throws on the poisoned one) → a key-guard
+			// stub output that mirrors uns_output's mandatory umh_topic check.
+			// Under drop-loudly: the poisoned msg is dropped at the processor
+			// (never reaches the output), the 2 good msgs are written with
+			// umh_topic, 0 nacks, 1 messages_dropped{reason=js_throw}.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			// defaults sets required metadata; condition throws on poisoned payload.
+			Expect(builder.AddProcessorYAML(strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temp";
+    return msg;
+  conditions:
+    - if: "msg.payload === 'poison'"
+      then: |
+        throw new Error("poisoned");
+`))).To(Succeed())
+
+			// Key-guard stub output: mirrors uns_output.go:403-404.
+			// Acks messages with umh_topic; counts keyless messages as nacks.
+			var writtenCount int64
+			var keylessCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				topic, exists := msg.MetaGet("umh_topic")
+				if !exists || topic == "" || topic == "null" {
+					atomic.AddInt64(&keylessCount, 1)
+					return nil
+				}
+				atomic.AddInt64(&writtenCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			// [good, poisoned, good]
+			msg0 := service.NewMessage([]byte("good1"))
+			msg1 := service.NewMessage([]byte("poison"))
+			msg2 := service.NewMessage([]byte("good2"))
+			batch := service.MessageBatch{msg0, msg1, msg2}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// Exactly 2 messages written (the good ones), both with umh_topic.
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&writtenCount)
+			}, "2s").Should(Equal(int64(2)))
+
+			// 0 keyless messages reached the output (no nack).
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&keylessCount)
+			}, "500ms").Should(Equal(int64(0)))
+
+			// Exactly 1 messages_dropped{reason=js_throw} (the poisoned one).
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "js_throw")
+			}, "2s").Should(Equal(int64(1)))
+		})
 	})
 })
 
