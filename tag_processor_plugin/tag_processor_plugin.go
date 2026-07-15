@@ -331,25 +331,18 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 			continue
 		}
 
-		// An errored message (e.g. from a condition) is forwarded as-is,
-		// skipping validation and construction so it reaches the consumer
-		// marked errored and unchanged (its original payload preserved for
-		// downstream error handling/DLQ).
-		if msg.GetError() != nil {
-			resultBatch = append(resultBatch, msg)
-			continue
-		}
-
 		if err := p.validateMessage(msg); err != nil {
-			p.messagesErrored.Incr(1)
-			p.logger.Errorf("Message validation failed: %v", err)
+			nodered_js_plugin.RecordDrop(p.messagesDropped, p.logger, "validation_missing_fields", "tag_processor", "final", msg, err)
 			continue
 		}
 
 		finalMsg, err := p.constructFinalMessage(msg)
 		if err != nil {
-			p.messagesErrored.Incr(1)
-			p.logger.Errorf("Failed to construct final message: %v", err)
+			reason := "value_convert_failed"
+			if strings.Contains(err.Error(), "construct UMH topic") || strings.Contains(err.Error(), "build UMH topic") {
+				reason = "topic_build_failed"
+			}
+			nodered_js_plugin.RecordDrop(p.messagesDropped, p.logger, reason, "tag_processor", "final", msg, err)
 			continue
 		}
 

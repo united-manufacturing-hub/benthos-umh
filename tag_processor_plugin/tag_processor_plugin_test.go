@@ -3796,6 +3796,126 @@ tag_processor:
 				return exporter.labeledValue("messages_dropped", "bad_array_element")
 			}, "2s").Should(Equal(int64(1)))
 		})
+
+		It("should drop a message missing required fields with reason=validation_missing_fields", func() {
+			// A msg whose defaults don't set location_path/data_contract/tag_name
+			// fails validateMessage and is dropped.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			// defaults sets only tag_name, missing location_path and data_contract.
+			Expect(builder.AddProcessorYAML(strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    msg.meta.tag_name = "temp";
+    return msg;
+`))).To(Succeed())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			msg0 := service.NewMessage([]byte("good1"))
+			msg1 := service.NewMessage([]byte("good2"))
+			batch := service.MessageBatch{msg0, msg1}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// No consumer output: both messages missing required fields.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "validation_missing_fields")
+			}, "2s").Should(Equal(int64(2)))
+		})
+
+		It("should drop a message with topic-build failure with reason=topic_build_failed", func() {
+			// A msg whose location_path starts with _ (invalid per ISA-95) fails
+			// constructUMHTopic and is dropped.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			// defaults sets location_path starting with _ (invalid).
+			Expect(builder.AddProcessorYAML(strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "_invalid";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temp";
+    return msg;
+`))).To(Succeed())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			msg0 := service.NewMessage([]byte("good1"))
+			msg1 := service.NewMessage([]byte("good2"))
+			batch := service.MessageBatch{msg0, msg1}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// No consumer output: topic build fails for both.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "topic_build_failed")
+			}, "2s").Should(Equal(int64(2)))
+		})
 	})
 })
 
