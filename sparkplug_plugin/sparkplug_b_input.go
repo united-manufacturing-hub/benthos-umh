@@ -1138,8 +1138,14 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	msg.MetaSet("spb_metric_index", fmt.Sprintf("%d", metricIndex))
 	msg.MetaSet("spb_metrics_in_payload", fmt.Sprintf("%d", totalMetrics))
 
-	if payload.Timestamp != nil {
-		msg.MetaSet("spb_timestamp", fmt.Sprintf("%d", *payload.Timestamp))
+	// ENG-5341: prefer the per-metric timestamp (Sparkplug proto field 3) so each metric
+	// keeps its own sample time; fall back to the payload-level timestamp when absent.
+	ts := payload.Timestamp
+	if metric.Timestamp != nil {
+		ts = metric.Timestamp
+	}
+	if ts != nil {
+		msg.MetaSet("spb_timestamp", fmt.Sprintf("%d", *ts))
 	}
 
 	// Add metric-specific metadata
@@ -1276,8 +1282,8 @@ func (s *sparkplugInput) extractMetricValue(metric *sparkplugb.Payload_Metric) [
 		}
 	}
 
-	// Note: Individual metrics don't have timestamps in Sparkplug B
-	// Timestamp is at the payload level
+	// Note: the metric timestamp is surfaced as spb_timestamp metadata (see
+	// createMessageFromMetric), not embedded in the value JSON here.
 
 	jsonBytes, err := json.Marshal(result)
 	if err != nil {
@@ -1605,8 +1611,10 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 		sparkplugMsg.MetricName = "unknown_metric"
 	}
 
-	// Set timestamp from payload if available
-	if payload.Timestamp != nil {
+	// ENG-5341: prefer the per-metric timestamp, falling back to the payload-level one.
+	if metric.Timestamp != nil {
+		sparkplugMsg.Timestamp = time.UnixMilli(int64(*metric.Timestamp))
+	} else if payload.Timestamp != nil {
 		sparkplugMsg.Timestamp = time.UnixMilli(int64(*payload.Timestamp))
 	}
 
