@@ -188,7 +188,7 @@ func newTagProcessor(config TagProcessorConfig, logger *service.Logger, metrics 
 		// Existing metrics
 		messagesProcessed: metrics.NewCounter("messages_processed"),
 		messagesErrored:   metrics.NewCounter("messages_errored"),
-		messagesDropped:   metrics.NewCounter("messages_dropped"),
+		messagesDropped:   metrics.NewCounter("messages_dropped", "reason"),
 
 		jsProcessor: jsProcessor,
 	}
@@ -310,22 +310,11 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 		var newBatch service.MessageBatch
 
 		for _, msg := range batch {
-			// A message already errored by an earlier condition skips the
-			// remaining conditions and is forwarded unchanged.
-			if msg.GetError() != nil {
-				newBatch = append(newBatch, msg)
-				continue
-			}
-			processedMsgs, err := p.processConditionForMessageWithProgram(ctx, i, msg)
+			processedMsgs, reason, stage, err := p.processConditionForMessageWithProgram(ctx, i, msg)
 			if err != nil {
-				// Forward the errored message instead of swallowing it. The
-				// GetError pass-through checks in later stages (advanced,
-				// construction) keep it unchanged so downstream error
-				// handling/DLQ can act on the original message.
-				msg.SetError(err)
-				p.messagesErrored.Incr(1)
-				p.logError(err, "condition evaluation", msg)
-				newBatch = append(newBatch, msg)
+				// Drop-loudly: the poisoned message is absent from the output
+				// batch. The good messages flow.
+				nodered_js_plugin.RecordDrop(p.messagesDropped, p.logger, reason, "tag_processor", stage, msg, err)
 				continue
 			}
 			// Append all returned messages (could be 0, 1, or multiple)
@@ -963,8 +952,10 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 	return resultBatch, nil
 }
 
-// processConditionForMessageWithProgram evaluates a condition using compiled programs (Phase 2 optimization)
-func (p *TagProcessor) processConditionForMessageWithProgram(ctx context.Context, conditionIndex int, msg *service.Message) (service.MessageBatch, error) {
+// processConditionForMessageWithProgram evaluates a condition using compiled programs (Phase 2 optimization).
+// Returns (batch, reason, stage, err): reason and stage are populated when err != nil,
+// for the caller to pass to RecordDrop.
+func (p *TagProcessor) processConditionForMessageWithProgram(ctx context.Context, conditionIndex int, msg *service.Message) (service.MessageBatch, string, string, error) {
 	// Get VM from pool and ensure it's returned
 	vm := p.getVM()
 	defer p.putVM(vm)
@@ -972,19 +963,19 @@ func (p *TagProcessor) processConditionForMessageWithProgram(ctx context.Context
 	// Convert message to JS object for condition check
 	jsMsg, err := nodered_js_plugin.ConvertMessageToJSObject(msg)
 	if err != nil {
-		return nil, fmt.Errorf("message conversion failed: %w", err)
+		return nil, "infra_failed", "condition-if", fmt.Errorf("message conversion failed: %w", err)
 	}
 
 	// Setup VM environment using optimized helper method
 	if err = p.setupMessageForVM(ctx, vm, msg, jsMsg); err != nil {
-		return nil, fmt.Errorf("JS environment setup failed: %w", err)
+		return nil, "infra_failed", "condition-if", fmt.Errorf("JS environment setup failed: %w", err)
 	}
 
 	// Evaluate condition using compiled program
 	ifResult, err := vm.RunProgram(p.conditionPrograms[conditionIndex])
 	if err != nil {
 		p.logJSError(err, p.originalConditions[conditionIndex].If, jsMsg)
-		return nil, fmt.Errorf("condition evaluation failed: %w", err)
+		return nil, "js_throw", "condition-if", fmt.Errorf("condition evaluation failed: %w", err)
 	}
 
 	// If condition is true, process the message with the compiled condition action
@@ -995,12 +986,12 @@ func (p *TagProcessor) processConditionForMessageWithProgram(ctx context.Context
 			p.conditionThenPrograms[conditionIndex],
 			fmt.Sprintf("condition-%d-then", conditionIndex))
 		if err != nil {
-			return nil, fmt.Errorf("condition processing failed: %w", err)
+			return nil, "js_throw", "condition-then", fmt.Errorf("condition processing failed: %w", err)
 		}
 		// Return all messages produced by the condition action (could be 0, 1, or multiple)
-		return conditionBatch, nil
+		return conditionBatch, "", "", nil
 	}
 
 	// Condition was false, return original message
-	return service.MessageBatch{msg}, nil
+	return service.MessageBatch{msg}, "", "", nil
 }

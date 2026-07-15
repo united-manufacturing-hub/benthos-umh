@@ -206,14 +206,10 @@ tag_processor:
 			Expect(count).To(Equal("42"))
 		})
 
-		It("should forward a condition-error message with SetError, skipping later stages", func() {
-			// A condition `then` that throws must not swallow the message
-			// (silent drop, no forward, no retry). It is forwarded to the
-			// consumer with SetError, UNCHANGED by later stages (remaining
-			// conditions, advanced processing, construction), so downstream
-			// error handling/DLQ can act on the original message. This
-			// matches the batch-fatal path's semantics at per-message
-			// granularity.
+		It("should drop a condition-error message loudly, continuing the batch", func() {
+			// A condition `then` that throws drops the message loudly
+			// (absent from output, messages_dropped bumped). The good
+			// message flows through conditions + advanced + construction.
 			env := service.NewEnvironment()
 
 			var mu sync.Mutex
@@ -275,23 +271,16 @@ tag_processor:
 			batch := service.MessageBatch{msgA, msgB}
 			Expect(batchHandler(ctx, batch)).To(Succeed())
 
-			// Both messages reach the consumer: the good one transformed,
-			// the condition-error one forwarded with SetError.
+			// Only the good message reaches the consumer; the throw is dropped.
 			Eventually(func() int {
 				messagesMutex.Lock()
 				defer messagesMutex.Unlock()
 				return len(messages)
-			}, "2s").Should(Equal(2))
+			}, "2s").Should(Equal(1))
 
 			messagesMutex.Lock()
-			var errored, ok *service.Message
-			for _, m := range messages {
-				if m.GetError() != nil {
-					errored = m
-				} else {
-					ok = m
-				}
-			}
+			Expect(messages).To(HaveLen(1))
+			ok := messages[0]
 			messagesMutex.Unlock()
 
 			// msgA: passed both conditions + advanced, payload value-wrapped
@@ -305,26 +294,12 @@ tag_processor:
 			Expect(exists).To(BeTrue())
 			Expect(cond1).To(Equal("ran"))
 
-			// msgB: condition 0 threw. Forwarded with SetError, UNCHANGED by
-			// condition 1 (no cond1 meta), advanced (payload still "throw",
-			// not "advanced-throw"), and construction (payload not value-
-			// wrapped into a JSON object).
-			Expect(errored).NotTo(BeNil())
-			Expect(errored.GetError()).NotTo(Succeed())
-			// Payload is the original "throw" (a structured string set by
-			// defaults): NOT "advanced-throw" (advanced skipped) and NOT a
-			// {value, timestamp_ms} object (construction skipped).
-			errStruct, e := errored.AsStructured()
-			Expect(e).NotTo(HaveOccurred())
-			Expect(errStruct).To(Equal("throw"))
-			_, hasCond1 := errored.MetaGet("cond1")
-			Expect(hasCond1).To(BeFalse(), "errored message must skip later conditions")
+			// No output message carries an error (no forward-on-error).
+			Expect(ok.GetError()).To(Succeed())
 
-			// messages_errored == 1 (one condition error, per-message).
+			// messages_dropped{reason=js_throw} == 1 (the condition throw).
 			Eventually(func() int64 {
-				mu.Lock()
-				defer mu.Unlock()
-				return counts["messages_errored"]
+				return exporter.labeledValue("messages_dropped", "js_throw")
 			}, "2s").Should(Equal(int64(1)))
 		})
 
@@ -2950,10 +2925,10 @@ tag_processor:
 			}, "500ms").Should(Equal(int64(0)))
 		})
 
-		It("should bump messagesErrored when a condition then-action throws a JS error", func() {
-			// A condition whose then action throws a JS error is forwarded to
-			// the consumer with SetError (not swallowed), so downstream error
-			// handling/DLQ can act. messages_errored bumps to make it visible.
+		It("should drop a condition then-action throw loudly", func() {
+			// A condition whose then action throws a JS error is dropped
+			// loudly: absent from output, messages_dropped{reason=js_throw}
+			// bumped, no consumer output, no messages_errored.
 			env := service.NewEnvironment()
 
 			var mu sync.Mutex
@@ -3000,30 +2975,24 @@ tag_processor:
 			testMsg.SetStructured("ignored")
 			Expect(msgHandler(ctx, testMsg)).To(Succeed())
 
-			// messages_errored bumps to exactly 1: the condition JS error is
-			// now visible in metrics.
+			// messages_dropped{reason=js_throw} == 1 (the condition throw).
 			Eventually(func() int64 {
-				mu.Lock()
-				defer mu.Unlock()
-				return counts["messages_errored"]
+				return exporter.labeledValue("messages_dropped", "js_throw")
 			}, "5s", "50ms").Should(Equal(int64(1)))
 
-			// The errored message is forwarded to the consumer with SetError
-			// (not swallowed), so downstream error handling can act.
-			Eventually(func() int64 {
+			// No consumer output: the throwing message is dropped, not forwarded.
+			Consistently(func() int64 {
 				return atomic.LoadInt64(&consumerCount)
-			}, "2s").Should(Equal(int64(1)))
+			}, "500ms").Should(Equal(int64(0)))
 			mu.Lock()
-			Expect(counts["messages_dropped"]).To(Equal(int64(0)))
+			Expect(counts["messages_errored"]).To(Equal(int64(0)))
 			Expect(counts["messages_processed"]).To(Equal(int64(0)))
 			mu.Unlock()
 		})
 
-		It("should bump messagesErrored when a condition if-expression throws a JS error", func() {
+		It("should drop a condition if-expression throw loudly", func() {
 			// Triangulates the then-action case: the if-expression throw
-			// returns the same error to the conditions-loop bump site, so
-			// messages_errored must rise here too. Guards against a future
-			// refactor that splits the two error returns.
+			// drops the message with reason=js_throw, same as the then path.
 			env := service.NewEnvironment()
 
 			var mu sync.Mutex
@@ -3071,18 +3040,15 @@ tag_processor:
 			Expect(msgHandler(ctx, testMsg)).To(Succeed())
 
 			Eventually(func() int64 {
-				mu.Lock()
-				defer mu.Unlock()
-				return counts["messages_errored"]
+				return exporter.labeledValue("messages_dropped", "js_throw")
 			}, "5s", "50ms").Should(Equal(int64(1)))
 
-			// The errored message is forwarded to the consumer with SetError
-			// (not swallowed), so downstream error handling can act.
-			Eventually(func() int64 {
+			// No consumer output: the throwing message is dropped.
+			Consistently(func() int64 {
 				return atomic.LoadInt64(&consumerCount)
-			}, "2s").Should(Equal(int64(1)))
+			}, "500ms").Should(Equal(int64(0)))
 			mu.Lock()
-			Expect(counts["messages_dropped"]).To(Equal(int64(0)))
+			Expect(counts["messages_errored"]).To(Equal(int64(0)))
 			Expect(counts["messages_processed"]).To(Equal(int64(0)))
 			mu.Unlock()
 		})
@@ -3332,12 +3298,12 @@ tag_processor:
 			mu.Unlock()
 		})
 
-		It("should not double-count messages_errored when a condition errors and advanced then aborts batch-fatal", func() {
-			// [a, b, c]: condition throws on b (forwarded with SetError,
-			// messages_errored+1), then advanced throws on c (batch-fatal).
-			// advanced's batchFatalErr must bump only the non-errored
-			// messages (a and c), not the already-counted b, so
-			// messages_errored == 3 (distinct), not 4.
+		It("should drop condition-errored msg and batch-fatal on advanced error", func() {
+			// [a, b, c]: condition throws on b (dropped via RecordDrop),
+			// then advanced throws on c (batch-fatal, still in place pre-R4).
+			// b is dropped (messages_dropped+1), advanced's batchFatalErr
+			// bumps messages_errored by 2 (a and c, the non-errored batch).
+			// The engine forwards all 3 original inputs on the batch-fatal.
 			env := service.NewEnvironment()
 
 			var mu sync.Mutex
@@ -3399,17 +3365,21 @@ tag_processor:
 				return atomic.LoadInt64(&consumerCount)
 			}, "2s").Should(Equal(int64(3)))
 
-			// messages_errored == 3 (1 from the condition + 2 from advanced's
-			// non-errored-only bump), NOT 4: b is not double-counted.
+			// messages_dropped{reason=js_throw} == 1 (b dropped by condition).
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "js_throw")
+			}, "2s").Should(Equal(int64(1)))
+
+			// messages_errored == 2 (a and c from advanced's batchFatalErr;
+			// b was already dropped, not forwarded-errored, so not counted).
 			Eventually(func() int64 {
 				mu.Lock()
 				defer mu.Unlock()
 				return counts["messages_errored"]
-			}, "2s").Should(Equal(int64(3)))
+			}, "2s").Should(Equal(int64(2)))
 
-			// No drops, no successful outputs (construction never ran).
+			// No successful outputs (construction never ran).
 			mu.Lock()
-			Expect(counts["messages_dropped"]).To(Equal(int64(0)))
 			Expect(counts["messages_processed"]).To(Equal(int64(0)))
 			mu.Unlock()
 		})
@@ -3487,6 +3457,199 @@ tag_processor:
 			Expect(counts["messages_processed"]).To(Equal(int64(0)))
 			Expect(counts["messages_dropped"]).To(Equal(int64(0)))
 			mu.Unlock()
+		})
+	})
+
+	When("drop-loudly error handling", func() {
+		It("should drop a condition-if-throwing message and continue the batch", func() {
+			// [good, throw-if, good]: msg1's condition `if` JS throws.
+			// Under drop-loudly, msg1 is dropped (absent from output),
+			// the two good msgs flow and get constructed with umh_topic,
+			// messages_dropped{reason=js_throw}==1, no output msg has
+			// GetError(), no batchFatalErr (no nack).
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			Expect(builder.AddProcessorYAML(strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temp";
+    return msg;
+  conditions:
+    - if: |
+        (function() {
+          if (msg.payload === "throw-if") { throw new Error("if boom"); }
+          return true;
+        })()
+      then: |
+        msg.meta.cond1 = "ran";
+        return msg;
+`))).To(Succeed())
+
+			var consumerCount int64
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			Expect(builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			msg0 := service.NewMessage([]byte("good1"))
+			msg1 := service.NewMessage([]byte("throw-if"))
+			msg2 := service.NewMessage([]byte("good2"))
+			batch := service.MessageBatch{msg0, msg1, msg2}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// (a) Only 2 reach the consumer: the good messages.
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "2s").Should(Equal(int64(2)))
+
+			// (b) messages_dropped{reason=js_throw} == 1.
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "js_throw")
+			}, "2s").Should(Equal(int64(1)))
+
+			// (c) No output message carries an error (no forward-on-error).
+			messagesMutex.Lock()
+			for _, m := range messages {
+				Expect(m.GetError()).To(Succeed(), "no output message should carry an error")
+			}
+			messagesMutex.Unlock()
+
+			// (d) Both output messages have umh_topic (they were constructed).
+			messagesMutex.Lock()
+			for _, m := range messages {
+				topic, exists := m.MetaGet("umh_topic")
+				Expect(exists).To(BeTrue(), "output message should have umh_topic")
+				Expect(topic).NotTo(BeEmpty(), "umh_topic should not be empty")
+			}
+			messagesMutex.Unlock()
+		})
+
+		It("should drop a condition-then-throwing message and continue the batch", func() {
+			// [good, throw-then, good]: msg1's condition `then` JS throws.
+			// Under drop-loudly, msg1 is dropped, the two good msgs flow.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			Expect(builder.AddProcessorYAML(strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temp";
+    return msg;
+  conditions:
+    - if: msg.payload === "throw-then"
+      then: |
+        throw new Error("then boom");
+    - if: true
+      then: |
+        msg.meta.cond1 = "ran";
+        return msg;
+`))).To(Succeed())
+
+			var consumerCount int64
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			Expect(builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			msg0 := service.NewMessage([]byte("good1"))
+			msg1 := service.NewMessage([]byte("throw-then"))
+			msg2 := service.NewMessage([]byte("good2"))
+			batch := service.MessageBatch{msg0, msg1, msg2}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// (a) Only 2 reach the consumer.
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "2s").Should(Equal(int64(2)))
+
+			// (b) messages_dropped{reason=js_throw} == 1.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "2s").Should(Equal(int64(1)), "unlabelled messages_dropped total")
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "js_throw")
+			}, "2s").Should(Equal(int64(1)))
+
+			// (c) No output message carries an error.
+			messagesMutex.Lock()
+			for _, m := range messages {
+				Expect(m.GetError()).To(Succeed(), "no output message should carry an error")
+			}
+			messagesMutex.Unlock()
+
+			// (d) Both output messages have umh_topic.
+			messagesMutex.Lock()
+			for _, m := range messages {
+				topic, exists := m.MetaGet("umh_topic")
+				Expect(exists).To(BeTrue(), "output message should have umh_topic")
+				Expect(topic).NotTo(BeEmpty(), "umh_topic should not be empty")
+			}
+			messagesMutex.Unlock()
 		})
 	})
 })
@@ -3956,17 +4119,33 @@ func (m *counterCaptureMetrics) NewGaugeCtor(string, ...string) service.MetricsE
 func (m *counterCaptureMetrics) Close(context.Context) error { return nil }
 
 // labeledValue returns the captured count for the given counter name and
-// label values. Returns 0 if the counter or label combination was never
-// incremented.
+// label values. Benthos prepends internal label values (e.g. "",
+// "root.pipeline.processors.0") to the user-provided ones, so the match is a
+// suffix match on the joined key. When no label values are given, the total
+// across all label combinations is returned. Returns 0 if the counter or label
+// combination was never incremented.
 func (m *counterCaptureMetrics) labeledValue(name string, labelValues ...string) int64 {
-	key := strings.Join(labelValues, ",")
+	suffix := strings.Join(labelValues, ",")
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	inner := m.labeledCounts[name]
 	if inner == nil {
 		return 0
 	}
-	return inner[key]
+	if suffix == "" {
+		var total int64
+		for _, v := range inner {
+			total += v
+		}
+		return total
+	}
+	var total int64
+	for k, v := range inner {
+		if k == suffix || strings.HasSuffix(k, ","+suffix) {
+			total += v
+		}
+	}
+	return total
 }
 
 type capturedCounter struct {
