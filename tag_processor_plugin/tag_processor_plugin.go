@@ -864,8 +864,13 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 			// NewMessage(nil) is safe: the engine wrapper (v2BatchedToV1Processor) restores input context onto outputs.
 			newMsg := service.NewMessage(nil)
 			// Share nodered_js's SetMetaFromJS so nested-nil meta serializes as JSON, not Go <nil>.
-			if meta, ok := resultMsg["meta"].(map[string]any); ok {
-				nodered_js_plugin.SetMetaFromJS(newMsg, meta)
+			if meta, exists := resultMsg["meta"]; exists && meta != nil {
+				metaMap, ok := meta.(map[string]any)
+				if !ok {
+					nodered_js_plugin.RecordDrop(p.messagesDropped, p.logger, "bad_return", "tag_processor", stageName, msg, fmt.Errorf("message meta must be an object, got %T", meta))
+					continue
+				}
+				nodered_js_plugin.SetMetaFromJS(newMsg, metaMap)
 			}
 			// Set payload
 			if payload, exists := resultMsg["payload"]; exists {

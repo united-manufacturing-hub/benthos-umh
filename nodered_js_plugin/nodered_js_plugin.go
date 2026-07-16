@@ -410,7 +410,7 @@ func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*servic
 			}
 			msg, err := messageFromReturnValue(el)
 			if err != nil {
-				return nil, "bad_array_element", fmt.Errorf("array element %d must be a message object, got %T", i, el)
+				return nil, "bad_array_element", fmt.Errorf("array element %d: %w", i, err)
 			}
 			out = append(out, msg)
 		}
@@ -436,8 +436,12 @@ func messageFromReturnValue(v any) (*service.Message, error) {
 	if payload, exists := returnedMsg["payload"]; exists {
 		newMsg.SetStructured(payload)
 	}
-	if meta, exists := returnedMsg["meta"].(map[string]any); exists {
-		SetMetaFromJS(newMsg, meta)
+	if meta, exists := returnedMsg["meta"]; exists && meta != nil {
+		metaMap, ok := meta.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("message meta must be an object, got %T", meta)
+		}
+		SetMetaFromJS(newMsg, metaMap)
 	}
 	return newMsg, nil
 }

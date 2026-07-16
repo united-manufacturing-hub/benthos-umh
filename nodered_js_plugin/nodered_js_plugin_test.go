@@ -514,6 +514,68 @@ nodered_js:
 			}, "2s").Should(Equal(int64(1)))
 		})
 
+		It("should drop the message when meta is a non-object value", func() {
+			// A returned meta that is not an object (here a string) is a bad
+			// return: the input is dropped (not forwarded without metadata),
+			// and messages_dropped{reason=bad_return}==1.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    return {payload: {value: 1}, meta: "not-an-object"};
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			// No consumer output: the input was dropped (bad meta).
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+
+			// messages_dropped{reason=bad_return} == 1.
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "bad_return")
+			}, "2s").Should(Equal(int64(1)))
+		})
+
 		It("should drop all messages when returning an all-nil array", func() {
 			env := service.NewEnvironment()
 
