@@ -42,7 +42,6 @@ type NodeREDJSProcessor struct {
 	logger            *service.Logger
 	cache             cache.Cache
 	messagesProcessed *service.MetricCounter
-	messagesErrored   *service.MetricCounter
 	messagesDropped   *service.MetricCounter
 	vmPoolHits        *service.MetricCounter
 	vmPoolMisses      *service.MetricCounter
@@ -63,7 +62,6 @@ func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service
 		logger:            logger,
 		cache:             c,
 		messagesProcessed: metrics.NewCounter("messages_processed"),
-		messagesErrored:   metrics.NewCounter("messages_errored"),
 		messagesDropped:   metrics.NewCounter("messages_dropped", "reason"),
 		vmPoolHits:        metrics.NewCounter("vm_pool_hits"),
 		vmPoolMisses:      metrics.NewCounter("vm_pool_misses"),

@@ -1,0 +1,3 @@
+kind: fixes
+body: The nodered_js and tag_processor plugins no longer publish the messages_errored counter; JS errors are counted in messages_dropped{reason=js_throw} instead (ENG-5240)
+time: 2026-07-16T17:00:00+02:00

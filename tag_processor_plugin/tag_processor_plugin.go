@@ -151,7 +151,6 @@ type TagProcessor struct {
 
 	// Existing metrics
 	messagesProcessed *service.MetricCounter
-	messagesErrored   *service.MetricCounter
 	messagesDropped   *service.MetricCounter
 
 	// Keep for JS environment setup helper methods
@@ -184,7 +183,6 @@ func newTagProcessor(config TagProcessorConfig, logger *service.Logger, metrics 
 
 		// Existing metrics
 		messagesProcessed: metrics.NewCounter("messages_processed"),
-		messagesErrored:   metrics.NewCounter("messages_errored"),
 		messagesDropped:   metrics.NewCounter("messages_dropped", "reason"),
 
 		jsProcessor: jsProcessor,
