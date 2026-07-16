@@ -819,74 +819,76 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 	}
 
 	var resultBatch service.MessageBatch
-
 	for _, msg := range batch {
 		if msg == nil {
 			continue
 		}
-		// Use VM pool for consistent performance
-		vm := p.getVM()
-
-		// Convert message to JS object
-		// defensive: AsBytes never errors as of benthos v4.74.0 (TODO upstream); kept for future-proofing
-		jsMsg, err := nodered_js_plugin.ConvertMessageToJSObject(msg)
-		if err != nil {
-			nodered_js_plugin.RecordDrop(p.messagesDropped, p.logger, "infra_failed", "tag_processor", stageName, msg, err)
-			p.putVM(vm)
-			continue
-		}
-
-		// Setup VM environment
-		// defensive: MetaWalkMut callback + vm.Set unreachable from normal messages; kept for future-proofing
-		if err = p.setupMessageForVM(ctx, vm, msg, jsMsg); err != nil {
-			nodered_js_plugin.RecordDrop(p.messagesDropped, p.logger, "infra_failed", "tag_processor", stageName, msg, err)
-			p.putVM(vm)
-			continue
-		}
-
-		// Execute compiled program for maximum performance
-		messages, reason, err := p.executeCompiledProgram(vm, program, jsMsg, stageName)
-		if err != nil {
-			nodered_js_plugin.RecordDrop(p.messagesDropped, p.logger, reason, "tag_processor", stageName, msg, err)
-			p.putVM(vm)
-			continue
-		}
-
-		// 0 outputs (null/undefined/empty/all-nil array) = deliberate drop.
-		if len(messages) == 0 {
-			p.messagesDropped.Incr(1, "deliberate")
-			p.putVM(vm)
-			continue
-		}
-
-		// Convert results back to Benthos messages
-		for _, resultMsg := range messages {
-			// NewMessage(nil) is safe: the engine wrapper (v2BatchedToV1Processor) restores input context onto outputs.
-			newMsg := service.NewMessage(nil)
-			// Share nodered_js's SetMetaFromJS so nested-nil meta serializes as JSON, not Go <nil>.
-			if meta, exists := resultMsg["meta"]; exists && meta != nil {
-				metaMap, ok := meta.(map[string]any)
-				if !ok {
-					nodered_js_plugin.RecordDrop(p.messagesDropped, p.logger, "bad_return", "tag_processor", stageName, msg, fmt.Errorf("message meta must be an object, got %T", meta))
-					continue
-				}
-				nodered_js_plugin.SetMetaFromJS(newMsg, metaMap)
-			}
-			// Set payload
-			if payload, exists := resultMsg["payload"]; exists {
-				newMsg.SetStructured(payload)
-			} else {
-				newMsg.SetStructured(jsMsg["payload"])
-			}
-
-			resultBatch = append(resultBatch, newMsg)
-		}
-
-		// Return VM to pool after processing this message
-		p.putVM(vm)
+		resultBatch = append(resultBatch, p.processMessageWithProgram(ctx, msg, program, stageName)...)
 	}
 
 	return resultBatch, nil
+}
+
+// processMessageWithProgram runs a compiled program over a single message.
+// Per-message errors drop via RecordDrop; returns only the good outputs.
+// This is a per-message helper so the deferred putVM fires each call,
+// not once per batch (a defer inside the loop body would hold every VM
+// until processMessageBatchWithProgram returns and starve the pool).
+func (p *TagProcessor) processMessageWithProgram(ctx context.Context, msg *service.Message, program *goja.Program, stageName string) []*service.Message {
+	vm := p.getVM()
+	defer p.putVM(vm)
+
+	// Convert message to JS object
+	// defensive: AsBytes never errors as of benthos v4.74.0 (TODO upstream); kept for future-proofing
+	jsMsg, err := nodered_js_plugin.ConvertMessageToJSObject(msg)
+	if err != nil {
+		nodered_js_plugin.RecordDrop(p.messagesDropped, p.logger, "infra_failed", "tag_processor", stageName, msg, err)
+		return nil
+	}
+
+	// Setup VM environment
+	// defensive: MetaWalkMut callback + vm.Set unreachable from normal messages; kept for future-proofing
+	if err = p.setupMessageForVM(ctx, vm, msg, jsMsg); err != nil {
+		nodered_js_plugin.RecordDrop(p.messagesDropped, p.logger, "infra_failed", "tag_processor", stageName, msg, err)
+		return nil
+	}
+
+	// Execute compiled program for maximum performance
+	messages, reason, err := p.executeCompiledProgram(vm, program, jsMsg, stageName)
+	if err != nil {
+		nodered_js_plugin.RecordDrop(p.messagesDropped, p.logger, reason, "tag_processor", stageName, msg, err)
+		return nil
+	}
+
+	// 0 outputs (null/undefined/empty/all-nil array) = deliberate drop.
+	if len(messages) == 0 {
+		p.messagesDropped.Incr(1, "deliberate")
+		return nil
+	}
+
+	// Convert results back to Benthos messages
+	out := make([]*service.Message, 0, len(messages))
+	for _, resultMsg := range messages {
+		// NewMessage(nil) is safe: the engine wrapper (v2BatchedToV1Processor) restores input context onto outputs.
+		newMsg := service.NewMessage(nil)
+		// Share nodered_js's SetMetaFromJS so nested-nil meta serializes as JSON, not Go <nil>.
+		if meta, exists := resultMsg["meta"]; exists && meta != nil {
+			metaMap, ok := meta.(map[string]any)
+			if !ok {
+				nodered_js_plugin.RecordDrop(p.messagesDropped, p.logger, "bad_return", "tag_processor", stageName, msg, fmt.Errorf("message meta must be an object, got %T", meta))
+				continue
+			}
+			nodered_js_plugin.SetMetaFromJS(newMsg, metaMap)
+		}
+		// Set payload
+		if payload, exists := resultMsg["payload"]; exists {
+			newMsg.SetStructured(payload)
+		} else {
+			newMsg.SetStructured(jsMsg["payload"])
+		}
+		out = append(out, newMsg)
+	}
+	return out
 }
 
 // processConditionForMessageWithProgram evaluates a condition with compiled programs.
