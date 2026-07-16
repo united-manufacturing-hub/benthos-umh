@@ -425,7 +425,7 @@ func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*servic
 }
 
 // messageFromReturnValue builds a service.Message from a JS return value (map with payload/meta).
-// NewMessage(nil) is safe: the engine restores input context onto outputs (see CLAUDE.md).
+// NewMessage(nil) is safe: the engine wrapper (v2BatchedToV1Processor) restores input context onto outputs.
 func messageFromReturnValue(v any) (*service.Message, error) {
 	returnedMsg, ok := v.(map[string]any)
 	if !ok {

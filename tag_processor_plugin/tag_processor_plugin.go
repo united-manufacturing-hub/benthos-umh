@@ -861,7 +861,7 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 
 		// Convert results back to Benthos messages
 		for _, resultMsg := range messages {
-			// NewMessage(nil) is safe: the engine restores input context (see CLAUDE.md).
+			// NewMessage(nil) is safe: the engine wrapper (v2BatchedToV1Processor) restores input context onto outputs.
 			newMsg := service.NewMessage(nil)
 			// Share nodered_js's SetMetaFromJS so nested-nil meta serializes as JSON, not Go <nil>.
 			if meta, ok := resultMsg["meta"].(map[string]any); ok {
