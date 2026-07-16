@@ -88,7 +88,7 @@ func markerFor(msg *service.Message) (string, error) {
 		v, _ := msg.MetaGet(k)
 		h.Write([]byte(k))
 		h.Write([]byte{'='})
-		h.Write([]byte(fmt.Sprintf("%v", v)))
+		fmt.Fprintf(h, "%v", v)
 		h.Write([]byte{';'})
 	}
 	return hex.EncodeToString(h.Sum(nil)[:8]), nil
