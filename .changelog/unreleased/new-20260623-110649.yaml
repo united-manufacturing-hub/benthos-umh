@@ -1,3 +1,3 @@
 kind: new
-body: nodered_js cache gains a persistent disk-backed backend, a TTL option, cross-processor sharing via cache.name, an auto-lock that makes plain get+set safe under concurrent messages, and cache_keys / cache_disk_bytes metrics; tag_processor inherits the same auto-lock so cache use inside defaults / conditions / advancedProcessing blocks is safe under threads > 1 (ENG-3463)
+body: The JavaScript cache used by `nodered_js` and `tag_processor` gains a persistent disk-backed backend with TTL, shared caches between processors via a `name` field, automatic locking so plain `cache.get`/`cache.set` stay correct under concurrent messages, replay dedup that skips cache writes when inputs like UNS or Kafka redeliver a message, and `cache_keys` / `cache_disk_bytes` metrics (ENG-3463)
 time: 2026-06-23T11:06:49.896448+02:00
