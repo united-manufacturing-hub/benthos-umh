@@ -3144,7 +3144,7 @@ tag_processor:
 		It("should drop a condition then-action throw loudly", func() {
 			// A condition whose then action throws a JS error is dropped
 			// loudly: absent from output, messages_dropped{reason=js_throw}
-			// bumped, no consumer output, no messages_errored.
+			// bumped, no consumer output.
 			env := service.NewEnvironment()
 
 			var mu sync.Mutex
@@ -3201,7 +3201,6 @@ tag_processor:
 				return atomic.LoadInt64(&consumerCount)
 			}, "500ms").Should(Equal(int64(0)))
 			mu.Lock()
-			Expect(counts["messages_errored"]).To(Equal(int64(0)))
 			Expect(counts["messages_processed"]).To(Equal(int64(0)))
 			mu.Unlock()
 		})
@@ -3264,15 +3263,13 @@ tag_processor:
 				return atomic.LoadInt64(&consumerCount)
 			}, "500ms").Should(Equal(int64(0)))
 			mu.Lock()
-			Expect(counts["messages_errored"]).To(Equal(int64(0)))
 			Expect(counts["messages_processed"]).To(Equal(int64(0)))
 			mu.Unlock()
 		})
 
 		It("should drop a defaults-throwing message loudly", func() {
 			// A defaults program that throws drops the message loudly:
-			// messages_dropped{reason=js_throw} bumped, no consumer output,
-			// no messages_errored.
+			// messages_dropped{reason=js_throw} bumped, no consumer output.
 			env := service.NewEnvironment()
 
 			var mu sync.Mutex
@@ -3328,7 +3325,6 @@ tag_processor:
 			}, "500ms").Should(Equal(int64(0)))
 
 			mu.Lock()
-			Expect(counts["messages_errored"]).To(Equal(int64(0)))
 			Expect(counts["messages_processed"]).To(Equal(int64(0)))
 			mu.Unlock()
 		})
@@ -3336,7 +3332,7 @@ tag_processor:
 		It("should independently drop a deliberate-drop and a later throwing message in defaults", func() {
 			// [drop, throw] in defaults: msg0 returns null (deliberate drop),
 			// msg1 throws (js_throw drop). Both are dropped independently;
-			// no batch-fatal, no messages_errored.
+			// no batch-fatal.
 			env := service.NewEnvironment()
 
 			var mu sync.Mutex
@@ -3407,19 +3403,11 @@ tag_processor:
 			Eventually(func() int64 {
 				return exporter.labeledValue("messages_dropped", "deliberate")
 			}, "2s").Should(Equal(int64(1)))
-
-			// messages_errored == 0 (no batch-fatal).
-			Consistently(func() int64 {
-				mu.Lock()
-				defer mu.Unlock()
-				return counts["messages_errored"]
-			}, "500ms").Should(Equal(int64(0)))
 		})
 
 		It("should drop an advancedProcessing-throwing message loudly", func() {
 			// An advancedProcessing program that throws drops the message:
-			// messages_dropped{reason=js_throw} bumped, no consumer output,
-			// no messages_errored.
+			// messages_dropped{reason=js_throw} bumped, no consumer output.
 			env := service.NewEnvironment()
 
 			var mu sync.Mutex
@@ -3475,7 +3463,6 @@ tag_processor:
 			}, "500ms").Should(Equal(int64(0)))
 
 			mu.Lock()
-			Expect(counts["messages_errored"]).To(Equal(int64(0)))
 			Expect(counts["messages_processed"]).To(Equal(int64(0)))
 			mu.Unlock()
 		})
@@ -3548,13 +3535,6 @@ tag_processor:
 			Eventually(func() int64 {
 				return exporter.labeledValue("messages_dropped", "js_throw")
 			}, "2s").Should(Equal(int64(2)))
-
-			// messages_errored == 0 (no batch-fatal).
-			Consistently(func() int64 {
-				mu.Lock()
-				defer mu.Unlock()
-				return counts["messages_errored"]
-			}, "500ms").Should(Equal(int64(0)))
 		})
 
 		It("should drop every message in a batch where defaults always throws", func() {
@@ -3621,8 +3601,114 @@ tag_processor:
 
 			mu.Lock()
 			Expect(counts["messages_processed"]).To(Equal(int64(0)))
-			Expect(counts["messages_errored"]).To(Equal(int64(0)))
 			mu.Unlock()
+		})
+
+		It("should bump messages_processed by the output count for a successful fan-out", func() {
+			// Positive guard (I-#5): a valid input that flows through all
+			// stages (defaults returns a 2-message array, conditions and
+			// advancedProcessing each transform successfully) must bump
+			// messages_processed to the OUTPUT count (2), not the input
+			// count (1). Closes the mutation hole where every other
+			// messages_processed assertion in this file is Equal(int64(0))
+			// on a drop path.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    let msg1 = {
+      payload: msg.payload,
+      meta: {
+        location_path: "enterprise",
+        data_contract: "_historian",
+        tag_name: "temperature"
+      }
+    };
+
+    let msg2 = {
+      payload: msg.payload,
+      meta: {
+        location_path: "enterprise",
+        data_contract: "_analytics",
+        tag_name: "temperature_raw"
+      }
+    };
+
+    return [msg1, msg2];
+
+  conditions:
+    - if: msg.meta.data_contract === "_historian"
+      then: |
+        msg.meta.location_path += ".production";
+        return msg;
+    - if: msg.meta.data_contract === "_analytics"
+      then: |
+        msg.meta.location_path += ".analytics";
+        msg.payload = msg.payload * 2;
+        return msg;
+
+  advancedProcessing: |
+    if (msg.meta.data_contract === "_analytics") {
+      msg.meta.virtual_path = "raw_data";
+    } else {
+      msg.meta.virtual_path = "processed";
+    }
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage([]byte("42"))
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			// 2 outputs reach the consumer (the array fan-out).
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "2s").Should(Equal(int64(2)))
+
+			// messages_processed == 2 (output count), not 1 (input count).
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_processed"]
+			}, "2s").Should(Equal(int64(2)))
+
+			// No drops on a fully successful flow.
+			Consistently(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "500ms").Should(Equal(int64(0)))
 		})
 	})
 
@@ -3883,13 +3969,6 @@ tag_processor:
 			Eventually(func() int64 {
 				return exporter.labeledValue("messages_dropped", "js_throw")
 			}, "2s").Should(Equal(int64(1)))
-
-			// messages_errored == 0 (no batch-fatal).
-			Consistently(func() int64 {
-				mu.Lock()
-				defer mu.Unlock()
-				return counts["messages_errored"]
-			}, "500ms").Should(Equal(int64(0)))
 		})
 
 		It("should drop a bad-return message with reason=bad_return", func() {

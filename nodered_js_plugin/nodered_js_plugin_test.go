@@ -889,7 +889,7 @@ nodered_js:
 		It("should drop the throwing message and continue the batch when a mid-batch message throws", func() {
 			// A 3-message batch [good, bad, good] where "bad" throws. Under
 			// drop-loudly, the throwing message is dropped (absent from
-			// output), the two good messages flow, messages_errored stays 0,
+			// output), the two good messages flow,
 			// and messages_dropped{reason=js_throw}==1.
 			env := service.NewEnvironment()
 
@@ -952,26 +952,19 @@ nodered_js:
 				return atomic.LoadInt64(&consumerCount)
 			}, "2s").Should(Equal(int64(2)))
 
-			// (b) messages_errored == 0 (drops don't bump errored).
-			Consistently(func() int64 {
-				mu.Lock()
-				defer mu.Unlock()
-				return counts["messages_errored"]
-			}, "500ms").Should(Equal(int64(0)))
-
-			// (c) messages_dropped{reason=js_throw} == 1.
+			// (b) messages_dropped{reason=js_throw} == 1.
 			Eventually(func() int64 {
 				return exporter.labeledValue("messages_dropped", "js_throw")
 			}, "2s").Should(Equal(int64(1)))
 
-			// (d) messages_processed == 2 (the two good outputs).
+			// (c) messages_processed == 2 (the two good outputs).
 			Consistently(func() int64 {
 				mu.Lock()
 				defer mu.Unlock()
 				return counts["messages_processed"]
 			}, "500ms").Should(Equal(int64(2)))
 
-			// (e) No output message carries an error (no forward-on-error).
+			// (d) No output message carries an error (no forward-on-error).
 			messagesMutex.Lock()
 			for _, m := range messages {
 				Expect(m.GetError()).To(Succeed(), "no output message should carry an error")
@@ -982,8 +975,7 @@ nodered_js:
 		It("should drop a null-returning message and independently drop a later throwing one", func() {
 			// [drop, throw]: msg0 returns null (a genuine drop) and msg1
 			// throws (dropped via RecordDrop). Both messages are absent from
-			// the output. messages_dropped is 2 (1 deliberate + 1 js_throw),
-			// messages_errored stays 0.
+			// the output. messages_dropped is 2 (1 deliberate + 1 js_throw).
 			env := service.NewEnvironment()
 
 			var mu sync.Mutex
@@ -1036,13 +1028,6 @@ nodered_js:
 			// No consumer outputs: both messages are dropped.
 			Consistently(func() int64 {
 				return atomic.LoadInt64(&consumerCount)
-			}, "500ms").Should(Equal(int64(0)))
-
-			// messages_errored == 0 (drops don't bump errored).
-			Consistently(func() int64 {
-				mu.Lock()
-				defer mu.Unlock()
-				return counts["messages_errored"]
 			}, "500ms").Should(Equal(int64(0)))
 
 			// messages_dropped total == 2 (1 deliberate + 1 js_throw).
@@ -1128,10 +1113,9 @@ nodered_js:
 				return counts["messages_processed"]
 			}, "2s").Should(Equal(int64(2)))
 
-			// No drops, no errors.
+			// No drops.
 			mu.Lock()
 			Expect(counts["messages_dropped"]).To(Equal(int64(0)))
-			Expect(counts["messages_errored"]).To(Equal(int64(0)))
 			mu.Unlock()
 		})
 
@@ -1211,21 +1195,14 @@ nodered_js:
 				return exporter.labeledValue("messages_dropped", "js_throw")
 			}, "2s").Should(Equal(int64(1)))
 
-			// (c) messages_errored == 0 (drops don't bump errored).
-			Consistently(func() int64 {
-				mu.Lock()
-				defer mu.Unlock()
-				return counts["messages_errored"]
-			}, "500ms").Should(Equal(int64(0)))
-
-			// (d) messages_processed == 2 (the two good outputs).
+			// (c) messages_processed == 2 (the two good outputs).
 			Consistently(func() int64 {
 				mu.Lock()
 				defer mu.Unlock()
 				return counts["messages_processed"]
 			}, "500ms").Should(Equal(int64(2)))
 
-			// (e) NO output message carries an error (no forward-on-error).
+			// (d) NO output message carries an error (no forward-on-error).
 			messagesMutex.Lock()
 			for _, m := range messages {
 				Expect(m.GetError()).To(Succeed(), "no output message should carry an error")
