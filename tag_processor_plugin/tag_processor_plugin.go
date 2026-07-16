@@ -267,6 +267,9 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 	p.jsProcessor.CacheLock()
 	defer p.jsProcessor.CacheUnlock()
 
+	// Tag replays once so every JS stage suppresses their cache writes.
+	p.jsProcessor.MarkReplayForBatch(batch)
+
 	// ───────────────── Store incoming metadata ────────────────────────────────
 	// For each message, capture its current meta fields and store them as JSON
 	// in msg.meta._initialMetadata. Also, record the original keys in _incomingKeys.
@@ -349,6 +352,11 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 
 		resultBatch = append(resultBatch, finalMsg)
 		p.messagesProcessed.Incr(1)
+	}
+
+	// Strip the internal dedup marker so downstream consumers don't see it.
+	for _, msg := range resultBatch {
+		msg.MetaDelete("_umh_dedup_replay")
 	}
 
 	if len(resultBatch) == 0 {
@@ -829,6 +837,7 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 		if msg == nil {
 			continue
 		}
+		p.jsProcessor.SetCacheSuppression(msg)
 		resultBatch = append(resultBatch, p.processMessageWithProgram(ctx, msg, program, stageName)...)
 	}
 

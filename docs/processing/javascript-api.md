@@ -122,6 +122,10 @@ Trade-off: cache operations serialize on a shared mutex. For workloads under 100
 
 The auto-lock does not guarantee message order. With `pipeline.threads > 1`, messages process out of order; message 5 may arrive before message 3. For strict message order, set `pipeline.threads: 1`.
 
+Cache writes also stay correct when a message is redelivered. Inputs like UNS, Kafka, or MQTT can re-emit a message after a downstream failure; without protection, counters and appends would fire twice. The processor remembers the last 100 messages by their content. When a redelivered message arrives, the JS still runs, but `cache.set` and `cache.delete` are silently skipped for that message. `cache.get` and `cache.exists` continue to return the current value.
+
+Watch out with polling inputs that repeat the same reading (S7, Modbus, EIP without a per-read timestamp in metadata): a second identical reading looks like a redelivery and its writes are skipped. Inputs that already stamp each read — OPC UA `SourceTimestamp`, Kafka offset, Sparkplug sequence — don't hit this.
+
 ### Counter
 
 ```javascript

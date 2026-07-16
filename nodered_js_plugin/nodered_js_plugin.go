@@ -40,21 +40,27 @@ import (
 // cacheStatsInterval controls how often the cache metrics are sampled.
 const cacheStatsInterval = 30 * time.Second
 
+// dedupCapacity is the max number of markers kept per processor for replay dedup.
+const dedupCapacity = 100
+
 // NodeREDJSProcessor defines the processor that wraps the JavaScript processor.
 type NodeREDJSProcessor struct {
-	program           *goja.Program
-	originalCode      string
-	vmpool            sync.Pool
-	logger            *service.Logger
-	cache             cache.Cache
-	messagesProcessed *service.MetricCounter
-	messagesDropped   *service.MetricCounter
-	vmPoolHits        *service.MetricCounter
-	vmPoolMisses      *service.MetricCounter
-	cacheKeys         *service.MetricGauge
-	cacheDiskBytes    *service.MetricGauge
-	metricsCancel     context.CancelFunc
-	metricsWG         sync.WaitGroup
+	program             *goja.Program
+	originalCode        string
+	vmpool              sync.Pool
+	logger              *service.Logger
+	cache               cache.Cache
+	dedup               *dedupState
+	suppressCacheWrites bool
+	messagesProcessed   *service.MetricCounter
+	messagesErrored     *service.MetricCounter
+	messagesDropped     *service.MetricCounter
+	vmPoolHits          *service.MetricCounter
+	vmPoolMisses        *service.MetricCounter
+	cacheKeys           *service.MetricGauge
+	cacheDiskBytes      *service.MetricGauge
+	metricsCancel       context.CancelFunc
+	metricsWG           sync.WaitGroup
 }
 
 // NewNodeREDJSProcessor creates a new NodeREDJSProcessor instance.
@@ -351,6 +357,9 @@ func (u *NodeREDJSProcessor) setupConsole(vm *goja.Runtime) error {
 func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) error {
 	cacheObj := map[string]any{
 		"set": func(key string, value any) {
+			if u.suppressCacheWrites {
+				return
+			}
 			err := u.cache.Set(ctx, key, value)
 			if err != nil {
 				u.logger.Errorf("cache.set failed: %v", err)
@@ -369,6 +378,9 @@ func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) e
 			return exists
 		},
 		"delete": func(key string) {
+			if u.suppressCacheWrites {
+				return
+			}
 			err := u.cache.Delete(ctx, key)
 			if err != nil {
 				u.logger.Errorf("cache.delete failed: %v", err)
@@ -519,8 +531,28 @@ func (u *NodeREDJSProcessor) CacheUnlock() {
 	u.cache.Unlock()
 }
 
-// ProcessBatch applies JS to each message. Per-message errors drop via RecordDrop;
-// deliberate drops (null/undefined/empty/all-nil array) bump messages_dropped{reason=deliberate}.
+// MarkReplayForBatch runs the dedup check once per message and tags replays with meta so per-stage callers can suppress writes without re-recording.
+func (u *NodeREDJSProcessor) MarkReplayForBatch(batch service.MessageBatch) {
+	if u.dedup == nil {
+		return
+	}
+	for _, msg := range batch {
+		marker, err := markerFor(msg)
+		if err != nil {
+			continue
+		}
+		if u.dedup.CheckDedup(marker) {
+			msg.MetaSet(dedupReplayMetaKey, "1")
+		}
+	}
+}
+
+// SetCacheSuppression flips the cache-write suppress switch to match the message's replay tag.
+func (u *NodeREDJSProcessor) SetCacheSuppression(msg *service.Message) {
+	_, isReplay := msg.MetaGet(dedupReplayMetaKey)
+	u.suppressCacheWrites = isReplay
+}
+
 func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	u.CacheLock()
 	defer u.CacheUnlock()
@@ -532,6 +564,17 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		if msg == nil {
 			continue
 		}
+
+		u.suppressCacheWrites = false
+		if u.dedup != nil {
+			marker, err := markerFor(msg)
+			if err != nil {
+				u.logger.Errorf("dedup marker failed: %v", err)
+			} else {
+				u.suppressCacheWrites = u.dedup.CheckDedup(marker)
+			}
+		}
+
 		processedMsgs, dropped, reason, err := u.processSingleMessage(ctx, msg)
 		if err != nil {
 			// Drop-loudly: the poisoned message is absent from the output
@@ -790,6 +833,7 @@ func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (
 		_ = store.Close()
 		return nil, err
 	}
+	processor.dedup = newDedupState(dedupCapacity)
 	return processor, nil
 }
 

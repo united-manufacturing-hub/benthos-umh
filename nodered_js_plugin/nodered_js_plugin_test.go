@@ -2006,7 +2006,9 @@ var _ = Describe("NodeREDJS cache", func() {
 		handler, err := builder.AddProducerFunc()
 		Expect(err).NotTo(HaveOccurred())
 
-		err = builder.AddProcessorYAML("nodered_js:\n  code: |\n" + indentLines(code, "    "))
+		err = builder.AddProcessorYAML(fmt.Sprintf("nodered_js:\n  cache:\n    name: %q\n  code: |\n%s",
+			fmt.Sprintf("test-%d", time.Now().UnixNano()),
+			indentLines(code, "    ")))
 		Expect(err).NotTo(HaveOccurred())
 
 		var msgs []*service.Message
@@ -2115,8 +2117,8 @@ return msg;
 			defer cancel()
 
 			ctx := context.Background()
-			for range 3 {
-				err := handler(ctx, newMsg("tick"))
+			for i := 0; i < 3; i++ {
+				err := handler(ctx, newMsg(fmt.Sprintf("tick-%d", i)))
 				Expect(err).NotTo(HaveOccurred())
 			}
 			Eventually(func() int { return len(*msgs) }).Should(Equal(3))
@@ -2152,10 +2154,11 @@ return msg;
 			ctx := context.Background()
 			var wg sync.WaitGroup
 			wg.Add(numMsgs)
-			for range numMsgs {
+			for i := 0; i < numMsgs; i++ {
+				id := i
 				go func() {
 					defer wg.Done()
-					_ = handler(ctx, newMsg("concurrent"))
+					_ = handler(ctx, newMsg(fmt.Sprintf("concurrent-%d", id)))
 				}()
 			}
 			wg.Wait()
@@ -2175,8 +2178,8 @@ return msg;
 			defer cancel()
 
 			ctx := context.Background()
-			for range 5 {
-				err := handler(ctx, newMsg("x"))
+			for i := 0; i < 5; i++ {
+				err := handler(ctx, newMsg(fmt.Sprintf("x-%d", i)))
 				Expect(err).NotTo(HaveOccurred())
 			}
 			Eventually(func() int { return len(*msgs) }).Should(Equal(5))
@@ -2213,8 +2216,8 @@ return msg;
 			defer cancel()
 
 			ctx := context.Background()
-			for range 2 {
-				err := handler(ctx, newMsg("tick"))
+			for i := 0; i < 2; i++ {
+				err := handler(ctx, newMsg(fmt.Sprintf("tick-%d", i)))
 				Expect(err).NotTo(HaveOccurred())
 			}
 			Eventually(func() int { return len(*msgs) }).Should(Equal(2))
@@ -2235,10 +2238,11 @@ return msg;
 			ctx := context.Background()
 			var wg sync.WaitGroup
 			wg.Add(numMsgs)
-			for range numMsgs {
+			for i := range numMsgs {
+				id := i
 				go func() {
 					defer wg.Done()
-					_ = handler(ctx, newMsg("tick"))
+					_ = handler(ctx, newMsg(fmt.Sprintf("tick-%d", id)))
 				}()
 			}
 			wg.Wait()
