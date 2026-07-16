@@ -62,8 +62,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -84,10 +87,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 
 			// Check metadata
 			location_path, exists := msg.MetaGet("location_path")
@@ -327,8 +334,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -350,10 +360,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 
 			// Check metadata
 			location_path, exists := msg.MetaGet("location_path")
@@ -422,8 +436,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -444,10 +461,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 
 			// Check metadata
 			location_path, exists := msg.MetaGet("location_path")
@@ -509,8 +530,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -532,6 +556,8 @@ tag_processor:
 
 			// Message should be dropped due to missing required fields
 			Consistently(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}, "500ms").Should(Equal(0))
 		})
@@ -564,8 +590,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -587,10 +616,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 
 			// Check metadata
 			location_path, exists := msg.MetaGet("location_path")
@@ -663,8 +696,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -690,10 +726,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 
 			// Check metadata
 			location_path, exists := msg.MetaGet("location_path")
@@ -748,8 +788,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -770,10 +813,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 
 			// Check metadata
 			location_path, exists := msg.MetaGet("location_path")
@@ -907,8 +954,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -931,11 +981,15 @@ tag_processor:
 
 			// Should get two messages
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(2))
 
 			// Check first message
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok := structured.(map[string]any)
@@ -943,7 +997,9 @@ tag_processor:
 			Expect(payload["value"]).To(Equal(json.Number("23.5")))
 
 			// Check second message
+			messagesMutex.Lock()
 			msg = messages[1]
+			messagesMutex.Unlock()
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok = structured.(map[string]any)
@@ -990,8 +1046,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1016,11 +1075,15 @@ tag_processor:
 			// 1. Original historian message
 			// 2. Analytics message with doubled value
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(2))
 
 			// Check historian message
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			data_contract, exists := msg.MetaGet("data_contract")
 			Expect(exists).To(BeTrue())
 			Expect(data_contract).To(Equal("_historian"))
@@ -1034,7 +1097,9 @@ tag_processor:
 			Expect(payload["value"]).To(Equal(json.Number("23.5")))
 
 			// Check analytics message
+			messagesMutex.Lock()
 			msg = messages[1]
+			messagesMutex.Unlock()
 			data_contract, exists = msg.MetaGet("data_contract")
 			Expect(exists).To(BeTrue())
 			Expect(data_contract).To(Equal("_analytics"))
@@ -1100,8 +1165,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1124,11 +1192,15 @@ tag_processor:
 
 			// Should get two messages that went through all stages
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(2))
 
 			// Check historian message
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			data_contract, exists := msg.MetaGet("data_contract")
 			Expect(exists).To(BeTrue())
 			Expect(data_contract).To(Equal("_historian"))
@@ -1145,7 +1217,9 @@ tag_processor:
 			Expect(payload["value"]).To(Equal(json.Number("23.5")))
 
 			// Check analytics message
+			messagesMutex.Lock()
 			msg = messages[1]
+			messagesMutex.Unlock()
 			data_contract, exists = msg.MetaGet("data_contract")
 			Expect(exists).To(BeTrue())
 			Expect(data_contract).To(Equal("_analytics"))
@@ -1180,8 +1254,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1261,11 +1338,15 @@ tag_processor:
 
 			// Should get ten messages
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(10))
 
 			// Check boolean value
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok := structured.(map[string]any)
@@ -1277,7 +1358,9 @@ tag_processor:
 			Expect(boolValue).To(BeTrue())
 
 			// Check string value
+			messagesMutex.Lock()
 			msg = messages[1]
+			messagesMutex.Unlock()
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok = structured.(map[string]any)
@@ -1289,7 +1372,9 @@ tag_processor:
 			Expect(strValue).To(Equal("test string"))
 
 			// Check integer value
+			messagesMutex.Lock()
 			msg = messages[2]
+			messagesMutex.Unlock()
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok = structured.(map[string]any)
@@ -1303,7 +1388,9 @@ tag_processor:
 			Expect(intValue).To(Equal(int64(42)))
 
 			// Check float value
+			messagesMutex.Lock()
 			msg = messages[3]
+			messagesMutex.Unlock()
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok = structured.(map[string]any)
@@ -1317,7 +1404,9 @@ tag_processor:
 			Expect(floatValue).To(BeNumerically("==", 23.5))
 
 			// Check float value of string encoded float
+			messagesMutex.Lock()
 			msg = messages[4]
+			messagesMutex.Unlock()
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok = structured.(map[string]any)
@@ -1331,7 +1420,9 @@ tag_processor:
 			Expect(floatValue).To(BeNumerically("==", 23.5))
 
 			// Check string array value (should be JSON serialized)
+			messagesMutex.Lock()
 			msg = messages[5]
+			messagesMutex.Unlock()
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok = structured.(map[string]any)
@@ -1343,7 +1434,9 @@ tag_processor:
 			Expect(strValue).To(Equal("[\"a\",\"b\",\"c\"]"))
 
 			// Check integer array value (should be JSON serialized)
+			messagesMutex.Lock()
 			msg = messages[6]
+			messagesMutex.Unlock()
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok = structured.(map[string]any)
@@ -1355,7 +1448,9 @@ tag_processor:
 			Expect(strValue).To(Equal("[1,2,3]"))
 
 			// Check mixed type array value (should be JSON serialized)
+			messagesMutex.Lock()
 			msg = messages[7]
+			messagesMutex.Unlock()
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok = structured.(map[string]any)
@@ -1367,7 +1462,9 @@ tag_processor:
 			Expect(strValue).To(Equal("[\"text\",42,true]"))
 
 			// Check float string array value (should be preserved as-is)
+			messagesMutex.Lock()
 			msg = messages[8]
+			messagesMutex.Unlock()
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok = structured.(map[string]any)
@@ -1379,7 +1476,9 @@ tag_processor:
 			Expect(strValue).To(Equal("[\"1.23\",\"2.34\",\"3.45\"]"))
 
 			// Check object value (should be preserved)
+			messagesMutex.Lock()
 			msg = messages[9]
+			messagesMutex.Unlock()
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok = structured.(map[string]any)
@@ -1411,8 +1510,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1433,10 +1535,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 
 			// Verify all metadata fields are set correctly
 			location_path, exists := msg.MetaGet("location_path")
@@ -1508,8 +1614,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1530,10 +1639,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 
 			// Verify virtual_path is not set
 			_, exists := msg.MetaGet("virtual_path")
@@ -1570,8 +1683,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1591,10 +1707,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 
 			// virtual_path should be treated as unset
 			_, exists := msg.MetaGet("virtual_path")
@@ -1626,8 +1746,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1648,6 +1771,8 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(0))
 		})
@@ -1670,8 +1795,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1697,10 +1825,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1730,8 +1862,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1756,10 +1891,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1795,8 +1934,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1816,10 +1958,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1851,8 +1997,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1872,10 +2021,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1907,8 +2060,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1928,10 +2084,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1965,8 +2125,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1986,10 +2149,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
@@ -2021,8 +2188,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -2042,10 +2212,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
@@ -2078,8 +2252,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -2099,10 +2276,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
@@ -2139,8 +2320,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -2162,10 +2346,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
@@ -2199,8 +2387,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -2220,10 +2411,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
@@ -2258,8 +2453,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -2279,10 +2477,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
@@ -2316,8 +2518,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -2337,10 +2542,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
@@ -2389,8 +2598,11 @@ tag_processor:
 				Expect(err).NotTo(HaveOccurred())
 
 				var messages []*service.Message
+				var messagesMutex sync.Mutex
 				err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+					messagesMutex.Lock()
 					messages = append(messages, msg)
+					messagesMutex.Unlock()
 					return nil
 				})
 				Expect(err).NotTo(HaveOccurred())
@@ -2410,10 +2622,14 @@ tag_processor:
 				Expect(err).NotTo(HaveOccurred())
 
 				Eventually(func() int {
+					messagesMutex.Lock()
+					defer messagesMutex.Unlock()
 					return len(messages)
 				}).Should(Equal(1))
 
+				messagesMutex.Lock()
 				msg := messages[0]
+				messagesMutex.Unlock()
 				structured, err := msg.AsStructured()
 				Expect(err).NotTo(HaveOccurred())
 
@@ -4107,8 +4323,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -4140,11 +4359,16 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(3))
 
 			// Verify all messages were processed correctly
-			for i, msg := range messages {
+			messagesMutex.Lock()
+			snapshot := append([]*service.Message(nil), messages...)
+			messagesMutex.Unlock()
+			for i, msg := range snapshot {
 				GinkgoWriter.Printf("Processing message %d\n", i+1)
 
 				// All should have defaults applied
@@ -4208,8 +4432,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -4232,11 +4459,16 @@ tag_processor:
 			}
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(5))
 
 			// Verify all messages were processed with complex calculations
-			for i, msg := range messages {
+			messagesMutex.Lock()
+			snapshot := append([]*service.Message(nil), messages...)
+			messagesMutex.Unlock()
+			for i, msg := range snapshot {
 				GinkgoWriter.Printf("Verifying complex message %d\n", i+1)
 
 				msg.MetaWalk(func(key, value string) error {
@@ -4289,9 +4521,12 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			var messageCount int64
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				atomic.AddInt64(&messageCount, 1)
 				return nil
 			})
@@ -4321,9 +4556,14 @@ tag_processor:
 			}).Should(Equal(int64(numMessages)))
 
 			// Verify all messages were processed correctly
+			messagesMutex.Lock()
 			Expect(messages).To(HaveLen(numMessages))
+			messagesMutex.Unlock()
 
-			for i, msg := range messages {
+			messagesMutex.Lock()
+			snapshot := append([]*service.Message(nil), messages...)
+			messagesMutex.Unlock()
+			for i, msg := range snapshot {
 				GinkgoWriter.Printf("Verifying concurrent message %d\n", i+1)
 
 				// All should have basic metadata
@@ -4379,8 +4619,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -4409,12 +4652,17 @@ tag_processor:
 
 			// We should get at least the success message (error message might be dropped)
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(BeNumerically(">=", 1))
 
 			// Find the success message (if any messages were processed)
 			var successProcessed bool
-			for _, msg := range messages {
+			messagesMutex.Lock()
+			snapshot := append([]*service.Message(nil), messages...)
+			messagesMutex.Unlock()
+			for _, msg := range snapshot {
 				if processed, exists := msg.MetaGet("processed"); exists && processed == "success" {
 					successProcessed = true
 					break
@@ -4422,7 +4670,10 @@ tag_processor:
 			}
 
 			// If we got any messages, at least one should be the success message
-			if len(messages) > 0 {
+			messagesMutex.Lock()
+			msgLen := len(messages)
+			messagesMutex.Unlock()
+			if msgLen > 0 {
 				Expect(successProcessed).To(BeTrue(), "Success message should be processed even after JS error")
 			}
 		})
@@ -4447,8 +4698,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -4468,10 +4722,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
