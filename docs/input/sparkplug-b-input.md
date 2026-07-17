@@ -479,7 +479,7 @@ These fields provide additional Sparkplug context and are primarily for debuggin
 * `spb_device`: Same as `spb_device_id` (alternative field name)
 * `spb_sequence`: The sequence number of the Sparkplug message
 * `spb_bdseq`: The birth-death sequence number of the session
-* `spb_timestamp`: The timestamp (in epoch ms) provided with the metric
+* `spb_timestamp`: The timestamp (in epoch ms) of the metric. The per-metric timestamp is used when present, falling back to the payload-level timestamp otherwise. This preserves each sample's own capture time — important for buffered or historical metrics that share one payload but were sampled at different moments.
 * `spb_datatype`: The Sparkplug data type of the metric (e.g. "Int32", "Double", "Boolean")
 * `spb_alias`: The alias number of the metric (for debugging alias resolution)
 * `spb_is_historical`: Set to "true" if the metric was flagged as historical
