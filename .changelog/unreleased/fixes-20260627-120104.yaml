@@ -1,0 +1,3 @@
+kind: fixes
+body: Metadata values in Kafka headers are now serialized consistently across the Node-RED JavaScript and tag processors; non-scalar and nested-null values serialize as JSON so a nested null no longer appears as the literal string <nil>, and in the Node-RED JavaScript processor numeric and boolean metadata values that were previously silently dropped now appear as strings (ENG-5240)
+time: 2026-06-27T12:04:00+02:00
