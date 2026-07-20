@@ -813,7 +813,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 	// benthos's mock harness (it backs metrics with a no-op), so these specs pin the co-located
 	// operator-facing log lines instead -- the same signal umh-core's log regex surfaces as degraded,
 	// and the guard against a regression that stops counting/logging a drop or truncation.
-	It("logs a dropped message by reason and warns when a whole batch is dropped", func() {
+	It("does not warn when a whole batch is dropped only for belonging to other data contracts", func() {
 		h := connected("drops")
 		defer h.Close(ctx)
 		logs := h.CaptureLogs()
@@ -821,7 +821,20 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(h.WriteBatch(ctx, service.MessageBatch{bad})).To(Succeed())
 		Expect(h.CountValueRows(ctx, "drops")).To(Equal(0))
 		Expect(logs()).To(ContainSubstring("reason=contract_mismatch"), "the per-drop log must name the reason")
-		Expect(logs()).To(ContainSubstring("dropped all 1 message(s)"), "a 100%-dropped non-empty batch must warn (degraded, not silent)")
+		Expect(logs()).To(ContainSubstring("all belong to other data contracts"), "a contract-mismatch-only batch must say so, not read as a fault")
+		Expect(logs()).NotTo(ContainSubstring("Check the source data and metadata configuration"), "a contract-mismatch-only batch must not warn (not degraded)")
+	})
+
+	It("warns when a whole batch is dropped for a real fault", func() {
+		h := connected("drops")
+		defer h.Close(ctx)
+		logs := h.CaptureLogs()
+		bad := mkMsg(nil, 1000, "_drops_v1", "acme.line1", "t", nil) // matching contract, missing value
+		Expect(h.WriteBatch(ctx, service.MessageBatch{bad})).To(Succeed())
+		Expect(h.CountValueRows(ctx, "drops")).To(Equal(0))
+		Expect(logs()).To(ContainSubstring("reason=missing_value_or_timestamp"), "the per-drop log must name the reason")
+		Expect(logs()).To(ContainSubstring("dropped all 1 message(s)"), "a 100%-dropped non-empty batch for a real fault must warn (degraded, not silent)")
+		Expect(logs()).To(ContainSubstring("Check the source data and metadata configuration"))
 	})
 
 	It("truncates an over-long value_text and warns exactly once", func() {

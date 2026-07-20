@@ -403,6 +403,7 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	view := o.dedup.NewBatch()
 	rows := make([]*Row, 0, len(batch))
 	churn := map[string]struct{}{} // high-churn metadata keys seen anywhere in this batch (see below)
+	contractMismatches := 0        // messages dropped solely because they belong to another data contract
 	for _, msg := range batch {
 		meta := map[string]string{}
 		_ = msg.MetaWalk(func(k, v string) error { meta[k] = v; return nil })
@@ -420,6 +421,9 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 		// this row also needs to write a metadata (attribute) row. A non-empty reason means drop.
 		row, reason := Transform(payload, meta, o.contract, o.metadataKeysAll, o.metadataKeys, o.metadataExclude, view)
 		if reason != DropNone {
+			if reason == DropContractMismatch {
+				contractMismatches++
+			}
 			o.recordDrop(string(reason), meta["umh_topic"])
 			continue
 		}
@@ -444,7 +448,15 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 		// A fully-dropped batch writes nothing while the connection stays up, so umh-core would
 		// see a healthy bridge silently discarding data. Warn (umh-core surfaces this as
 		// degraded); still return nil so one bad message never stalls the stream.
-		if len(batch) > 0 {
+		switch {
+		case len(batch) == 0:
+			// empty batch: nothing to say
+		case contractMismatches == len(batch):
+			// Every message simply belonged to another data contract. Expected when a bridge
+			// subscribes to more of umh.v1 than the single contract this historian stores, so
+			// it is not a fault: log at debug and leave the bridge healthy.
+			o.logger.Debugf("TimescaleDB historian: dropped all %d message(s) in the batch; all belong to other data contracts (this historian stores only _%s). This is expected when the bridge subscribes to more than _%s and is not an error.", len(batch), o.contract, o.contract)
+		default:
 			o.logger.Warnf("TimescaleDB historian: dropped all %d message(s) in the batch; nothing written. Check the source data and metadata configuration.", len(batch))
 		}
 		return nil

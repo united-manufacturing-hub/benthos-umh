@@ -1,0 +1,3 @@
+kind: fixes
+body: Historian no longer logs a warning (or reports the bridge as degraded) when a batch is dropped solely because its messages belong to a different data contract than the one the bridge stores; that expected case is now a debug-level message (ENG-5394)
+time: 2026-07-20T13:29:09.837735+02:00
