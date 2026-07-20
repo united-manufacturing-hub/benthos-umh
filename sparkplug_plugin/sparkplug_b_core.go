@@ -523,8 +523,8 @@ func (mp *MessageProcessor) extractMetricValue(metric *sparkplugb.Payload_Metric
 		result["quality"] = "UNCERTAIN"
 	}
 
-	// Note: Timestamp is at payload level in Sparkplug B, not metric level
-	// Individual metrics don't have timestamps
+	// Note: the timestamp (per-metric when present, else payload-level) is handled by
+	// the caller and not embedded in the value JSON here.
 
 	jsonBytes, err := json.Marshal(result)
 	if err != nil {

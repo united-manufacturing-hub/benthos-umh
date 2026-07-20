@@ -1089,6 +1089,16 @@ func (s *sparkplugInput) createSplitMessages(payload *sparkplugb.Payload, msgTyp
 	return batch
 }
 
+// ENG-5341: resolveMetricTimestamp returns the per-metric timestamp (Sparkplug
+// proto field 3) when set so each metric keeps its own sample time, falling back
+// to the payload-level timestamp. It returns nil when neither is present.
+func resolveMetricTimestamp(metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload) *uint64 {
+	if metric.Timestamp != nil {
+		return metric.Timestamp
+	}
+	return payload.Timestamp
+}
+
 func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload, msgType MessageType, topicInfo *TopicInfo, originalTopic string, metricIndex int, totalMetrics int) *service.Message {
 	// Extract metric value as JSON (always preserve Sparkplug B format)
 	value := s.extractMetricValue(metric)
@@ -1138,8 +1148,8 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	msg.MetaSet("spb_metric_index", fmt.Sprintf("%d", metricIndex))
 	msg.MetaSet("spb_metrics_in_payload", fmt.Sprintf("%d", totalMetrics))
 
-	if payload.Timestamp != nil {
-		msg.MetaSet("spb_timestamp", fmt.Sprintf("%d", *payload.Timestamp))
+	if ts := resolveMetricTimestamp(metric, payload); ts != nil {
+		msg.MetaSet("spb_timestamp", fmt.Sprintf("%d", *ts))
 	}
 
 	// Add metric-specific metadata
@@ -1276,8 +1286,8 @@ func (s *sparkplugInput) extractMetricValue(metric *sparkplugb.Payload_Metric) [
 		}
 	}
 
-	// Note: Individual metrics don't have timestamps in Sparkplug B
-	// Timestamp is at the payload level
+	// Note: the metric timestamp is surfaced as spb_timestamp metadata (see
+	// createMessageFromMetric), not embedded in the value JSON here.
 
 	jsonBytes, err := json.Marshal(result)
 	if err != nil {
@@ -1605,9 +1615,8 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 		sparkplugMsg.MetricName = "unknown_metric"
 	}
 
-	// Set timestamp from payload if available
-	if payload.Timestamp != nil {
-		sparkplugMsg.Timestamp = time.UnixMilli(int64(*payload.Timestamp))
+	if ts := resolveMetricTimestamp(metric, payload); ts != nil {
+		sparkplugMsg.Timestamp = time.UnixMilli(int64(*ts))
 	}
 
 	// Store original values before any sanitization
