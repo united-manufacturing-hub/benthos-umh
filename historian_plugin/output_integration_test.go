@@ -843,6 +843,22 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(logs()).NotTo(ContainSubstring("level=warning"))
 	})
 
+	It("stores the matching messages in a mixed batch and never reads as starving", func() {
+		h := connected("overbroad") // own contract: mixed batch writes a row, must not collide with other specs
+		defer h.Close(ctx)
+		logs := h.CaptureLogs()
+		batch := service.MessageBatch{
+			mkMsg(1.0, 1000, "_overbroad_v1", "acme.line1", "t", nil), // matches "overbroad" -> stored
+			mkMsg(2.0, 2000, "_other_v1", "acme.line1", "t", nil),     // other contract -> dropped
+		}
+		Expect(h.WriteBatch(ctx, batch)).To(Succeed())
+		Expect(h.CountValueRows(ctx, "overbroad")).To(Equal(1))
+		Expect(logs()).To(ContainSubstring("reason=contract_mismatch"), "the other-contract message must be dropped by reason")
+		Expect(logs()).To(ContainSubstring("level=info msg=TimescaleDB historian: first message stored for data contract _overbroad"), "a stored row must be confirmed")
+		Expect(logs()).NotTo(ContainSubstring("nothing stored for data contract _overbroad yet"), "a mixed batch that stored a row must not read as starving")
+		Expect(logs()).NotTo(ContainSubstring("level=warning"), "a mixed batch must not warn")
+	})
+
 	It("warns when a whole batch is dropped for a real fault", func() {
 		h := connected("drops")
 		defer h.Close(ctx)
