@@ -1,0 +1,3 @@
+kind: fixes
+body: The TimescaleDB historian output logs a one-time info notice confirming the first message stored for its data contract. When it is receiving data but has stored nothing for that contract, it logs a one-time notice that the messages all belong to other contracts and points at data_contract_name and the flow's topic subscription. Other-contract-only batches no longer warn once data is flowing, while genuine faults are still logged as warnings (ENG-5394)
+time: 2026-07-20T13:29:09.837735+02:00

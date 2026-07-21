@@ -199,16 +199,29 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
-// msgHandler writes each record's formatted message verbatim (one per line), so a test can grep the
-// exact operator-facing text. slog's TextHandler would quote and backslash-escape the message, which
-// mangles substrings like tag="t" -- and that text is precisely what the runbook tells operators to
-// search for.
+// msgHandler writes each record as "level=<benthos-level> msg=<message>" (one per line), matching
+// benthos's own log format so a test can assert severity, not just message text. A plain
+// slog.TextHandler would quote and escape the message, mangling substrings like tag="t".
 type msgHandler struct{ w io.Writer }
 
 func (h msgHandler) Enabled(context.Context, slog.Level) bool { return true }
 func (h msgHandler) Handle(_ context.Context, r slog.Record) error {
-	_, err := io.WriteString(h.w, r.Message+"\n")
+	_, err := io.WriteString(h.w, "level="+benthosLevel(r.Level)+" msg="+r.Message+"\n")
 	return err
+}
+
+// benthosLevel formats a slog level as benthos does (benthos uses "warning", not slog's "WARN").
+func benthosLevel(l slog.Level) string {
+	switch {
+	case l >= slog.LevelError:
+		return "error"
+	case l >= slog.LevelWarn:
+		return "warning"
+	case l >= slog.LevelInfo:
+		return "info"
+	default:
+		return "debug"
+	}
 }
 func (h msgHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
 func (h msgHandler) WithGroup(string) slog.Handler      { return h }
