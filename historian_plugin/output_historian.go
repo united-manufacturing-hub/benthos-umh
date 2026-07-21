@@ -43,7 +43,7 @@ func historianConfig() *service.ConfigSpec {
 		Field(service.NewStringField("database").Description("Database name.").Default("umh")).
 		Field(service.NewStringField("username").Description("Login role.").Default("umh_owner")).
 		Field(service.NewStringField("sslmode").Description("require | disable | verify-full.").Default("require").Examples("require", "disable", "verify-full")).
-		Field(service.NewStringField("sslrootcert").Description("CA cert path (inside the umh-core container).").Default("").Advanced()).
+		Field(service.NewStringField("sslrootcert").Description("CA cert path, as seen by the benthos process.").Default("").Advanced()).
 		Field(service.NewStringField("sslcert").Description("Client cert path.").Default("").Advanced()).
 		Field(service.NewStringField("sslkey").Description("Client key path.").Default("").Advanced()).
 		Field(service.NewBoolField("metadata_keys_all").Description("Store all metadata keys except blacklists.").Default(true).Examples(true, false).Advanced()).
@@ -93,6 +93,8 @@ type historianOutput struct {
 	warnedChurn map[string]struct{} // high-churn metadata keys already warned about
 
 	warnedTruncate atomic.Bool // warn-once guard for truncation
+
+	warnedContractMismatch atomic.Bool // info-once guard for contract-mismatch-only batches
 }
 
 func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*historianOutput, error) {
@@ -242,7 +244,7 @@ func (o *historianOutput) bootstrapStmt() string {
 
 // Connect opens the pool (once), verifies the server version, bootstraps the schema idempotently on
 // first call, and checks the login role can INSERT. It is the benthos output Connect hook; a
-// returned error keeps the bridge from registering as up.
+// returned error keeps the output from registering as connected.
 //
 // The login role is assumed to be able to run the (idempotent) bootstrap DDL -- the owner
 // (umh_owner) or an equivalent. Either way a role that cannot write fails Connect visibly, just at
@@ -312,8 +314,8 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 		o.bootstrapped = true
 	}
 	// Verify write permission on every Connect (a grant can be revoked between reconnects), so a
-	// permission reject fails Connect -> connection_up never registers -> the bridge fails visibly
-	// instead of stalling on an endless WriteBatch NACK.
+	// permission reject fails Connect -> the output never registers as connected -> it fails
+	// visibly instead of stalling on an endless WriteBatch NACK.
 	if err := o.probeWritable(bootCtx); err != nil {
 		return err
 	}
@@ -323,7 +325,7 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 // probeWritable verifies the login role can INSERT into this contract's tables. Connect otherwise
 // only proves the server is reachable and the schema exists -- and bootstrap runs as the owner, so
 // it passes even when a different login role lacks INSERT. Without this a permission reject shows up
-// only as an endless WriteBatch NACK and the bridge stalls "starting" instead of failing visibly.
+// only as an endless WriteBatch NACK and the output stalls instead of failing visibly.
 // Read-only catalog lookup, so it is safe on every Connect and under concurrency.
 func (o *historianOutput) probeWritable(ctx context.Context) error {
 	valueTbl := "umh.value_" + o.contract
@@ -335,7 +337,7 @@ func (o *historianOutput) probeWritable(ctx context.Context) error {
 		return fmt.Errorf("write-permission check failed for %s / %s: %w", valueTbl, attrTbl, err)
 	}
 	if !ok {
-		return fmt.Errorf("login role %q lacks INSERT on %s or %s; grant it before the bridge can write", o.username, valueTbl, attrTbl)
+		return fmt.Errorf("login role %q lacks INSERT on %s or %s; grant it before this output can write", o.username, valueTbl, attrTbl)
 	}
 	return nil
 }
@@ -371,7 +373,7 @@ func (o *historianOutput) warnPolicyDrift(ctx context.Context) {
 		retentionWant = &v
 	}
 	for _, w := range policyDriftWarnings(int64(o.compressAfter.Seconds()), appliedComp, retentionWant, appliedRet) {
-		o.logger.Warnf("TimescaleDB historian: %s. Policies are applied once at first bootstrap and not re-applied on restart, so a config change alone does not update them. Change them on the database directly with the TimescaleDB policy functions (remove_/add_compression_policy, remove_/add_retention_policy) on umh.value_%s and umh.attribute_%s, then set the same value in the bridge config to silence this warning.", w, o.contract, o.contract)
+		o.logger.Warnf("TimescaleDB historian: %s. Policies are applied once at first bootstrap and not re-applied on restart, so a config change alone does not update them. Change them on the database directly with the TimescaleDB policy functions (remove_/add_compression_policy, remove_/add_retention_policy) on umh.value_%s and umh.attribute_%s, then set the same value in this output's config to silence this warning.", w, o.contract, o.contract)
 	}
 }
 
@@ -403,7 +405,7 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	view := o.dedup.NewBatch()
 	rows := make([]*Row, 0, len(batch))
 	churn := map[string]struct{}{} // high-churn metadata keys seen anywhere in this batch (see below)
-	contractMismatches := 0        // messages dropped solely because they belong to another data contract
+	contractMismatches := 0        // DropContractMismatch count this batch
 	for _, msg := range batch {
 		meta := map[string]string{}
 		_ = msg.MetaWalk(func(k, v string) error { meta[k] = v; return nil })
@@ -445,17 +447,15 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	// wants them out of metadata_keys.
 	o.warnHighChurnMetadata(churn)
 	if len(rows) == 0 {
-		// A fully-dropped batch writes nothing while the connection stays up, so umh-core would
-		// see a healthy bridge silently discarding data. Warn (umh-core surfaces this as
-		// degraded); still return nil so one bad message never stalls the stream.
+		// Return nil in every branch so one fully-dropped batch never stalls the stream.
 		switch {
 		case len(batch) == 0:
-			// empty batch: nothing to say
 		case contractMismatches == len(batch):
-			// Every message simply belonged to another data contract. Expected when a bridge
-			// subscribes to more of umh.v1 than the single contract this historian stores, so
-			// it is not a fault: log at debug and leave the bridge healthy.
-			o.logger.Debugf("TimescaleDB historian: dropped all %d message(s) in the batch; all belong to other data contracts (this historian stores only _%s). This is expected when the bridge subscribes to more than _%s and is not an error.", len(batch), o.contract, o.contract)
+			// All dropped for belonging to other contracts: expected, not a fault. Info (debug is
+			// hidden at the default log level), and once since it recurs on every such batch.
+			if o.warnedContractMismatch.CompareAndSwap(false, true) {
+				o.logger.Infof("TimescaleDB historian: stores only data contract _%s; messages for other contracts are ignored.", o.contract)
+			}
 		default:
 			o.logger.Warnf("TimescaleDB historian: dropped all %d message(s) in the batch; nothing written. Check the source data and metadata configuration.", len(batch))
 		}
@@ -742,7 +742,7 @@ func describeRow(r *Row) string {
 		r.ContractName, r.RawLocation, r.VirtualPath, r.TagName, r.TS)
 }
 
-// recordDrop counts and debug-logs a discarded message, so a misconfigured bridge that
+// recordDrop counts and debug-logs a discarded message, so a misconfigured output that
 // drops everything is visible (the metric) rather than silently healthy with zero rows.
 func (o *historianOutput) recordDrop(reason string, topic string) {
 	o.dropped.Incr(1, reason)

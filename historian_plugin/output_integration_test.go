@@ -813,16 +813,19 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 	// benthos's mock harness (it backs metrics with a no-op), so these specs pin the co-located
 	// operator-facing log lines instead -- the same signal umh-core's log regex surfaces as degraded,
 	// and the guard against a regression that stops counting/logging a drop or truncation.
-	It("does not warn when a whole batch is dropped only for belonging to other data contracts", func() {
+	It("logs info once (never at warning) when whole batches are dropped only for belonging to other data contracts", func() {
 		h := connected("drops")
 		defer h.Close(ctx)
 		logs := h.CaptureLogs()
 		bad := mkMsg(1.0, 1000, "_other_v1", "acme.line1", "t", nil) // contract mismatch vs "drops"
 		Expect(h.WriteBatch(ctx, service.MessageBatch{bad})).To(Succeed())
+		Expect(h.WriteBatch(ctx, service.MessageBatch{bad})).To(Succeed()) // second contract-mismatch-only batch
 		Expect(h.CountValueRows(ctx, "drops")).To(Equal(0))
 		Expect(logs()).To(ContainSubstring("reason=contract_mismatch"), "the per-drop log must name the reason")
-		Expect(logs()).To(ContainSubstring("all belong to other data contracts"), "a contract-mismatch-only batch must say so, not read as a fault")
-		Expect(logs()).NotTo(ContainSubstring("Check the source data and metadata configuration"), "a contract-mismatch-only batch must not warn (not degraded)")
+		Expect(logs()).To(ContainSubstring("level=info msg=TimescaleDB historian: stores only data contract _drops"), "the notice must be emitted at info, not warning")
+		Expect(strings.Count(logs(), "stores only data contract _drops")).To(Equal(1), "the notice must be logged once per process, not per batch")
+		Expect(logs()).NotTo(ContainSubstring("level=warning"), "a contract-mismatch-only batch must not warn")
+		Expect(logs()).NotTo(ContainSubstring("level=error"), "a contract-mismatch-only batch must not error")
 	})
 
 	It("warns when a whole batch is dropped for a real fault", func() {
@@ -833,7 +836,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(h.WriteBatch(ctx, service.MessageBatch{bad})).To(Succeed())
 		Expect(h.CountValueRows(ctx, "drops")).To(Equal(0))
 		Expect(logs()).To(ContainSubstring("reason=missing_value_or_timestamp"), "the per-drop log must name the reason")
-		Expect(logs()).To(ContainSubstring("dropped all 1 message(s)"), "a 100%-dropped non-empty batch for a real fault must warn (degraded, not silent)")
+		Expect(logs()).To(ContainSubstring("level=warning msg=TimescaleDB historian: dropped all 1 message(s)"), "a 100%-dropped non-empty batch for a real fault must warn (not silent)")
 		Expect(logs()).To(ContainSubstring("Check the source data and metadata configuration"))
 	})
 
