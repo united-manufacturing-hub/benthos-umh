@@ -761,7 +761,8 @@ func (o *historianOutput) noteStored() {
 	}
 	o.logStateMu.Lock()
 	defer o.logStateMu.Unlock()
-	if o.everStored.CompareAndSwap(false, true) {
+	if !o.everStored.Load() { // recheck under the lock; only this method writes everStored
+		o.everStored.Store(true)
 		o.logger.Infof("TimescaleDB historian: first message stored for data contract _%s.", o.contract)
 	}
 }
