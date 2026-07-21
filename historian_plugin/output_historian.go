@@ -449,27 +449,20 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	// wants them out of metadata_keys.
 	o.warnHighChurnMetadata(churn)
 	if len(rows) == 0 {
-		// Return nil in every branch so one fully-dropped batch never stalls the stream.
+		// Return nil in every branch so one fully-dropped batch never stalls the stream. Cases below
+		// only reach the last two once contractMismatches == len(batch) (every drop was a mismatch).
 		switch {
-		case len(batch) == 0:
-		case contractMismatches == len(batch):
-			if o.everStored.Load() {
-				// Over-broad subscription lull: this contract is stored, this batch just had none.
-				o.logger.Debugf("TimescaleDB historian: dropped all %d message(s); all for other data contracts.", len(batch))
-			} else {
-				// Nothing stored for this contract yet while other-contract data keeps arriving --
-				// most likely a wrong contract or subscription. Info once (debug is hidden by default).
-				// Re-check everStored under logStateMu so a store landing on a concurrent batch wins
-				// and suppresses a false starving notice.
-				o.logStateMu.Lock()
-				if !o.everStored.Load() && !o.warnedStarving {
-					o.warnedStarving = true
-					o.logger.Infof("TimescaleDB historian: nothing stored for data contract _%s yet; the last %d message(s) were all for other contracts. Check data_contract_name and the topics this flow subscribes to.", o.contract, len(batch))
-				}
-				o.logStateMu.Unlock()
-			}
-		default:
+		case len(batch) == 0: // empty batch, nothing to report
+		case contractMismatches < len(batch):
+			// Some drops were not contract mismatches, so this is a genuine fault worth a warning.
 			o.logger.Warnf("TimescaleDB historian: dropped all %d message(s) in the batch; nothing written. Check the source data and metadata configuration.", len(batch))
+		case o.everStored.Load():
+			// Over-broad subscription lull: this contract is stored, this batch just had none.
+			o.logger.Debugf("TimescaleDB historian: dropped all %d message(s); all for other data contracts.", len(batch))
+		default:
+			// Nothing stored for this contract yet while other-contract data keeps arriving --
+			// most likely a wrong contract or subscription.
+			o.noteStarving(len(batch))
 		}
 		return nil
 	}
@@ -764,6 +757,18 @@ func (o *historianOutput) noteStored() {
 	if !o.everStored.Load() { // recheck under the lock; only this method writes everStored
 		o.everStored.Store(true)
 		o.logger.Infof("TimescaleDB historian: first message stored for data contract _%s.", o.contract)
+	}
+}
+
+// noteStarving logs once, at info, while nothing has ever been stored for this contract and a batch
+// was dropped entirely for other contracts -- the negative counterpart to noteStored. The everStored
+// re-check under logStateMu lets a store landing on a concurrent batch win and suppress a false notice.
+func (o *historianOutput) noteStarving(n int) {
+	o.logStateMu.Lock()
+	defer o.logStateMu.Unlock()
+	if !o.everStored.Load() && !o.warnedStarving {
+		o.warnedStarving = true
+		o.logger.Infof("TimescaleDB historian: nothing stored for data contract _%s yet; the last %d message(s) were all for other contracts. Check data_contract_name and the topics this flow subscribes to.", o.contract, n)
 	}
 }
 
