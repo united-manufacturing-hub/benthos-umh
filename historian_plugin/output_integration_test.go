@@ -813,19 +813,34 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 	// benthos's mock harness (it backs metrics with a no-op), so these specs pin the co-located
 	// operator-facing log lines instead -- the same signal umh-core's log regex surfaces as degraded,
 	// and the guard against a regression that stops counting/logging a drop or truncation.
-	It("logs info once (never at warning) when whole batches are dropped only for belonging to other data contracts", func() {
+	It("logs 'nothing stored yet' once at info (never warning) when data arrives but nothing matches the contract", func() {
 		h := connected("drops")
 		defer h.Close(ctx)
 		logs := h.CaptureLogs()
 		bad := mkMsg(1.0, 1000, "_other_v1", "acme.line1", "t", nil) // contract mismatch vs "drops"
 		Expect(h.WriteBatch(ctx, service.MessageBatch{bad})).To(Succeed())
-		Expect(h.WriteBatch(ctx, service.MessageBatch{bad})).To(Succeed()) // second contract-mismatch-only batch
+		Expect(h.WriteBatch(ctx, service.MessageBatch{bad})).To(Succeed()) // still nothing stored for "drops"
 		Expect(h.CountValueRows(ctx, "drops")).To(Equal(0))
 		Expect(logs()).To(ContainSubstring("reason=contract_mismatch"), "the per-drop log must name the reason")
-		Expect(logs()).To(ContainSubstring("level=info msg=TimescaleDB historian: stores only data contract _drops"), "the notice must be emitted at info, not warning")
-		Expect(strings.Count(logs(), "stores only data contract _drops")).To(Equal(1), "the notice must be logged once per process, not per batch")
+		Expect(logs()).To(ContainSubstring("level=info msg=TimescaleDB historian: nothing stored for data contract _drops yet"), "the starving notice must be info, not a warning")
+		Expect(strings.Count(logs(), "nothing stored for data contract _drops yet")).To(Equal(1), "the starving notice must be logged once per process, not per batch")
 		Expect(logs()).NotTo(ContainSubstring("level=warning"), "a contract-mismatch-only batch must not warn")
 		Expect(logs()).NotTo(ContainSubstring("level=error"), "a contract-mismatch-only batch must not error")
+	})
+
+	It("confirms the first stored message, then stays quiet on later other-contract-only batches", func() {
+		h := connected("stored") // own contract: this spec writes a row, so it must not pollute the "drops" tables
+		defer h.Close(ctx)
+		logs := h.CaptureLogs()
+		good := mkMsg(1.0, 1000, "_stored_v1", "acme.line1", "t", nil) // matches "stored"
+		Expect(h.WriteBatch(ctx, service.MessageBatch{good})).To(Succeed())
+		Expect(h.CountValueRows(ctx, "stored")).To(Equal(1))
+		Expect(logs()).To(ContainSubstring("level=info msg=TimescaleDB historian: first message stored for data contract _stored"), "a successful first store must be confirmed at info")
+		// Data has flowed, so a later all-other-contract batch is an expected lull: no starving notice, no warning.
+		other := mkMsg(2.0, 2000, "_other_v1", "acme.line1", "t", nil)
+		Expect(h.WriteBatch(ctx, service.MessageBatch{other})).To(Succeed())
+		Expect(logs()).NotTo(ContainSubstring("nothing stored for data contract _stored yet"), "once data has flowed, an other-contract batch must not read as starving")
+		Expect(logs()).NotTo(ContainSubstring("level=warning"))
 	})
 
 	It("warns when a whole batch is dropped for a real fault", func() {

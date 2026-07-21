@@ -94,7 +94,8 @@ type historianOutput struct {
 
 	warnedTruncate atomic.Bool // warn-once guard for truncation
 
-	warnedContractMismatch atomic.Bool // info-once guard for contract-mismatch-only batches
+	everStored     atomic.Bool // set once the first value row for this contract is stored
+	warnedStarving atomic.Bool // info-once guard: receiving data but nothing stored for this contract
 }
 
 func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*historianOutput, error) {
@@ -451,10 +452,13 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 		switch {
 		case len(batch) == 0:
 		case contractMismatches == len(batch):
-			// All dropped for belonging to other contracts: expected, not a fault. Info (debug is
-			// hidden at the default log level), and once since it recurs on every such batch.
-			if o.warnedContractMismatch.CompareAndSwap(false, true) {
-				o.logger.Infof("TimescaleDB historian: stores only data contract _%s; messages for other contracts are ignored.", o.contract)
+			if o.everStored.Load() {
+				// Over-broad subscription lull: this contract is stored, this batch just had none.
+				o.logger.Debugf("TimescaleDB historian: dropped all %d message(s); all for other data contracts.", len(batch))
+			} else if o.warnedStarving.CompareAndSwap(false, true) {
+				// Nothing stored for this contract yet while other-contract data keeps arriving --
+				// most likely a wrong contract or subscription. Info once (debug is hidden by default).
+				o.logger.Infof("TimescaleDB historian: nothing stored for data contract _%s yet; the last %d message(s) were all for other contracts. Check data_contract_name and the topics this flow subscribes to.", o.contract, len(batch))
 			}
 		default:
 			o.logger.Warnf("TimescaleDB historian: dropped all %d message(s) in the batch; nothing written. Check the source data and metadata configuration.", len(batch))
@@ -673,6 +677,9 @@ func (o *historianOutput) writeBatchFast(ctx context.Context, pool *pgxpool.Pool
 	o.topicCacheSize.Set(int64(o.topicCache.Len()))
 	o.valueRows.Incr(int64(len(vIDs)))
 	o.attrRows.Incr(int64(len(aIDs)))
+	if len(vIDs) > 0 {
+		o.noteStored()
+	}
 	return nil
 }
 
@@ -733,7 +740,18 @@ func (o *historianOutput) writeRowsIsolated(ctx context.Context, pool *pgxpool.P
 	o.topicCacheSize.Set(int64(o.topicCache.Len()))
 	o.valueRows.Incr(int64(written))
 	o.attrRows.Incr(int64(attrs))
+	if written > 0 {
+		o.noteStored()
+	}
 	return nil // ACK: good rows committed, poison rows dropped-with-signal
+}
+
+// noteStored logs once when the first value row for this contract lands, so an operator can confirm
+// data is being written -- the positive counterpart to the starving notice in WriteBatch.
+func (o *historianOutput) noteStored() {
+	if o.everStored.CompareAndSwap(false, true) {
+		o.logger.Infof("TimescaleDB historian: first message stored for data contract _%s.", o.contract)
+	}
 }
 
 // describeRow identifies a row for an attributable write-failure log: which tag, at which ts.
