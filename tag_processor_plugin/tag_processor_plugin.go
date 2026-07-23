@@ -606,10 +606,6 @@ func (p *TagProcessor) autoConvertValue(v any) any {
 	case bool:
 		return val
 	case string:
-		num, err := strconv.ParseFloat(val, 64)
-		if err == nil {
-			return json.Number(fmt.Sprintf("%v", num))
-		}
 		return val
 	case float64, float32, int, int32, int64, uint, uint32, uint64:
 		return json.Number(fmt.Sprintf("%v", val))
@@ -627,9 +623,9 @@ func (p *TagProcessor) autoConvertValue(v any) any {
 		return string(jsonBytes)
 	default:
 		str := fmt.Sprintf("%v", val)
-		num, err := strconv.ParseFloat(str, 64)
+		_, err := strconv.ParseFloat(str, 64)
 		if err == nil {
-			return json.Number(fmt.Sprintf("%v", num))
+			return json.Number(str)
 		}
 		return str
 	}
