@@ -1,0 +1,210 @@
+// Copyright 2026 UMH Systems GmbH
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package beckhoff_ads_plugin
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/netip"
+	"strconv"
+	"time"
+
+	adsLib "github.com/RuneRoven/go-ads/v2"
+	"github.com/redpanda-data/benthos/v4/public/service"
+)
+
+// goADSClient is the go-ads adapter — the ONLY file (besides client.go)
+// importing the fork. All WithRoute/NewAMSAddress/type-mapping logic lives here.
+type goADSClient struct {
+	session *adsLib.Session
+}
+
+// containerIPRanges are ranges specific to container networking. Such an address
+// is unreachable from the PLC, which breaks TwinCAT 2; TwinCAT 3 is unaffected.
+var containerIPRanges = []netip.Prefix{
+	netip.MustParsePrefix("172.17.0.0/16"), // Docker default bridge
+	netip.MustParsePrefix("172.18.0.0/15"), // Docker user-defined bridge pool (172.18–172.31)
+	netip.MustParsePrefix("172.20.0.0/14"),
+	netip.MustParsePrefix("172.24.0.0/13"),
+	netip.MustParsePrefix("100.64.0.0/10"), // CGNAT, used by some Kubernetes CNIs
+}
+
+// isLikelyContainerIP reports whether route registration would advertise an IP
+// the PLC cannot reach.
+func isLikelyContainerIP(ip string) bool {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil || !addr.Is4() {
+		return false
+	}
+	for _, r := range containerIPRanges {
+		if r.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveRouteHostIP returns the local IP for the ADS route: the configured
+// hostIP, else the source IP of a TCP dial to the ADS port (same interface).
+func resolveRouteHostIP(ctx context.Context, cfg SessionConfig, log *service.Logger) (string, error) {
+	if cfg.HostIP != "" {
+		return cfg.HostIP, nil
+	}
+	dialer := net.Dialer{Timeout: routeDialTimeout}
+	tcpConn, dialErr := dialer.DialContext(ctx, "tcp4", net.JoinHostPort(cfg.TargetIP, strconv.Itoa(cfg.TargetPort)))
+	if dialErr != nil {
+		// PLC unreachable; fall back to a UDP routing lookup (no packet sent).
+		udpConn, udpErr := net.Dial("udp4", net.JoinHostPort(cfg.TargetIP, adsDiscoveryPort))
+		if udpErr != nil {
+			log.Errorf("Failed to auto-detect local address: %v", dialErr)
+			return "", dialErr
+		}
+		defer udpConn.Close()
+		return udpConn.LocalAddr().(*net.UDPAddr).IP.String(), nil
+	}
+	defer tcpConn.Close()
+	return tcpConn.LocalAddr().(*net.TCPAddr).IP.String(), nil
+}
+
+// buildSessionOptions assembles the go-ads SessionOptions: logger bridge,
+// route registration, local AMS override, and request timeout.
+func buildSessionOptions(ctx context.Context, cfg SessionConfig, log *service.Logger) ([]adsLib.SessionOption, error) {
+	// go-ads verbosity follows the benthos pipeline log level via this bridge;
+	// no global SetDefaultLogger (last-input-wins across multiple ADS inputs).
+	opts := []adsLib.SessionOption{adsLib.WithLogger(slog.New(&benthosLogHandler{logger: log}))}
+
+	if cfg.Username != "" && cfg.Password != "" {
+		hostAddr, err := resolveRouteHostIP(ctx, cfg, log)
+		if err != nil {
+			return nil, err
+		}
+		if isLikelyContainerIP(hostAddr) {
+			log.Warnf("Auto-detected IP %s looks like a container IP, which the PLC cannot reach. "+
+				"TwinCAT 2 routes replies via this address, so reads will time out — set hostIP to the address "+
+				"the PLC can reach this client at. TwinCAT 3 answers on the existing connection and is unaffected.", hostAddr)
+		}
+		routeName := fmt.Sprintf("benthosADS-%s", hostAddr)
+		log.Infof("Route will be registered on PLC %s: name=%s, clientIP=%s", cfg.TargetIP, routeName, hostAddr)
+		opts = append(opts, adsLib.WithRoute(routeName, cfg.Username, cfg.Password), adsLib.WithHostIP(hostAddr))
+	}
+
+	// "auto" (default) lets go-ads derive local AMS from the TCP connection.
+	if cfg.HostAMS != "" && cfg.HostAMS != "auto" {
+		localAMS, err := adsLib.NewAMSAddress(cfg.HostAMS, uint16(cfg.HostPort))
+		if err != nil {
+			log.Errorf("Invalid local AMS %q: %v", cfg.HostAMS, err)
+			return nil, err
+		}
+		opts = append(opts, adsLib.WithLocalAMS(localAMS))
+	}
+	if cfg.RequestTimeout > 0 {
+		opts = append(opts, adsLib.WithRequestTimeout(cfg.RequestTimeout))
+	}
+	return opts, nil
+}
+
+// newGoADSClient builds session options and the go-ads session from
+// SessionConfig. It does not call Connect; the caller drives that.
+func newGoADSClient(ctx context.Context, cfg SessionConfig, log *service.Logger) (Client, error) {
+	opts, err := buildSessionOptions(ctx, cfg, log)
+	if err != nil {
+		return nil, err
+	}
+	targetAMS, err := adsLib.NewAMSAddress(cfg.TargetAMS, uint16(cfg.RuntimePort))
+	if err != nil {
+		log.Errorf("Invalid target AMS %q: %v", cfg.TargetAMS, err)
+		return nil, err
+	}
+	// Background ctx: session lifetime is driven by Close, not the per-call
+	// construction ctx (which would tear the session down on return).
+	sess, err := adsLib.NewSession(context.Background(), adsLib.AMSEndpoint{
+		IP: cfg.TargetIP, Port: cfg.TargetPort, AMS: targetAMS,
+	}, opts...)
+	if err != nil {
+		log.Errorf("Failed to create connection: %v", err)
+		return nil, err
+	}
+	return &goADSClient{session: sess}, nil
+}
+
+func (c *goADSClient) Connect(ctx context.Context) error     { return c.session.Connect(ctx) }
+func (c *goADSClient) Close() error                          { return c.session.Close() }
+func (c *goADSClient) IsClosed() bool                        { return c.session.IsClosed() }
+func (c *goADSClient) LoadSymbols(ctx context.Context) error { return c.session.LoadSymbols(ctx) }
+
+func (c *goADSClient) GetSymbol(ctx context.Context, name string) (SymbolInfo, error) {
+	v, err := c.session.GetSymbol(ctx, name)
+	if err != nil {
+		return SymbolInfo{}, err
+	}
+	return SymbolInfo{DataType: v.DataType, BaseType: v.BaseTypeName(), Length: v.Length}, nil
+}
+
+func (c *goADSClient) ReadMultipleSymbols(ctx context.Context, names []string) (map[string]string, error) {
+	return c.session.ReadMultipleSymbols(ctx, names)
+}
+
+func (c *goADSClient) ReadFromSymbol(ctx context.Context, name string) (string, error) {
+	return c.session.ReadFromSymbol(ctx, name)
+}
+
+// toTransMode maps the plugin's plain transmission-mode code to the go-ads
+// protocol constant (see transmissionModeValue in ads.go for the code table).
+func toTransMode(code int) adsLib.TransMode {
+	switch code {
+	case 1:
+		return adsLib.TransModeServerCycle
+	case 2:
+		return adsLib.TransModeServerOnChange2
+	case 3:
+		return adsLib.TransModeServerCycle2
+	default:
+		return adsLib.TransModeServerOnChange
+	}
+}
+
+func (c *goADSClient) AddNotifications(ctx context.Context, cfgs []NotifyConfig, ch chan *adsLib.Update) ([]NotifyResult, error) {
+	adsCfgs := make([]adsLib.NotificationConfig, len(cfgs))
+	for i, cfg := range cfgs {
+		adsCfgs[i] = adsLib.NotificationConfig{
+			SymbolName:       cfg.SymbolName,
+			MaxDelay:         cfg.MaxDelay,
+			CycleTime:        cfg.CycleTime,
+			TransmissionMode: toTransMode(cfg.TransmissionMode),
+		}
+	}
+	results, err := c.session.AddSymbolNotifications(ctx, adsCfgs, ch)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]NotifyResult, len(results))
+	for i, r := range results {
+		out[i] = NotifyResult{
+			SymbolName: cfgs[i].SymbolName,
+			Registered: r.Skipped == nil && r.Error == adsLib.ReturnCodeNoErrors,
+			Skipped:    r.Skipped != nil,
+			Code:       uint32(r.Error),
+		}
+	}
+	return out, nil
+}
+
+// Channel accessors — the one deliberate *adsLib.Update leak. go-ads Update.Value
+// is already a decoded string (see the Client value contract).
+func sampleName(u *adsLib.Update) string    { return u.Variable }
+func sampleValue(u *adsLib.Update) string   { return u.Value }
+func sampleTime(u *adsLib.Update) time.Time { return u.TimeStamp }
