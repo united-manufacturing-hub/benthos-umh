@@ -346,8 +346,13 @@ func (a *AdsCommInput) finishConnect(ctx context.Context) error {
 	return nil
 }
 
-func (a *AdsCommInput) ReadBatch(_ context.Context) (service.MessageBatch, service.AckFunc, error) {
-	return nil, nil, service.ErrNotConnected
+// ReadBatch dispatches to the notification or pull read path per ReadType.
+func (a *AdsCommInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+	a.Log.Debugf("ReadBatch called")
+	if a.ReadType == "notification" {
+		return a.ReadBatchNotification(ctx)
+	}
+	return a.ReadBatchPull(ctx)
 }
 
 func (a *AdsCommInput) Close(_ context.Context) error {

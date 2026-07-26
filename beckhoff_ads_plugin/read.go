@@ -1,0 +1,192 @@
+// Copyright 2026 UMH Systems GmbH
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package beckhoff_ads_plugin
+
+import (
+	"context"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/redpanda-data/benthos/v4/public/service"
+)
+
+func sanitize(s string) string {
+	re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+	return re.ReplaceAllString(s, "_")
+}
+
+// closeHandler async-closes a dead client session; nil-safe and non-blocking
+// so callers can invoke it right after detecting IsClosed().
+func (a *AdsCommInput) closeHandler() {
+	if a.client != nil {
+		c := a.client
+		a.client = nil
+		go func() { _ = c.Close() }()
+	}
+}
+
+// newSymbolMessage is the single message-build site: payload is the raw value
+// (pre-parse.go typing), metadata carries symbol/type/size/timestamp.
+func (a *AdsCommInput) newSymbolMessage(sym *PlcSymbol, value string, ts time.Time) *service.Message {
+	msg := service.NewMessage([]byte(value))
+	msg.MetaSet("symbol_name", sanitize(sym.Name))
+	if sym.DataType != "" {
+		msg.MetaSet("data_type", sym.DataType)
+	}
+	if sym.BaseType != "" {
+		msg.MetaSet("base_type", sym.BaseType)
+	}
+	if sym.Size != 0 {
+		msg.MetaSet("data_size", strconv.FormatUint(uint64(sym.Size), 10))
+	}
+	if !ts.IsZero() {
+		msg.MetaSet("timestamp_ms", strconv.FormatInt(ts.UnixMilli(), 10))
+	}
+	return msg
+}
+
+// makeNotificationMessage resolves the enriched symbol for a notification
+// update, falling back to a bare symbol (name only) if it isn't tracked.
+func (a *AdsCommInput) makeNotificationMessage(u *Update) *service.Message {
+	sym, ok := a.symbolByName[strings.ToLower(sampleName(u))]
+	if !ok || sym == nil {
+		sym = &PlcSymbol{Name: sampleName(u)}
+	}
+	return a.newSymbolMessage(sym, sampleValue(u), sampleTime(u))
+}
+
+func (a *AdsCommInput) ReadBatchNotification(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+	a.Log.Debugf("ReadBatchNotification called")
+
+	// Flush any initial samples captured during Connect before blocking on the channel,
+	// so the first values (e.g. static serverOnChange symbols) are delivered.
+	if len(a.pendingInitial) > 0 {
+		msgs := make(service.MessageBatch, 0, len(a.pendingInitial))
+		for _, u := range a.pendingInitial {
+			if u != nil {
+				msgs = append(msgs, a.makeNotificationMessage(u))
+			}
+		}
+		a.pendingInitial = nil
+		return msgs, func(_ context.Context, _ error) error { return nil }, nil
+	}
+
+	// Use a short-lived context so ReadBatch returns periodically even when no
+	// notifications arrive (e.g. slow-changing symbols). Caller loops immediately.
+	waitCtx, cancel := context.WithTimeout(ctx, notificationWait)
+	defer cancel()
+
+	var first *Update
+	select {
+	case first = <-a.NotificationChan:
+		if first == nil {
+			a.Log.Warnf("Received nil update from ADS library, skipping")
+			return nil, func(_ context.Context, _ error) error { return nil }, nil
+		}
+	case <-waitCtx.Done():
+		if a.client != nil && a.client.IsClosed() {
+			a.closeHandler()
+			return nil, nil, service.ErrNotConnected
+		}
+		// No data within timeout — normal for slow-changing symbols or mid-reconnect.
+		return nil, func(_ context.Context, _ error) error { return nil }, nil
+	}
+
+	msgs := service.MessageBatch{a.makeNotificationMessage(first)}
+
+	// Drain buffered notifications, bounded to a channel-depth snapshot so a sustained
+	// producer can't grow this batch unboundedly (go-ads drops when the channel is full).
+	pending := len(a.NotificationChan)
+	for i := 0; i < pending; i++ {
+		select {
+		case update := <-a.NotificationChan:
+			if update != nil {
+				msgs = append(msgs, a.makeNotificationMessage(update))
+			}
+		default:
+			return msgs, func(_ context.Context, _ error) error { return nil }, nil
+		}
+	}
+	return msgs, func(_ context.Context, _ error) error { return nil }, nil
+}
+
+func (a *AdsCommInput) ReadBatchPull(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+	a.Log.Debugf("ReadBatchPull called")
+	start := time.Now()
+	if a.client == nil {
+		return nil, nil, service.ErrNotConnected
+	}
+
+	names := make([]string, len(a.Symbols))
+	for i, symbol := range a.Symbols {
+		names[i] = symbol.Name
+	}
+
+	values, err := a.client.ReadMultipleSymbols(ctx, names)
+	if err != nil {
+		a.Log.Errorf("Batch read failed: %v", err)
+		if a.client.IsClosed() {
+			// Session permanently dead — async close to avoid blocking.
+			a.closeHandler()
+			return nil, nil, service.ErrNotConnected
+		}
+		// Transient: reconnecting or PLC not ready. Return empty batch immediately so
+		// the caller controls the retry rate; small sleep avoids spinning in production.
+		a.Log.Warnf("Batch read failed (will retry): %v", err)
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-time.After(pullRetryBackoff):
+		}
+		return service.MessageBatch{}, func(_ context.Context, _ error) error { return nil }, nil
+	}
+
+	now := time.Now()
+	msgs := service.MessageBatch{}
+	for i := range a.Symbols {
+		val, ok := values[a.Symbols[i].Name]
+		if !ok {
+			continue
+		}
+		msgs = append(msgs, a.newSymbolMessage(&a.Symbols[i], val, now))
+	}
+
+	// Fall back to individual reads if batch returned no results: some PLCs
+	// don't support ADS sum read commands, silently skipping all symbols.
+	if len(msgs) == 0 && len(a.Symbols) > 0 {
+		a.Log.Warnf("Batch read returned no results for %d symbols, falling back to individual reads", len(a.Symbols))
+		for i := range a.Symbols {
+			val, readErr := a.client.ReadFromSymbol(ctx, a.Symbols[i].Name)
+			if readErr != nil {
+				a.Log.Errorf("Individual read failed for %s: %v", a.Symbols[i].Name, readErr)
+				continue
+			}
+			msgs = append(msgs, a.newSymbolMessage(&a.Symbols[i], val, time.Now()))
+		}
+	}
+
+	// Sleep the remaining interval so the poll period matches IntervalTime; on
+	// ctx cancellation, discard the collected batch and return the error.
+	if remaining := a.IntervalTime - time.Since(start); remaining > 0 {
+		select {
+		case <-time.After(remaining):
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		}
+	}
+	return msgs, func(_ context.Context, _ error) error { return nil }, nil
+}
