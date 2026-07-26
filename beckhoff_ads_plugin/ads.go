@@ -52,7 +52,7 @@ type AdsCommInput struct {
 	client           Client
 	Log              *service.Logger
 	Symbols          []PlcSymbol
-	symbolByName     map[string]*PlcSymbol // configured symbol name → *PlcSymbol, populated in NewAdsCommInput
+	symbolByName     map[string]*PlcSymbol // configured symbol name → *PlcSymbol, populated in initSymbolIndex (Connect)
 	NotificationChan chan *Update
 	TransmissionMode int
 
@@ -217,11 +217,6 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 		mgr.Logger().Warnf("%s", w)
 	}
 
-	symbolByName := make(map[string]*PlcSymbol, len(symbolList))
-	for i := range symbolList {
-		symbolByName[symbolList[i].Name] = &symbolList[i]
-	}
-
 	m := &AdsCommInput{
 		TargetIP:         targetIP,
 		TargetAMS:        targetAMS,
@@ -233,7 +228,6 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 		MaxDelay:         maxDelay,
 		CycleTime:        cycleTime,
 		Symbols:          symbolList,
-		symbolByName:     symbolByName,
 		Log:              mgr.Logger(),
 		IntervalTime:     intervalTime,
 		RequestTimeout:   requestTimeout,
@@ -259,11 +253,97 @@ func init() {
 	}
 }
 
-// Connect, ReadBatch and Close are stubs; the go-ads adapter (Task 2) fills in
-// connection, read and shutdown behaviour behind the Client seam.
+// sessionConfig builds the library-agnostic connection spec passed to the
+// go-ads adapter.
+func (a *AdsCommInput) sessionConfig() SessionConfig {
+	return SessionConfig{
+		TargetIP:       a.TargetIP,
+		TargetAMS:      a.TargetAMS,
+		HostIP:         a.HostIP,
+		HostAMS:        a.HostAMS,
+		TargetPort:     a.TargetPort,
+		RuntimePort:    a.RuntimePort,
+		HostPort:       a.HostPort,
+		Username:       a.Username,
+		Password:       a.Password,
+		RequestTimeout: a.RequestTimeout,
+	}
+}
 
-func (a *AdsCommInput) Connect(_ context.Context) error {
-	return service.ErrNotConnected
+// targetSummary lists the PLC-side connection parameters for logging.
+func (a *AdsCommInput) targetSummary() string {
+	return fmt.Sprintf(
+		"  target IP:    %s\n"+
+			"  target port:  %d\n"+
+			"  target AMS:   %s\n"+
+			"  runtime port: %d",
+		a.TargetIP, a.TargetPort, a.TargetAMS, a.RuntimePort)
+}
+
+// hostSummary lists our own AMS identity for logging, marking the values that
+// are derived at runtime rather than configured.
+func (a *AdsCommInput) hostSummary() string {
+	hostAMS := a.HostAMS
+	if hostAMS == "auto" {
+		hostAMS = "auto (derived on connect)"
+	}
+	hostPort := fmt.Sprintf("%d", a.HostPort)
+	if a.HostPort == 0 {
+		hostPort = "random"
+	}
+	hostIP := a.HostIP
+	if hostIP == "" {
+		hostIP = "auto-detected"
+	}
+	return fmt.Sprintf(
+		"  host AMS:     %s\n"+
+			"  host port:    %s\n"+
+			"  host IP:      %s",
+		hostAMS, hostPort, hostIP)
+}
+
+// Connect establishes the ADS session, resolves symbol metadata, and (depending
+// on config) loads the full symbol table and registers notifications.
+func (a *AdsCommInput) Connect(ctx context.Context) error {
+	if a.client != nil {
+		return nil
+	}
+
+	c, err := newGoADSClient(ctx, a.sessionConfig(), a.Log)
+	if err != nil {
+		return err
+	}
+	a.client = c
+
+	if err = a.finishConnect(ctx); err != nil {
+		a.client.Close()
+		a.client = nil
+		return err
+	}
+	return nil
+}
+
+// finishConnect drives connect → symbol resolution → (optional) symbol table
+// load → (optional) notification setup; split out so Connect can clean up a.client on failure.
+func (a *AdsCommInput) finishConnect(ctx context.Context) error {
+	a.Log.Infof("Connecting to PLC:\n%s\n%s", a.targetSummary(), a.hostSummary())
+	if err := a.client.Connect(ctx); err != nil {
+		a.Log.Errorf("Connecting to PLC failed:\n%s\n  error:        %v", a.targetSummary(), err)
+		return err
+	}
+	a.Log.Infof("Connecting to PLC succeeded:\n%s", a.targetSummary())
+	a.initSymbolIndex(ctx)
+	if a.LoadSymbols {
+		if err := a.loadSymbolTable(ctx); err != nil {
+			return err
+		}
+	}
+	if a.ReadType == "notification" {
+		if err := a.setupNotifications(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *AdsCommInput) ReadBatch(_ context.Context) (service.MessageBatch, service.AckFunc, error) {
@@ -271,5 +351,17 @@ func (a *AdsCommInput) ReadBatch(_ context.Context) (service.MessageBatch, servi
 }
 
 func (a *AdsCommInput) Close(_ context.Context) error {
+	if a.client == nil {
+		return nil
+	}
+	a.Log.Infof("Closing connection to PLC:\n%s", a.targetSummary())
+
+	err := a.client.Close()
+	a.client = nil
+	if err != nil {
+		a.Log.Errorf("Closing connection to PLC failed:\n%s\n  error:        %v", a.targetSummary(), err)
+		return err
+	}
+	a.Log.Infof("Closing connection to PLC succeeded:\n%s", a.targetSummary())
 	return nil
 }
