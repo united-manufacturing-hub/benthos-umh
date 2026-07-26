@@ -292,8 +292,6 @@ github.com/ProtonMail/go-crypto v1.4.1/go.mod h1:e1OaTyu5SYVrO9gKOEhTc+5UcXtTUa+
 github.com/RaveNoX/go-jsoncommentstrip v1.0.0/go.mod h1:78ihd09MekBnJnxpICcwzCMzGrKSKYe4AqU6PDYYpjk=
 github.com/RoaringBitmap/roaring/v2 v2.15.0 h1:gCbixa3UiG7g6WUZNVOfEEg2HTc1vR4OVdMkX8t1ZFc=
 github.com/RoaringBitmap/roaring/v2 v2.15.0/go.mod h1:eq4wdNXxtJIS/oikeCzdX1rBzek7ANzbth041hrU8Q4=
-github.com/RuneRoven/benthosADS v1.0.10 h1:1AyKGSLaLHTiLa8NE/Au9tjW3BG+D+sIrHz9ezYX32w=
-github.com/RuneRoven/benthosADS v1.0.10/go.mod h1:Ut0oLVv3y0AkIcLVgXze+HejHg7Sz/nlwMgNug2JmhY=
 github.com/RuneRoven/benthosAlarm v1.0.0 h1:jI1RUjgta0FsNGtGPM7yIc1ox3zSbP/ZZVc518GhVs0=
 github.com/RuneRoven/benthosAlarm v1.0.0/go.mod h1:8081JBViQHAJAWDy+T/IYEB/UCICAJCb0M61EmI89DI=
 github.com/RuneRoven/benthosSMTP v0.0.1 h1:pgFBqcYvFXPT07YuoYPbpXhAD0CRD8dEC7SuC82VFAs=
