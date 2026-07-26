@@ -39,10 +39,16 @@ func (a *AdsCommInput) closeHandler() {
 	}
 }
 
-// newSymbolMessage is the single message-build site: payload is the raw value
-// (pre-parse.go typing), metadata carries symbol/type/size/timestamp.
+// newSymbolMessage is the single message-build site: payload is typed via parse.go
+// (base type preferred, data type fallback); metadata carries symbol/type/size/timestamp.
 func (a *AdsCommInput) newSymbolMessage(sym *PlcSymbol, value string, ts time.Time) *service.Message {
-	msg := service.NewMessage([]byte(value))
+	typeName := sym.BaseType
+	if typeName == "" {
+		typeName = sym.DataType
+	}
+	payload, tagType := adsValueBytes(typeName, value)
+	msg := service.NewMessage(payload)
+	msg.MetaSet("tag_type", tagType)
 	msg.MetaSet("symbol_name", sanitize(sym.Name))
 	if sym.DataType != "" {
 		msg.MetaSet("data_type", sym.DataType)
@@ -161,6 +167,15 @@ func (a *AdsCommInput) ReadBatchPull(ctx context.Context) (service.MessageBatch,
 		val, ok := values[a.Symbols[i].Name]
 		if !ok {
 			continue
+		}
+		// Symbol type unresolved at connect (e.g. PLC not ready yet): retry here
+		// so it gets typed on a later poll instead of staying string-typed forever.
+		if a.Symbols[i].BaseType == "" && a.Symbols[i].DataType == "" {
+			if info, err := a.client.GetSymbol(ctx, a.Symbols[i].Name); err == nil {
+				a.Symbols[i].DataType = info.DataType
+				a.Symbols[i].BaseType = info.BaseType
+				a.Symbols[i].Size = info.Length
+			}
 		}
 		msgs = append(msgs, a.newSymbolMessage(&a.Symbols[i], val, now))
 	}
