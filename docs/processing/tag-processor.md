@@ -121,6 +121,7 @@ This consistent formatting ensures that:
 - Simple types (numbers, strings, booleans) are preserved as-is
 - Complex types (arrays, objects) are converted to JSON string representations
 - Numbers are always preserved as numeric types (integers or floats)
+- Numeric-looking strings (e.g., `"2340925"`) stay strings and keep their exact digits; set `msg.meta.datatype = "number"` to convert them explicitly
 
 > **Breaking change in v4.0.0**: Arrays now serialize to JSON format `["a","b","c"]` instead of space-separated format `[a b c]`. This preserves type information and enables array parsing in downstream processors.
 
@@ -269,7 +270,7 @@ The processor uses the following metadata fields:
 **Optional Fields:**
 
 - `virtual_path`: Logical, non-physical grouping path in dot notation (e.g., "axis.x.position")
-- `datatype`: Forces the output value type (`"string"`, `"number"`, or `"bool"`) instead of auto-detection. Set to `"string"` to keep numeric-looking strings (e.g., serial codes) from being converted to lossy numbers
+- `datatype`: Forces the output value type (`"string"`, `"number"`, or `"bool"`) instead of auto-detection. Set to `"number"` to convert a numeric string (e.g., `"42"`) into a number; without it, a string value always stays a string
 
 **Generated Fields:**
 

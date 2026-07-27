@@ -1403,7 +1403,8 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 			Expect(floatValue).To(BeNumerically("==", 23.5))
 
-			// Check float value of string encoded float
+			// Check string encoded float stays a string (no auto-conversion;
+			// use msg.meta.datatype = "number" for explicit coercion)
 			messagesMutex.Lock()
 			msg = messages[4]
 			messagesMutex.Unlock()
@@ -1413,11 +1414,9 @@ tag_processor:
 			Expect(ok).To(BeTrue())
 			value, ok = payload["value"]
 			Expect(ok).To(BeTrue())
-			numValue, ok = value.(json.Number)
+			strValue, ok = value.(string)
 			Expect(ok).To(BeTrue())
-			floatValue, err = numValue.Float64()
-			Expect(err).NotTo(HaveOccurred())
-			Expect(floatValue).To(BeNumerically("==", 23.5))
+			Expect(strValue).To(Equal("23.5"))
 
 			// Check string array value (should be JSON serialized)
 			messagesMutex.Lock()
