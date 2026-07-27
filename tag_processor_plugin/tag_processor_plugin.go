@@ -70,7 +70,8 @@ Empty or undefined fields will be omitted from the topic.`).
 		Field(service.NewStringField("defaults").
 			Description("JavaScript code to set initial metadata values").
 			Default("")).
-		Field(service.NewObjectListField("conditions",
+		Field(service.NewObjectListField(
+			"conditions",
 			service.NewStringField("if").Description("JavaScript condition expression"),
 			service.NewStringField("then").Description("JavaScript code to execute if condition is true"),
 		).Description("List of conditions to evaluate").
@@ -123,7 +124,8 @@ Empty or undefined fields will be omitted from the topic.`).
 			}
 
 			return newTagProcessor(config, mgr.Logger(), mgr.Metrics())
-		})
+		},
+	)
 	if err != nil {
 		panic(err)
 	}
@@ -624,10 +626,10 @@ func (p *TagProcessor) autoConvertValue(v any) any {
 	default:
 		str := fmt.Sprintf("%v", val)
 		_, err := strconv.ParseFloat(str, 64)
-		if err == nil {
-			return json.Number(str)
+		if err != nil {
+			return str
 		}
-		return str
+		return json.Number(str)
 	}
 }
 
@@ -727,7 +729,8 @@ func (p *TagProcessor) compilePrograms() error {
 		p.conditionPrograms[i], err = goja.Compile(
 			fmt.Sprintf("condition-%d-if.js", i),
 			condition.If,
-			false)
+			false,
+		)
 		if err != nil {
 			return fmt.Errorf("failed to compile condition %d 'if' code: %w", i, err)
 		}
@@ -738,7 +741,8 @@ func (p *TagProcessor) compilePrograms() error {
 		p.conditionThenPrograms[i], err = goja.Compile(
 			fmt.Sprintf("condition-%d-then.js", i),
 			wrappedThenCode,
-			false)
+			false,
+		)
 		if err != nil {
 			return fmt.Errorf("failed to compile condition %d 'then' code: %w", i, err)
 		}
@@ -918,7 +922,8 @@ func (p *TagProcessor) processConditionForMessageWithProgram(ctx context.Context
 			ctx,
 			service.MessageBatch{msg},
 			p.conditionThenPrograms[conditionIndex],
-			"condition-then")
+			"condition-then",
+		)
 		// Return all messages produced by the condition action (could be 0, 1, or multiple)
 		return conditionBatch, "", "", nil
 	}
