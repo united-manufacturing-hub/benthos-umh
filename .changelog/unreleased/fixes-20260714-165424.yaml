@@ -1,3 +1,0 @@
-kind: fixes
-body: Sparkplug B input derives spb_timestamp from each metric's own timestamp when present, falling back to the payload timestamp; multi-metric NDATA/DDATA no longer collapse to one timestamp (ENG-5341)
-time: 2026-07-14T16:54:24.582426+02:00

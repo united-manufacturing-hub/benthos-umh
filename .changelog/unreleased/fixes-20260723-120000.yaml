@@ -1,3 +1,0 @@
-kind: fixes
-body: The tag processor no longer converts numeric-looking string values to numbers; a string read from the source stays a string in the UNS, and msg.meta.datatype = "number" remains available for explicit coercion (ENG-5422)
-time: 2026-07-23T17:31:13+02:00

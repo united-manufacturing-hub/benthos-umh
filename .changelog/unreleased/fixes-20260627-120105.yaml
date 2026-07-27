@@ -1,3 +1,0 @@
-kind: fixes
-body: The Node-RED JavaScript processor messages_processed counter now counts successfully produced outputs; a throwing message is counted in messages_dropped{reason=js_throw} rather than processed, so the counter no longer counts every input attempt or inflates on retries (ENG-5240)
-time: 2026-06-27T12:05:00+02:00
