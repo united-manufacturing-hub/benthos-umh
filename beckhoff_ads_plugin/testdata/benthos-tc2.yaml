@@ -1,0 +1,74 @@
+# Benthos ADS config for TwinCAT 2 PLC (tc3prg on TC2)
+# TC2 symbol naming: GVL globals use dot prefix (.varName),
+# program locals use UPPERCASE program prefix without dot (PRG_DIAGNOSTICS.varName)
+# Default port 801, route credentials required
+#
+# Connection settings use benthos env var interpolation.
+# Set TEST_ADS_TC2_TARGET_IP and TEST_ADS_TC2_TARGET_AMS to run.
+input:
+  ads:
+    targetIP: "${TEST_ADS_TC2_TARGET_IP}"
+    targetAMS: "${TEST_ADS_TC2_TARGET_AMS}"
+    runtimePort: ${TEST_ADS_TC2_RUNTIME_PORT:801}
+    readType: interval
+    intervalTime: 500ms
+    loadSymbols: true
+    username: "${TEST_ADS_TC2_ROUTE_USER:}"
+    password: "${TEST_ADS_TC2_ROUTE_PASS:}"
+    symbols:
+      # section:process_data — GVL counters, strings, enums, reals (dot prefix)
+      - ".nMasterCycleCounter"
+      - ".sStatusMessage"
+      - ".eMachineState"
+      - ".fGlobalReal"
+      # section:diagnostics_scalars — basic type counters from PRG_Diagnostics (no dot)
+      - "PRG_DIAGNOSTICS.nInt"
+      - "PRG_DIAGNOSTICS.fReal"
+      - "PRG_DIAGNOSTICS.bHeartbeat"
+      - "PRG_DIAGNOSTICS.nByte"
+      - "PRG_DIAGNOSTICS.nSint"
+      - "PRG_DIAGNOSTICS.nDint"
+      - "PRG_DIAGNOSTICS.nWord"
+      - "PRG_DIAGNOSTICS.nFastDint"
+      # section:diagnostics_time — time/date types from PRG_Diagnostics (no dot)
+      - "PRG_DIAGNOSTICS.tTime"
+      - "PRG_DIAGNOSTICS.dDate"
+      - "PRG_DIAGNOSTICS.dtDateTime"
+      - "PRG_DIAGNOSTICS.todTimeOfDay"
+      # section:production_stats — stProductionStats struct (dot prefix)
+      - ".stProductionStats.nPartsProduced"
+      - ".stProductionStats.nPartsRejected"
+      - ".stProductionStats.fYieldPercent"
+      - ".stProductionStats.nBatchNumber"
+      # section:motor — stMachineStatus.stMotor1 struct (dot prefix)
+      - ".stMachineStatus.stMotor1.fSpeed"
+      - ".stMachineStatus.stMotor1.eState"
+      - ".stMachineStatus.stMotor1.bEnabled"
+      - ".stMachineStatus.stMotor1.bError"
+      - ".stMachineStatus.stMotor1.fTorque"
+      # section:temperature — stMachineStatus.stTemperature struct (dot prefix)
+      - ".stMachineStatus.stTemperature.fValue"
+      - ".stMachineStatus.stTemperature.bValid"
+      - ".stMachineStatus.stTemperature.sUnit"
+      # section:machine_name — static string (dot prefix)
+      - ".stMachineStatus.sMachineName"
+      # section:counter_array — anCounters DINT array (dot prefix)
+      - ".anCounters[0]"
+      - ".anCounters[1]"
+      - ".anCounters[2]"
+      - ".anCounters[3]"
+      - ".anCounters[4]"
+      # section:measurement_array — afMeasurements LREAL array (dot prefix)
+      - ".afMeasurements[0]"
+      - ".afMeasurements[1]"
+      - ".afMeasurements[2]"
+      # section:sensor_history — PRG_Diagnostics.astSensorHistory array of struct (no dot)
+      - "PRG_DIAGNOSTICS.astSensorHistory[0].fValue"
+      - "PRG_DIAGNOSTICS.astSensorHistory[0].sUnit"
+      # section:fb_direct — FB direct access for GVL copy consistency (no dot)
+      - "PRG_MACHINE.fbTempSensor.stReading.fValue"
+pipeline:
+  processors:
+    - bloblang: "root = this"
+output:
+  stdout: {}
