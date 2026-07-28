@@ -136,7 +136,7 @@ AS $fn$
 $fn$;
 -- ===================== MIGRATIONS =====================
 -- Forward-only, run-once steps applied after the baseline; each is ledger-gated and runs inside
--- the bootstrap advisory lock, so an older bridge sharing the database can never revert a newer one.
+-- the bootstrap advisory lock, so an older instance sharing the database can never revert a newer one.
 MIGRATIONS_SLOT
 -- ======================================================
 COMMIT;`

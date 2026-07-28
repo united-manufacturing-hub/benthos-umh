@@ -319,6 +319,8 @@ output:
 
 The SortGroup tag and trace parent reach the output regardless of how the plugin builds its messages. `NewMessage(nil)` is safe here, and a plugin-side `msg.Copy()` or `newMsg.WithContext(input.Context())` is a no-op (the wrapper overwrites it). Verified: a `tag_processor` 1→2 fan-out through the full `service.NewStreamBuilder` pipeline resolves `Indexer.IndexOf(output)` to the source index with no plugin-side context handling.
 
+Caveat (multi-input batches): the restore maps by output part index with fallback to input index 0 (`if partIdx >= len(origCtxs) { ctxIdx = 0 }`). For a single-input fan-out (one input → N outputs) every child correctly gets input 0's context. For a multi-input batch where inputs fan out, the part-index mapping can mis-attribute a child to the wrong input's context (e.g. input0→3 outputs then input1→1 output: the 4th output is mapped to input0, not input1). This is pre-existing engine behavior (present for the drop case too, and in `tag_processor`'s existing fan-out), not something the plugin can fix. The wrapper overwrites whatever the plugin sets. If correct per-child attribution ever matters for a multi-input fan-out pipeline, the fix belongs in the vendored `v2BatchedToV1Processor`, not the plugin.
+
 Any context/lineage/ACK-SortGroup claim about these plugins must be verified against the full stream pipeline, not the plugin's `ProcessBatch` in isolation.
 
 ### JavaScript Engine: goja
