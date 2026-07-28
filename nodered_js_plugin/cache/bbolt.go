@@ -41,12 +41,12 @@ type BboltStore struct {
 	stop              chan struct{}
 	closeOnce         sync.Once
 	serialMu          sync.Mutex
+	currentTx         *bolt.Tx
 }
 
 var _ Cache = (*BboltStore)(nil)
 
-// NewBboltStore opens (or creates) a bbolt file at path and returns a Cache
-// backed by it. defaultExpiration of 0 disables expiration entirely.
+// NewBboltStore opens (or creates) a bbolt file at path and returns a Cache.
 func NewBboltStore(path string, defaultExpiration time.Duration) (*BboltStore, error) {
 	if path == "" {
 		return nil, fmt.Errorf("cache: bbolt path must not be empty")
@@ -89,7 +89,7 @@ func NewBboltStore(path string, defaultExpiration time.Duration) (*BboltStore, e
 	return s, nil
 }
 
-func (s *BboltStore) Set(ctx context.Context, key string, value any) error {
+func (b *BboltStore) Set(ctx context.Context, key string, value any) error {
 	err := ctx.Err()
 	if err != nil {
 		return err
@@ -99,8 +99,8 @@ func (s *BboltStore) Set(ctx context.Context, key string, value any) error {
 	}
 
 	var expiration int64
-	if s.defaultExpiration > 0 {
-		expiration = time.Now().Add(s.defaultExpiration).UnixNano()
+	if b.defaultExpiration > 0 {
+		expiration = time.Now().Add(b.defaultExpiration).UnixNano()
 	}
 
 	data, err := json.Marshal(Item{Value: value, Expiration: expiration})
@@ -108,7 +108,14 @@ func (s *BboltStore) Set(ctx context.Context, key string, value any) error {
 		return fmt.Errorf("cache: encode value: %w", err)
 	}
 
-	return s.db.Update(func(tx *bolt.Tx) error {
+	if b.currentTx != nil {
+		b := b.currentTx.Bucket(bboltBucket)
+		if b == nil {
+			return fmt.Errorf("cache: bucket missing")
+		}
+		return b.Put([]byte(key), data)
+	}
+	return b.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bboltBucket)
 		if b == nil {
 			return fmt.Errorf("cache: bucket missing")
@@ -117,36 +124,48 @@ func (s *BboltStore) Set(ctx context.Context, key string, value any) error {
 	})
 }
 
-func (s *BboltStore) Get(ctx context.Context, key string) (any, bool) {
-	if ctx.Err() != nil {
-		return nil, false
-	}
-
-	var (
-		raw   []byte
-		found bool
-	)
-
-	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bboltBucket)
-		if b == nil {
+// Returns nil when the key is missing.
+func (b *BboltStore) readRaw(key string) []byte {
+	if b.currentTx != nil {
+		bucket := b.currentTx.Bucket(bboltBucket)
+		if bucket == nil {
 			return nil
 		}
-		v := b.Get([]byte(key))
+		v := bucket.Get([]byte(key))
 		if v == nil {
 			return nil
 		}
-		// Copy bytes out of tx — value is invalid after View returns.
-		raw = append(raw, v...)
-		found = true
-		return nil
-	})
-	if err != nil || !found {
-		return nil, false
+		// Copy: v is only valid inside the tx.
+		return append([]byte(nil), v...)
 	}
 
+	var raw []byte
+	_ = b.db.View(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(bboltBucket)
+		if bucket == nil {
+			return nil
+		}
+		v := bucket.Get([]byte(key))
+		if v == nil {
+			return nil
+		}
+		raw = append(raw, v...)
+		return nil
+	})
+	return raw
+}
+
+func (b *BboltStore) Get(ctx context.Context, key string) (any, bool) {
+	if ctx.Err() != nil {
+		return nil, false
+	}
+	raw := b.readRaw(key)
+	if raw == nil {
+		return nil, false
+	}
 	var item Item
-	if err := json.Unmarshal(raw, &item); err != nil {
+	err := json.Unmarshal(raw, &item)
+	if err != nil {
 		return nil, false
 	}
 	if item.Expired() {
@@ -155,22 +174,22 @@ func (s *BboltStore) Get(ctx context.Context, key string) (any, bool) {
 	return item.Value, true
 }
 
-func (s *BboltStore) Lock() {
-	s.serialMu.Lock()
+func (b *BboltStore) Lock() {
+	b.serialMu.Lock()
 }
 
-func (s *BboltStore) Unlock() {
-	s.serialMu.Unlock()
+func (b *BboltStore) Unlock() {
+	b.serialMu.Unlock()
 }
 
-func (s *BboltStore) Stats(ctx context.Context) (Stats, error) {
+func (b *BboltStore) Stats(ctx context.Context) (Stats, error) {
 	err := ctx.Err()
 	if err != nil {
 		return Stats{}, err
 	}
 
 	var stats Stats
-	err = s.db.View(func(tx *bolt.Tx) error {
+	err = b.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bboltBucket)
 		if b == nil {
 			return nil
@@ -182,14 +201,14 @@ func (s *BboltStore) Stats(ctx context.Context) (Stats, error) {
 		return stats, err
 	}
 
-	fi, err := os.Stat(s.db.Path())
+	fi, err := os.Stat(b.db.Path())
 	if err == nil {
 		stats.DiskBytes = fi.Size()
 	}
 	return stats, nil
 }
 
-func (s *BboltStore) Delete(ctx context.Context, key string) error {
+func (b *BboltStore) Delete(ctx context.Context, key string) error {
 	err := ctx.Err()
 	if err != nil {
 		return err
@@ -197,7 +216,14 @@ func (s *BboltStore) Delete(ctx context.Context, key string) error {
 	if key == "" {
 		return fmt.Errorf("cache: key must not be empty")
 	}
-	return s.db.Update(func(tx *bolt.Tx) error {
+	if b.currentTx != nil {
+		b := b.currentTx.Bucket(bboltBucket)
+		if b == nil {
+			return nil
+		}
+		return b.Delete([]byte(key))
+	}
+	return b.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bboltBucket)
 		if b == nil {
 			return nil
@@ -206,36 +232,59 @@ func (s *BboltStore) Delete(ctx context.Context, key string) error {
 	})
 }
 
+// Begin opens a writable batch tx; subsequent Set/Get/Delete share this tx until Commit.
+func (b *BboltStore) Begin(_ context.Context) error {
+	if b.currentTx != nil {
+		return fmt.Errorf("cache: begin called with an active batch tx")
+	}
+	tx, err := b.db.Begin(true)
+	if err != nil {
+		return fmt.Errorf("cache: begin bbolt tx: %w", err)
+	}
+	b.currentTx = tx
+	return nil
+}
+
+// Commit closes the batch tx opened by Begin, flushing pending writes atomically.
+func (b *BboltStore) Commit(_ context.Context) error {
+	if b.currentTx == nil {
+		return nil
+	}
+	tx := b.currentTx
+	b.currentTx = nil
+	return tx.Commit()
+}
+
 // Close stops the janitor and closes the underlying bbolt file. Safe to call
 // multiple times.
-func (s *BboltStore) Close() error {
+func (b *BboltStore) Close() error {
 	var dbErr error
-	s.closeOnce.Do(func() {
-		close(s.stop)
-		dbErr = s.db.Close()
+	b.closeOnce.Do(func() {
+		close(b.stop)
+		dbErr = b.db.Close()
 	})
 	return dbErr
 }
 
-func (s *BboltStore) runJanitor() {
+func (b *BboltStore) runJanitor() {
 	ticker := time.NewTicker(bboltJanitorInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
-			s.deleteExpired()
-		case <-s.stop:
+			b.deleteExpired()
+		case <-b.stop:
 			return
 		}
 	}
 }
 
-func (s *BboltStore) deleteExpired() {
+func (b *BboltStore) deleteExpired() {
 	// Phase 1: collect expired keys in a read-only tx.
 	var expired [][]byte
 	now := time.Now().UnixNano()
 
-	_ = s.db.View(func(tx *bolt.Tx) error {
+	_ = b.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bboltBucket)
 		if b == nil {
 			return nil
@@ -259,7 +308,7 @@ func (s *BboltStore) deleteExpired() {
 	}
 
 	// Phase 2: delete in a single write tx.
-	_ = s.db.Update(func(tx *bolt.Tx) error {
+	_ = b.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bboltBucket)
 		if b == nil {
 			return nil

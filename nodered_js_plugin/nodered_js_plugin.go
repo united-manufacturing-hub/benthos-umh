@@ -40,9 +40,6 @@ import (
 // cacheStatsInterval controls how often the cache metrics are sampled.
 const cacheStatsInterval = 30 * time.Second
 
-// dedupCapacity is the max number of markers kept per processor for replay dedup.
-const dedupCapacity = 100
-
 // NodeREDJSProcessor defines the processor that wraps the JavaScript processor.
 type NodeREDJSProcessor struct {
 	program             *goja.Program
@@ -50,10 +47,8 @@ type NodeREDJSProcessor struct {
 	vmpool              sync.Pool
 	logger              *service.Logger
 	cache               cache.Cache
-	dedup               *dedupState
 	suppressCacheWrites bool
 	messagesProcessed   *service.MetricCounter
-	messagesErrored     *service.MetricCounter
 	messagesDropped     *service.MetricCounter
 	vmPoolHits          *service.MetricCounter
 	vmPoolMisses        *service.MetricCounter
@@ -522,40 +517,32 @@ func RecordDrop(counter *service.MetricCounter, logger *service.Logger, reason s
 	logger.Warnf("%s: dropped message (reason=%s, umh_topic=%s, stage=%s) %v", plugin, reason, topic, stage, err)
 }
 
-func (u *NodeREDJSProcessor) CacheLock() {
+// cacheBegin acquires the cache mutex and opens the batch tx; pair with defer cacheCommit.
+func (u *NodeREDJSProcessor) cacheBegin(ctx context.Context) error {
 	u.cache.Lock()
+	err := u.cache.Begin(ctx)
+	if err != nil {
+		u.cache.Unlock()
+		return err
+	}
+	return nil
 }
 
-// CacheUnlock releases the mutex acquired by CacheLock.
-func (u *NodeREDJSProcessor) CacheUnlock() {
+// cacheCommit commits the batch tx and releases the mutex.
+func (u *NodeREDJSProcessor) cacheCommit(ctx context.Context) {
+	err := u.cache.Commit(ctx)
+	if err != nil {
+		u.logger.Errorf("cache commit failed: %v", err)
+	}
 	u.cache.Unlock()
 }
 
-// MarkReplayForBatch runs the dedup check once per message and tags replays with meta so per-stage callers can suppress writes without re-recording.
-func (u *NodeREDJSProcessor) MarkReplayForBatch(batch service.MessageBatch) {
-	if u.dedup == nil {
-		return
-	}
-	for _, msg := range batch {
-		marker, err := markerFor(msg)
-		if err != nil {
-			continue
-		}
-		if u.dedup.CheckDedup(marker) {
-			msg.MetaSet(dedupReplayMetaKey, "1")
-		}
-	}
-}
-
-// SetCacheSuppression flips the cache-write suppress switch to match the message's replay tag.
-func (u *NodeREDJSProcessor) SetCacheSuppression(msg *service.Message) {
-	_, isReplay := msg.MetaGet(dedupReplayMetaKey)
-	u.suppressCacheWrites = isReplay
-}
-
 func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
-	u.CacheLock()
-	defer u.CacheUnlock()
+	err := u.cacheBegin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer u.cacheCommit(ctx)
 
 	var resultBatch service.MessageBatch
 	processedCount := 0
@@ -563,16 +550,6 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 	for _, msg := range batch {
 		if msg == nil {
 			continue
-		}
-
-		u.suppressCacheWrites = false
-		if u.dedup != nil {
-			marker, err := markerFor(msg)
-			if err != nil {
-				u.logger.Errorf("dedup marker failed: %v", err)
-			} else {
-				u.suppressCacheWrites = u.dedup.CheckDedup(marker)
-			}
 		}
 
 		processedMsgs, dropped, reason, err := u.processSingleMessage(ctx, msg)
@@ -833,7 +810,6 @@ func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (
 		_ = store.Close()
 		return nil, err
 	}
-	processor.dedup = newDedupState(dedupCapacity)
 	return processor, nil
 }
 

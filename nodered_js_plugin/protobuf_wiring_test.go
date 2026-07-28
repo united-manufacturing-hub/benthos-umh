@@ -63,7 +63,7 @@ var _ = Describe("protobuf in the JS environment (ENG-5243)", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		vm = goja.New()
-		Expect(proc.SetupJSEnvironment(context.Background(), vm, map[string]interface{}{})).To(Succeed())
+		Expect(proc.SetupJSEnvironment(context.Background(), vm, map[string]any{})).To(Succeed())
 	})
 
 	It("exposes protobuf.decode and protobuf.encode as functions", func() {

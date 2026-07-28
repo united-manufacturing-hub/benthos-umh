@@ -34,6 +34,10 @@ type Cache interface {
 	Lock()
 	// Unlock releases the mutex acquired by Lock.
 	Unlock()
+	// Begin opens a batch scope so subsequent Set/Get/Delete run inside one commit.
+	Begin(ctx context.Context) error
+	// Commit closes the batch, flushing pending writes atomically.
+	Commit(ctx context.Context) error
 	// Stats reports the current key count and on-disk size.
 	Stats(ctx context.Context) (Stats, error)
 	// Close releases any resources held by the store.

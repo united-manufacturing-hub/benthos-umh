@@ -157,12 +157,15 @@ type TagProcessor struct {
 
 	// Keep for JS environment setup helper methods
 	jsProcessor *nodered_js_plugin.NodeREDJSProcessor
+	// Same instance the jsProcessor uses; held here to open the batch scope directly.
+	cache cache.Cache
 }
 
 func newTagProcessor(config TagProcessorConfig, logger *service.Logger, metrics *service.Metrics) (*TagProcessor, error) {
 	// TagProcessor only uses the JS processor for SetupJSEnvironment, not for caching.
 	// In-memory with no expiration is sufficient here.
-	jsProcessor, err := nodered_js_plugin.NewNodeREDJSProcessor("", logger, metrics, cache.NewMemoryStore(0))
+	sharedCache := cache.NewMemoryStore(0)
+	jsProcessor, err := nodered_js_plugin.NewNodeREDJSProcessor("", logger, metrics, sharedCache)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create JS processor: %w", err)
 	}
@@ -188,6 +191,7 @@ func newTagProcessor(config TagProcessorConfig, logger *service.Logger, metrics 
 		messagesDropped:   metrics.NewCounter("messages_dropped", "reason"),
 
 		jsProcessor: jsProcessor,
+		cache:       sharedCache,
 	}
 
 	// Phase 2: Compile all JavaScript once at startup to catch errors early and optimize runtime
@@ -262,13 +266,33 @@ func (p *TagProcessor) setupMessageForVM(ctx context.Context, vm *goja.Runtime, 
 	return nil
 }
 
+// beginBatch acquires the cache mutex and opens the batch tx; pair with defer endBatch.
+func (p *TagProcessor) beginBatch(ctx context.Context) error {
+	p.cache.Lock()
+	err := p.cache.Begin(ctx)
+	if err != nil {
+		p.cache.Unlock()
+		return err
+	}
+	return nil
+}
+
+// endBatch commits the batch tx and releases the mutex under one defer.
+func (p *TagProcessor) endBatch(ctx context.Context) {
+	err := p.cache.Commit(ctx)
+	if err != nil {
+		p.logger.Errorf("cache commit failed: %v", err)
+	}
+	p.cache.Unlock()
+}
+
 // TODO: Each time there is any execution error, output the code where the error happened as well as the message that caused it (see nodered_js_plugin). Double-check that it is not being outputted twice.
 func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
-	p.jsProcessor.CacheLock()
-	defer p.jsProcessor.CacheUnlock()
-
-	// Tag replays once so every JS stage suppresses their cache writes.
-	p.jsProcessor.MarkReplayForBatch(batch)
+	err := p.beginBatch(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer p.endBatch(ctx)
 
 	// ───────────────── Store incoming metadata ────────────────────────────────
 	// For each message, capture its current meta fields and store them as JSON
@@ -352,11 +376,6 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 
 		resultBatch = append(resultBatch, finalMsg)
 		p.messagesProcessed.Incr(1)
-	}
-
-	// Strip the internal dedup marker so downstream consumers don't see it.
-	for _, msg := range resultBatch {
-		msg.MetaDelete("_umh_dedup_replay")
 	}
 
 	if len(resultBatch) == 0 {
@@ -837,7 +856,6 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 		if msg == nil {
 			continue
 		}
-		p.jsProcessor.SetCacheSuppression(msg)
 		resultBatch = append(resultBatch, p.processMessageWithProgram(ctx, msg, program, stageName)...)
 	}
 

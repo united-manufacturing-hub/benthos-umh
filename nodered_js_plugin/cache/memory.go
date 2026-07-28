@@ -109,6 +109,16 @@ func (m *MemoryStore) Unlock() {
 	m.serialMu.Unlock()
 }
 
+// Begin is a no-op; MemoryStore writes are atomic and the outer Lock scopes the batch.
+func (m *MemoryStore) Begin(_ context.Context) error {
+	return nil
+}
+
+// Commit is a no-op paired with Begin.
+func (m *MemoryStore) Commit(_ context.Context) error {
+	return nil
+}
+
 func (m *MemoryStore) Stats(_ context.Context) (Stats, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
