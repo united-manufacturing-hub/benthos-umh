@@ -69,10 +69,10 @@ jobs:
         with:
           path: united-manufacturing-hub
           token: ${{ steps.generate-token.outputs.token }}
-          commit-message: "chore: bump benthos-umh to ${{ env.VERSION }}"
+          commit-message: 'chore: bump benthos-umh to ${{ env.VERSION }}'
           branch: chore/benthos-umh-${{ env.VERSION }}
           delete-branch: true
-          title: "chore: bump benthos-umh to ${{ env.VERSION }}"
+          title: 'chore: bump benthos-umh to ${{ env.VERSION }}'
           body: ${{ steps.release-notes.outputs.body }}
           labels: |
             auto-generated
@@ -129,7 +129,7 @@ jobs:
       - name: Update schema discovery test
         run: |
           VERSION_CLEAN="${VERSION#v}"
-          TEST_FILE="ManagementConsole/frontend/src/lib/schemas/loaders/versioned-ui-loader.test.ts"
+          TEST_FILE="ManagementConsole/frontend/src/lib/schemas/loaders/versionedUiLoader.test.ts"
 
           if [ ! -f "$TEST_FILE" ]; then
               echo "Missing test file: $TEST_FILE" >&2
@@ -154,10 +154,10 @@ jobs:
         with:
           path: ManagementConsole
           token: ${{ steps.generate-token.outputs.token }}
-          commit-message: "chore(schemas): add benthos-umh schemas for ${{ env.VERSION }}"
+          commit-message: 'chore(schemas): add benthos-umh schemas for ${{ env.VERSION }}'
           branch: chore/benthos-schemas-${{ env.VERSION }}
           delete-branch: true
-          title: "chore(schemas): add benthos-umh schemas for ${{ env.VERSION }}"
+          title: 'chore(schemas): add benthos-umh schemas for ${{ env.VERSION }}'
           body: |
             ## Summary
             Adds benthos-umh schemas for version ${{ env.VERSION }}.
