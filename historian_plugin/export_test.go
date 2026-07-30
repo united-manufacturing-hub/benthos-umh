@@ -158,6 +158,8 @@ func NewHistorianTestHandle(dsn string, contract string) *HistorianTestHandle {
 		topicCache:      newTopicCache(),
 		topicCacheSize:  mgr.Metrics().NewGauge("historian_topic_cache_size"),
 		warnedChurn:     map[string]struct{}{},
+		now:             time.Now,
+		startedAt:       time.Now(),
 	}}
 }
 
@@ -313,3 +315,33 @@ func (h *HistorianTestHandle) AttributeValue(ctx context.Context, contract strin
 func PolicyDriftWarningsForTest(compressWant int64, appliedComp *int64, retentionWant *int64, appliedRet *int64) []string {
 	return policyDriftWarnings(compressWant, appliedComp, retentionWant, appliedRet)
 }
+
+func SuggestedTopicPatternForTest(contract string) string { return suggestedTopicPattern(contract) }
+
+func ReportedContractsForTest(seen map[string]struct{}) []string { return reportedContracts(seen) }
+
+func MismatchMessageForTest(contract string, everStored bool, total int, mismatched int, contracts []string, example string) string {
+	return mismatchMessage(contract, everStored, total, mismatched, contracts, example)
+}
+
+func MismatchLogIntervalForTest() time.Duration { return mismatchLogInterval }
+
+func (h *HistorianTestHandle) SetClock(fn func() time.Time) { h.o.now = fn }
+
+func (h *HistorianTestHandle) SetStartedAt(t time.Time) { h.o.startedAt = t }
+
+func (h *HistorianTestHandle) ElapseStartupGrace() {
+	h.o.startedAt = h.o.now().Add(-mismatchStartupGrace - time.Second)
+}
+
+func (h *HistorianTestHandle) NoteContractMismatch(total int, mismatched int, seen map[string]struct{}, example string, sawMatching bool) {
+	h.o.noteContractMismatch(total, mismatched, seen, example, sawMatching)
+}
+
+func (h *HistorianTestHandle) RelogContractMismatch() { h.o.relogContractMismatch() }
+
+func DropHintForTest(reason DropReason) string { return dropHint(reason) }
+
+func (h *HistorianTestHandle) SetAllowUnvalidated(v bool) { h.o.allowUnvalidated = v }
+
+func (h *HistorianTestHandle) AllowUnvalidated() bool { return h.o.allowUnvalidated }

@@ -167,10 +167,30 @@ tp AS (
 // rows, reused on retry, not a correctness bug.
 const topicResolveSQL = dimensionCTE + `SELECT topic_id FROM tp;`
 
+const dimensionCTEKeepType = `WITH loc AS (
+  INSERT INTO umh.location (path) VALUES (umh.to_ltree_path($1))
+  ON CONFLICT (path) DO UPDATE SET path = EXCLUDED.path
+  RETURNING location_id
+),
+tg AS (
+  INSERT INTO umh.tag (name, virtual_path, data_contract_name, value_type)
+  VALUES ($4, $3, $2, $5::umh.value_type)
+  ON CONFLICT (virtual_path, name, data_contract_name) DO UPDATE SET value_type = umh.tag.value_type
+  RETURNING tag_id
+),
+tp AS (
+  INSERT INTO umh.topic (location_id, tag_id)
+  SELECT loc.location_id, tg.tag_id FROM loc CROSS JOIN tg
+  ON CONFLICT (location_id, tag_id) DO UPDATE SET location_id = EXCLUDED.location_id
+  RETURNING topic_id
+)
+SELECT topic_id FROM tp;`
+
 // topicLookupSQL resolves an existing topic via a read (no sequence burn); on a miss the caller
 // falls through to topicResolveSQL. value_type is in the WHERE deliberately: a datatype flip
 // misses here and hits the guarded upsert, which RAISEs. A value_type-agnostic lookup would match
-// the natural key and silently bypass tag_value_type_guard.
+// the natural key and silently bypass tag_value_type_guard -- which is exactly what
+// topicLookupAnyTypeSQL below is for, on a contract that has no schema to pin a type with.
 const topicLookupSQL = `SELECT t.topic_id
 FROM umh.topic t
 JOIN umh.location l ON l.location_id = t.location_id
@@ -180,6 +200,15 @@ WHERE l.path = umh.to_ltree_path($1)
   AND g.virtual_path       = $3
   AND g.name               = $4
   AND g.value_type         = $5::umh.value_type;`
+
+const topicLookupAnyTypeSQL = `SELECT t.topic_id
+FROM umh.topic t
+JOIN umh.location l ON l.location_id = t.location_id
+JOIN umh.tag      g ON g.tag_id      = t.tag_id
+WHERE l.path = umh.to_ltree_path($1)
+  AND g.data_contract_name = $2
+  AND g.virtual_path       = $3
+  AND g.name               = $4;`
 
 // valueInsert / attributeInsert write one row against an already-resolved topic_id (passed as
 // $1), so the value-write phase only touches distinct (topic_id, ts) rows and concurrent

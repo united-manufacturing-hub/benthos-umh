@@ -1,0 +1,3 @@
+kind: breaking
+body: A historian bridge now reports as degraded when messages arrive for a data contract other than its configured data_contract_name, instead of discarding them silently; the error names the contracts that arrived and the umh_topics pattern to narrow to. Bridges subscribed to more than their own contract will report degraded after upgrading until their subscription is narrowed (ENG-5413)
+time: 2026-07-30T18:50:13.000000+02:00

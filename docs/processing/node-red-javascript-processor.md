@@ -6,6 +6,22 @@ Use the `nodered_js` processor instead of the `tag_processor` when you need full
 
 For the full list of available JavaScript globals (`msg`, `console`, `cache`, `protobuf`), see the [JavaScript API Reference](javascript-api.md).
 
+> **This processor does not add `timestamp_ms`.** It emits exactly the payload your code returns.
+> The [tag processor](tag-processor.md) wraps a bare value into `{value, timestamp_ms}` and fills the
+> timestamp for you; `nodered_js` deliberately does not, because it also carries relational payloads
+> (work orders, batch reports) where a timeseries timestamp would be wrong.
+>
+> If the destination expects timeseries shape — the [TimescaleDB historian output](../output/historian.md)
+> and the UNS timeseries data contracts both do — set it yourself:
+>
+> ```javascript
+> msg.payload = { value: msg.payload.temperature, timestamp_ms: Date.now() };
+> return msg;
+> ```
+>
+> Reshaping the payload without carrying `timestamp_ms` across is the usual way this gets lost: the
+> historian then drops the message with `reason=missing_timestamp`.
+
 **Configuration**
 
 ```yaml

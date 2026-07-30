@@ -28,6 +28,7 @@ No JavaScript processor or hand-written `sql_raw` is needed.
 | `password` | yes | — | Role password (plaintext in config; redacted in logs). |
 | `sslmode` | no | `require` | `require` \| `disable` \| `verify-full`. |
 | `sslrootcert` / `sslcert` / `sslkey` | no | `""` | TLS cert paths inside the container. |
+| `allow_unvalidated_data` | no | `false` | Store data from an **unversioned** data contract (e.g. `_historian`). Unversioned contracts are never schema-validated, so datatypes are unchecked — this is an explicit opt-in to that. Has no effect on a versioned contract: one whose schema was bypassed is always rejected. |
 | `data_contract_name` | yes | — | Bare lowercase contract name, e.g. `pump`; no leading `_`, no `_vN` suffix. Stored in `umh.tag.data_contract_name` in its UNS form with a leading underscore (`_pump`), matching the topic's data-contract segment. |
 | `metadata_keys_all` | no | `true` | Store every metadata key except structural/high-churn keys and any `metadata_keys_exclude` match. |
 | `metadata_keys` | no | `[]` | Allowlist used only when `metadata_keys_all=false`. |
@@ -138,10 +139,47 @@ ORDER  BY v.ts DESC;
   (see [Error handling](#error-handling)). This includes a tag emitting two distinct values
   within one millisecond, which the millisecond UNS timestamp cannot distinguish from a real
   conflict, so this contract is unsuitable for tags that emit distinct values faster than 1 kHz.
-- **Malformed messages are dropped, not nacked.** A wrong `data_contract`, an absent or
-  invalid `umh_topic` (validated by the canonical topic parser), a non-finite number, or an
+- **Only schema-validated data is stored.** A **versioned** contract (`_pump_v1`) whose schema was
+  not applied — the message carries `data_contract_bypassed=true` because the schema registry was
+  unreachable or no schema is registered for that version — is dropped with
+  `reason=contract_bypassed`. That is never overridable: silently storing it is how a registry
+  outage turns into permanently unchecked history. An **unversioned** contract (`_historian`) can
+  never be schema-validated at all, so it is dropped with `reason=contract_unvalidated` unless you
+  set `allow_unvalidated_data: true`, which is the explicit acknowledgement that datatypes go
+  unchecked for that contract.
+- **Relational payloads are rejected.** The payload must carry `value` and `timestamp_ms` and
+  nothing else. A relational record that happens to include both fields alongside others (an order
+  id, a batch number) is dropped with `reason=not_timeseries` rather than being silently narrowed
+  to its two timeseries fields. Route relational data to its own data contract.
+- **The payload must be `{value, timestamp_ms}`.** A message missing either field is dropped with
+  `reason=missing_value` or `reason=missing_timestamp`, and the log says how to supply it. The
+  [tag processor](../processing/tag-processor.md) adds `timestamp_ms` automatically; the
+  [Node-RED JavaScript processor](../processing/node-red-javascript-processor.md) does **not**, so a
+  write flow that reshapes the payload in JavaScript has to set it explicitly
+  (`msg.payload.timestamp_ms = Date.now()`).
+- **Malformed messages are dropped, not nacked — but they are logged at error level.** An absent
+  or invalid `umh_topic` (validated by the canonical topic parser), a non-finite number, or an
   unparseable timestamp drop the message and increment the `historian_messages_dropped` metric
-  (labelled by `reason`), so one bad message never stalls the stream.
+  (labelled by `reason`), so one bad message never stalls the stream. Each drop also logs
+  `dropped message (reason=…, umh_topic=…)` at error level, which umh-core surfaces as a degraded
+  bridge. A source emitting malformed data therefore shows as degraded even while every other tag
+  keeps being written. The log clears once the bad messages stop and the last error ages out of
+  umh-core's window; unlike the contract-mismatch error it is not latched.
+- **A wrong data contract errors the bridge.** A message whose data-contract segment is not the
+  configured `data_contract_name` is still dropped and counted on
+  `historian_messages_dropped{reason=contract_mismatch}`, but it also logs at error level, which
+  umh-core surfaces as a degraded bridge. The error names the contracts that actually arrived, an
+  example topic, and the `umh_topics` pattern to narrow to. Matching rows in the same batch are
+  still written — degraded does not mean stopped. The first error is held back for 30 seconds
+  after startup so the bridge reaches a running state before it degrades, and it re-logs every
+  2 minutes while messages keep arriving, so the bridge stays degraded until the subscription is
+  fixed and the bridge redeployed. A bridge that stops receiving messages entirely recovers on its
+  own once the last error ages out of umh-core's log window.
+- **Subscribe only to this contract.** `umh_topics` must select the configured contract and nothing
+  else; anything wider errors the bridge. Use
+  `^umh\.v1(?:\.[^._][^.]*)+\._<contract>(_v\d+)?\..+$`, which matches any location depth and both
+  the bare and `_vN` forms of the contract, while excluding a virtual-path segment that happens to
+  share the contract's name.
 - **Metadata de-duplication.** An attribute row is rewritten only when its key set changes,
   via an in-process, LRU-bounded fingerprint cache. The cache is process-local and cleared on
   restart, so the plugin re-emits at most one attribute row per topic per restart: the first
@@ -214,10 +252,13 @@ define it), and route text or high-precision counters to a text contract rather 
 types on one tag.
 
 > **Generic contracts (`_historian`/`_raw`).** These deliberately don't pin a type, so a type
-> change is a realistic operational event rather than a defect. How the plugin should treat a
-> type change there — reject as poison (today), tolerate both `value_num` and `value_text`, or
-> promote the tag to text — is an open policy decision tracked separately; today it is dropped
-> as poison like any other flip.
+> change is a realistic operational event rather than a defect. With `allow_unvalidated_data: true`
+> the tag resolves on its natural key alone, ignoring `value_type`, so the change is accepted:
+> one `topic_id` then holds numeric rows in `value_num` and text rows in `value_text`, and
+> `umh.tag.value_type` records only the first type seen. Read such a tag with
+> `coalesce(value_num::text, value_text)`; a plain `value_num` query shows gaps across the change
+> rather than failing. Without the flag a flip is still dropped as poison, which is correct for a
+> versioned contract whose schema pins the type.
 
 ## Throughput
 
@@ -309,7 +350,7 @@ drift warning on restart.
 input:
   uns:
     umh_topics:
-      - '^umh\.v1\..*\._pump_v.*'
+      - '^umh\.v1(?:\.[^._][^.]*)+\._pump(_v\d+)?\..+$'
 output:
   historian:
     host: timescaledb.example.com

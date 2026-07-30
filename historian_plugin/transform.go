@@ -188,49 +188,81 @@ type Row struct {
 type DropReason string
 
 const (
-	DropNone                    DropReason = ""
-	DropInvalidTopic            DropReason = "invalid_topic"
-	DropContractMismatch        DropReason = "contract_mismatch"
-	DropServerVirtualPath       DropReason = "server_virtual_path"
-	DropMissingValueOrTimestamp DropReason = "missing_value_or_timestamp"
-	DropUnclassifiableValue     DropReason = "unclassifiable_value"
-	DropBadTimestamp            DropReason = "bad_timestamp"
+	DropNone                DropReason = ""
+	DropInvalidTopic        DropReason = "invalid_topic"
+	DropContractMismatch    DropReason = "contract_mismatch"
+	DropServerVirtualPath   DropReason = "server_virtual_path"
+	DropMissingValue        DropReason = "missing_value"
+	DropMissingTimestamp    DropReason = "missing_timestamp"
+	DropUnclassifiableValue DropReason = "unclassifiable_value"
+	DropBadTimestamp        DropReason = "bad_timestamp"
+	DropContractBypassed    DropReason = "contract_bypassed"
+	DropContractUnvalidated DropReason = "contract_unvalidated"
+	DropNotTimeseries       DropReason = "not_timeseries"
 )
 
+var dropHints = map[DropReason]string{
+	DropMissingValue:        " -- the historian needs a {value, timestamp_ms} payload; set msg.payload.value in the processing step",
+	DropMissingTimestamp:    " -- the historian needs a {value, timestamp_ms} payload; the Node-RED JavaScript processor does not add timestamp_ms, so set msg.payload.timestamp_ms = Date.now() (or use the tag processor, which adds it automatically)",
+	DropContractBypassed:    " -- this versioned data contract carries data_contract_bypassed=true, so its schema was never applied (the registry was unreachable, or no schema is registered for this version) and the payload is unchecked; register the schema or restore the registry, then redeploy. This cannot be overridden by allow_unvalidated_data",
+	DropContractUnvalidated: " -- an unversioned data contract cannot be schema-validated, so datatypes are never checked; set allow_unvalidated_data: true on this output to store it anyway, or publish to a versioned contract (e.g. _pump_v1) to get validation",
+	DropNotTimeseries:       " -- the historian stores timeseries only, and this payload carries fields beyond {value, timestamp_ms}; route relational data to a different data contract",
+}
+
+func dropHint(reason DropReason) string { return dropHints[reason] }
+
+type DropInfo struct {
+	Reason   DropReason
+	Contract string
+}
+
 // Transform maps one UNS message to a Row, or returns a non-empty DropReason to drop it.
-func Transform(payload map[string]any, meta map[string]string, contract string, allMeta bool, allowlist []string, excl *MetaExcluder, view *BatchView) (*Row, DropReason) {
+func Transform(payload map[string]any, meta map[string]string, contract string, allMeta bool, allowlist []string, excl *MetaExcluder, allowUnvalidated bool, view *BatchView) (*Row, DropInfo) {
 	// Parse the canonical umh_topic via the shared parser rather than trusting separate
 	// location/contract/tag meta: a pipeline may not have run the tag_processor, so a missing or
 	// malformed topic is dropped here.
 	ut, err := topic.NewUnsTopic(meta["umh_topic"])
 	if err != nil {
-		return nil, DropInvalidTopic
+		return nil, DropInfo{Reason: DropInvalidTopic}
 	}
 	info := ut.Info()
 
 	want := "_" + contract
 	if NormalizeContract(info.DataContract) != want {
-		return nil, DropContractMismatch
+		return nil, DropInfo{Reason: DropContractMismatch, Contract: info.DataContract}
+	}
+	if reVersionSuffix.MatchString(info.DataContract) {
+		if meta["data_contract_bypassed"] == "true" {
+			return nil, DropInfo{Reason: DropContractBypassed}
+		}
+	} else if !allowUnvalidated {
+		return nil, DropInfo{Reason: DropContractUnvalidated}
 	}
 	// NewUnsTopic already rejects empty/dotted location and empty name, so no re-check here.
 	loc := info.LocationPath()
 	tag := info.Name
 	vp := info.GetVirtualPath()
 	if strings.HasPrefix(vp, "Root.Objects.Server") {
-		return nil, DropServerVirtualPath
+		return nil, DropInfo{Reason: DropServerVirtualPath}
 	}
 	value, hasValue := payload["value"]
+	if !hasValue || value == nil {
+		return nil, DropInfo{Reason: DropMissingValue}
+	}
 	tsRaw, hasTS := payload["timestamp_ms"]
-	if !hasValue || value == nil || !hasTS || tsRaw == nil {
-		return nil, DropMissingValueOrTimestamp
+	if !hasTS || tsRaw == nil {
+		return nil, DropInfo{Reason: DropMissingTimestamp}
+	}
+	if len(payload) != 2 {
+		return nil, DropInfo{Reason: DropNotTimeseries}
 	}
 	vt, num, text, ok, truncated := ClassifyValue(value)
 	if !ok {
-		return nil, DropUnclassifiableValue
+		return nil, DropInfo{Reason: DropUnclassifiableValue}
 	}
 	ts, ok := ParseTimestampMs(tsRaw)
 	if !ok {
-		return nil, DropBadTimestamp
+		return nil, DropInfo{Reason: DropBadTimestamp}
 	}
 	row := &Row{
 		RawLocation:  loc,
@@ -256,5 +288,5 @@ func Transform(payload map[string]any, meta map[string]string, contract string, 
 			row.MetadataJSON = fp
 		}
 	}
-	return row, DropNone
+	return row, DropInfo{}
 }

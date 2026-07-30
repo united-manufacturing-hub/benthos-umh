@@ -46,6 +46,7 @@ func historianConfig() *service.ConfigSpec {
 		Field(service.NewStringField("sslrootcert").Description("CA cert path, as seen by the benthos process.").Default("").Advanced()).
 		Field(service.NewStringField("sslcert").Description("Client cert path.").Default("").Advanced()).
 		Field(service.NewStringField("sslkey").Description("Client key path.").Default("").Advanced()).
+		Field(service.NewBoolField("allow_unvalidated_data").Description("Store data from an unversioned data contract (e.g. _historian). Unversioned contracts are never schema-validated, so datatypes are unchecked. Has no effect on a versioned contract: one whose schema was bypassed is always rejected.").Default(false).Examples(true, false).Advanced()).
 		Field(service.NewBoolField("metadata_keys_all").Description("Store all metadata keys except blacklists.").Default(true).Examples(true, false).Advanced()).
 		Field(service.NewStringListField("metadata_keys").Description("Allowlist when metadata_keys_all=false.").Default([]any{}).Advanced()).
 		Field(service.NewStringListField("metadata_keys_exclude").Description("Blacklist applied only when metadata_keys_all=true: drop these metadata keys on top of the built-in structural/high-churn exclusions. Each entry is an exact key name or a trailing-* prefix (e.g. \"opcua_*\"). Ignored in allowlist mode.").Default([]any{}).Examples([]any{"serialNumber"}, []any{"opcua_*", "spb_*"}).Advanced()).
@@ -62,6 +63,7 @@ type historianOutput struct {
 	sslmode, sslrootcert, sslcert, sslkey string
 	contract                              string
 	metadataKeysAll                       bool
+	allowUnvalidated                      bool
 	metadataKeys                          []string
 	metadataExclude                       *MetaExcluder
 	compressAfter, retention              time.Duration
@@ -69,6 +71,8 @@ type historianOutput struct {
 	maxInFlight                           int
 	writeTimeout                          time.Duration // 0 => unbounded (per-batch write deadline)
 	dsnOverride                           string        // set by tests; empty => build from fields
+	now                                   func() time.Time
+	startedAt                             time.Time
 
 	logger    *service.Logger
 	dropped   *service.MetricCounter // labeled by drop reason
@@ -94,9 +98,12 @@ type historianOutput struct {
 
 	warnedTruncate atomic.Bool // warn-once guard for truncation
 
-	logStateMu     sync.Mutex  // linearizes the everStored transition with the starving-notice decision
-	everStored     atomic.Bool // set once the first value row is stored; lock-free reads gate the hot path
-	warnedStarving bool        // info-once guard for the starving notice; guarded by logStateMu
+	logStateMu sync.Mutex  // linearizes the everStored transition with the mismatch-report decision
+	everStored atomic.Bool // set once the first value row is stored; lock-free reads gate the hot path
+
+	mismatchSeen    bool
+	mismatchMsg     string
+	lastMismatchLog time.Time
 }
 
 func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*historianOutput, error) {
@@ -112,6 +119,8 @@ func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*hi
 		topicCache:     newTopicCache(),
 		topicCacheSize: mgr.Metrics().NewGauge("historian_topic_cache_size"),
 		warnedChurn:    map[string]struct{}{},
+		now:            time.Now,
+		startedAt:      time.Now(),
 	}
 	var err error
 	str := func(field string, dst *string) bool {
@@ -137,6 +146,9 @@ func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*hi
 		return nil, err
 	}
 	if err = ValidateContract(o.contract); err != nil {
+		return nil, err
+	}
+	if o.allowUnvalidated, err = conf.FieldBool("allow_unvalidated_data"); err != nil {
 		return nil, err
 	}
 	if o.metadataKeysAll, err = conf.FieldBool("metadata_keys_all"); err != nil {
@@ -408,6 +420,8 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	rows := make([]*Row, 0, len(batch))
 	churn := map[string]struct{}{} // high-churn metadata keys seen anywhere in this batch (see below)
 	contractMismatches := 0        // DropContractMismatch count this batch
+	mismatchedContracts := map[string]struct{}{}
+	mismatchExample := ""
 	for _, msg := range batch {
 		meta := map[string]string{}
 		_ = msg.MetaWalk(func(k, v string) error { meta[k] = v; return nil })
@@ -423,12 +437,18 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 		}
 		// Transform validates the umh_topic/contract and the value+timestamp, and decides whether
 		// this row also needs to write a metadata (attribute) row. A non-empty reason means drop.
-		row, reason := Transform(payload, meta, o.contract, o.metadataKeysAll, o.metadataKeys, o.metadataExclude, view)
-		if reason != DropNone {
-			if reason == DropContractMismatch {
+		row, drop := Transform(payload, meta, o.contract, o.metadataKeysAll, o.metadataKeys, o.metadataExclude, o.allowUnvalidated, view)
+		if drop.Reason != DropNone {
+			if drop.Reason == DropContractMismatch {
 				contractMismatches++
+				if drop.Contract != "" {
+					mismatchedContracts[drop.Contract] = struct{}{}
+				}
+				if mismatchExample == "" {
+					mismatchExample = meta["umh_topic"]
+				}
 			}
-			o.recordDrop(string(reason), meta["umh_topic"])
+			o.recordDrop(string(drop.Reason), meta["umh_topic"])
 			continue
 		}
 		for _, k := range row.churnKeys { // union across the whole batch, not just the first row
@@ -448,21 +468,16 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	// attribute de-dup cache and make the attribute table grow per-message, so the operator likely
 	// wants them out of metadata_keys.
 	o.warnHighChurnMetadata(churn)
+	if contractMismatches > 0 {
+		o.noteContractMismatch(len(batch), contractMismatches, mismatchedContracts, mismatchExample, len(rows) > 0)
+	} else {
+		o.relogContractMismatch()
+	}
 	if len(rows) == 0 {
-		// Return nil in every branch so one fully-dropped batch never stalls the stream. Cases below
-		// only reach the last two once contractMismatches == len(batch) (every drop was a mismatch).
-		switch {
-		case len(batch) == 0: // empty batch, nothing to report
-		case contractMismatches < len(batch):
-			// Some drops were not contract mismatches, so this is a genuine fault worth a warning.
+		// Return nil so one fully-dropped batch never stalls the stream. A batch dropped entirely for
+		// contract mismatch is already reported above; anything else is a genuine fault.
+		if len(batch) > 0 && contractMismatches < len(batch) {
 			o.logger.Warnf("TimescaleDB historian: dropped all %d message(s) in the batch; nothing written. Check the source data and metadata configuration.", len(batch))
-		case o.everStored.Load():
-			// Over-broad subscription lull: this contract is stored, this batch just had none.
-			o.logger.Debugf("TimescaleDB historian: dropped all %d message(s); all for other data contracts.", len(batch))
-		default:
-			// Nothing stored for this contract yet while other-contract data keeps arriving --
-			// most likely a wrong contract or subscription.
-			o.noteStarving(len(batch))
 		}
 		return nil
 	}
@@ -503,14 +518,23 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 // pgconn.PgError with %w so classify() can unwrap the SQLSTATE.
 func (o *historianOutput) resolveTopic(ctx context.Context, pool *pgxpool.Pool, r *Row) (int64, error) {
 	var id int64
-	err := pool.QueryRow(ctx, topicLookupSQL, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType)).Scan(&id)
+	var err error
+	if o.allowUnvalidated {
+		err = pool.QueryRow(ctx, topicLookupAnyTypeSQL, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName).Scan(&id)
+	} else {
+		err = pool.QueryRow(ctx, topicLookupSQL, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType)).Scan(&id)
+	}
+	resolve := topicResolveSQL
+	if o.allowUnvalidated {
+		resolve = dimensionCTEKeepType
+	}
 	switch {
 	case err == nil:
 		o.lookupHits.Add(1)
 		return id, nil
 	case errors.Is(err, pgx.ErrNoRows):
 		o.lookupMisses.Add(1)
-		if err = pool.QueryRow(ctx, topicResolveSQL, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType)).Scan(&id); err != nil {
+		if err = pool.QueryRow(ctx, resolve, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType)).Scan(&id); err != nil {
 			return 0, fmt.Errorf("topic resolve failed: %w", err)
 		}
 		return id, nil
@@ -760,29 +784,22 @@ func (o *historianOutput) noteStored() {
 	}
 }
 
-// noteStarving logs once, at info, while nothing has ever been stored for this contract and a batch
-// was dropped entirely for other contracts -- the negative counterpart to noteStored. The everStored
-// re-check under logStateMu lets a store landing on a concurrent batch win and suppress a false notice.
-func (o *historianOutput) noteStarving(n int) {
-	o.logStateMu.Lock()
-	defer o.logStateMu.Unlock()
-	if !o.everStored.Load() && !o.warnedStarving {
-		o.warnedStarving = true
-		o.logger.Infof("TimescaleDB historian: nothing stored for data contract _%s yet; the last %d message(s) were all for other contracts. Check data_contract_name and the topics this flow subscribes to.", o.contract, n)
-	}
-}
-
 // describeRow identifies a row for an attributable write-failure log: which tag, at which ts.
 func describeRow(r *Row) string {
 	return fmt.Sprintf("contract=%q location=%q virtual_path=%q tag=%q ts=%v",
 		r.ContractName, r.RawLocation, r.VirtualPath, r.TagName, r.TS)
 }
 
-// recordDrop counts and debug-logs a discarded message, so a misconfigured output that
-// drops everything is visible (the metric) rather than silently healthy with zero rows.
+// recordDrop counts and error-logs a discarded message, so a misconfigured output that drops
+// everything is visible rather than silently healthy with zero rows. Contract mismatch is counted
+// but not logged here: it is reported by the throttled mismatch error instead, because it is the
+// one reason that can fire on every message of a high-rate stream.
 func (o *historianOutput) recordDrop(reason string, topic string) {
 	o.dropped.Incr(1, reason)
-	o.logger.Debugf("TimescaleDB historian: dropped message (reason=%s, umh_topic=%q)", reason, topic)
+	if reason == string(DropContractMismatch) {
+		return
+	}
+	o.logger.Errorf("TimescaleDB historian: dropped message (reason=%s, umh_topic=%q)%s", reason, topic, dropHint(DropReason(reason)))
 }
 
 // warnHighChurnMetadata warns once per distinct high-churn metadata key (re-firing when a new one
