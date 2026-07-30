@@ -26,4 +26,5 @@
   - [Sparkplug B (Output)](output/sparkplug-b-output.md)
   - [UNS (Output)](output/uns-output.md)
   - [OPC UA (Output)](output/opc-ua-output.md)
+  - [TimescaleDB Historian (Output)](output/historian.md)
   - [More](https://docs.redpanda.com/redpanda-connect/components/outputs/about/)
