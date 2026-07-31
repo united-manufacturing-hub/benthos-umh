@@ -331,7 +331,7 @@ func (h *HistorianTestHandle) SetClock(fn func() time.Time) { h.o.now = fn }
 func (h *HistorianTestHandle) SetStartedAt(t time.Time) { h.o.startedAt = t }
 
 func (h *HistorianTestHandle) ElapseStartupGrace() {
-	h.o.startedAt = h.o.now().Add(-mismatchStartupGrace - time.Second)
+	h.o.startedAt = h.o.now().Add(-startupGrace - time.Second)
 }
 
 func (h *HistorianTestHandle) NoteContractMismatch(total int, mismatched int, seen map[string]struct{}, example string, sawMatching bool) {
@@ -345,3 +345,7 @@ func DropHintForTest(reason DropReason) string { return dropHint(reason) }
 func (h *HistorianTestHandle) SetAllowUnvalidated(v bool) { h.o.allowUnvalidated = v }
 
 func (h *HistorianTestHandle) AllowUnvalidated() bool { return h.o.allowUnvalidated }
+
+func (h *HistorianTestHandle) RecordDropForTest(reason string, topic string) {
+	h.o.recordDrop(reason, topic)
+}

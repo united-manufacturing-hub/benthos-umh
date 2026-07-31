@@ -930,6 +930,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 	It("warns when a whole batch is dropped for a real fault", func() {
 		h := connected("drops")
 		defer h.Close(ctx)
+		h.ElapseStartupGrace()
 		logs := h.CaptureLogs()
 		bad := mkMsg(nil, 1000, "_drops_v1", "acme.line1", "t", nil) // matching contract, missing value
 		Expect(h.WriteBatch(ctx, service.MessageBatch{bad})).To(Succeed())

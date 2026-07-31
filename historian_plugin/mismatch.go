@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	mismatchStartupGrace = 30 * time.Second
+	startupGrace         = 30 * time.Second
 	mismatchLogInterval  = 2 * time.Minute
 	maxReportedContracts = 5
 )
@@ -72,7 +72,7 @@ func (o *historianOutput) relogContractMismatch() {
 
 func (o *historianOutput) emitMismatchLocked() {
 	now := o.now()
-	if now.Sub(o.startedAt) < mismatchStartupGrace {
+	if now.Sub(o.startedAt) < startupGrace {
 		return
 	}
 	if !o.lastMismatchLog.IsZero() && now.Sub(o.lastMismatchLog) < mismatchLogInterval {

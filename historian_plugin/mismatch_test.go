@@ -234,3 +234,20 @@ var _ = Describe("dropHint for the validation guards", func() {
 		Expect(tsh.DropHintForTest(tsh.DropNotTimeseries)).To(ContainSubstring("relational data"))
 	})
 })
+
+var _ = Describe("drop logging during the startup grace", func() {
+	It("holds a malformed-message error until the bridge can clear umh-core's startup gate", func() {
+		h := tsh.NewHistorianTestHandle("", "historian")
+		now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+		h.SetClock(func() time.Time { return now })
+		h.SetStartedAt(now)
+		logs := h.CaptureLogs()
+
+		h.RecordDropForTest("missing_timestamp", "umh.v1.acme._historian_v1.t")
+		Expect(logs()).To(BeEmpty(), "an error inside the 10s gate would strand the bridge in starting")
+
+		now = now.Add(31 * time.Second)
+		h.RecordDropForTest("missing_timestamp", "umh.v1.acme._historian_v1.t")
+		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: dropped message (reason=missing_timestamp"))
+	})
+})

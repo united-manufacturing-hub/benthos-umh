@@ -793,10 +793,15 @@ func describeRow(r *Row) string {
 // recordDrop counts and error-logs a discarded message, so a misconfigured output that drops
 // everything is visible rather than silently healthy with zero rows. Contract mismatch is counted
 // but not logged here: it is reported by the throttled mismatch error instead, because it is the
-// one reason that can fire on every message of a high-rate stream.
+// one reason that can fire on every message of a high-rate stream. The log is held for startupGrace
+// for the same reason the mismatch report is: an error inside umh-core's 10s startup gate strands
+// the bridge in starting instead of degrading it.
 func (o *historianOutput) recordDrop(reason string, topic string) {
 	o.dropped.Incr(1, reason)
 	if reason == string(DropContractMismatch) {
+		return
+	}
+	if o.now().Sub(o.startedAt) < startupGrace {
 		return
 	}
 	o.logger.Errorf("TimescaleDB historian: dropped message (reason=%s, umh_topic=%q)%s", reason, topic, dropHint(DropReason(reason)))

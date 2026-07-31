@@ -170,7 +170,7 @@ ORDER  BY v.ts DESC;
   `historian_messages_dropped{reason=contract_mismatch}`, but it also logs at error level, which
   umh-core surfaces as a degraded bridge. The error names the contracts that actually arrived, an
   example topic, and the `umh_topics` pattern to narrow to. Matching rows in the same batch are
-  still written — degraded does not mean stopped. The first error is held back for 30 seconds
+  still written — degraded does not mean stopped. Drop errors are held back for 30 seconds
   after startup so the bridge reaches a running state before it degrades, and it re-logs every
   2 minutes while messages keep arriving, so the bridge stays degraded until the subscription is
   fixed and the bridge redeployed. A bridge that stops receiving messages entirely recovers on its
