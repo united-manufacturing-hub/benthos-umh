@@ -599,8 +599,8 @@ github.com/cyphar/filepath-securejoin v0.6.1 h1:5CeZ1jPXEiYt3+Z6zqprSAgSWiggmpVy
 github.com/cyphar/filepath-securejoin v0.6.1/go.mod h1:A8hd4EnAeyujCJRrICiOWqjS1AX0a9kM5XL+NwKoYSc=
 github.com/danieljoos/wincred v1.2.3 h1:v7dZC2x32Ut3nEfRH+vhoZGvN72+dQ/snVXo/vMFLdQ=
 github.com/danieljoos/wincred v1.2.3/go.mod h1:6qqX0WNrS4RzPZ1tnroDzq9kY3fu1KwE7MRLQK4X0bs=
-github.com/danomagnum/gologix v0.27.2-beta h1:j0lFcAUY70InT7u7ys91TGu96SU/gRMt2lqOD5ra390=
-github.com/danomagnum/gologix v0.27.2-beta/go.mod h1:a0mVZ0+1vBg6R56BLSk68iO9XQGHyqEkyh33OCCIr9k=
+github.com/danomagnum/gologix v0.35.1-beta h1:h5pktnSTg492N8/g3mZsAWLw51BUg32zV5J0l3VeOhs=
+github.com/danomagnum/gologix v0.35.1-beta/go.mod h1:a0mVZ0+1vBg6R56BLSk68iO9XQGHyqEkyh33OCCIr9k=
 github.com/databricks/databricks-sql-go v1.10.0 h1:U17EKVC+hLP87swFMe2N6UUVektwUgTvT2pMDaDc46g=
 github.com/databricks/databricks-sql-go v1.10.0/go.mod h1:qC010ucrtqrNXY2UOcoczbfPD4gJ1jr1y6TL7iqyxPk=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
