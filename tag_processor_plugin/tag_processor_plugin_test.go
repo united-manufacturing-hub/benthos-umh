@@ -4557,7 +4557,7 @@ func jsonNumberToFloat(v any) float64 {
 	}
 }
 
-func indentTagProcJS(s, prefix string) string {
+func indentTagProcJS(s string, prefix string) string {
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
 		if l != "" {

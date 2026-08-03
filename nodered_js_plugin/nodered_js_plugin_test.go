@@ -2382,7 +2382,7 @@ func newMsg(payload string) *service.Message {
 }
 
 // msgWithMeta creates a service.Message with the given payload and one meta field.
-func msgWithMeta(payload, metaKey, metaValue string) *service.Message {
+func msgWithMeta(payload string, metaKey string, metaValue string) *service.Message {
 	m := service.NewMessage([]byte(payload))
 	m.MetaSet(metaKey, metaValue)
 	return m

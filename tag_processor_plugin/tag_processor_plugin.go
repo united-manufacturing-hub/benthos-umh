@@ -95,20 +95,25 @@ Empty or undefined fields will be omitted from the topic.`).
 				return nil, err
 			}
 
-			var conditions []ConditionConfig
+			var (
+				conditions      []ConditionConfig
+				conditionsArray []*service.ParsedConfig
+				ifExpr          string
+				thenCode        string
+			)
 			if conf.Contains("conditions") {
-				conditionsArray, err := conf.FieldObjectList("conditions")
+				conditionsArray, err = conf.FieldObjectList("conditions")
 				if err != nil {
 					return nil, err
 				}
 
 				for _, condObj := range conditionsArray {
-					ifExpr, err := condObj.FieldString("if")
+					ifExpr, err = condObj.FieldString("if")
 					if err != nil {
 						return nil, err
 					}
 
-					thenCode, err := condObj.FieldString("then")
+					thenCode, err = condObj.FieldString("then")
 					if err != nil {
 						return nil, err
 					}
@@ -261,7 +266,6 @@ func (p *TagProcessor) clearVMState(vm *goja.Runtime) error {
 // setupMessageForVM prepares a VM with message data for execution
 func (p *TagProcessor) setupMessageForVM(ctx context.Context, vm *goja.Runtime, msg *service.Message, jsMsg map[string]any) error {
 	p.jsProcessor.SetSuppressCacheWrites(p.shouldSuppressWritesFor(msg))
-
 
 	// Initialize meta if it doesn't exist
 	if _, exists := jsMsg["meta"]; !exists {

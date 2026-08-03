@@ -76,15 +76,15 @@ func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service
 	}
 
 	processor := &NodeREDJSProcessor{
-		program:           program,
-		originalCode:      code,
-		vmpool:            sync.Pool{}, // No New function - Get() will return nil when pool is empty
-		logger:            logger,
-		cache:             c,
-		messagesProcessed: metrics.NewCounter("messages_processed"),
-		messagesDropped:   metrics.NewCounter("messages_dropped", "reason"),
-		vmPoolHits:        metrics.NewCounter("vm_pool_hits"),
-		vmPoolMisses:      metrics.NewCounter("vm_pool_misses"),
+		program:            program,
+		originalCode:       code,
+		vmpool:             sync.Pool{}, // No New function - Get() will return nil when pool is empty
+		logger:             logger,
+		cache:              c,
+		messagesProcessed:  metrics.NewCounter("messages_processed"),
+		messagesDropped:    metrics.NewCounter("messages_dropped", "reason"),
+		vmPoolHits:         metrics.NewCounter("vm_pool_hits"),
+		vmPoolMisses:       metrics.NewCounter("vm_pool_misses"),
 		cacheKeys:          metrics.NewGauge("cache_keys"),
 		cacheDiskBytes:     metrics.NewGauge("cache_disk_bytes"),
 		cacheDedupSuppress: metrics.NewCounter("cache_dedup_suppressed"),
