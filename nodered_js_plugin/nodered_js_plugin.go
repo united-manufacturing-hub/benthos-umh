@@ -62,6 +62,7 @@ type NodeREDJSProcessor struct {
 	vmPoolMisses        *service.MetricCounter
 	cacheKeys           *service.MetricGauge
 	cacheDiskBytes      *service.MetricGauge
+	cacheDedupSuppress  *service.MetricCounter
 	metricsCancel       context.CancelFunc
 	metricsWG           sync.WaitGroup
 }
@@ -84,8 +85,9 @@ func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service
 		messagesDropped:   metrics.NewCounter("messages_dropped", "reason"),
 		vmPoolHits:        metrics.NewCounter("vm_pool_hits"),
 		vmPoolMisses:      metrics.NewCounter("vm_pool_misses"),
-		cacheKeys:         metrics.NewGauge("cache_keys"),
-		cacheDiskBytes:    metrics.NewGauge("cache_disk_bytes"),
+		cacheKeys:          metrics.NewGauge("cache_keys"),
+		cacheDiskBytes:     metrics.NewGauge("cache_disk_bytes"),
+		cacheDedupSuppress: metrics.NewCounter("cache_dedup_suppressed"),
 	}
 
 	metricsCtx, cancel := context.WithCancel(context.Background())
@@ -570,6 +572,8 @@ func (u *NodeREDJSProcessor) checkDedup(ctx context.Context, msg *service.Messag
 	cacheKey := DedupCacheKeyPrefix + v
 	_, seen := u.cache.Get(ctx, cacheKey)
 	if seen {
+		u.cacheDedupSuppress.Incr(1)
+		u.logger.Warnf("cache: suppressing writes for retried message (dedupKey=%q value=%q). If this fires often, investigate the upstream retry source.", u.dedupKey, v)
 		return true
 	}
 	err := u.cache.Set(ctx, cacheKey, true)

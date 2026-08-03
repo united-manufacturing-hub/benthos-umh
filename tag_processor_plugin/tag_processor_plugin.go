@@ -166,8 +166,9 @@ type TagProcessor struct {
 	originalAdvanced   string
 
 	// Existing metrics
-	messagesProcessed *service.MetricCounter
-	messagesDropped   *service.MetricCounter
+	messagesProcessed  *service.MetricCounter
+	messagesDropped    *service.MetricCounter
+	cacheDedupSuppress *service.MetricCounter
 
 	// Keep for JS environment setup helper methods
 	jsProcessor *nodered_js_plugin.NodeREDJSProcessor
@@ -205,8 +206,9 @@ func newTagProcessor(config TagProcessorConfig, logger *service.Logger, metrics 
 		originalAdvanced:   config.AdvancedProcessing,
 
 		// Existing metrics
-		messagesProcessed: metrics.NewCounter("messages_processed"),
-		messagesDropped:   metrics.NewCounter("messages_dropped", "reason"),
+		messagesProcessed:  metrics.NewCounter("messages_processed"),
+		messagesDropped:    metrics.NewCounter("messages_dropped", "reason"),
+		cacheDedupSuppress: metrics.NewCounter("cache_dedup_suppressed"),
 
 		jsProcessor: jsProcessor,
 		cache:       sharedCache,
@@ -311,7 +313,9 @@ func (p *TagProcessor) endBatch(ctx context.Context) {
 // prepareBatchDedup walks the input batch and records one decision per distinct
 // dedupKey value. Fresh values are recorded in the cache; already-seen values
 // mark suppression. Fan-out messages produced by later stages inherit the
-// suppression decision via their preserved dedupKey meta field.
+// suppression decision via their preserved dedupKey meta field. Each input
+// message that lands on a suppressed value increments cache_dedup_suppressed
+// and emits one WARN line.
 func (p *TagProcessor) prepareBatchDedup(ctx context.Context, batch service.MessageBatch) {
 	p.dedupSuppress = nil
 	if p.dedupKey == "" {
@@ -327,20 +331,25 @@ func (p *TagProcessor) prepareBatchDedup(ctx context.Context, batch service.Mess
 			}
 			continue
 		}
-		if _, decided := p.dedupSuppress[v]; decided {
-			continue
+		decision, decided := p.dedupSuppress[v]
+		if !decided {
+			cacheKey := nodered_js_plugin.DedupCacheKeyPrefix + v
+			_, seen := p.cache.Get(ctx, cacheKey)
+			if seen {
+				decision = true
+			} else {
+				err := p.cache.Set(ctx, cacheKey, true)
+				if err != nil {
+					p.logger.Errorf("cache.dedup record failed: %v", err)
+				}
+				decision = false
+			}
+			p.dedupSuppress[v] = decision
 		}
-		cacheKey := nodered_js_plugin.DedupCacheKeyPrefix + v
-		_, seen := p.cache.Get(ctx, cacheKey)
-		if seen {
-			p.dedupSuppress[v] = true
-			continue
+		if decision {
+			p.cacheDedupSuppress.Incr(1)
+			p.logger.Warnf("cache: suppressing writes for retried message (dedupKey=%q value=%q). If this fires often, investigate the upstream retry source.", p.dedupKey, v)
 		}
-		err := p.cache.Set(ctx, cacheKey, true)
-		if err != nil {
-			p.logger.Errorf("cache.dedup record failed: %v", err)
-		}
-		p.dedupSuppress[v] = false
 	}
 }
 
