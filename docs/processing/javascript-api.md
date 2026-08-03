@@ -148,6 +148,8 @@ tag_processor:
 - Read-modify-write patterns become idempotent: the JS still runs and computes locally, but the retried write does not commit
 - Monotonic counters, high-water marks, alarm latches — all stay correct across retries when built on `cache.set`
 
+Every suppressed message emits a WARN log line (`"cache: suppressing writes for retried message (dedupKey=... value=...)"`) and increments the `cache_dedup_suppressed` counter. Retries should be rare, so a WARN is intentional; a sustained high rate on this counter or a flood of these log lines usually means the upstream retry source is misbehaving.
+
 **What it does NOT cover**
 
 - Side effects outside the cache — HTTP calls, external DB writes, log lines, and metrics `Incr` still run on every retry
@@ -311,6 +313,7 @@ Each processor reports these Benthos metrics for its cache (sampled every 30 s):
 
 - `cache_keys`: number of entries currently stored
 - `cache_disk_bytes`: file size on disk (`0` for the memory backend)
+- `cache_dedup_suppressed`: total messages whose cache writes were suppressed because their `dedupKey` value was seen before (see [Idempotency and monotonicity under retries](#idempotency-and-monotonicity-under-retries-dedupkey))
 
 ## protobuf
 
