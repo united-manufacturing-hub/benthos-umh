@@ -40,6 +40,9 @@ import (
 // cacheStatsInterval controls how often the cache metrics are sampled.
 const cacheStatsInterval = 30 * time.Second
 
+// dedupCacheKeyPrefix isolates dedup markers from user keys inside the same cache.
+const dedupCacheKeyPrefix = "__dedup__:"
+
 // NodeREDJSProcessor defines the processor that wraps the JavaScript processor.
 type NodeREDJSProcessor struct {
 	program             *goja.Program
@@ -47,6 +50,8 @@ type NodeREDJSProcessor struct {
 	vmpool              sync.Pool
 	logger              *service.Logger
 	cache               cache.Cache
+	dedupKey            string
+	dedupMissingWarned  bool
 	suppressCacheWrites bool
 	messagesProcessed   *service.MetricCounter
 	messagesDropped     *service.MetricCounter
@@ -537,6 +542,33 @@ func (u *NodeREDJSProcessor) cacheCommit(ctx context.Context) {
 	u.cache.Unlock()
 }
 
+// checkDedup returns true when the message's dedupKey value was seen before, so the
+// caller can suppress cache writes. New values are recorded here. Returns false when
+// dedupKey is unset or missing from meta (with a one-time warning).
+func (u *NodeREDJSProcessor) checkDedup(ctx context.Context, msg *service.Message) bool {
+	if u.dedupKey == "" {
+		return false
+	}
+	v, ok := msg.MetaGet(u.dedupKey)
+	if !ok || v == "" {
+		if !u.dedupMissingWarned {
+			u.logger.Warnf("cache.dedupKey %q missing on message; dedup skipped when the field is absent", u.dedupKey)
+			u.dedupMissingWarned = true
+		}
+		return false
+	}
+	cacheKey := dedupCacheKeyPrefix + v
+	_, seen := u.cache.Get(ctx, cacheKey)
+	if seen {
+		return true
+	}
+	err := u.cache.Set(ctx, cacheKey, true)
+	if err != nil {
+		u.logger.Errorf("cache.dedup record failed: %v", err)
+	}
+	return false
+}
+
 func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	err := u.cacheBegin(ctx)
 	if err != nil {
@@ -551,6 +583,7 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		if msg == nil {
 			continue
 		}
+		u.suppressCacheWrites = u.checkDedup(ctx, msg)
 
 		processedMsgs, dropped, reason, err := u.processSingleMessage(ctx, msg)
 		if err != nil {
@@ -762,6 +795,9 @@ return msg;`)).
 		service.NewDurationField("ttl").
 			Description("Time-to-live for cached entries. 0 (default) keeps entries until explicit delete or restart. Set a positive duration (e.g. '1h') to auto-expire entries N after the last write.").
 			Default("0s"),
+		service.NewStringField("dedupKey").
+			Description("Name of the message metadata field whose value identifies a message across retries (e.g. 'kafka_offset', 'opcua_source_timestamp', 'spb_sequence'). When set, the plugin remembers each seen value in the cache and skips cache writes when the same value arrives again — so retried messages don't double-write counters or state. Leave empty (default) to disable; a startup warning is logged when disabled.").
+			Default(""),
 	).
 		Description("Cache configuration for state across messages.").
 		Default(map[string]any{}).
@@ -793,6 +829,11 @@ func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (
 		return nil, fmt.Errorf("parse cache.ttl: %w", err)
 	}
 
+	dedupKey, err := conf.FieldString("cache", "dedupKey")
+	if err != nil {
+		return nil, fmt.Errorf("parse cache.dedupKey: %w", err)
+	}
+
 	store, err := openCacheStore(backend, cacheName, path, ttl)
 	if err != nil {
 		return nil, err
@@ -809,6 +850,10 @@ func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (
 	if err != nil {
 		_ = store.Close()
 		return nil, err
+	}
+	processor.dedupKey = dedupKey
+	if dedupKey == "" {
+		mgr.Logger().Warnf("cache.dedupKey not set — retried messages will re-run cache writes. Set cache.dedupKey to a per-message identifier (e.g. kafka_offset) to skip already-processed messages.")
 	}
 	return processor, nil
 }

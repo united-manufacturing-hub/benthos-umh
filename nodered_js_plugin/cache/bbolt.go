@@ -109,18 +109,18 @@ func (b *BboltStore) Set(ctx context.Context, key string, value any) error {
 	}
 
 	if b.currentTx != nil {
-		b := b.currentTx.Bucket(bboltBucket)
-		if b == nil {
+		bucket := b.currentTx.Bucket(bboltBucket)
+		if bucket == nil {
 			return fmt.Errorf("cache: bucket missing")
 		}
-		return b.Put([]byte(key), data)
+		return bucket.Put([]byte(key), data)
 	}
 	return b.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bboltBucket)
-		if b == nil {
+		bucket := tx.Bucket(bboltBucket)
+		if bucket == nil {
 			return fmt.Errorf("cache: bucket missing")
 		}
-		return b.Put([]byte(key), data)
+		return bucket.Put([]byte(key), data)
 	})
 }
 
@@ -190,11 +190,11 @@ func (b *BboltStore) Stats(ctx context.Context) (Stats, error) {
 
 	var stats Stats
 	err = b.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bboltBucket)
-		if b == nil {
+		bucket := tx.Bucket(bboltBucket)
+		if bucket == nil {
 			return nil
 		}
-		stats.Keys = int64(b.Stats().KeyN)
+		stats.Keys = int64(bucket.Stats().KeyN)
 		return nil
 	})
 	if err != nil {
@@ -217,18 +217,18 @@ func (b *BboltStore) Delete(ctx context.Context, key string) error {
 		return fmt.Errorf("cache: key must not be empty")
 	}
 	if b.currentTx != nil {
-		b := b.currentTx.Bucket(bboltBucket)
-		if b == nil {
+		bucket := b.currentTx.Bucket(bboltBucket)
+		if bucket == nil {
 			return nil
 		}
-		return b.Delete([]byte(key))
+		return bucket.Delete([]byte(key))
 	}
 	return b.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bboltBucket)
-		if b == nil {
+		bucket := tx.Bucket(bboltBucket)
+		if bucket == nil {
 			return nil
 		}
-		return b.Delete([]byte(key))
+		return bucket.Delete([]byte(key))
 	})
 }
 
@@ -285,11 +285,11 @@ func (b *BboltStore) deleteExpired() {
 	now := time.Now().UnixNano()
 
 	_ = b.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bboltBucket)
-		if b == nil {
+		bucket := tx.Bucket(bboltBucket)
+		if bucket == nil {
 			return nil
 		}
-		return b.ForEach(func(k, v []byte) error {
+		return bucket.ForEach(func(k, v []byte) error {
 			var item Item
 			if err := json.Unmarshal(v, &item); err != nil {
 				return nil
@@ -309,12 +309,12 @@ func (b *BboltStore) deleteExpired() {
 
 	// Phase 2: delete in a single write tx.
 	_ = b.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bboltBucket)
-		if b == nil {
+		bucket := tx.Bucket(bboltBucket)
+		if bucket == nil {
 			return nil
 		}
 		for _, k := range expired {
-			_ = b.Delete(k)
+			_ = bucket.Delete(k)
 		}
 		return nil
 	})
