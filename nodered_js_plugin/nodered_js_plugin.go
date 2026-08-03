@@ -37,11 +37,14 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin/protobuf"
 )
 
-// cacheStatsInterval controls how often the cache metrics are sampled.
-const cacheStatsInterval = 30 * time.Second
+const (
+	// cacheStatsInterval controls how often the cache metrics are sampled.
+	cacheStatsInterval = 30 * time.Second
 
-// dedupCacheKeyPrefix isolates dedup markers from user keys inside the same cache.
-const dedupCacheKeyPrefix = "__dedup__:"
+	// DedupCacheKeyPrefix isolates dedup markers from user keys.
+	// Full Key: DedupCacheKeyPrefix + <dedupKey meta value>.
+	DedupCacheKeyPrefix = "__dedup__:"
+)
 
 // NodeREDJSProcessor defines the processor that wraps the JavaScript processor.
 type NodeREDJSProcessor struct {
@@ -542,6 +545,13 @@ func (u *NodeREDJSProcessor) cacheCommit(ctx context.Context) {
 	u.cache.Unlock()
 }
 
+// SetSuppressCacheWrites toggles whether cache.set/delete bindings silently drop
+// writes. Callers that own a batch scope (e.g. tag_processor) use this to gate
+// writes for retried messages.
+func (u *NodeREDJSProcessor) SetSuppressCacheWrites(v bool) {
+	u.suppressCacheWrites = v
+}
+
 // checkDedup returns true when the message's dedupKey value was seen before, so the
 // caller can suppress cache writes. New values are recorded here. Returns false when
 // dedupKey is unset or missing from meta (with a one-time warning).
@@ -557,7 +567,7 @@ func (u *NodeREDJSProcessor) checkDedup(ctx context.Context, msg *service.Messag
 		}
 		return false
 	}
-	cacheKey := dedupCacheKeyPrefix + v
+	cacheKey := DedupCacheKeyPrefix + v
 	_, seen := u.cache.Get(ctx, cacheKey)
 	if seen {
 		return true

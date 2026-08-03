@@ -41,6 +41,7 @@ type TagProcessorConfig struct {
 	Defaults           string            `json:"defaults" yaml:"defaults"`
 	Conditions         []ConditionConfig `json:"conditions" yaml:"conditions"`
 	AdvancedProcessing string            `json:"advancedProcessing" yaml:"advancedProcessing"`
+	DedupKey           string            `json:"dedupKey" yaml:"dedupKey"`
 }
 
 type ConditionConfig struct {
@@ -79,7 +80,11 @@ Empty or undefined fields will be omitted from the topic.`).
 		Field(service.NewStringField("advancedProcessing").
 			Description("Optional JavaScript code for advanced message processing").
 			Default("").
-			Optional())
+			Optional()).
+		Field(service.NewStringField("dedupKey").
+			Description("Name of the message metadata field whose value identifies a message across retries (for example `kafka_offset`). When set, cache.set/delete calls from JavaScript are silently skipped for a message whose value has already been processed once, so the cache state stays idempotent under at-least-once retries. Leave empty to disable — a startup warning is logged if unset.").
+			Default("").
+			Advanced())
 
 	err := service.RegisterBatchProcessor(
 		"tag_processor",
@@ -117,10 +122,19 @@ Empty or undefined fields will be omitted from the topic.`).
 
 			advancedProcessing, _ := conf.FieldString("advancedProcessing")
 
+			dedupKey, err := conf.FieldString("dedupKey")
+			if err != nil {
+				return nil, err
+			}
+			if dedupKey == "" {
+				mgr.Logger().Warnf("tag_processor.dedupKey not set — retried messages will re-run cache writes. Set dedupKey to a per-message identifier (e.g. kafka_offset) to skip already-processed messages.")
+			}
+
 			config := TagProcessorConfig{
 				Defaults:           defaults,
 				Conditions:         conditions,
 				AdvancedProcessing: advancedProcessing,
+				DedupKey:           dedupKey,
 			}
 
 			return newTagProcessor(config, mgr.Logger(), mgr.Metrics())
@@ -157,8 +171,12 @@ type TagProcessor struct {
 
 	// Keep for JS environment setup helper methods
 	jsProcessor *nodered_js_plugin.NodeREDJSProcessor
+
 	// Same instance the jsProcessor uses; held here to open the batch scope directly.
-	cache cache.Cache
+	cache              cache.Cache
+	dedupKey           string
+	dedupMissingWarned bool
+	dedupSuppress      map[string]bool
 }
 
 func newTagProcessor(config TagProcessorConfig, logger *service.Logger, metrics *service.Metrics) (*TagProcessor, error) {
@@ -192,6 +210,7 @@ func newTagProcessor(config TagProcessorConfig, logger *service.Logger, metrics 
 
 		jsProcessor: jsProcessor,
 		cache:       sharedCache,
+		dedupKey:    config.DedupKey,
 	}
 
 	// Phase 2: Compile all JavaScript once at startup to catch errors early and optimize runtime
@@ -239,6 +258,9 @@ func (p *TagProcessor) clearVMState(vm *goja.Runtime) error {
 
 // setupMessageForVM prepares a VM with message data for execution
 func (p *TagProcessor) setupMessageForVM(ctx context.Context, vm *goja.Runtime, msg *service.Message, jsMsg map[string]any) error {
+	p.jsProcessor.SetSuppressCacheWrites(p.shouldSuppressWritesFor(msg))
+
+
 	// Initialize meta if it doesn't exist
 	if _, exists := jsMsg["meta"]; !exists {
 		jsMsg["meta"] = make(map[string]any)
@@ -286,6 +308,55 @@ func (p *TagProcessor) endBatch(ctx context.Context) {
 	p.cache.Unlock()
 }
 
+// prepareBatchDedup walks the input batch and records one decision per distinct
+// dedupKey value. Fresh values are recorded in the cache; already-seen values
+// mark suppression. Fan-out messages produced by later stages inherit the
+// suppression decision via their preserved dedupKey meta field.
+func (p *TagProcessor) prepareBatchDedup(ctx context.Context, batch service.MessageBatch) {
+	p.dedupSuppress = nil
+	if p.dedupKey == "" {
+		return
+	}
+	p.dedupSuppress = map[string]bool{}
+	for _, msg := range batch {
+		v, ok := msg.MetaGet(p.dedupKey)
+		if !ok || v == "" {
+			if !p.dedupMissingWarned {
+				p.logger.Warnf("tag_processor.dedupKey %q missing on message; dedup skipped when the field is absent", p.dedupKey)
+				p.dedupMissingWarned = true
+			}
+			continue
+		}
+		if _, decided := p.dedupSuppress[v]; decided {
+			continue
+		}
+		cacheKey := nodered_js_plugin.DedupCacheKeyPrefix + v
+		_, seen := p.cache.Get(ctx, cacheKey)
+		if seen {
+			p.dedupSuppress[v] = true
+			continue
+		}
+		err := p.cache.Set(ctx, cacheKey, true)
+		if err != nil {
+			p.logger.Errorf("cache.dedup record failed: %v", err)
+		}
+		p.dedupSuppress[v] = false
+	}
+}
+
+// shouldSuppressWritesFor returns the batch-entry decision for this message's
+// dedupKey value. Fan-out messages missing the meta field default to false.
+func (p *TagProcessor) shouldSuppressWritesFor(msg *service.Message) bool {
+	if p.dedupKey == "" || p.dedupSuppress == nil {
+		return false
+	}
+	v, ok := msg.MetaGet(p.dedupKey)
+	if !ok || v == "" {
+		return false
+	}
+	return p.dedupSuppress[v]
+}
+
 // TODO: Each time there is any execution error, output the code where the error happened as well as the message that caused it (see nodered_js_plugin). Double-check that it is not being outputted twice.
 func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	err := p.beginBatch(ctx)
@@ -293,6 +364,8 @@ func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBa
 		return nil, err
 	}
 	defer p.endBatch(ctx)
+
+	p.prepareBatchDedup(ctx, batch)
 
 	// ───────────────── Store incoming metadata ────────────────────────────────
 	// For each message, capture its current meta fields and store them as JSON
@@ -957,7 +1030,7 @@ func (p *TagProcessor) processConditionForMessageWithProgram(ctx context.Context
 			ctx,
 			service.MessageBatch{msg},
 			p.conditionThenPrograms[conditionIndex],
-			"condition-then",
+			fmt.Sprintf("condition-%d-then", conditionIndex),
 		)
 		// Return all messages produced by the condition action (could be 0, 1, or multiple)
 		return conditionBatch, "", "", nil

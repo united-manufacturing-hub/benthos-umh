@@ -2224,6 +2224,118 @@ return msg;
 			Expect(payloadFloat(*msgs, 1)).To(Equal(float64(2)))
 		})
 
+		buildStreamDedup := func(dedupKey, code string) (service.MessageHandlerFunc, *[]*service.Message, context.CancelFunc) {
+			builder := service.NewStreamBuilder()
+			handler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			yaml := fmt.Sprintf("nodered_js:\n  cache:\n    name: %q\n    dedupKey: %q\n  code: |\n%s",
+				fmt.Sprintf("test-%d", time.Now().UnixNano()),
+				dedupKey,
+				indentLines(code, "    "))
+			err = builder.AddProcessorYAML(yaml)
+			Expect(err).NotTo(HaveOccurred())
+
+			var msgs []*service.Message
+			err = builder.AddConsumerFunc(func(_ context.Context, m *service.Message) error {
+				msgs = append(msgs, m)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			go func() { _ = stream.Run(ctx) }()
+			return handler, &msgs, cancel
+		}
+
+		It("suppresses cache writes when dedupKey value was seen before", func() {
+			handler, msgs, cancel := buildStreamDedup("kafka_offset", `
+var n = cache.exists("n") ? cache.get("n") : 0;
+n = n + 1;
+cache.set("n", n);
+msg.payload = n;
+return msg;
+`)
+			defer cancel()
+
+			ctx := context.Background()
+			// Same dedup value across three messages — only the first write commits.
+			for i := 0; i < 3; i++ {
+				Expect(handler(ctx, msgWithMeta(fmt.Sprintf("tick-%d", i), "kafka_offset", "42"))).To(Succeed())
+			}
+			Eventually(func() int { return len(*msgs) }).Should(Equal(3))
+
+			Expect(payloadFloat(*msgs, 0)).To(Equal(float64(1)))
+			Expect(payloadFloat(*msgs, 1)).To(Equal(float64(2)))
+			Expect(payloadFloat(*msgs, 2)).To(Equal(float64(2)))
+		})
+
+		It("allows writes when dedupKey values differ", func() {
+			handler, msgs, cancel := buildStreamDedup("kafka_offset", `
+var n = cache.exists("n") ? cache.get("n") : 0;
+n = n + 1;
+cache.set("n", n);
+msg.payload = n;
+return msg;
+`)
+			defer cancel()
+
+			ctx := context.Background()
+			for i := range 3 {
+				Expect(handler(ctx, msgWithMeta(fmt.Sprintf("tick-%d", i), "kafka_offset", fmt.Sprintf("%d", i)))).To(Succeed())
+			}
+			Eventually(func() int { return len(*msgs) }).Should(Equal(3))
+
+			Expect(payloadFloat(*msgs, 0)).To(Equal(float64(1)))
+			Expect(payloadFloat(*msgs, 1)).To(Equal(float64(2)))
+			Expect(payloadFloat(*msgs, 2)).To(Equal(float64(3)))
+		})
+
+		It("does not suppress when dedupKey meta field is missing", func() {
+			handler, msgs, cancel := buildStreamDedup("kafka_offset", `
+var n = cache.exists("n") ? cache.get("n") : 0;
+n = n + 1;
+cache.set("n", n);
+msg.payload = n;
+return msg;
+`)
+			defer cancel()
+
+			ctx := context.Background()
+			// No meta set — dedup skipped, all writes commit.
+			for i := range 2 {
+				Expect(handler(ctx, newMsg(fmt.Sprintf("tick-%d", i)))).To(Succeed())
+			}
+			Eventually(func() int { return len(*msgs) }).Should(Equal(2))
+
+			Expect(payloadFloat(*msgs, 0)).To(Equal(float64(1)))
+			Expect(payloadFloat(*msgs, 1)).To(Equal(float64(2)))
+		})
+
+		It("also suppresses cache.delete on a retried dedupKey value", func() {
+			handler, msgs, cancel := buildStreamDedup("kafka_offset", `
+if (!cache.exists("keep")) {
+  cache.set("keep", "alive");
+}
+cache.delete("keep");
+msg.payload = cache.exists("keep") ? "present" : "gone";
+return msg;
+`)
+			defer cancel()
+
+			ctx := context.Background()
+			// First msg: dedup fresh, cache.set + cache.delete both run → key gone.
+			Expect(handler(ctx, msgWithMeta("first", "kafka_offset", "77"))).To(Succeed())
+			Expect(handler(ctx, msgWithMeta("second", "kafka_offset", "77"))).To(Succeed())
+			Eventually(func() int { return len(*msgs) }).Should(Equal(2))
+
+			Expect(payloadString(*msgs, 0)).To(Equal("gone"))
+			Expect(payloadString(*msgs, 1)).To(Equal("gone"))
+		})
+
 		It("plain get+set counter is atomic across concurrent messages (auto-lock)", func() {
 			handler, msgs, cancel := buildStream(`
 var n = cache.exists("counter") ? cache.get("counter") : 0;
@@ -2267,6 +2379,13 @@ return msg;
 // newMsg creates a service.Message with the given string payload.
 func newMsg(payload string) *service.Message {
 	return service.NewMessage([]byte(payload))
+}
+
+// msgWithMeta creates a service.Message with the given payload and one meta field.
+func msgWithMeta(payload, metaKey, metaValue string) *service.Message {
+	m := service.NewMessage([]byte(payload))
+	m.MetaSet(metaKey, metaValue)
+	return m
 }
 
 // payloadString extracts the string payload from messages[i].
@@ -2409,7 +2528,8 @@ type noopGauge struct{}
 func (noopGauge) Set(int64) {}
 
 var _ = Describe("js logmessage", func() {
-	DescribeTable("format",
+	DescribeTable(
+		"format",
 		func(input []any, expected string) {
 			result := nodered_js_plugin.FormatConsoleLogMsg(input)
 			Expect(result).To(Equal(expected))
@@ -2468,7 +2588,8 @@ var _ = Describe("js logmessage", func() {
 })
 
 var _ = Describe("ConvertMessageToJSObject", func() {
-	DescribeTable("parses payload",
+	DescribeTable(
+		"parses payload",
 		func(input string, expectedPayload any) {
 			expectedOutput := map[string]any{"payload": expectedPayload}
 			msg := service.NewMessage([]byte(input))
