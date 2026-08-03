@@ -4361,6 +4361,212 @@ tag_processor:
 	})
 })
 
+var _ = Describe("TagProcessor dedupKey", func() {
+	BeforeEach(func() {
+		if os.Getenv("TEST_TAG_PROCESSOR") == "" {
+			Skip("Skipping Tag Processor tests: TEST_TAG_PROCESSOR not set")
+		}
+	})
+
+	// buildDedupStream returns a handler + collected messages + cancel.
+	// The pipeline runs the counter JS inside `defaults`, so every call to the
+	// handler goes through the dedup check first.
+	buildDedupStream := func(dedupKey, defaultsJS string) (service.MessageHandlerFunc, *[]*service.Message, context.CancelFunc) {
+		builder := service.NewStreamBuilder()
+		handler, err := builder.AddProducerFunc()
+		Expect(err).NotTo(HaveOccurred())
+
+		yaml := fmt.Sprintf(`
+tag_processor:
+  dedupKey: %q
+  defaults: |
+%s
+`, dedupKey, indentTagProcJS(defaultsJS, "    "))
+		err = builder.AddProcessorYAML(yaml)
+		Expect(err).NotTo(HaveOccurred())
+
+		var msgs []*service.Message
+		err = builder.AddConsumerFunc(func(_ context.Context, m *service.Message) error {
+			msgs = append(msgs, m)
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		stream, err := builder.Build()
+		Expect(err).NotTo(HaveOccurred())
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		go func() { _ = stream.Run(ctx) }()
+		return handler, &msgs, cancel
+	}
+
+	// setDedupMeta builds a payload=0 msg carrying required tag metadata + a
+	// dedupKey meta value. The counter defaults script bumps msg.payload = n
+	// from the cache so we can assert what the cache read after processing.
+	newDedupMsg := func(dedupValue string) *service.Message {
+		m := service.NewMessage([]byte(`0`))
+		m.MetaSet("kafka_offset", dedupValue)
+		return m
+	}
+
+	counterJS := `
+var n = cache.exists("n") ? cache.get("n") : 0;
+n = n + 1;
+cache.set("n", n);
+msg.payload = n;
+msg.meta.location_path = "enterprise";
+msg.meta.data_contract = "_historian";
+msg.meta.tag_name = "counter";
+return msg;
+`
+
+	It("suppresses cache writes when dedupKey value was seen before", func() {
+		handler, msgs, cancel := buildDedupStream("kafka_offset", counterJS)
+		defer cancel()
+
+		ctx := context.Background()
+		// Same offset twice across two separate handler calls (=> separate batches).
+		Expect(handler(ctx, newDedupMsg("42"))).To(Succeed())
+		Expect(handler(ctx, newDedupMsg("42"))).To(Succeed())
+		Eventually(func() int { return len(*msgs) }).Should(Equal(2))
+
+		// First msg: fresh → cache writes commit → n=1 → payload.value=1.
+		// Second msg: retry → cache stays at 1, JS reads 1 and computes 2 but the write is
+		// suppressed. payload.value=2 while cache never advances past 1.
+		Expect(wrappedValueFloat(*msgs, 0)).To(Equal(float64(1)))
+		Expect(wrappedValueFloat(*msgs, 1)).To(Equal(float64(2)))
+	})
+
+	It("allows writes when dedupKey values differ", func() {
+		handler, msgs, cancel := buildDedupStream("kafka_offset", counterJS)
+		defer cancel()
+
+		ctx := context.Background()
+		for i := range 3 {
+			Expect(handler(ctx, newDedupMsg(fmt.Sprintf("%d", i)))).To(Succeed())
+		}
+		Eventually(func() int { return len(*msgs) }).Should(Equal(3))
+
+		for i := range 3 {
+			Expect(wrappedValueFloat(*msgs, i)).To(Equal(float64(i + 1)))
+		}
+	})
+
+	It("does not suppress when dedupKey meta field is missing", func() {
+		handler, msgs, cancel := buildDedupStream("kafka_offset", counterJS)
+		defer cancel()
+
+		ctx := context.Background()
+		// Send messages without the kafka_offset meta.
+		for range 2 {
+			m := service.NewMessage([]byte(`0`))
+			m.MetaSet("location_path", "enterprise")
+			m.MetaSet("data_contract", "_historian")
+			m.MetaSet("tag_name", "counter")
+			Expect(handler(ctx, m)).To(Succeed())
+		}
+		Eventually(func() int { return len(*msgs) }).Should(Equal(2))
+
+		Expect(wrappedValueFloat(*msgs, 0)).To(Equal(float64(1)))
+		Expect(wrappedValueFloat(*msgs, 1)).To(Equal(float64(2)))
+	})
+
+	It("shares the dedup decision across defaults and advancedProcessing stages", func() {
+		// Two JS stages: defaults bumps a counter; advancedProcessing bumps a
+		// second counter. A retried message must skip writes in both stages.
+		yaml := `
+tag_processor:
+  dedupKey: "kafka_offset"
+  defaults: |
+    var a = cache.exists("a") ? cache.get("a") : 0;
+    cache.set("a", a + 1);
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_historian";
+    msg.meta.tag_name = "counter";
+    msg.payload = a + 1;
+    return msg;
+  advancedProcessing: |
+    var b = cache.exists("b") ? cache.get("b") : 0;
+    cache.set("b", b + 1);
+    msg.payload = { defaults_counter: cache.get("a"), advanced_counter: cache.get("b") };
+    return msg;
+`
+		builder := service.NewStreamBuilder()
+		handler, err := builder.AddProducerFunc()
+		Expect(err).NotTo(HaveOccurred())
+		err = builder.AddProcessorYAML(yaml)
+		Expect(err).NotTo(HaveOccurred())
+
+		var msgs []*service.Message
+		err = builder.AddConsumerFunc(func(_ context.Context, m *service.Message) error {
+			msgs = append(msgs, m)
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		stream, err := builder.Build()
+		Expect(err).NotTo(HaveOccurred())
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		go func() { _ = stream.Run(ctx) }()
+
+		Expect(handler(ctx, newDedupMsg("77"))).To(Succeed())
+		Expect(handler(ctx, newDedupMsg("77"))).To(Succeed())
+		Eventually(func() int { return len(msgs) }).Should(Equal(2))
+
+		// First msg: both cache.set calls commit → a=1, b=1.
+		// Second msg: retry → both stages suppressed → a and b still 1.
+		// autoConvertValue JSON-encodes map payloads into a string in .value.
+		for _, m := range msgs {
+			p, _ := m.AsStructured()
+			raw := p.(map[string]any)["value"].(string)
+			var inner map[string]any
+			Expect(json.Unmarshal([]byte(raw), &inner)).To(Succeed())
+			Expect(jsonNumberToFloat(inner["defaults_counter"])).To(Equal(float64(1)))
+			Expect(jsonNumberToFloat(inner["advanced_counter"])).To(Equal(float64(1)))
+		}
+	})
+})
+
+// wrappedValueFloat extracts the `.value` field from a tag_processor-wrapped
+// payload ({value, timestamp_ms}) as a float64. json.Number is unwrapped.
+func wrappedValueFloat(msgs []*service.Message, i int) float64 {
+	s, err := msgs[i].AsStructured()
+	Expect(err).NotTo(HaveOccurred())
+	obj, ok := s.(map[string]any)
+	Expect(ok).To(BeTrue(), "expected wrapped map payload, got %T: %v", s, s)
+	return jsonNumberToFloat(obj["value"])
+}
+
+func jsonNumberToFloat(v any) float64 {
+	switch n := v.(type) {
+	case json.Number:
+		f, err := n.Float64()
+		Expect(err).NotTo(HaveOccurred())
+		return f
+	case float64:
+		return n
+	case int64:
+		return float64(n)
+	case int:
+		return float64(n)
+	default:
+		Fail(fmt.Sprintf("expected numeric, got %T: %v", v, v))
+		return 0
+	}
+}
+
+func indentTagProcJS(s, prefix string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		if l != "" {
+			lines[i] = prefix + l
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 var _ = Describe("VM Pooling Optimization", func() {
 	BeforeEach(func() {
 		testActivated := os.Getenv("TEST_TAG_PROCESSOR")
