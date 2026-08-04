@@ -109,7 +109,7 @@ type historianOutput struct {
 func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*historianOutput, error) {
 	o := &historianOutput{
 		logger:         mgr.Logger(),
-		dropped:        mgr.Metrics().NewCounter("historian_messages_dropped", "reason"),
+		dropped:        mgr.Metrics().NewCounter("messages_dropped", "reason"),
 		valueRows:      mgr.Metrics().NewCounter("historian_value_rows_written"),
 		attrRows:       mgr.Metrics().NewCounter("historian_attribute_rows_written"),
 		dedupSize:      mgr.Metrics().NewGauge("historian_dedup_cache_size"),

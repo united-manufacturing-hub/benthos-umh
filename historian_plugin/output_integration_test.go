@@ -831,7 +831,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(h.CountAttributeRows(ctx, "reemit")).To(Equal(2))
 	})
 
-	// The metric counters (historian_messages_dropped, _values_truncated) are not readable through
+	// The metric counters (messages_dropped, historian_values_truncated) are not readable through
 	// benthos's mock harness (it backs metrics with a no-op), so these specs pin the co-located
 	// operator-facing log lines instead -- the same signal umh-core's log regex surfaces as degraded,
 	// and the guard against a regression that stops counting/logging a drop or truncation.

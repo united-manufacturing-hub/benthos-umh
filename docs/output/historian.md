@@ -159,7 +159,7 @@ ORDER  BY v.ts DESC;
   (`msg.payload.timestamp_ms = Date.now()`).
 - **Malformed messages are dropped, not nacked — but they are logged at error level.** An absent
   or invalid `umh_topic` (validated by the canonical topic parser), a non-finite number, or an
-  unparseable timestamp drop the message and increment the `historian_messages_dropped` metric
+  unparseable timestamp drop the message and increment the `messages_dropped` metric
   (labelled by `reason`), so one bad message never stalls the stream. Each drop also logs
   `dropped message (reason=…, umh_topic=…)` at error level, which umh-core surfaces as a degraded
   bridge. A source emitting malformed data therefore shows as degraded even while every other tag
@@ -167,7 +167,7 @@ ORDER  BY v.ts DESC;
   umh-core's window; unlike the contract-mismatch error it is not latched.
 - **A wrong data contract errors the bridge.** A message whose data-contract segment is not the
   configured `data_contract_name` is still dropped and counted on
-  `historian_messages_dropped{reason=contract_mismatch}`, but it also logs at error level, which
+  `messages_dropped{reason=contract_mismatch}`, but it also logs at error level, which
   umh-core surfaces as a degraded bridge. The error names the contracts that actually arrived, an
   example topic, and the `umh_topics` pattern to narrow to. Matching rows in the same batch are
   still written — degraded does not mean stopped. Drop errors are held back for 30 seconds
@@ -285,7 +285,10 @@ On top of benthos's built-in output metrics (`output_sent`, `output_error`,
 - `historian_value_rows_written` — value rows upserted (counted after the batch commits).
 - `historian_attribute_rows_written` — attribute rows upserted; the gap below the value-row
   count is metadata de-duplication at work.
-- `historian_messages_dropped` (labelled by `reason`) — messages dropped before any write.
+- `messages_dropped` (labelled by `reason`) — messages dropped before any write. The name is
+  deliberately unprefixed: it is the shared drop-counter convention across benthos-umh plugins, and
+  umh-core subtracts it from `output_sent` so a bridge that accepts messages and discards them
+  reports its real write throughput rather than what it accepted.
 - `historian_dedup_cache_size` — current dedup-cache entry count.
 
 ## Numeric precision

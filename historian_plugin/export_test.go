@@ -148,7 +148,7 @@ func NewHistorianTestHandle(dsn string, contract string) *HistorianTestHandle {
 		compressAfter:   168 * time.Hour,
 		maxInFlight:     8,
 		logger:          mgr.Logger(),
-		dropped:         mgr.Metrics().NewCounter("historian_messages_dropped", "reason"),
+		dropped:         mgr.Metrics().NewCounter("messages_dropped", "reason"),
 		valueRows:       mgr.Metrics().NewCounter("historian_value_rows_written"),
 		attrRows:        mgr.Metrics().NewCounter("historian_attribute_rows_written"),
 		dedupSize:       mgr.Metrics().NewGauge("historian_dedup_cache_size"),
