@@ -14,16 +14,40 @@
 
 package eip_plugin
 
-import "github.com/danomagnum/gologix"
+import (
+	"errors"
+	"io"
+	"net"
+	"os"
+	"syscall"
+)
 
-// NOTE: Abstraction for the CIP calls so we can potentially mock them
-// possibly add some more calls here later on. The gologix.Client implements this
-// interface for our main functionality.
-type CIPReader interface {
-	Connect() error
-	Disconnect() error
-	// needed because gologix rejects calls that do not match its connection state
-	Connected() bool
-	Read(tag string, data any) error
-	GetAttrSingle(cls gologix.CIPClass, inst gologix.CIPInstance, attr gologix.CIPAttribute) (*gologix.CIPItem, error)
+// gologix-library wraps around these errors
+var transportErrors = []error{
+	os.ErrDeadlineExceeded,
+	io.EOF,
+	io.ErrUnexpectedEOF,
+	net.ErrClosed,
+	syscall.ECONNRESET,
+	syscall.ECONNREFUSED,
+	syscall.ECONNABORTED,
+	syscall.EPIPE,
+	syscall.ETIMEDOUT,
+	syscall.EHOSTUNREACH,
+	syscall.ENETUNREACH,
+}
+
+func isTransportError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	for _, transErr := range transportErrors {
+		if errors.Is(err, transErr) {
+			return true
+		}
+	}
+
+	var netErr net.Error
+	return errors.As(err, &netErr)
 }

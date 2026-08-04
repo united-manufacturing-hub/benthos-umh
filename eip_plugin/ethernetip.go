@@ -17,7 +17,6 @@ package eip_plugin
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/danomagnum/gologix"
@@ -75,6 +74,15 @@ type CIPReadItem struct {
 
 	// needed to transform data into given type
 	ConverterFunc func(*gologix.CIPItem) (any, error)
+}
+
+// attributes carry no tag name, so per-item logs need this
+func (i *CIPReadItem) name() string {
+	if i.IsAttribute {
+		return i.AttributeName
+	}
+
+	return i.TagName
 }
 
 var EthernetIPConfigSpec = service.NewConfigSpec().
@@ -189,32 +197,38 @@ func init() {
 		"ethernetip", EthernetIPConfigSpec,
 		func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
 			return NewEthernetIPInput(conf, mgr)
-		})
+		},
+	)
 	if err != nil {
 		panic(err)
 	}
 }
 
+// keep-alive stays off because the poll loop already holds the session open
+func (g *EIPInput) newCIPClient() *gologix.Client {
+	return &gologix.Client{
+		Controller:         *g.Controller,
+		VendorId:           vendorIdDefault,
+		ConnectionSize:     connSizeLargeDefault,
+		AutoConnect:        true,
+		KeepAliveAutoStart: false,
+		KeepAliveFrequency: keepAliveFreq,
+		KeepAliveProps:     []gologix.CIPAttribute{1, 2, 3, 4, 10},
+		// this is the Request Packet Interval
+		RPI:           g.PollRate,
+		SocketTimeout: socketTimeoutDefault,
+		KnownTags:     make(map[string]gologix.KnownTag),
+		Logger:        cipLogger{log: g.Log},
+	}
+}
+
 func (g *EIPInput) Connect(_ context.Context) error {
 	if g.CIP == nil {
-		g.CIP = &gologix.Client{
-			Controller:         *g.Controller,
-			VendorId:           vendorIdDefault,
-			ConnectionSize:     connSizeLargeDefault,
-			AutoConnect:        true,
-			KeepAliveAutoStart: false,
-			KeepAliveFrequency: keepAliveFreq,
-			KeepAliveProps:     []gologix.CIPAttribute{1, 2, 3, 4, 10},
-			// this is the Request Packet Interval
-			RPI:           g.PollRate,
-			SocketTimeout: socketTimeoutDefault,
-			KnownTags:     make(map[string]gologix.KnownTag),
-			// NOTE:
-			// we only want to use our logs not the gologix-logs here
-			Logger: slog.New(slog.DiscardHandler),
-			// but for now we want to see some logs here:
-			// Logger: slog.Default(),
-		}
+		g.CIP = g.newCIPClient()
+	}
+
+	if g.CIP.Connected() {
+		return nil
 	}
 
 	err := g.CIP.Connect()
@@ -272,12 +286,7 @@ func (g *EIPInput) logDeviceProperties() error {
 	if err != nil {
 		return err
 	}
-	deviceNameBytes, err := productNameAttr.Bytes()
-	if err != nil {
-		return err
-	}
-
-	deviceName := string(deviceNameBytes)
+	deviceName := decodeCIPString(attributePayload(productNameAttr))
 
 	g.Log.Infof("EIP Device Information:")
 	g.Log.Infof("    Device Name: %s", deviceName)
@@ -289,44 +298,63 @@ func (g *EIPInput) logDeviceProperties() error {
 	return nil
 }
 
-func (g *EIPInput) ReadBatch(_ context.Context) (service.MessageBatch, service.AckFunc, error) {
+func (g *EIPInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
 	var msgs service.MessageBatch
+	failed := 0
 
 	for _, item := range g.Items {
-		// read either tags or attributes
 		dataAsString, err := g.readTagsOrAttributes(item)
 		if err != nil {
-			// service.ErrNotconnected
-			return nil, nil, err
+			if isTransportError(err) {
+				g.Log.Errorf("Lost connection to EIP controller: %v", err)
+				g.disconnect()
+
+				return nil, nil, service.ErrNotConnected
+			}
+
+			g.Log.Warnf("Skipping %s: %v", item.name(), err)
+			failed++
+			continue
 		}
 
 		// convert the dataAsString into bytes
 		dataAsBytes := []byte(dataAsString)
 
-		msg, err := CreateMessageFromValue(dataAsBytes, item)
-		if err != nil {
-			// service.ErrNotconnected
-			return nil, nil, err
-		}
-
 		// append the new message to the msgs slice
-		msgs = append(msgs, msg)
+		msgs = append(msgs, CreateMessageFromValue(dataAsBytes, item))
 	}
 
-	// not sure if we could just set a global "pollRate" for the plc
-	time.Sleep(g.PollRate)
+	if len(msgs) == 0 && failed > 0 {
+		g.Log.Errorf("None of the %d configured items could be read, requesting reconnect", failed)
+		g.disconnect()
+
+		return nil, nil, service.ErrNotConnected
+	}
+
+	select {
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	case <-time.After(g.PollRate):
+	}
 
 	return msgs, func(_ context.Context, _ error) error {
-		// for now
 		return nil
 	}, nil
 }
 
-func (g *EIPInput) Close(_ context.Context) error {
+func (g *EIPInput) disconnect() {
+	if g.CIP == nil || !g.CIP.Connected() {
+		return
+	}
+
 	err := g.CIP.Disconnect()
 	if err != nil {
-		return err
+		g.Log.Debugf("Disconnect failed: %v", err)
 	}
+}
+
+func (g *EIPInput) Close(_ context.Context) error {
+	g.disconnect()
 
 	return nil
 }

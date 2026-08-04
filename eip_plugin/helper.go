@@ -16,6 +16,7 @@ package eip_plugin
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"math"
 	"net"
@@ -239,6 +240,37 @@ func parseCIPTypeFromString(datatype string) (gologix.CIPType, error) {
 	}
 }
 
+// CIPItem.Bytes() marshals the item back out, header included, so it cannot read a payload.
+func attributePayload(item *gologix.CIPItem) []byte {
+	if item.Pos >= len(item.Data) {
+		return nil
+	}
+
+	return item.Data[item.Pos:]
+}
+
+// controllers disagree on string framing: a 1 byte length, a 4 byte length, or none.
+func decodeCIPString(payload []byte) string {
+	trimmed := bytes.TrimRight(payload, "\x00")
+	if len(trimmed) == 0 {
+		return ""
+	}
+
+	shortLen := int(trimmed[0])
+	if shortLen == len(trimmed)-1 {
+		return string(trimmed[1:])
+	}
+
+	if len(trimmed) > 4 {
+		longLen := int(binary.LittleEndian.Uint32(trimmed[:4]))
+		if longLen == len(trimmed)-4 {
+			return string(trimmed[4:])
+		}
+	}
+
+	return string(trimmed)
+}
+
 // buildConverterFunc is used to build the function, which is needed to convert
 // the values into the correct datatype
 // only used for attributes
@@ -264,7 +296,7 @@ func buildConverterFunc(datatype string) (func(*gologix.CIPItem) (any, error), e
 		}, nil
 	case "word":
 		return func(item *gologix.CIPItem) (any, error) {
-			val, err := item.Bytes()
+			val, err := item.Uint16()
 			if err != nil {
 				return nil, err
 			}
@@ -272,7 +304,7 @@ func buildConverterFunc(datatype string) (func(*gologix.CIPItem) (any, error), e
 		}, nil
 	case "dword":
 		return func(item *gologix.CIPItem) (any, error) {
-			val, err := item.Bytes()
+			val, err := item.Uint32()
 			if err != nil {
 				return nil, err
 			}
@@ -345,20 +377,11 @@ func buildConverterFunc(datatype string) (func(*gologix.CIPItem) (any, error), e
 		}, nil
 	case "string":
 		return func(item *gologix.CIPItem) (any, error) {
-			val, err := item.Bytes()
-			if err != nil {
-				return nil, err
-			}
-			return string(val), nil
+			return decodeCIPString(attributePayload(item)), nil
 		}, nil
 	case "array of octed":
 		return func(item *gologix.CIPItem) (any, error) {
-			val, err := item.Bytes()
-			if err != nil {
-				return nil, err
-			}
-
-			return val, nil
+			return attributePayload(item), nil
 		}, nil
 	default:
 		return nil, fmt.Errorf("Failed to build converterFunc, unsupported datatype: %s", datatype)
