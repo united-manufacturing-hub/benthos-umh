@@ -1181,3 +1181,33 @@ var _ = Describe("Validator Logger Integration", func() {
 		})
 	})
 })
+
+var _ = Describe("ParseContractRef", func() {
+	DescribeTable("parses one-part and two-part contracts",
+		func(in string, wantName string, wantMajor, wantMinor uint64) {
+			ref, err := ParseContractRef(in)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ref.Full).To(Equal(in))
+			Expect(ref.Name).To(Equal(wantName))
+			Expect(ref.Major).To(Equal(wantMajor))
+			Expect(ref.Minor).To(Equal(wantMinor))
+		},
+		Entry("one-part", "_pump_v1", "_pump", uint64(1), uint64(0)),
+		Entry("one-part multi-digit", "_pump_v12", "_pump", uint64(12), uint64(0)),
+		Entry("two-part", "_pump_v1_1", "_pump", uint64(1), uint64(1)),
+		Entry("two-part minor zero", "_pump_v1_0", "_pump", uint64(1), uint64(0)),
+		Entry("two-part multi-digit", "_pump_v10_3", "_pump", uint64(10), uint64(3)),
+		Entry("model name with digits", "_line_2_v1_1", "_line_2", uint64(1), uint64(1)),
+	)
+
+	DescribeTable("rejects unversioned contracts so they take the bypass",
+		func(in string) {
+			_, err := ParseContractRef(in)
+			Expect(err).To(HaveOccurred())
+		},
+		Entry("raw", "_raw"),
+		Entry("historian", "_historian"),
+		Entry("empty", ""),
+		Entry("no version", "_pump"),
+	)
+})

@@ -40,8 +40,52 @@ const (
 )
 
 // schemaVersionRegex matches data contract names with version suffixes.
-// Expected format: "contractname_v123" where 123 is the version number.
-var schemaVersionRegex = regexp.MustCompile(`^(.+)_v(\d+)$`)
+// Expected format: "contractname_v123" or "contractname_v123_4".
+var schemaVersionRegex = regexp.MustCompile(`^(.+)_v(\d+)(?:_(\d+))?$`)
+
+// ContractRef is a data contract name decomposed into its parts. Full is the
+// name as it appeared on the topic and is what keys the schema cache and
+// prefixes the registry subject lookup.
+type ContractRef struct {
+	Full  string
+	Name  string
+	Major uint64
+	Minor uint64
+}
+
+// ParseContractRef splits a versioned data contract name into its parts. It
+// returns an error for an unversioned contract, which the caller treats as
+// "no schema to check".
+func ParseContractRef(contract string) (ContractRef, error) {
+	if contract == "" {
+		return ContractRef{}, fmt.Errorf("contract string is empty")
+	}
+
+	matches := schemaVersionRegex.FindStringSubmatch(contract)
+	if len(matches) < 3 {
+		return ContractRef{}, fmt.Errorf("invalid data contract format '%s', expected 'name_v1' or 'name_v1_2'", contract)
+	}
+
+	major, err := strconv.ParseUint(matches[2], 10, 64)
+	if err != nil {
+		return ContractRef{}, fmt.Errorf("invalid version number '%s' in contract '%s': %w", matches[2], contract, err)
+	}
+
+	var minor uint64
+	if len(matches) > 3 && matches[3] != "" {
+		minor, err = strconv.ParseUint(matches[3], 10, 64)
+		if err != nil {
+			return ContractRef{}, fmt.Errorf("invalid version number '%s' in contract '%s': %w", matches[3], contract, err)
+		}
+	}
+
+	return ContractRef{Full: contract, Name: matches[1], Major: major, Minor: minor}, nil
+}
+
+// VersionString renders the version as it appears in a two-part contract name.
+func (r ContractRef) VersionString() string {
+	return fmt.Sprintf("v%d_%d", r.Major, r.Minor)
+}
 
 // ValidationResult contains information about the validation result and the contract used.
 type ValidationResult struct {
@@ -196,7 +240,7 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 
 	v.debugf("Validator.Validate: Starting validation for contract='%s', payload length=%d", contract, len(payload))
 
-	contractName, version, err := v.ExtractSchemaVersionFromDataContract(contract)
+	ref, err := ParseContractRef(contract)
 	if err != nil {
 		v.debugf("Validator.Validate: Unversioned contract '%s', bypassing validation", contract)
 		// For unversioned contracts, always bypass (no fetching of "latest")
@@ -209,6 +253,7 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 			Error:               nil,
 		}
 	}
+	contractName, version := ref.Name, ref.Major
 
 	v.debugf("Validator.Validate: Extracted contractName='%s', version=%d", contractName, version)
 
@@ -583,26 +628,15 @@ func (v *Validator) fetchLatestSchemaFromRegistry(subject string) ([]byte, bool,
 	return []byte(versionResp.Schema), true, nil
 }
 
-// ExtractSchemaVersionFromDataContract parses a data contract string to extract
-// the base contract name and version number.
-// Expected format: "contractname_v123" -> ("contractname", 123, nil)
+// ExtractSchemaVersionFromDataContract reports a contract's name and major
+// version. Retained for callers that predate ParseContractRef.
 func (v *Validator) ExtractSchemaVersionFromDataContract(contract string) (string, uint64, error) {
-	if contract == "" {
-		return "", 0, fmt.Errorf("contract string is empty")
-	}
-
-	matches := schemaVersionRegex.FindStringSubmatch(contract)
-	if len(matches) != 3 {
-		return "", 0, fmt.Errorf("invalid data contract format '%s', expected format: 'name_v123'", contract)
-	}
-
-	contractName := matches[1]
-	version, err := strconv.ParseUint(matches[2], 10, 64)
+	ref, err := ParseContractRef(contract)
 	if err != nil {
-		return "", 0, fmt.Errorf("invalid version number '%s' in contract '%s': %w", matches[2], contract, err)
+		return "", 0, err
 	}
 
-	return contractName, version, nil
+	return ref.Name, ref.Major, nil
 }
 
 // LoadSchemas loads and compiles multiple schemas for the specified contract name and version.
