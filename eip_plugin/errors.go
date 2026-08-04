@@ -16,17 +16,15 @@ package eip_plugin
 
 import (
 	"errors"
-	"io"
 	"net"
 	"os"
 	"syscall"
 )
 
-// gologix-library wraps around these errors
+// gologix-library wraps around these errors. io.EOF and io.ErrUnexpectedEOF are
+// deliberately absent: the same values come back from parsing a reply buffer.
 var transportErrors = []error{
 	os.ErrDeadlineExceeded,
-	io.EOF,
-	io.ErrUnexpectedEOF,
 	net.ErrClosed,
 	syscall.ECONNRESET,
 	syscall.ECONNREFUSED,

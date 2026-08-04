@@ -303,9 +303,14 @@ func (g *EIPInput) ReadBatch(ctx context.Context) (service.MessageBatch, service
 	failed := 0
 
 	for _, item := range g.Items {
+		err := ctx.Err()
+		if err != nil {
+			return nil, nil, err
+		}
+
 		dataAsString, err := g.readTagsOrAttributes(item)
 		if err != nil {
-			if isTransportError(err) {
+			if !g.CIP.Connected() || isTransportError(err) {
 				g.Log.Errorf("Lost connection to EIP controller: %v", err)
 				g.disconnect()
 
