@@ -333,18 +333,33 @@ func (g *EIPInput) ReadBatch(ctx context.Context) (service.MessageBatch, service
 		g.Log.Errorf("None of the %d configured items could be read, requesting reconnect", failed)
 		g.disconnect()
 
+		err := g.pause(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+
 		return nil, nil, service.ErrNotConnected
 	}
 
-	select {
-	case <-ctx.Done():
-		return nil, nil, ctx.Err()
-	case <-time.After(g.PollRate):
+	err := g.pause(ctx)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	return msgs, func(_ context.Context, _ error) error {
 		return nil
 	}, nil
+}
+
+// pause spaces out polls without holding a shutdown for the whole interval
+func (g *EIPInput) pause(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(g.PollRate):
+	}
+
+	return nil
 }
 
 func (g *EIPInput) disconnect() {
