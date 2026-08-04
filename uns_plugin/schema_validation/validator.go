@@ -255,12 +255,12 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 	}
 	contractName, version := ref.Name, ref.Major
 
-	v.debugf("Validator.Validate: Extracted contractName='%s', version=%d", contractName, version)
+	v.debugf("Validator.Validate: Extracted contractName='%s', version=%s", contractName, ref.VersionString())
 
 	// Get schemas from cache or fetch synchronously
-	schemas, schemaExists, err := v.getSchemasWithCache(contractName, version)
+	schemas, schemaExists, err := v.getSchemasWithCache(ref)
 	if err != nil {
-		v.debugf("Validator.Validate: Failed to get schemas for %s v%d: %v", contractName, version, err)
+		v.debugf("Validator.Validate: Failed to get schemas for %s %s: %v", contractName, ref.VersionString(), err)
 		return &ValidationResult{
 			SchemaCheckPassed:   false,
 			SchemaCheckBypassed: true,
@@ -272,30 +272,30 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 	}
 
 	if !schemaExists {
-		v.debugf("Validator.Validate: No schemas found for contract '%s' version %d", contractName, version)
+		v.debugf("Validator.Validate: No schemas found for contract '%s' version %s", contractName, ref.VersionString())
 		return &ValidationResult{
 			SchemaCheckPassed:   false,
 			SchemaCheckBypassed: true,
 			ContractName:        contractName,
 			ContractVersion:     version,
-			BypassReason:        fmt.Sprintf("no schemas found for contract '%s' version %d", contractName, version),
+			BypassReason:        fmt.Sprintf("no schemas found for contract '%s' version %s", contractName, ref.VersionString()),
 			Error:               nil,
 		}
 	}
 
 	if len(schemas) == 0 {
-		v.debugf("Validator.Validate: No schemas available for contract '%s' version %d", contractName, version)
+		v.debugf("Validator.Validate: No schemas available for contract '%s' version %s", contractName, ref.VersionString())
 		return &ValidationResult{
 			SchemaCheckPassed:   false,
 			SchemaCheckBypassed: true,
 			ContractName:        contractName,
 			ContractVersion:     version,
-			BypassReason:        fmt.Sprintf("no schemas available for contract '%s' version %d", contractName, version),
+			BypassReason:        fmt.Sprintf("no schemas available for contract '%s' version %s", contractName, ref.VersionString()),
 			Error:               nil,
 		}
 	}
 
-	v.debugf("Validator.Validate: Found %d schemas for contract '%s' version %d", len(schemas), contractName, version)
+	v.debugf("Validator.Validate: Found %d schemas for contract '%s' version %s", len(schemas), contractName, ref.VersionString())
 
 	// Build the full path for validation
 	var fullPath strings.Builder
@@ -373,7 +373,7 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 
 	// For existing tag, but a different type we want a datatype-mismatch error here
 	if lastError != nil {
-		mismatch := v.datatypeMismatchError(schemas, version, contractName, virtualPath, classifyPayloadType(payload))
+		mismatch := v.datatypeMismatchError(schemas, version, ref.Full, virtualPath, classifyPayloadType(payload))
 		if mismatch != nil {
 			v.debugf("Validator.Validate: datatype mismatch for '%s': %v", virtualPath, mismatch)
 			return &ValidationResult{
@@ -387,7 +387,7 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 	}
 
 	// None of the schemas matched
-	v.debugf("Validator.Validate: FAILED! No schemas matched for contract '%s' version %d. Last error: %v", contractName, version, lastError)
+	v.debugf("Validator.Validate: FAILED! No schemas matched for contract '%s' version %s. Last error: %v", contractName, ref.VersionString(), lastError)
 	return &ValidationResult{
 		SchemaCheckPassed:   false,
 		SchemaCheckBypassed: false,
@@ -397,9 +397,20 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 	}
 }
 
+// cacheKeyFor keys the compiled-schema cache. Minor 0 reuses the legacy
+// "name-vMAJOR" key so bare "_pump_v1" and explicit "_pump_v1_0" (the same
+// version per the versionKey grammar) share one entry; any other minor gets
+// its own key so it is never served for a different minor of the same major.
+func cacheKeyFor(name string, major uint64, minor uint64) string {
+	if minor == 0 {
+		return fmt.Sprintf("%s-v%d", name, major)
+	}
+	return fmt.Sprintf("%s-v%d_%d", name, major, minor)
+}
+
 // getSchemasWithCache retrieves schemas from cache or fetches them synchronously
-func (v *Validator) getSchemasWithCache(contractName string, version uint64) (map[string]*Schema, bool, error) {
-	cacheKey := fmt.Sprintf("%s-v%d", contractName, version)
+func (v *Validator) getSchemasWithCache(ref ContractRef) (map[string]*Schema, bool, error) {
+	cacheKey := cacheKeyFor(ref.Name, ref.Major, ref.Minor)
 
 	// Check cache first
 	v.cacheMutex.RLock()
@@ -415,7 +426,7 @@ func (v *Validator) getSchemasWithCache(contractName string, version uint64) (ma
 	v.debugf("getSchemasWithCache: CACHE MISS for key='%s', fetching from registry", cacheKey)
 
 	// Cache miss or expired, fetch synchronously
-	return v.fetchSchemasSync(contractName, version)
+	return v.fetchSchemasSync(ref)
 }
 
 // fetchSchemasSync fetches all schemas matching the contract+version pattern synchronously and updates cache
@@ -423,10 +434,10 @@ func (v *Validator) getSchemasWithCache(contractName string, version uint64) (ma
 // This function always fetches the LATEST version of each schema subject rather than trying to map
 // contract versions to registry versions. This simplifies the architecture and avoids version conflicts
 // since schema registry versions are independent of UMH contract versions.
-func (v *Validator) fetchSchemasSync(contractName string, version uint64) (map[string]*Schema, bool, error) {
-	cacheKey := fmt.Sprintf("%s-v%d", contractName, version)
+func (v *Validator) fetchSchemasSync(ref ContractRef) (map[string]*Schema, bool, error) {
+	cacheKey := cacheKeyFor(ref.Name, ref.Major, ref.Minor)
 
-	v.debugf("fetchSchemasSync: Fetching schemas for contractName='%s', version=%d", contractName, version)
+	v.debugf("fetchSchemasSync: Fetching schemas for contract='%s'", ref.Full)
 
 	// Double-check locking pattern
 	v.cacheMutex.Lock()
@@ -454,8 +465,8 @@ func (v *Validator) fetchSchemasSync(contractName string, version uint64) (map[s
 
 	v.debugf("fetchSchemasSync: Found %d subjects in registry", len(subjects))
 
-	// Filter subjects that match our pattern: contractName_v{version}-*
-	schemaPrefix := fmt.Sprintf("%s_v%d-", contractName, version)
+	// Filter subjects that match our pattern: <contract>-*
+	schemaPrefix := ref.Full + "-"
 	var matchingSubjects []string
 	for _, subject := range subjects {
 		if strings.HasPrefix(subject, schemaPrefix) {
@@ -508,7 +519,7 @@ func (v *Validator) fetchSchemasSync(contractName string, version uint64) (map[s
 
 		// Compile the schema
 		schema := NewSchema(subject)
-		if err := schema.AddVersion(version, schemaBytes); err != nil {
+		if err := schema.AddVersion(ref.Major, schemaBytes); err != nil {
 			v.debugf("fetchSchemasSync: Failed to compile schema for subject='%s': %v", subject, err)
 			// Log error but continue with other schemas
 			continue
@@ -518,7 +529,7 @@ func (v *Validator) fetchSchemasSync(contractName string, version uint64) (map[s
 		v.debugf("fetchSchemasSync: Successfully compiled schema for subject='%s'", subject)
 	}
 
-	v.debugf("fetchSchemasSync: Successfully compiled %d schemas for contractName='%s' version %d", len(schemas), contractName, version)
+	v.debugf("fetchSchemasSync: Successfully compiled %d schemas for contract='%s'", len(schemas), ref.Full)
 
 	// Cache the results
 	expiresAt := time.Time{} // Zero time means never expires
@@ -654,7 +665,7 @@ func (v *Validator) LoadSchemas(contractName string, version uint64, schemas map
 		return fmt.Errorf("schemas cannot be empty for contract '%s' version %d", contractName, version)
 	}
 
-	cacheKey := fmt.Sprintf("%s-v%d", contractName, version)
+	cacheKey := cacheKeyFor(contractName, version, 0)
 
 	v.cacheMutex.Lock()
 	defer v.cacheMutex.Unlock()
@@ -695,7 +706,7 @@ func (v *Validator) LoadSchemas(contractName string, version uint64, schemas map
 
 // HasSchema checks if schemas exist for the given contract name and version.
 func (v *Validator) HasSchema(contractName string, version uint64) bool {
-	cacheKey := fmt.Sprintf("%s-v%d", contractName, version)
+	cacheKey := cacheKeyFor(contractName, version, 0)
 
 	v.cacheMutex.RLock()
 	defer v.cacheMutex.RUnlock()
@@ -840,7 +851,7 @@ func classifyPayloadType(payload []byte) string {
 }
 
 // datatypeMismatchError replaces the confusing "path is both valid and invalid" error with a clear got-vs-want line.
-func (v *Validator) datatypeMismatchError(schemas map[string]*Schema, version uint64, contractName string, virtualPath string, payloadType string) error {
+func (v *Validator) datatypeMismatchError(schemas map[string]*Schema, version uint64, contract string, virtualPath string, payloadType string) error {
 	if payloadType == "" {
 		return nil
 	}
@@ -865,8 +876,8 @@ func (v *Validator) datatypeMismatchError(schemas map[string]*Schema, version ui
 	}
 
 	sort.Strings(registered)
-	return fmt.Errorf("datatype mismatch for '%s' in %s_v%d: want %s, got %s",
-		virtualPath, contractName, version, strings.Join(registered, ", "), payloadType)
+	return fmt.Errorf("datatype mismatch for '%s' in %s: want %s, got %s",
+		virtualPath, contract, strings.Join(registered, ", "), payloadType)
 }
 
 // extractValidVirtualPaths extracts valid virtual_path enum values from a JSON schema

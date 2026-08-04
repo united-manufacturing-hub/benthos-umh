@@ -1182,6 +1182,102 @@ var _ = Describe("Validator Logger Integration", func() {
 	})
 })
 
+func numberSchemaFor(tag string) []byte {
+	return []byte(fmt.Sprintf(`{
+		"type": "object",
+		"properties": {
+			"virtual_path": {
+				"type": "string",
+				"enum": ["%s"]
+			},
+			"fields": {
+				"type": "object",
+				"properties": {
+					"timestamp_ms": {"type": "number"},
+					"value": {"type": "number"}
+				},
+				"required": ["timestamp_ms", "value"],
+				"additionalProperties": false
+			}
+		},
+		"required": ["virtual_path", "fields"],
+		"additionalProperties": false
+	}`, tag))
+}
+
+var _ = Describe("schema cache keying", func() {
+	It("does not serve one minor's schemas for another", func() {
+		freshRegistry := NewMockSchemaRegistry()
+		defer freshRegistry.Close()
+		freshRegistry.AddSchema("_pump_v1_1-timeseries-number", 1, string(numberSchemaFor("temperature")))
+
+		freshValidator := NewValidatorWithRegistry(freshRegistry.URL())
+		defer freshValidator.Close()
+
+		payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
+
+		v1Topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_v1.temperature")
+		Expect(err).ToNot(HaveOccurred())
+		v1_1Topic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_v1_1.temperature")
+		Expect(err).ToNot(HaveOccurred())
+
+		resultV1_1 := freshValidator.Validate(v1_1Topic, payload)
+		Expect(resultV1_1.SchemaCheckPassed).To(BeTrue())
+
+		resultV1 := freshValidator.Validate(v1Topic, payload)
+		Expect(resultV1.SchemaCheckPassed).To(BeFalse())
+		Expect(resultV1.SchemaCheckBypassed).To(BeTrue())
+		Expect(resultV1.BypassReason).To(ContainSubstring("no schemas found for contract"))
+
+		freshValidator.cacheMutex.RLock()
+		_, existsV1 := freshValidator.contractCache[cacheKeyFor("_pump", 1, 0)]
+		_, existsV1_1 := freshValidator.contractCache[cacheKeyFor("_pump", 1, 1)]
+		freshValidator.cacheMutex.RUnlock()
+
+		Expect(existsV1).To(BeTrue())
+		Expect(existsV1_1).To(BeTrue())
+		Expect(cacheKeyFor("_pump", 1, 0)).ToNot(Equal(cacheKeyFor("_pump", 1, 1)))
+	})
+
+	It("keeps one-part contracts distinct from two-part ones", func() {
+		v := NewValidator()
+		defer v.Close()
+
+		Expect(v.LoadSchemas("_pump", 1, map[string][]byte{
+			"_pump_v1-timeseries-number": numberSchemaFor("temperature"),
+		})).To(Succeed())
+
+		Expect(v.HasSchema("_pump", 1)).To(BeTrue())
+
+		v.cacheMutex.RLock()
+		_, existsMinor1 := v.contractCache[cacheKeyFor("_pump", 1, 1)]
+		v.cacheMutex.RUnlock()
+		Expect(existsMinor1).To(BeFalse())
+	})
+
+	It("serves a cache hit without going back to the registry", func() {
+		freshRegistry := NewMockSchemaRegistry()
+		freshRegistry.AddSchema("_pump_v1_1-timeseries-number", 1, string(numberSchemaFor("temperature")))
+
+		freshValidator := NewValidatorWithRegistry(freshRegistry.URL())
+		defer freshValidator.Close()
+
+		unsTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_v1_1.temperature")
+		Expect(err).ToNot(HaveOccurred())
+		payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
+
+		first := freshValidator.Validate(unsTopic, payload)
+		Expect(first.SchemaCheckPassed).To(BeTrue())
+
+		// Registry is now gone; a second validation can only pass if it was
+		// served from cache instead of going back over the network.
+		freshRegistry.Close()
+
+		second := freshValidator.Validate(unsTopic, payload)
+		Expect(second.SchemaCheckPassed).To(BeTrue())
+	})
+})
+
 var _ = Describe("ParseContractRef", func() {
 	DescribeTable("parses one-part and two-part contracts",
 		func(in string, wantName string, wantMajor, wantMinor uint64) {
