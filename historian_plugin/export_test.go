@@ -338,8 +338,6 @@ func (h *HistorianTestHandle) NoteContractMismatch(total int, mismatched int, se
 	h.o.noteContractMismatch(total, mismatched, seen, example, sawMatching)
 }
 
-func (h *HistorianTestHandle) RelogContractMismatch() { h.o.relogContractMismatch() }
-
 func DropHintForTest(reason DropReason) string { return dropHint(reason) }
 
 func (h *HistorianTestHandle) SetAllowUnvalidated(v bool) { h.o.allowUnvalidated = v }

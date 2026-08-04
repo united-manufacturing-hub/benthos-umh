@@ -46,38 +46,31 @@ func reportedContracts(seen map[string]struct{}) []string {
 func mismatchMessage(contract string, everStored bool, total int, mismatched int, contracts []string, example string) string {
 	seen := "[" + strings.Join(contracts, ", ") + "]"
 	if everStored {
-		return fmt.Sprintf("TimescaleDB historian: subscription is over-broad (reason=%s) -- %d of %d message(s) in this batch carry other data contracts %s (example: %s) and were discarded, so bridge throughput does not reflect rows written. Narrow umh_topics to %s",
+		return fmt.Sprintf("TimescaleDB historian: subscription is over-broad (reason=%s) -- %d of %d message(s) in this batch carry other data contracts %s (example: %s), so the whole batch is refused and even its matching message(s) are not written. Narrow umh_topics to %s",
 			DropContractMismatch, mismatched, total, seen, example, suggestedTopicPattern(contract))
 	}
-	return fmt.Sprintf("TimescaleDB historian: no message carries data contract _%s (reason=%s); the subscription selects %s (example: %s). Either set data_contract_name to a contract that is published, or narrow umh_topics to %s",
+	return fmt.Sprintf("TimescaleDB historian: no message carries data contract _%s (reason=%s); the subscription selects %s (example: %s) and every batch is refused. Either set data_contract_name to a contract that is published, or narrow umh_topics to %s",
 		contract, DropContractMismatch, seen, example, suggestedTopicPattern(contract))
+}
+
+// nackMessage is deliberately terse: the uns input error-logs it on every refused batch, with no
+// throttle, so the actionable detail lives in the throttled mismatchMessage instead.
+func nackMessage(contract string, total int, mismatched int) string {
+	return fmt.Sprintf("TimescaleDB historian: batch refused, %d of %d message(s) do not carry data contract _%s (reason=%s)",
+		mismatched, total, contract, DropContractMismatch)
+}
+
+func (o *historianOutput) pastStartupGrace() bool {
+	return o.now().Sub(o.startedAt) >= startupGrace
 }
 
 func (o *historianOutput) noteContractMismatch(total int, mismatched int, seen map[string]struct{}, example string, sawMatching bool) {
 	o.logStateMu.Lock()
 	defer o.logStateMu.Unlock()
-	o.mismatchSeen = true
-	o.mismatchMsg = mismatchMessage(o.contract, o.everStored.Load() || sawMatching, total, mismatched, reportedContracts(seen), example)
-	o.emitMismatchLocked()
-}
-
-func (o *historianOutput) relogContractMismatch() {
-	o.logStateMu.Lock()
-	defer o.logStateMu.Unlock()
-	if !o.mismatchSeen {
-		return
-	}
-	o.emitMismatchLocked()
-}
-
-func (o *historianOutput) emitMismatchLocked() {
 	now := o.now()
-	if now.Sub(o.startedAt) < startupGrace {
-		return
-	}
 	if !o.lastMismatchLog.IsZero() && now.Sub(o.lastMismatchLog) < mismatchLogInterval {
 		return
 	}
 	o.lastMismatchLog = now
-	o.logger.Errorf("%s", o.mismatchMsg)
+	o.logger.Errorf("%s", mismatchMessage(o.contract, o.everStored.Load() || sawMatching, total, mismatched, reportedContracts(seen), example))
 }

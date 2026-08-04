@@ -164,17 +164,21 @@ ORDER  BY v.ts DESC;
   `dropped message (reason=…, umh_topic=…)` at error level, which umh-core surfaces as a degraded
   bridge. A source emitting malformed data therefore shows as degraded even while every other tag
   keeps being written. The log clears once the bad messages stop and the last error ages out of
-  umh-core's window; unlike the contract-mismatch error it is not latched.
-- **A wrong data contract errors the bridge.** A message whose data-contract segment is not the
-  configured `data_contract_name` is still dropped and counted on
-  `messages_dropped{reason=contract_mismatch}`, but it also logs at error level, which
-  umh-core surfaces as a degraded bridge. The error names the contracts that actually arrived, an
-  example topic, and the `umh_topics` pattern to narrow to. Matching rows in the same batch are
-  still written — degraded does not mean stopped. Drop errors are held back for 30 seconds
-  after startup so the bridge reaches a running state before it degrades, and it re-logs every
-  2 minutes while messages keep arriving, so the bridge stays degraded until the subscription is
-  fixed and the bridge redeployed. A bridge that stops receiving messages entirely recovers on its
-  own once the last error ages out of umh-core's log window.
+  umh-core's window.
+- **A wrong data contract refuses the whole batch.** A batch holding any message whose data-contract
+  segment is not the configured `data_contract_name` is NACKed: nothing in it is written, not even
+  its matching messages, and `output_sent` never counts it, so reported write throughput is the
+  number of rows actually stored rather than the number of messages accepted. This applies from the
+  first batch, with no startup grace. Every mismatched message still increments
+  `messages_dropped{reason=contract_mismatch}`, and the plugin logs an error naming the contracts
+  that arrived, an example topic, and the `umh_topics` pattern to narrow to, throttled to once every
+  2 minutes because this reason can fire on every message of a high-rate stream. The `uns` input
+  additionally logs its own error for each refused batch, unthrottled.
+
+  A NACKed batch is not replayed. The `uns` input leaves its offsets uncommitted, and the next
+  batch that is ACKed commits past them, so the refused messages are lost rather than retried.
+  Fix the subscription first, then redeploy. Once mismatched messages stop arriving the bridge
+  recovers on its own, as the last error ages out of umh-core's log window.
 - **Subscribe only to this contract.** `umh_topics` must select the configured contract and nothing
   else; anything wider errors the bridge. Use
   `^umh\.v1(?:\.[^._][^.]*)+\._<contract>(_v\d+)?\..+$`, which matches any location depth and both

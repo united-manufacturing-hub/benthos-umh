@@ -101,8 +101,6 @@ type historianOutput struct {
 	logStateMu sync.Mutex  // linearizes the everStored transition with the mismatch-report decision
 	everStored atomic.Bool // set once the first value row is stored; lock-free reads gate the hot path
 
-	mismatchSeen    bool
-	mismatchMsg     string
 	lastMismatchLog time.Time
 }
 
@@ -396,7 +394,9 @@ func (o *historianOutput) warnPolicyDrift(ctx context.Context) {
 // then the surviving rows are written to Postgres in a single transaction (writeBatchFast). A
 // row Postgres can never accept ("poison") demotes the write to a row-by-row pass so the good
 // rows still land. The return value is the benthos ACK/NACK signal: nil ACKs the batch (including
-// a batch where every message was dropped); a returned error NACKs it for retry.
+// a batch where every message was dropped for a reason other than a contract mismatch); a returned
+// error NACKs it. A batch holding any contract mismatch is NACKed whole, from the first batch
+// onwards, and nothing in it is written.
 func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageBatch) error {
 	o.mu.Lock()
 	pool := o.pool
@@ -415,7 +415,8 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	}
 
 	// Step 1: transform every message into a Row. Malformed messages are counted (by reason) and
-	// skipped -- never nacked -- so one bad message can't stall the stream.
+	// skipped, so one bad message can't stall the stream; a contract mismatch instead NACKs the
+	// whole batch below.
 	view := o.dedup.NewBatch()
 	rows := make([]*Row, 0, len(batch))
 	churn := map[string]struct{}{} // high-churn metadata keys seen anywhere in this batch (see below)
@@ -470,13 +471,12 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	o.warnHighChurnMetadata(churn)
 	if contractMismatches > 0 {
 		o.noteContractMismatch(len(batch), contractMismatches, mismatchedContracts, mismatchExample, len(rows) > 0)
-	} else {
-		o.relogContractMismatch()
+		return errors.New(nackMessage(o.contract, len(batch), contractMismatches))
 	}
 	if len(rows) == 0 {
-		// Return nil so one fully-dropped batch never stalls the stream. A batch dropped entirely for
-		// contract mismatch is already reported above; anything else is a genuine fault.
-		if len(batch) > 0 && contractMismatches < len(batch) {
+		// Return nil so one fully-dropped batch never stalls the stream. A contract mismatch NACKed
+		// above; reaching here means every message was dropped for a different reason.
+		if len(batch) > 0 {
 			o.logger.Warnf("TimescaleDB historian: dropped all %d message(s) in the batch; nothing written. Check the source data and metadata configuration.", len(batch))
 		}
 		return nil
@@ -792,16 +792,16 @@ func describeRow(r *Row) string {
 
 // recordDrop counts and error-logs a discarded message, so a misconfigured output that drops
 // everything is visible rather than silently healthy with zero rows. Contract mismatch is counted
-// but not logged here: it is reported by the throttled mismatch error instead, because it is the
-// one reason that can fire on every message of a high-rate stream. The log is held for startupGrace
-// for the same reason the mismatch report is: an error inside umh-core's 10s startup gate strands
-// the bridge in starting instead of degrading it.
+// but not logged here: it is reported by the mismatch error instead, because it is the one reason
+// that can fire on every message of a high-rate stream. These drops are ACKed, so the log is held
+// for startupGrace: an error inside umh-core's 10s startup gate strands the bridge in starting
+// instead of degrading it, and a dropped-but-ACKed message is not worth that.
 func (o *historianOutput) recordDrop(reason string, topic string) {
 	o.dropped.Incr(1, reason)
 	if reason == string(DropContractMismatch) {
 		return
 	}
-	if o.now().Sub(o.startedAt) < startupGrace {
+	if !o.pastStartupGrace() {
 		return
 	}
 	o.logger.Errorf("TimescaleDB historian: dropped message (reason=%s, umh_topic=%q)%s", reason, topic, dropHint(DropReason(reason)))
