@@ -130,7 +130,7 @@ AS $fn$
     JOIN umh.tag   g ON g.virtual_path = p_virtual_path
                 AND g.name = p_tag_name
                 AND g.data_contract_name =
-                    '_' || regexp_replace(regexp_replace(p_data_contract, '_v\d+$', ''), '^_', '')
+                    '_' || regexp_replace(regexp_replace(p_data_contract, '_v\d+(_\d+)?$', ''), '^_', '')
     JOIN umh.topic t ON t.location_id = l.location_id AND t.tag_id = g.tag_id
    WHERE l.path = umh.to_ltree_path(p_location_path);
 $fn$;

@@ -26,13 +26,18 @@ import (
 )
 
 var _ = Describe("contract helpers", func() {
-	DescribeTable("NormalizeContract strips a trailing _vN",
+	DescribeTable("NormalizeContract strips a trailing _vN or _vN_M",
 		func(in, want string) { Expect(tsh.NormalizeContract(in)).To(Equal(want)) },
 		Entry("plain", "_pump", "_pump"),
 		Entry("v1", "_pump_v1", "_pump"),
 		Entry("v12", "_pump_v12", "_pump"),
 		Entry("bare with version", "pump_v1", "pump"),
 		Entry("empty", "", ""),
+		Entry("two-part", "_pump_v1_1", "_pump"),
+		Entry("two-part multi-digit", "_pump_v10_3", "_pump"),
+		Entry("two-part minor zero", "_pump_v1_0", "_pump"),
+		Entry("model name ending in digits", "_line_2_v1_1", "_line_2"),
+		Entry("idempotent", "_pump", "_pump"),
 	)
 
 	DescribeTable("ValidateContract",
@@ -50,6 +55,7 @@ var _ = Describe("contract helpers", func() {
 		Entry("leading underscore rejected", "_pump", false),
 		Entry("version suffix rejected", "pump_v1", false),
 		Entry("empty rejected", "", false),
+		Entry("two-part version suffix rejected", "pump_v1_1", false),
 	)
 })
 

@@ -32,7 +32,7 @@ const (
 )
 
 var (
-	reVersionSuffix = regexp.MustCompile(`_v\d+$`)
+	reVersionSuffix = regexp.MustCompile(`_v\d+(_\d+)?$`)
 	reContract      = regexp.MustCompile(`^[a-z0-9_]+$`)
 	reNonLtreeLabel = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 )
@@ -63,13 +63,13 @@ func CanonicalLtreePath(loc string) string {
 	return strings.Join(out, ".")
 }
 
-// NormalizeContract strips a trailing _vN (all versions share one table).
+// NormalizeContract strips a trailing _vN or _vN_M (all versions share one table).
 func NormalizeContract(metaContract string) string {
 	return reVersionSuffix.ReplaceAllString(metaContract, "")
 }
 
 // ValidateContract checks that data_contract_name is a bare lowercase name (letters, digits,
-// underscores) with no leading underscore and no _vN version suffix.
+// underscores) with no leading underscore and no version suffix.
 func ValidateContract(c string) error {
 	if !reContract.MatchString(c) {
 		return fmt.Errorf("data_contract_name %q invalid: use a bare lowercase name (letters, digits, underscores), e.g. \"pump\"", c)
