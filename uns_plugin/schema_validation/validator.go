@@ -56,6 +56,10 @@ type ContractRef struct {
 	Name  string
 	Major uint64
 	Minor uint64
+	// HasMinor reports whether the contract name carried an explicit "_N"
+	// minor segment, distinguishing "_pump_v1" (false) from "_pump_v1_0"
+	// (true, Minor 0).
+	HasMinor bool
 }
 
 // ParseContractRef splits a versioned data contract name into its parts. It
@@ -77,14 +81,15 @@ func ParseContractRef(contract string) (ContractRef, error) {
 	}
 
 	var minor uint64
-	if len(matches) > 3 && matches[3] != "" {
+	hasMinor := len(matches) > 3 && matches[3] != ""
+	if hasMinor {
 		minor, err = strconv.ParseUint(matches[3], 10, 64)
 		if err != nil {
 			return ContractRef{}, fmt.Errorf("invalid version number '%s' in contract '%s': %w", matches[3], contract, err)
 		}
 	}
 
-	return ContractRef{Full: contract, Name: matches[1], Major: major, Minor: minor}, nil
+	return ContractRef{Full: contract, Name: matches[1], Major: major, Minor: minor, HasMinor: hasMinor}, nil
 }
 
 // VersionString renders the version as it appears in a two-part contract name.
@@ -102,10 +107,24 @@ type ValidationResult struct {
 	ContractName string
 	// ContractVersion is the version of the contract that was validated against
 	ContractVersion uint64
+	// ContractMinor is the contract's minor version, and is non-nil only
+	// when the contract name carried an explicit two-part version (e.g.
+	// "_pump_v1_1"). It is nil for a one-part contract like "_pump_v1".
+	ContractMinor *uint64
 	// BypassReason indicates why validation was bypassed (empty if not bypassed)
 	BypassReason string
 	// Error contains the validation error if validation failed
 	Error error
+}
+
+// contractMinorPtr reports ref's minor version for ValidationResult.ContractMinor,
+// or nil when the contract name has no explicit minor segment.
+func contractMinorPtr(ref ContractRef) *uint64 {
+	if !ref.HasMinor {
+		return nil
+	}
+	minor := ref.Minor
+	return &minor
 }
 
 // ContractCacheEntry represents a cached entry for a contract+version combination
@@ -259,6 +278,7 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 		}
 	}
 	contractName, version := ref.Name, ref.Major
+	minor := contractMinorPtr(ref)
 
 	v.debugf("Validator.Validate: Extracted contractName='%s', version=%s", contractName, ref.VersionString())
 
@@ -271,6 +291,7 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 			SchemaCheckBypassed: true,
 			ContractName:        contractName,
 			ContractVersion:     version,
+			ContractMinor:       minor,
 			BypassReason:        fmt.Sprintf("failed to fetch schemas: %v", err),
 			Error:               nil,
 		}
@@ -283,6 +304,7 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 			SchemaCheckBypassed: true,
 			ContractName:        contractName,
 			ContractVersion:     version,
+			ContractMinor:       minor,
 			BypassReason:        fmt.Sprintf("no schemas found for contract '%s' version %s", contractName, ref.VersionString()),
 			Error:               nil,
 		}
@@ -295,6 +317,7 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 			SchemaCheckBypassed: true,
 			ContractName:        contractName,
 			ContractVersion:     version,
+			ContractMinor:       minor,
 			BypassReason:        fmt.Sprintf("no schemas available for contract '%s' version %s", contractName, ref.VersionString()),
 			Error:               nil,
 		}
@@ -354,6 +377,7 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 				SchemaCheckBypassed: false,
 				ContractName:        contractName,
 				ContractVersion:     version,
+				ContractMinor:       minor,
 				Error:               nil,
 			}
 		}
@@ -386,6 +410,7 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 				SchemaCheckBypassed: false,
 				ContractName:        contractName,
 				ContractVersion:     version,
+				ContractMinor:       minor,
 				Error:               mismatch,
 			}
 		}
@@ -398,6 +423,7 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 		SchemaCheckBypassed: false,
 		ContractName:        contractName,
 		ContractVersion:     version,
+		ContractMinor:       minor,
 		Error:               fmt.Errorf("schema validation failed for contract '%s' version %s against all available schemas. Last error: %w", contractName, ref.VersionString(), lastError),
 	}
 }

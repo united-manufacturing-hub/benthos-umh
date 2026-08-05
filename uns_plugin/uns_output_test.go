@@ -459,3 +459,28 @@ var _ = Describe("topic validation", func() {
 		})
 	})
 })
+
+var _ = Describe("contractVersionMetaValue", func() {
+	DescribeTable("renders data_contract_version exactly as the contract name carries it",
+		func(contract, want string) {
+			ref, err := schemavalidation.ParseContractRef(contract)
+			Expect(err).ToNot(HaveOccurred())
+
+			var minor *uint64
+			if ref.HasMinor {
+				m := ref.Minor
+				minor = &m
+			}
+
+			result := &schemavalidation.ValidationResult{
+				ContractVersion: ref.Major,
+				ContractMinor:   minor,
+			}
+			Expect(contractVersionMetaValue(result)).To(Equal(want))
+		},
+		Entry("one-part contract is unchanged from today", "_pump_v1", "1"),
+		Entry("two-part contract with explicit minor zero", "_pump_v1_0", "1_0"),
+		Entry("two-part contract", "_pump_v1_1", "1_1"),
+		Entry("two-part contract with multi-digit major and minor", "_pump_v10_3", "10_3"),
+	)
+})

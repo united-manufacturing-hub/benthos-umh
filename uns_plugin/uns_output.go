@@ -379,8 +379,19 @@ func (o *unsOutput) validateAndEnrichMessage(msg *service.Message, unsTopic *top
 	}
 
 	msg.MetaSet("data_contract_name", result.ContractName)
-	msg.MetaSet("data_contract_version", strconv.FormatUint(result.ContractVersion, 10))
+	msg.MetaSet("data_contract_version", contractVersionMetaValue(result))
 	return nil
+}
+
+// contractVersionMetaValue renders the "data_contract_version" metadata value.
+// For a one-part contract (no minor) it is the major version alone, unchanged
+// from before minor versions existed. For a two-part contract it is
+// "major_minor".
+func contractVersionMetaValue(result *schemavalidation.ValidationResult) string {
+	if result.ContractMinor != nil {
+		return fmt.Sprintf("%d_%d", result.ContractVersion, *result.ContractMinor)
+	}
+	return strconv.FormatUint(result.ContractVersion, 10)
 }
 
 // WriteBatch implements service.BatchOutput.

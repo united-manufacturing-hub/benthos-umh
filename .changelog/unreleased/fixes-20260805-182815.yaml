@@ -1,0 +1,3 @@
+kind: fixes
+body: UNS output now includes the minor version in the data_contract_version metadata for a two-part data contract (e.g. 1_1 for _pump_v1_1) instead of reporting the major version alone (ENG-5500)
+time: 2026-08-05T18:28:15.772987+02:00
