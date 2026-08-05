@@ -53,8 +53,6 @@ func mismatchMessage(contract string, everStored bool, total int, mismatched int
 		contract, DropContractMismatch, seen, example, suggestedTopicPattern(contract))
 }
 
-// nackMessage is deliberately terse: the uns input error-logs it on every refused batch, with no
-// throttle, so the actionable detail lives in the throttled mismatchMessage instead.
 func nackMessage(contract string, total int, mismatched int) string {
 	return fmt.Sprintf("TimescaleDB historian: batch refused, %d of %d message(s) do not carry data contract _%s (reason=%s)",
 		mismatched, total, contract, DropContractMismatch)

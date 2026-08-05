@@ -54,6 +54,12 @@ func mkMsg(value any, tsMs float64, contract string, loc string, tag string, ext
 	return m
 }
 
+func mkMsgNoTimestamp(value any, contract string, loc string, tag string, extraMeta map[string]string) *service.Message {
+	m := mkMsg(value, 0, contract, loc, tag, extraMeta)
+	m.SetStructured(map[string]any{"value": value})
+	return m
+}
+
 var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 	var ctx context.Context
 
@@ -846,7 +852,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(err.Error()).To(ContainSubstring("batch refused"))
 		Expect(h.CountValueRows(ctx, "drops")).To(Equal(0))
 		Expect(logs()).To(ContainSubstring("reason=contract_mismatch"), "the error must name the drop reason")
-		Expect(logs()).NotTo(ContainSubstring("dropped message (reason=contract_mismatch"), "contract mismatch must not also log per message; it would flood at stream rate")
+		Expect(logs()).NotTo(ContainSubstring("(reason=contract_mismatch, example"), "a refused batch reports through the throttled mismatch error only; the drop tally is discarded with it")
 		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: no message carries data contract _drops"), "a wrong contract must error, so umh-core degrades the bridge")
 		Expect(logs()).To(ContainSubstring("_other_v1"), "the error must name the contract that actually arrived")
 		Expect(logs()).To(ContainSubstring(`^umh\.v1(?:\.[^._][^.]*)+\._drops(_v\d+)?\..+$`), "the error must carry the regex to paste")
@@ -940,7 +946,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(logs()).To(ContainSubstring("reason=not_timeseries"))
 	})
 
-	It("warns when a whole batch is dropped for a real fault", func() {
+	It("errors with the reason and the fix when a whole batch is dropped for a real fault", func() {
 		h := connected("drops")
 		defer h.Close(ctx)
 		h.ElapseStartupGrace()
@@ -948,10 +954,28 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		bad := mkMsg(nil, 1000, "_drops_v1", "acme.line1", "t", nil) // matching contract, missing value
 		Expect(h.WriteBatch(ctx, service.MessageBatch{bad})).To(Succeed())
 		Expect(h.CountValueRows(ctx, "drops")).To(Equal(0))
-		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: dropped message (reason=missing_value"), "a malformed message must log at error level so umh-core degrades the bridge")
+		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: dropped 1 of 1 message(s) (reason=missing_value"), "a malformed message must log at error level so umh-core degrades the bridge")
 		Expect(logs()).To(ContainSubstring("set msg.payload.value in the processing step"), "the drop log must tell the user how to fix it")
-		Expect(logs()).To(ContainSubstring("level=warning msg=TimescaleDB historian: dropped all 1 message(s)"), "a 100%-dropped non-empty batch for a real fault must warn (not silent)")
-		Expect(logs()).To(ContainSubstring("Check the source data and metadata configuration"))
+		Expect(logs()).NotTo(ContainSubstring("level=warning"), "the per-message error already carries the reason and the fix; a reasonless batch summary on top of it is noise")
+	})
+
+	It("reports each reason once per batch with its share, and still writes the good rows", func() {
+		h := connected("tally")
+		defer h.Close(ctx)
+		h.ElapseStartupGrace()
+		logs := h.CaptureLogs()
+		batch := service.MessageBatch{
+			mkMsg(1.0, 1000, "_tally_v1", "acme.line1", "good", nil),
+			mkMsg(nil, 2000, "_tally_v1", "acme.line1", "noval1", nil),
+			mkMsg(nil, 3000, "_tally_v1", "acme.line1", "noval2", nil),
+			mkMsgNoTimestamp(4.0, "_tally_v1", "acme.line1", "nots", nil),
+		}
+		Expect(h.WriteBatch(ctx, batch)).To(Succeed())
+		Expect(h.CountValueRows(ctx, "tally")).To(Equal(1), "a partly-dropped batch still writes what it can")
+		Expect(logs()).To(ContainSubstring("dropped 2 of 4 message(s) (reason=missing_value"), "two messages, one line, with the share of the batch")
+		Expect(logs()).To(ContainSubstring("dropped 1 of 4 message(s) (reason=missing_timestamp"), "a second reason gets its own line, not a merged one")
+		Expect(strings.Count(logs(), "level=error")).To(Equal(2), "one line per reason, never one per message")
+		Expect(logs()).To(ContainSubstring("Date.now()"), "each line keeps the fix for its own reason")
 	})
 
 	It("truncates an over-long value_text and warns exactly once", func() {

@@ -199,6 +199,8 @@ const (
 	DropContractBypassed    DropReason = "contract_bypassed"
 	DropContractUnvalidated DropReason = "contract_unvalidated"
 	DropNotTimeseries       DropReason = "not_timeseries"
+	DropNotStructured       DropReason = "not_structured"
+	DropNotObject           DropReason = "not_object"
 )
 
 var dropHints = map[DropReason]string{

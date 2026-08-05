@@ -389,14 +389,6 @@ func (o *historianOutput) warnPolicyDrift(ctx context.Context) {
 	}
 }
 
-// WriteBatch is the output entry point benthos calls once per message batch. It works in two
-// steps: first each message is turned into a Row in-process (parse, validate, build metadata),
-// then the surviving rows are written to Postgres in a single transaction (writeBatchFast). A
-// row Postgres can never accept ("poison") demotes the write to a row-by-row pass so the good
-// rows still land. The return value is the benthos ACK/NACK signal: nil ACKs the batch (including
-// a batch where every message was dropped for a reason other than a contract mismatch); a returned
-// error NACKs it. A batch holding any contract mismatch is NACKed whole, from the first batch
-// onwards, and nothing in it is written.
 func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageBatch) error {
 	o.mu.Lock()
 	pool := o.pool
@@ -414,42 +406,32 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 		defer cancel()
 	}
 
-	// Step 1: transform every message into a Row. Malformed messages are counted (by reason) and
-	// skipped, so one bad message can't stall the stream; a contract mismatch instead NACKs the
-	// whole batch below.
 	view := o.dedup.NewBatch()
 	rows := make([]*Row, 0, len(batch))
 	churn := map[string]struct{}{} // high-churn metadata keys seen anywhere in this batch (see below)
-	contractMismatches := 0        // DropContractMismatch count this batch
+	drops := map[DropReason]dropTally{}
 	mismatchedContracts := map[string]struct{}{}
-	mismatchExample := ""
 	for _, msg := range batch {
 		meta := map[string]string{}
 		_ = msg.MetaWalk(func(k, v string) error { meta[k] = v; return nil })
 		structured, err := msg.AsStructured()
 		if err != nil {
-			o.recordDrop("not_structured", meta["umh_topic"]) // payload is not decodable JSON
+			o.noteDrop(drops, DropNotStructured, meta["umh_topic"])
 			continue
 		}
 		payload, ok := structured.(map[string]any)
 		if !ok {
-			o.recordDrop("not_object", meta["umh_topic"]) // payload is JSON but not a {value, timestamp_ms} object
+			o.noteDrop(drops, DropNotObject, meta["umh_topic"])
 			continue
 		}
 		// Transform validates the umh_topic/contract and the value+timestamp, and decides whether
 		// this row also needs to write a metadata (attribute) row. A non-empty reason means drop.
 		row, drop := Transform(payload, meta, o.contract, o.metadataKeysAll, o.metadataKeys, o.metadataExclude, o.allowUnvalidated, view)
 		if drop.Reason != DropNone {
-			if drop.Reason == DropContractMismatch {
-				contractMismatches++
-				if drop.Contract != "" {
-					mismatchedContracts[drop.Contract] = struct{}{}
-				}
-				if mismatchExample == "" {
-					mismatchExample = meta["umh_topic"]
-				}
+			if drop.Reason == DropContractMismatch && drop.Contract != "" {
+				mismatchedContracts[drop.Contract] = struct{}{}
 			}
-			o.recordDrop(string(drop.Reason), meta["umh_topic"])
+			o.noteDrop(drops, drop.Reason, meta["umh_topic"])
 			continue
 		}
 		for _, k := range row.churnKeys { // union across the whole batch, not just the first row
@@ -469,16 +451,12 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	// attribute de-dup cache and make the attribute table grow per-message, so the operator likely
 	// wants them out of metadata_keys.
 	o.warnHighChurnMetadata(churn)
-	if contractMismatches > 0 {
-		o.noteContractMismatch(len(batch), contractMismatches, mismatchedContracts, mismatchExample, len(rows) > 0)
-		return errors.New(nackMessage(o.contract, len(batch), contractMismatches))
+	if mismatch := drops[DropContractMismatch]; mismatch.count > 0 {
+		o.noteContractMismatch(len(batch), mismatch.count, mismatchedContracts, mismatch.example, len(rows) > 0)
+		return errors.New(nackMessage(o.contract, len(batch), mismatch.count))
 	}
+	o.reportDrops(len(batch), drops)
 	if len(rows) == 0 {
-		// Return nil so one fully-dropped batch never stalls the stream. A contract mismatch NACKed
-		// above; reaching here means every message was dropped for a different reason.
-		if len(batch) > 0 {
-			o.logger.Warnf("TimescaleDB historian: dropped all %d message(s) in the batch; nothing written. Check the source data and metadata configuration.", len(batch))
-		}
 		return nil
 	}
 
@@ -790,21 +768,35 @@ func describeRow(r *Row) string {
 		r.ContractName, r.RawLocation, r.VirtualPath, r.TagName, r.TS)
 }
 
-// recordDrop counts and error-logs a discarded message, so a misconfigured output that drops
-// everything is visible rather than silently healthy with zero rows. Contract mismatch is counted
-// but not logged here: it is reported by the mismatch error instead, because it is the one reason
-// that can fire on every message of a high-rate stream. These drops are ACKed, so the log is held
-// for startupGrace: an error inside umh-core's 10s startup gate strands the bridge in starting
-// instead of degrading it, and a dropped-but-ACKed message is not worth that.
-func (o *historianOutput) recordDrop(reason string, topic string) {
-	o.dropped.Incr(1, reason)
-	if reason == string(DropContractMismatch) {
+type dropTally struct {
+	example string
+	count   int
+}
+
+func (o *historianOutput) noteDrop(tally map[DropReason]dropTally, reason DropReason, topic string) {
+	o.dropped.Incr(1, string(reason))
+	t := tally[reason]
+	t.count++
+	if t.example == "" {
+		t.example = topic
+	}
+	tally[reason] = t
+}
+
+func (o *historianOutput) reportDrops(total int, tally map[DropReason]dropTally) {
+	if len(tally) == 0 || !o.pastStartupGrace() {
 		return
 	}
-	if !o.pastStartupGrace() {
-		return
+	reasons := make([]string, 0, len(tally))
+	for reason := range tally {
+		reasons = append(reasons, string(reason))
 	}
-	o.logger.Errorf("TimescaleDB historian: dropped message (reason=%s, umh_topic=%q)%s", reason, topic, dropHint(DropReason(reason)))
+	sort.Strings(reasons)
+	for _, reason := range reasons {
+		t := tally[DropReason(reason)]
+		o.logger.Errorf("TimescaleDB historian: dropped %d of %d message(s) (reason=%s, example umh_topic=%q)%s",
+			t.count, total, reason, t.example, dropHint(DropReason(reason)))
+	}
 }
 
 // warnHighChurnMetadata warns once per distinct high-churn metadata key (re-firing when a new one

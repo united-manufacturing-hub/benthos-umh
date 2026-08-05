@@ -230,11 +230,28 @@ var _ = Describe("drop logging during the startup grace", func() {
 		h.SetStartedAt(now)
 		logs := h.CaptureLogs()
 
-		h.RecordDropForTest("missing_timestamp", "umh.v1.acme._historian_v1.t")
+		h.ReportDropForTest(4, "missing_timestamp", 4, "umh.v1.acme._historian_v1.t")
 		Expect(logs()).To(BeEmpty(), "an error inside the 10s gate would strand the bridge in starting")
 
 		now = now.Add(31 * time.Second)
-		h.RecordDropForTest("missing_timestamp", "umh.v1.acme._historian_v1.t")
-		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: dropped message (reason=missing_timestamp"))
+		h.ReportDropForTest(4, "missing_timestamp", 4, "umh.v1.acme._historian_v1.t")
+		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: dropped 4 of 4 message(s) (reason=missing_timestamp"))
+	})
+
+	It("reports one line per reason, naming each reason's share and an example topic", func() {
+		h := tsh.NewHistorianTestHandle("", "historian")
+		h.ElapseStartupGrace()
+		logs := h.CaptureLogs()
+
+		h.ReportDropsForTest(10, map[string]tsh.DropTallyForTest{
+			"missing_value":     {Count: 7, Example: "umh.v1.acme._historian_v1.a"},
+			"missing_timestamp": {Count: 3, Example: "umh.v1.acme._historian_v1.b"},
+		})
+
+		Expect(logs()).To(ContainSubstring(`dropped 7 of 10 message(s) (reason=missing_value, example umh_topic="umh.v1.acme._historian_v1.a")`))
+		Expect(logs()).To(ContainSubstring(`dropped 3 of 10 message(s) (reason=missing_timestamp, example umh_topic="umh.v1.acme._historian_v1.b")`))
+		Expect(strings.Count(logs(), "level=error")).To(Equal(2), "one line per reason, not one per message")
+		Expect(logs()).To(ContainSubstring("msg.payload.value"), "each line keeps its own fix")
+		Expect(logs()).To(ContainSubstring("Date.now()"))
 	})
 })

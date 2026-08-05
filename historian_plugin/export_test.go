@@ -344,6 +344,21 @@ func (h *HistorianTestHandle) SetAllowUnvalidated(v bool) { h.o.allowUnvalidated
 
 func (h *HistorianTestHandle) AllowUnvalidated() bool { return h.o.allowUnvalidated }
 
-func (h *HistorianTestHandle) RecordDropForTest(reason string, topic string) {
-	h.o.recordDrop(reason, topic)
+func (h *HistorianTestHandle) ReportDropForTest(total int, reason string, count int, topic string) {
+	h.o.reportDrops(total, map[DropReason]dropTally{
+		DropReason(reason): {count: count, example: topic},
+	})
+}
+
+type DropTallyForTest struct {
+	Example string
+	Count   int
+}
+
+func (h *HistorianTestHandle) ReportDropsForTest(total int, tallies map[string]DropTallyForTest) {
+	m := make(map[DropReason]dropTally, len(tallies))
+	for reason, t := range tallies {
+		m[DropReason(reason)] = dropTally{count: t.Count, example: t.Example}
+	}
+	h.o.reportDrops(total, m)
 }
