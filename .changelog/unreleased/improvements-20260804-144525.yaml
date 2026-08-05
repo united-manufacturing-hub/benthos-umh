@@ -1,3 +1,0 @@
-kind: improvements
-body: Stopping an EtherNet/IP input no longer waits out the current poll interval (ENG-5401)
-time: 2026-08-04T14:45:25.976637+02:00

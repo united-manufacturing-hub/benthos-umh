@@ -1,3 +1,0 @@
-kind: fixes
-body: A single unreadable tag or attribute no longer stops the rest of an EtherNet/IP poll; only a poll where nothing at all can be read triggers a reconnect (ENG-5401)
-time: 2026-08-04T14:44:33.656144+02:00
