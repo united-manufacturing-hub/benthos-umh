@@ -22,7 +22,6 @@ import (
 )
 
 const (
-	startupGrace         = 30 * time.Second
 	mismatchLogInterval  = 2 * time.Minute
 	maxReportedContracts = 5
 )
@@ -56,10 +55,6 @@ func mismatchMessage(contract string, everStored bool, total int, mismatched int
 func nackMessage(contract string, total int, mismatched int) string {
 	return fmt.Sprintf("TimescaleDB historian: batch refused, %d of %d message(s) do not carry data contract _%s (reason=%s)",
 		mismatched, total, contract, DropContractMismatch)
-}
-
-func (o *historianOutput) pastStartupGrace() bool {
-	return o.now().Sub(o.startedAt) >= startupGrace
 }
 
 func (o *historianOutput) noteContractMismatch(total int, mismatched int, seen map[string]struct{}, example string, sawMatching bool) {

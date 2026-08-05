@@ -258,7 +258,6 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		defer h.SetAllowUnvalidated(false)
 		defer h.Close(ctx)
 		h.SetAllowUnvalidated(true)
-		h.ElapseStartupGrace()
 		logs := h.CaptureLogs()
 		Expect(h.WriteBatch(ctx, service.MessageBatch{
 			mkMsg(1.0, 1000, "_flipok", "l.a", "t", nil),
@@ -844,7 +843,6 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 	It("nacks and errors when data arrives but nothing matches the contract", func() {
 		h := connected("drops")
 		defer h.Close(ctx)
-		h.ElapseStartupGrace()
 		logs := h.CaptureLogs()
 		bad := mkMsg(1.0, 1000, "_other_v1", "acme.line1", "t", nil)
 		err := h.WriteBatch(ctx, service.MessageBatch{bad})
@@ -861,7 +859,6 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 	It("confirms the first stored message, then nacks a later other-contract batch", func() {
 		h := connected("stored")
 		defer h.Close(ctx)
-		h.ElapseStartupGrace()
 		logs := h.CaptureLogs()
 		good := mkMsg(1.0, 1000, "_stored_v1", "acme.line1", "t", nil)
 		Expect(h.WriteBatch(ctx, service.MessageBatch{good})).To(Succeed())
@@ -875,7 +872,6 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 	It("nacks a mixed batch whole, so the matching message is not written either", func() {
 		h := connected("overbroad")
 		defer h.Close(ctx)
-		h.ElapseStartupGrace()
 		logs := h.CaptureLogs()
 		batch := service.MessageBatch{
 			mkMsg(1.0, 1000, "_overbroad_v1", "acme.line1", "t", nil),
@@ -903,7 +899,6 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 	It("refuses an unversioned contract until unvalidated data is explicitly allowed", func() {
 		h := connected("unver")
 		defer h.Close(ctx)
-		h.ElapseStartupGrace()
 		logs := h.CaptureLogs()
 		msg := mkMsg(1.0, 1000, "_unver", "acme.line1", "t", nil)
 		Expect(h.WriteBatch(ctx, service.MessageBatch{msg})).To(Succeed())
@@ -925,7 +920,6 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		h := connected("bypassed")
 		defer h.Close(ctx)
 		h.SetAllowUnvalidated(true)
-		h.ElapseStartupGrace()
 		logs := h.CaptureLogs()
 		msg := mkMsg(1.0, 1000, "_bypassed_v1", "acme.line1", "t", map[string]string{"data_contract_bypassed": "true"})
 		Expect(h.WriteBatch(ctx, service.MessageBatch{msg})).To(Succeed())
@@ -936,7 +930,6 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 	It("refuses a relational payload carrying extra fields alongside value and timestamp_ms", func() {
 		h := connected("relational")
 		defer h.Close(ctx)
-		h.ElapseStartupGrace()
 		logs := h.CaptureLogs()
 		msg := service.NewMessage(nil)
 		msg.SetStructured(map[string]any{"value": 1.0, "timestamp_ms": float64(1000), "orderId": "WO-42"})
@@ -949,7 +942,6 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 	It("errors with the reason and the fix when a whole batch is dropped for a real fault", func() {
 		h := connected("drops")
 		defer h.Close(ctx)
-		h.ElapseStartupGrace()
 		logs := h.CaptureLogs()
 		bad := mkMsg(nil, 1000, "_drops_v1", "acme.line1", "t", nil) // matching contract, missing value
 		Expect(h.WriteBatch(ctx, service.MessageBatch{bad})).To(Succeed())
@@ -962,7 +954,6 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 	It("reports each reason once per batch with its share, and still writes the good rows", func() {
 		h := connected("tally")
 		defer h.Close(ctx)
-		h.ElapseStartupGrace()
 		logs := h.CaptureLogs()
 		batch := service.MessageBatch{
 			mkMsg(1.0, 1000, "_tally_v1", "acme.line1", "good", nil),

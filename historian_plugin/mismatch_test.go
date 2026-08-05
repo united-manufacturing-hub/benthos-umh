@@ -126,19 +126,12 @@ var _ = Describe("contract-mismatch notification", func() {
 		h = tsh.NewHistorianTestHandle("", "historian")
 		now = time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 		h.SetClock(func() time.Time { return now })
-		h.SetStartedAt(now)
 		logs = h.CaptureLogs()
 	})
 
-	It("errors on the very first mismatch, with no startup hold", func() {
+	It("errors on the very first mismatch", func() {
 		h.NoteContractMismatch(4, 4, seen, example, false)
-		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: no message carries data contract _historian"), "the batch is NACKed from the first message, so holding the reason back would leave only the input's generic batch error")
-	})
-
-	It("errors inside what used to be the grace period", func() {
-		now = now.Add(2 * time.Second)
-		h.NoteContractMismatch(4, 4, seen, example, false)
-		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: no message carries data contract _historian"))
+		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: no message carries data contract _historian"), "the batch is NACKed from the first message, so the reason has to arrive with it")
 	})
 
 	It("names the contracts that arrived in the first error", func() {
@@ -222,25 +215,17 @@ var _ = Describe("dropHint for the validation guards", func() {
 	})
 })
 
-var _ = Describe("drop logging during the startup grace", func() {
-	It("holds a malformed-message error until the bridge can clear umh-core's startup gate", func() {
+var _ = Describe("drop logging", func() {
+	It("reports the first dropped batch immediately, with no startup hold", func() {
 		h := tsh.NewHistorianTestHandle("", "historian")
-		now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
-		h.SetClock(func() time.Time { return now })
-		h.SetStartedAt(now)
 		logs := h.CaptureLogs()
 
 		h.ReportDropForTest(4, "missing_timestamp", 4, "umh.v1.acme._historian_v1.t")
-		Expect(logs()).To(BeEmpty(), "an error inside the 10s gate would strand the bridge in starting")
-
-		now = now.Add(31 * time.Second)
-		h.ReportDropForTest(4, "missing_timestamp", 4, "umh.v1.acme._historian_v1.t")
-		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: dropped 4 of 4 message(s) (reason=missing_timestamp"))
+		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: dropped 4 of 4 message(s) (reason=missing_timestamp"), "a plugin usable outside umh-core cannot defer its errors for a host's startup gate")
 	})
 
 	It("reports one line per reason, naming each reason's share and an example topic", func() {
 		h := tsh.NewHistorianTestHandle("", "historian")
-		h.ElapseStartupGrace()
 		logs := h.CaptureLogs()
 
 		h.ReportDropsForTest(10, map[string]tsh.DropTallyForTest{

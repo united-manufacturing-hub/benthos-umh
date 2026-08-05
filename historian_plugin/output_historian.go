@@ -72,7 +72,6 @@ type historianOutput struct {
 	writeTimeout                          time.Duration // 0 => unbounded (per-batch write deadline)
 	dsnOverride                           string        // set by tests; empty => build from fields
 	now                                   func() time.Time
-	startedAt                             time.Time
 
 	logger    *service.Logger
 	dropped   *service.MetricCounter // labeled by drop reason
@@ -118,7 +117,6 @@ func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*hi
 		topicCacheSize: mgr.Metrics().NewGauge("historian_topic_cache_size"),
 		warnedChurn:    map[string]struct{}{},
 		now:            time.Now,
-		startedAt:      time.Now(),
 	}
 	var err error
 	str := func(field string, dst *string) bool {
@@ -784,7 +782,7 @@ func (o *historianOutput) noteDrop(tally map[DropReason]dropTally, reason DropRe
 }
 
 func (o *historianOutput) reportDrops(total int, tally map[DropReason]dropTally) {
-	if len(tally) == 0 || !o.pastStartupGrace() {
+	if len(tally) == 0 {
 		return
 	}
 	reasons := make([]string, 0, len(tally))
