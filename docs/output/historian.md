@@ -140,50 +140,48 @@ ORDER  BY v.ts DESC;
   within one millisecond, which the millisecond UNS timestamp cannot distinguish from a real
   conflict, so this contract is unsuitable for tags that emit distinct values faster than 1 kHz.
 - **Only schema-validated data is stored.** A **versioned** contract (`_pump_v1`) whose schema was
-  not applied — the message carries `data_contract_bypassed=true` because the schema registry was
-  unreachable or no schema is registered for that version — is dropped with
-  `reason=contract_bypassed`. That is never overridable: silently storing it is how a registry
-  outage turns into permanently unchecked history. An **unversioned** contract (`_historian`) can
-  never be schema-validated at all, so it is dropped with `reason=contract_unvalidated` unless you
-  set `allow_unvalidated_data: true`, which is the explicit acknowledgement that datatypes go
-  unchecked for that contract.
-- **Relational payloads are rejected.** The payload must carry `value` and `timestamp_ms` and
-  nothing else. A relational record that happens to include both fields alongside others (an order
-  id, a batch number) is dropped with `reason=not_timeseries` rather than being silently narrowed
-  to its two timeseries fields. Route relational data to its own data contract.
-- **The payload must be `{value, timestamp_ms}`.** A message missing either field is dropped with
-  `reason=missing_value` or `reason=missing_timestamp`, and the log says how to supply it. The
+  never applied is dropped with `reason=contract_bypassed`. The message carries
+  `data_contract_bypassed=true` when the schema registry was unreachable or no schema is registered
+  for that version. There is no override: storing those rows would leave unchecked history with no
+  way to tell it apart later. An **unversioned** contract (`_historian`) can never be
+  schema-validated at all, so it is dropped with `reason=contract_unvalidated` unless you set
+  `allow_unvalidated_data: true`. Setting it accepts that datatypes go unchecked for that contract.
+- **The payload must be exactly `{value, timestamp_ms}`.** This output stores timeseries and
+  nothing else. A missing field is dropped with `reason=missing_value` or
+  `reason=missing_timestamp`; any *additional* top-level field is dropped with
+  `reason=not_timeseries`, which is what refuses a relational record carrying an order id or a
+  batch number alongside them. Neither rule is configurable and `allow_unvalidated_data` does not
+  relax either one. A record that carries only those two fields is indistinguishable from a sensor
+  reading and is stored. The
   [tag processor](../processing/tag-processor.md) adds `timestamp_ms` automatically; the
   [Node-RED JavaScript processor](../processing/node-red-javascript-processor.md) does **not**, so a
   write flow that reshapes the payload in JavaScript has to set it explicitly
   (`msg.payload.timestamp_ms = Date.now()`).
-- **Malformed messages are dropped, not nacked — but they are logged at error level.** An absent
-  or invalid `umh_topic` (validated by the canonical topic parser), a non-finite number, or an
-  unparseable timestamp drop the message and increment the `messages_dropped` metric
-  (labelled by `reason`), so one bad message never stalls the stream. Each drop also logs
-  `dropped message (reason=…, umh_topic=…)` at error level, which umh-core surfaces as a degraded
-  bridge. A source emitting malformed data therefore shows as degraded even while every other tag
-  keeps being written. The log clears once the bad messages stop and the last error ages out of
-  umh-core's window.
+- **A malformed message is dropped and logged at error level, never nacked.** Anything the parser or
+  the value classifier rejects increments `messages_dropped{reason=…}` and is skipped: an absent or
+  unparseable `umh_topic` as `invalid_topic`, a non-finite number as `unclassifiable_value`, an
+  unreadable timestamp as `bad_timestamp`, a payload that is not a JSON object as `not_structured` or
+  `not_object`. The rest of the batch is still written. Each reason logs once per batch with its
+  share of the batch and an example topic, which umh-core surfaces as a degraded bridge, so a source
+  emitting malformed data shows as degraded even while every other tag keeps being written. The log
+  clears once the bad messages stop and the last error ages out of umh-core's window.
 - **A wrong data contract refuses the whole batch.** A batch holding any message whose data-contract
   segment is not the configured `data_contract_name` is NACKed: nothing in it is written, not even
   its matching messages, and `output_sent` never counts it, so reported write throughput is the
-  number of rows actually stored rather than the number of messages accepted. This applies from the
-  first batch, with no startup grace. Every mismatched message still increments
-  `messages_dropped{reason=contract_mismatch}`, and the plugin logs an error naming the contracts
-  that arrived, an example topic, and the `umh_topics` pattern to narrow to, throttled to once every
+  number of rows stored. This applies from the first batch, with no startup grace. Every mismatched
+  message still increments `messages_dropped{reason=contract_mismatch}`, and the plugin logs an error
+  with the contracts that arrived and the `umh_topics` pattern to narrow to, throttled to once every
   2 minutes because this reason can fire on every message of a high-rate stream. The `uns` input
   additionally logs its own error for each refused batch, unthrottled.
 
   A NACKed batch is not replayed. The `uns` input leaves its offsets uncommitted, and the next
-  batch that is ACKed commits past them, so the refused messages are lost rather than retried.
-  Fix the subscription first, then redeploy. Once mismatched messages stop arriving the bridge
-  recovers on its own, as the last error ages out of umh-core's log window.
+  batch that is ACKed commits past them, so the refused messages are lost. Fix the subscription,
+  then redeploy.
 - **Subscribe only to this contract.** `umh_topics` must select the configured contract and nothing
   else; anything wider errors the bridge. Use
-  `^umh\.v1(?:\.[^._][^.]*)+\._<contract>(_v\d+)?\..+$`, which matches any location depth and both
-  the bare and `_vN` forms of the contract, while excluding a virtual-path segment that happens to
-  share the contract's name.
+  `^umh\.v1(?:\.[^._][^.]*)+\._<contract>(_v\d+)?\..+$`. It matches any location depth and both the
+  bare and `_vN` forms of the contract, and it excludes a virtual-path segment that shares the
+  contract's name.
 - **Metadata de-duplication.** An attribute row is rewritten only when its key set changes,
   via an in-process, LRU-bounded fingerprint cache. The cache is process-local and cleared on
   restart, so the plugin re-emits at most one attribute row per topic per restart: the first
@@ -256,12 +254,12 @@ define it), and route text or high-precision counters to a text contract rather 
 types on one tag.
 
 > **Generic contracts (`_historian`/`_raw`).** These deliberately don't pin a type, so a type
-> change is a realistic operational event rather than a defect. With `allow_unvalidated_data: true`
+> change happens in the field and is not a defect. With `allow_unvalidated_data: true`
 > the tag resolves on its natural key alone, ignoring `value_type`, so the change is accepted:
 > one `topic_id` then holds numeric rows in `value_num` and text rows in `value_text`, and
 > `umh.tag.value_type` records only the first type seen. Read such a tag with
 > `coalesce(value_num::text, value_text)`; a plain `value_num` query shows gaps across the change
-> rather than failing. Without the flag a flip is still dropped as poison, which is correct for a
+> and does not fail. Without the flag a flip is still dropped as poison, which is correct for a
 > versioned contract whose schema pins the type.
 
 ## Throughput
@@ -289,10 +287,9 @@ On top of benthos's built-in output metrics (`output_sent`, `output_error`,
 - `historian_value_rows_written` — value rows upserted (counted after the batch commits).
 - `historian_attribute_rows_written` — attribute rows upserted; the gap below the value-row
   count is metadata de-duplication at work.
-- `messages_dropped` (labelled by `reason`) — messages dropped before any write. The name is
-  deliberately unprefixed: it is the shared drop-counter convention across benthos-umh plugins, and
-  umh-core subtracts it from `output_sent` so a bridge that accepts messages and discards them
-  reports its real write throughput rather than what it accepted.
+- `messages_dropped` (labelled by `reason`) — messages dropped before any write. The name has no
+  plugin prefix because every benthos-umh plugin uses the same drop counter, which is how umh-core
+  subtracts it from `output_sent`.
 - `historian_dedup_cache_size` — current dedup-cache entry count.
 
 ## Numeric precision
@@ -357,6 +354,8 @@ drift warning on restart.
 input:
   uns:
     umh_topics:
+      # Substitute your own contract for "pump", here and in data_contract_name below.
+      # Both must name the same contract: a batch carrying any other one is refused whole.
       - '^umh\.v1(?:\.[^._][^.]*)+\._pump(_v\d+)?\..+$'
 output:
   historian:
