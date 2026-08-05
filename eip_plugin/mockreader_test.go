@@ -15,6 +15,7 @@
 package eip_plugin_test
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/danomagnum/gologix"
@@ -22,21 +23,33 @@ import (
 
 // MockCIPReader implements CIPReader and stores tagName -> value
 type MockCIPReader struct {
-	Connected bool
-	Tags      map[string]any
+	IsConnected bool
+	Tags        map[string]any
 
 	// let's ignore this for now
 	Attrs map[[3]uint16]*gologix.CIPItem
 }
 
+// Connect mirrors gologix v0.35.1-beta, which rejects a connect on a client that
+// is not disconnected instead of returning nil.
 func (m *MockCIPReader) Connect() error {
-	m.Connected = true
+	if m.IsConnected {
+		return errors.New("already connected")
+	}
+	m.IsConnected = true
 	return nil
 }
 
 func (m *MockCIPReader) Disconnect() error {
-	m.Connected = false
+	if !m.IsConnected {
+		return errors.New("client is already disconnected")
+	}
+	m.IsConnected = false
 	return nil
+}
+
+func (m *MockCIPReader) Connected() bool {
+	return m.IsConnected
 }
 
 func (m *MockCIPReader) Read(tag string, data any) error {
