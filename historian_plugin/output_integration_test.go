@@ -592,6 +592,41 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(ok).To(BeFalse())
 	})
 
+	It("resolves a versioned contract name to the same topic as the bare name via get_topic_id (P12: Go/SQL regex parity)", func() {
+		h := connected("pump")
+		defer h.Close(ctx)
+		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(1.0, 1000, "_pump_v1", "acme.line1", "t", nil)})).To(Succeed())
+
+		idBare, ok := h.GetTopicID(ctx, "acme.line1", "vibration", "pump", "t")
+		Expect(ok).To(BeTrue())
+
+		for _, versioned := range []string{"pump_v1", "pump_v1_1", "pump_v10_3"} {
+			idVersioned, ok := h.GetTopicID(ctx, "acme.line1", "vibration", versioned, "t")
+			Expect(ok).To(BeTrue(), "versioned contract %q must resolve", versioned)
+			Expect(idVersioned).To(Equal(idBare), "versioned contract %q must resolve to the same topic as the bare name", versioned)
+			Expect(tsh.NormalizeContract(versioned)).To(Equal(tsh.NormalizeContract("pump")), "Go NormalizeContract must agree with the SQL resolution for %q", versioned)
+		}
+	})
+
+	It("strips only the literal _v suffix, not a digit run in the model name (P12)", func() {
+		h := connected("line_2")
+		defer h.Close(ctx)
+		Expect(h.WriteBatch(ctx, service.MessageBatch{mkMsg(1.0, 1000, "_line_2_v1_1", "acme.line1", "t", nil)})).To(Succeed())
+
+		idBare, ok := h.GetTopicID(ctx, "acme.line1", "vibration", "line_2", "t")
+		Expect(ok).To(BeTrue())
+
+		idVersioned, ok := h.GetTopicID(ctx, "acme.line1", "vibration", "line_2_v1_1", "t")
+		Expect(ok).To(BeTrue())
+		Expect(idVersioned).To(Equal(idBare), "line_2_v1_1 must resolve to the same topic as line_2")
+		Expect(tsh.NormalizeContract("line_2_v1_1")).To(Equal(tsh.NormalizeContract("line_2")))
+
+		// A regex that latches onto any trailing digit run rather than the literal "_v" would
+		// wrongly strip "_2_v1_1" down to "line". Assert that lookup does NOT match.
+		_, ok = h.GetTopicID(ctx, "acme.line1", "vibration", "line", "t")
+		Expect(ok).To(BeFalse(), "line_2_v1_1 must not resolve against the unrelated bare name line")
+	})
+
 	It("drops a different value at the same (topic_id, ts) as poison", func() {
 		h := connected("conf")
 		defer h.Close(ctx)
