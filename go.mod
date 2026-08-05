@@ -32,7 +32,7 @@ require (
 	github.com/RuneRoven/benthosSMTP v0.0.1
 	github.com/bufbuild/protocompile v0.14.1
 	github.com/cespare/xxhash/v2 v2.3.0
-	github.com/danomagnum/gologix v0.27.2-beta
+	github.com/danomagnum/gologix v0.35.1-beta
 	github.com/dop251/goja v0.0.0-20260723142020-b4aef50fa347
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/gofrs/uuid/v5 v5.4.0

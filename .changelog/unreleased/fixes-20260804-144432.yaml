@@ -1,0 +1,3 @@
+kind: fixes
+body: The EtherNet/IP input now reconnects after losing the connection to the controller; it previously kept reporting a healthy connection while delivering no data (ENG-5401)
+time: 2026-08-04T14:44:32.439123+02:00
