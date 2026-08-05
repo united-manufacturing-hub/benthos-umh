@@ -43,6 +43,11 @@ const (
 // Expected format: "contractname_v123" or "contractname_v123_4".
 var schemaVersionRegex = regexp.MustCompile(`^(.+)_v(\d+)(?:_(\d+))?$`)
 
+// subjectVersionPattern matches the version segment of a schema registry
+// subject name, e.g. "_v1-" or "_v1_1-", so the payload shape after it can
+// be extracted.
+var subjectVersionPattern = regexp.MustCompile(`_v\d+(_\d+)?-`)
+
 // ContractRef is a data contract name decomposed into its parts. Full is the
 // name as it appeared on the topic and is what keys the schema cache and
 // prefixes the registry subject lookup.
@@ -134,7 +139,7 @@ type SchemaRegistryVersion struct {
 
 // Validator manages schema validation for UNS topics with TTL-based caching.
 type Validator struct {
-	// Cache maps "contractName-v123" to ContractCacheEntry
+	// Cache maps the full contract name (e.g. "_pump_v1" or "_pump_v1_1") to ContractCacheEntry
 	contractCache     map[string]*ContractCacheEntry
 	cacheMutex        sync.RWMutex
 	schemaRegistryURL string
@@ -943,10 +948,7 @@ func (v *Validator) enhanceVirtualPathError(originalError error, _ string, schem
 // extractSchemaTypeFromSubject extracts the schema type from a subject name
 // e.g., "_sensor_data_v1-timeseries-number" -> "timeseries-number"
 func extractSchemaTypeFromSubject(subjectName string) string {
-	// Find the first occurrence of "-" after the version part to get the schema type
-	// Pattern: contractName_v{version}-{schemaType}
-	versionPattern := regexp.MustCompile(`_v\d+-`)
-	match := versionPattern.FindStringIndex(subjectName)
+	match := subjectVersionPattern.FindStringIndex(subjectName)
 	if match != nil && match[1] < len(subjectName) {
 		return subjectName[match[1]:]
 	}

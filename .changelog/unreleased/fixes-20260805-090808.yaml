@@ -1,0 +1,3 @@
+kind: fixes
+body: Data contracts with a two-part version suffix (_pump_v1_1) are now recognised by the Historian output and the UNS schema validator. Previously the Historian dropped every message for such a contract and the validator treated it as unversioned, skipping schema checks entirely. (ENG-5500)
+time: 2026-08-05T09:08:08.270723+02:00

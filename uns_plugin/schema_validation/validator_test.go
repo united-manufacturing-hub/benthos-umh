@@ -1341,3 +1341,16 @@ var _ = Describe("ParseContractRef", func() {
 		Entry("no version", "_pump"),
 	)
 })
+
+var _ = Describe("extractSchemaTypeFromSubject", func() {
+	DescribeTable("returns the payload shape after the version",
+		func(subject, want string) {
+			Expect(extractSchemaTypeFromSubject(subject)).To(Equal(want))
+		},
+		Entry("one-part", "_pump_v1-timeseries-number", "timeseries-number"),
+		Entry("two-part", "_pump_v1_1-timeseries-number", "timeseries-number"),
+		Entry("two-part string", "_pump_v10_3-timeseries-string", "timeseries-string"),
+		Entry("model name with digits", "_line_2_v1_1-timeseries-number", "timeseries-number"),
+		Entry("no version", "_pump-timeseries-number", "unknown"),
+	)
+})
