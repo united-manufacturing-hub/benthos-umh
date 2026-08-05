@@ -1,3 +1,0 @@
-kind: improvements
-body: Connection and session diagnostics from the EtherNet/IP protocol library now surface in the input logs, including failures it previously swallowed (ENG-5401)
-time: 2026-08-04T14:45:27.206865+02:00
