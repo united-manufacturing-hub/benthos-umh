@@ -1,6 +1,6 @@
 # Changelog
 
-## [v0.14.1]
+## [v0.15.0]
 
 ### Improvements
 
@@ -11,7 +11,7 @@
 
 - The EtherNet/IP input now reconnects after losing the connection to the controller; it previously kept reporting a healthy connection while delivering no data (ENG-5401)
 - A single unreadable tag or attribute no longer stops the rest of an EtherNet/IP poll; only a poll where nothing at all can be read triggers a reconnect (ENG-5401)
-- word, dword, uint8 and uint64 values from the EtherNet/IP input are now labelled eip_tag_type number instead of string, and word and dword attributes decode to a number instead of a stringified byte slice; processors that branched on either see different input (ENG-5401)
+- `word`, `dword`, `uint8` and `uint64` values from the EtherNet/IP input are now labelled `eip_tag_type` `number` instead of `string`, and `word` and `dword` attributes decode to a number instead of a stringified byte slice (ENG-5401)
 
 ## [v0.14.0]
 
@@ -25,7 +25,7 @@
 - Node-RED JavaScript and tag processor counters now report throws accurately: messages_errored is gone, throws count in messages_dropped{reason=js_throw}, and messages_processed counts produced outputs instead of every input attempt (ENG-5240)
 - Metadata values in Kafka headers are now serialized consistently across the Node-RED JavaScript and tag processors; non-scalar and nested-null values serialize as JSON so a nested null no longer appears as the literal string <nil>, and in the Node-RED JavaScript processor numeric and boolean metadata values that were previously silently dropped now appear as strings (ENG-5240)
 - UNS schema validation now reports a clear datatype mismatch (e.g. sent timeseries-number, tag registered as timeseries-string) instead of a confusing error that listed the tag as both valid and invalid (ENG-5347)
-- Sparkplug B input derives spb_timestamp from each metric's own timestamp when present, falling back to the payload timestamp; multi-metric NDATA/DDATA no longer collapse to one timestamp (ENG-5341)
+- Sparkplug B input derives `spb_timestamp` from each metric's own timestamp when present, falling back to the payload timestamp; multi-metric NDATA/DDATA no longer collapse to one timestamp (ENG-5341)
 - The TimescaleDB historian output no longer warns when a batch holds only other contracts' data; it logs once when it stores its first message, and once if data arrives but none matches the configured data contract (ENG-5394)
 - The tag processor no longer converts numeric-looking string values to numbers; a string read from the source stays a string in the UNS, and msg.meta.datatype = "number" remains available for explicit coercion (ENG-5422)
 
