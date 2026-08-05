@@ -28,7 +28,7 @@ No JavaScript processor or hand-written `sql_raw` is needed.
 | `password` | yes | — | Role password (plaintext in config; redacted in logs). |
 | `sslmode` | no | `require` | `require` \| `disable` \| `verify-full`. |
 | `sslrootcert` / `sslcert` / `sslkey` | no | `""` | TLS cert paths inside the container. |
-| `allow_unvalidated_data` | no | `false` | Store data from an **unversioned** data contract (e.g. `_historian`). Unversioned contracts are never schema-validated, so datatypes are unchecked — this is an explicit opt-in to that. Has no effect on a versioned contract: one whose schema was bypassed is always rejected. |
+| `allow_unvalidated_data` | no | `false` | Store data from an **unversioned** contract (e.g. `_historian`), accepting that its datatypes are never schema-checked. No effect on a versioned contract, where a bypassed schema is always rejected. |
 | `data_contract_name` | yes | — | Bare lowercase contract name, e.g. `pump`; no leading `_`, no `_vN` suffix. Stored in `umh.tag.data_contract_name` in its UNS form with a leading underscore (`_pump`), matching the topic's data-contract segment. |
 | `metadata_keys_all` | no | `true` | Store every metadata key except structural/high-churn keys and any `metadata_keys_exclude` match. |
 | `metadata_keys` | no | `[]` | Allowlist used only when `metadata_keys_all=false`. |
@@ -139,49 +139,36 @@ ORDER  BY v.ts DESC;
   (see [Error handling](#error-handling)). This includes a tag emitting two distinct values
   within one millisecond, which the millisecond UNS timestamp cannot distinguish from a real
   conflict, so this contract is unsuitable for tags that emit distinct values faster than 1 kHz.
-- **Only schema-validated data is stored.** A **versioned** contract (`_pump_v1`) whose schema was
-  never applied is dropped with `reason=contract_bypassed`. The message carries
-  `data_contract_bypassed=true` when the schema registry was unreachable or no schema is registered
-  for that version. There is no override: storing those rows would leave unchecked history with no
-  way to tell it apart later. An **unversioned** contract (`_historian`) can never be
-  schema-validated at all, so it is dropped with `reason=contract_unvalidated` unless you set
-  `allow_unvalidated_data: true`. Setting it accepts that datatypes go unchecked for that contract.
-- **The payload must be exactly `{value, timestamp_ms}`.** This output stores timeseries and
-  nothing else. A missing field is dropped with `reason=missing_value` or
-  `reason=missing_timestamp`; any *additional* top-level field is dropped with
-  `reason=not_timeseries`, which is what refuses a relational record carrying an order id or a
-  batch number alongside them. Neither rule is configurable and `allow_unvalidated_data` does not
-  relax either one. A record that carries only those two fields is indistinguishable from a sensor
-  reading and is stored. The
-  [tag processor](../processing/tag-processor.md) adds `timestamp_ms` automatically; the
-  [Node-RED JavaScript processor](../processing/node-red-javascript-processor.md) does **not**, so a
-  write flow that reshapes the payload in JavaScript has to set it explicitly
-  (`msg.payload.timestamp_ms = Date.now()`).
-- **A malformed message is dropped and logged at error level, never nacked.** Anything the parser or
-  the value classifier rejects increments `messages_dropped{reason=…}` and is skipped: an absent or
-  unparseable `umh_topic` as `invalid_topic`, a non-finite number as `unclassifiable_value`, an
-  unreadable timestamp as `bad_timestamp`, a payload that is not a JSON object as `not_structured` or
-  `not_object`. The rest of the batch is still written. Each reason logs once per batch with its
-  share of the batch and an example topic, which umh-core surfaces as a degraded bridge, so a source
-  emitting malformed data shows as degraded even while every other tag keeps being written. The log
-  clears once the bad messages stop and the last error ages out of umh-core's window.
+- **Only schema-validated data is stored.** A **versioned** contract (`_pump_v1`) carrying
+  `data_contract_bypassed=true`, which the `uns` output sets when the registry was unreachable or no
+  schema is registered, is dropped as `contract_bypassed` with no way to override it. An
+  **unversioned** contract (`_historian`) can never be validated, so it is dropped as
+  `contract_unvalidated` unless you set `allow_unvalidated_data: true` and accept unchecked
+  datatypes.
+- **The payload must be exactly `{value, timestamp_ms}`.** A missing field is dropped as
+  `missing_value` or `missing_timestamp`, an extra top-level field as `not_timeseries`, which is what
+  refuses a relational record. Neither rule is configurable. The
+  [tag processor](../processing/tag-processor.md) fills `timestamp_ms`; the
+  [Node-RED JavaScript processor](../processing/node-red-javascript-processor.md) does not, so a
+  write flow that reshapes the payload has to carry it across.
+- **A malformed message is dropped, never nacked.** An unparseable `umh_topic`
+  (`invalid_topic`), a non-finite number (`unclassifiable_value`), an unreadable timestamp
+  (`bad_timestamp`) and a payload that is not a JSON object (`not_structured`, `not_object`) are
+  skipped; the rest of the batch is written. Each reason logs one error per batch with its share of
+  the batch, an example topic and its fix, which umh-core reads as a degraded bridge. The log clears
+  once the bad messages stop and the last error ages out of umh-core's window.
 - **A wrong data contract refuses the whole batch.** A batch holding any message whose data-contract
-  segment is not the configured `data_contract_name` is NACKed: nothing in it is written, not even
-  its matching messages, and `output_sent` never counts it, so reported write throughput is the
-  number of rows stored. This applies from the first batch, with no startup grace. Every mismatched
-  message still increments `messages_dropped{reason=contract_mismatch}`, and the plugin logs an error
-  with the contracts that arrived and the `umh_topics` pattern to narrow to, throttled to once every
-  2 minutes because this reason can fire on every message of a high-rate stream. The `uns` input
-  additionally logs its own error for each refused batch, unthrottled.
+  segment is not the configured `data_contract_name` is NACKed from the first batch on: nothing in it
+  is written, not even its matching messages, and `output_sent` never counts it, so write throughput
+  reports rows stored. The error names the contracts that arrived and the `umh_topics` pattern to
+  narrow to, throttled to once every 2 minutes; the `uns` input logs its own error per refused batch,
+  unthrottled.
 
-  A NACKed batch is not replayed. The `uns` input leaves its offsets uncommitted, and the next
-  batch that is ACKed commits past them, so the refused messages are lost. Fix the subscription,
-  then redeploy.
-- **Subscribe only to this contract.** `umh_topics` must select the configured contract and nothing
-  else; anything wider errors the bridge. Use
-  `^umh\.v1(?:\.[^._][^.]*)+\._<contract>(_v\d+)?\..+$`. It matches any location depth and both the
-  bare and `_vN` forms of the contract, and it excludes a virtual-path segment that shares the
-  contract's name.
+  A NACKed batch is not replayed: the `uns` input leaves its offsets uncommitted and the next ACKed
+  batch commits past them, so the refused messages are lost. Fix the subscription, then redeploy.
+- **Subscribe only to this contract.** Anything wider errors the bridge. Use
+  `^umh\.v1(?:\.[^._][^.]*)+\._<contract>(_v\d+)?\..+$`: any location depth, both the bare and `_vN`
+  forms, and no match on a virtual-path segment sharing the contract's name.
 - **Metadata de-duplication.** An attribute row is rewritten only when its key set changes,
   via an in-process, LRU-bounded fingerprint cache. The cache is process-local and cleared on
   restart, so the plugin re-emits at most one attribute row per topic per restart: the first
@@ -253,14 +240,12 @@ not representable by the millisecond UNS timestamp and unsuitable for this contr
 define it), and route text or high-precision counters to a text contract rather than mixing
 types on one tag.
 
-> **Generic contracts (`_historian`/`_raw`).** These deliberately don't pin a type, so a type
-> change happens in the field and is not a defect. With `allow_unvalidated_data: true`
-> the tag resolves on its natural key alone, ignoring `value_type`, so the change is accepted:
-> one `topic_id` then holds numeric rows in `value_num` and text rows in `value_text`, and
-> `umh.tag.value_type` records only the first type seen. Read such a tag with
-> `coalesce(value_num::text, value_text)`; a plain `value_num` query shows gaps across the change
-> and does not fail. Without the flag a flip is still dropped as poison, which is correct for a
-> versioned contract whose schema pins the type.
+> **Generic contracts (`_historian`/`_raw`).** These don't pin a type, so a type change happens in
+> the field and is not a defect. With `allow_unvalidated_data: true` the tag resolves on its natural
+> key alone and the change is accepted: one `topic_id` then holds numeric rows in `value_num` and
+> text rows in `value_text`, with `umh.tag.value_type` recording only the first type seen. Read such
+> a tag with `coalesce(value_num::text, value_text)`. Without the flag a flip is dropped as poison,
+> which is correct for a versioned contract whose schema pins the type.
 
 ## Throughput
 
