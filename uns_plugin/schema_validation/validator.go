@@ -393,24 +393,21 @@ func (v *Validator) Validate(unsTopic *topic.UnsTopic, payload []byte) *Validati
 		SchemaCheckBypassed: false,
 		ContractName:        contractName,
 		ContractVersion:     version,
-		Error:               fmt.Errorf("schema validation failed for contract '%s' version %d against all available schemas. Last error: %w", contractName, version, lastError),
+		Error:               fmt.Errorf("schema validation failed for contract '%s' version %s against all available schemas. Last error: %w", contractName, ref.VersionString(), lastError),
 	}
 }
 
-// cacheKeyFor keys the compiled-schema cache. Minor 0 reuses the legacy
-// "name-vMAJOR" key so bare "_pump_v1" and explicit "_pump_v1_0" (the same
-// version per the versionKey grammar) share one entry; any other minor gets
-// its own key so it is never served for a different minor of the same major.
-func cacheKeyFor(name string, major uint64, minor uint64) string {
-	if minor == 0 {
-		return fmt.Sprintf("%s-v%d", name, major)
-	}
-	return fmt.Sprintf("%s-v%d_%d", name, major, minor)
+// cacheKeyFor keys the compiled-schema cache on the contract name exactly as
+// it appeared on the topic, so two contracts are never conflated just
+// because ParseContractRef reports the same Minor for both (an absent
+// minor group and an explicit "_0" both parse to Minor 0).
+func cacheKeyFor(contract string) string {
+	return contract
 }
 
 // getSchemasWithCache retrieves schemas from cache or fetches them synchronously
 func (v *Validator) getSchemasWithCache(ref ContractRef) (map[string]*Schema, bool, error) {
-	cacheKey := cacheKeyFor(ref.Name, ref.Major, ref.Minor)
+	cacheKey := cacheKeyFor(ref.Full)
 
 	// Check cache first
 	v.cacheMutex.RLock()
@@ -435,7 +432,7 @@ func (v *Validator) getSchemasWithCache(ref ContractRef) (map[string]*Schema, bo
 // contract versions to registry versions. This simplifies the architecture and avoids version conflicts
 // since schema registry versions are independent of UMH contract versions.
 func (v *Validator) fetchSchemasSync(ref ContractRef) (map[string]*Schema, bool, error) {
-	cacheKey := cacheKeyFor(ref.Name, ref.Major, ref.Minor)
+	cacheKey := cacheKeyFor(ref.Full)
 
 	v.debugf("fetchSchemasSync: Fetching schemas for contract='%s'", ref.Full)
 
@@ -665,7 +662,7 @@ func (v *Validator) LoadSchemas(contractName string, version uint64, schemas map
 		return fmt.Errorf("schemas cannot be empty for contract '%s' version %d", contractName, version)
 	}
 
-	cacheKey := cacheKeyFor(contractName, version, 0)
+	cacheKey := cacheKeyFor(fmt.Sprintf("%s_v%d", contractName, version))
 
 	v.cacheMutex.Lock()
 	defer v.cacheMutex.Unlock()
@@ -706,7 +703,7 @@ func (v *Validator) LoadSchemas(contractName string, version uint64, schemas map
 
 // HasSchema checks if schemas exist for the given contract name and version.
 func (v *Validator) HasSchema(contractName string, version uint64) bool {
-	cacheKey := cacheKeyFor(contractName, version, 0)
+	cacheKey := cacheKeyFor(fmt.Sprintf("%s_v%d", contractName, version))
 
 	v.cacheMutex.RLock()
 	defer v.cacheMutex.RUnlock()

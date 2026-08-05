@@ -215,7 +215,7 @@ var _ = Describe("Validator", func() {
 
 			// Check cache entry exists and never expires
 			validator.cacheMutex.RLock()
-			entry, exists := validator.contractCache["_sensor_data-v1"]
+			entry, exists := validator.contractCache["_sensor_data_v1"]
 			validator.cacheMutex.RUnlock()
 
 			Expect(exists).To(BeTrue())
@@ -237,7 +237,7 @@ var _ = Describe("Validator", func() {
 
 			// Check cache entry exists with 10 minute expiration
 			validator.cacheMutex.RLock()
-			entry, exists := validator.contractCache["_non_existent-v1"]
+			entry, exists := validator.contractCache["_non_existent_v1"]
 			validator.cacheMutex.RUnlock()
 
 			Expect(exists).To(BeTrue())
@@ -290,7 +290,7 @@ var _ = Describe("Validator", func() {
 
 			// Verify cache entry
 			validator.cacheMutex.RLock()
-			entry, exists := validator.contractCache["_test_contract-v1"]
+			entry, exists := validator.contractCache["_test_contract_v1"]
 			validator.cacheMutex.RUnlock()
 
 			Expect(exists).To(BeTrue())
@@ -513,7 +513,7 @@ var _ = Describe("Validator", func() {
 
 			// Now manually corrupt the cache to have nil schema
 			validator.cacheMutex.Lock()
-			entry := validator.contractCache["_test_contract-v1"]
+			entry := validator.contractCache["_test_contract_v1"]
 			entry.Schemas["_test_contract_v1-timeseries-number"] = nil
 			validator.cacheMutex.Unlock()
 
@@ -829,7 +829,7 @@ var _ = Describe("Validator", func() {
 
 			// Verify exact error message format
 			errorMsg := result.Error.Error()
-			Expect(errorMsg).To(ContainSubstring("schema validation failed for contract '_test_contract' version 1"))
+			Expect(errorMsg).To(ContainSubstring("schema validation failed for contract '_test_contract' version v1_0"))
 			Expect(errorMsg).To(ContainSubstring("schema validation failed for subject '_test_contract_v1-timeseries-number'"))
 			Expect(errorMsg).To(ContainSubstring("virtual_path"))
 			Expect(errorMsg).To(ContainSubstring("does not match"))
@@ -879,7 +879,7 @@ var _ = Describe("Validator", func() {
 
 			// Verify exact error message format
 			errorMsg := result.Error.Error()
-			Expect(errorMsg).To(ContainSubstring("schema validation failed for contract '_test_contract' version 1"))
+			Expect(errorMsg).To(ContainSubstring("schema validation failed for contract '_test_contract' version v1_0"))
 			Expect(errorMsg).To(ContainSubstring("schema validation failed for subject '_test_contract_v1-timeseries-string'"))
 			Expect(errorMsg).To(ContainSubstring("virtual_path"))
 			Expect(errorMsg).To(ContainSubstring("does not match"))
@@ -1230,29 +1230,63 @@ var _ = Describe("schema cache keying", func() {
 		Expect(resultV1.BypassReason).To(ContainSubstring("no schemas found for contract"))
 
 		freshValidator.cacheMutex.RLock()
-		_, existsV1 := freshValidator.contractCache[cacheKeyFor("_pump", 1, 0)]
-		_, existsV1_1 := freshValidator.contractCache[cacheKeyFor("_pump", 1, 1)]
+		_, existsV1 := freshValidator.contractCache[cacheKeyFor("_pump_v1")]
+		_, existsV1_1 := freshValidator.contractCache[cacheKeyFor("_pump_v1_1")]
 		freshValidator.cacheMutex.RUnlock()
 
 		Expect(existsV1).To(BeTrue())
 		Expect(existsV1_1).To(BeTrue())
-		Expect(cacheKeyFor("_pump", 1, 0)).ToNot(Equal(cacheKeyFor("_pump", 1, 1)))
 	})
 
-	It("keeps one-part contracts distinct from two-part ones", func() {
-		v := NewValidator()
+	It("keeps a bare version and its explicit two-part minor-zero form in separate entries", func() {
+		// ParseContractRef reports Minor=0 for both "_pump_v1" (no minor group)
+		// and "_pump_v1_0" (explicit zero minor), so the cache key must be the
+		// full contract string, not a reconstruction from Name/Major/Minor,
+		// or these two would collide onto one entry (ENG-5500 regression).
+		freshRegistry := NewMockSchemaRegistry()
+		defer freshRegistry.Close()
+		freshRegistry.AddSchema("_pump_v1_0-timeseries-number", 1, string(numberSchemaFor("two_part_tag")))
+
+		v := NewValidatorWithRegistry(freshRegistry.URL())
 		defer v.Close()
 
 		Expect(v.LoadSchemas("_pump", 1, map[string][]byte{
-			"_pump_v1-timeseries-number": numberSchemaFor("temperature"),
+			"_pump_v1-timeseries-number": numberSchemaFor("bare_tag"),
 		})).To(Succeed())
 
-		Expect(v.HasSchema("_pump", 1)).To(BeTrue())
+		payload := []byte(`{"timestamp_ms": 1719859200000, "value": 25.5}`)
+
+		bareTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_v1.bare_tag")
+		Expect(err).ToNot(HaveOccurred())
+		twoPartTopic, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_v1_0.two_part_tag")
+		Expect(err).ToNot(HaveOccurred())
+
+		bareResult := v.Validate(bareTopic, payload)
+		Expect(bareResult.SchemaCheckPassed).To(BeTrue())
+
+		twoPartResult := v.Validate(twoPartTopic, payload)
+		Expect(twoPartResult.SchemaCheckPassed).To(BeTrue())
 
 		v.cacheMutex.RLock()
-		_, existsMinor1 := v.contractCache[cacheKeyFor("_pump", 1, 1)]
+		_, existsBare := v.contractCache[cacheKeyFor("_pump_v1")]
+		_, existsTwoPart := v.contractCache[cacheKeyFor("_pump_v1_0")]
 		v.cacheMutex.RUnlock()
-		Expect(existsMinor1).To(BeFalse())
+		Expect(existsBare).To(BeTrue())
+		Expect(existsTwoPart).To(BeTrue())
+
+		// Neither entry is served the other's schemas: a tag valid only under
+		// one contract must be rejected under the other.
+		bareToppedWithOtherTag, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_v1.two_part_tag")
+		Expect(err).ToNot(HaveOccurred())
+		crossResult := v.Validate(bareToppedWithOtherTag, payload)
+		Expect(crossResult.SchemaCheckPassed).To(BeFalse())
+		Expect(crossResult.SchemaCheckBypassed).To(BeFalse())
+
+		twoPartWithOtherTag, err := topic.NewUnsTopic("umh.v1.enterprise.site.area._pump_v1_0.bare_tag")
+		Expect(err).ToNot(HaveOccurred())
+		crossResult2 := v.Validate(twoPartWithOtherTag, payload)
+		Expect(crossResult2.SchemaCheckPassed).To(BeFalse())
+		Expect(crossResult2.SchemaCheckBypassed).To(BeFalse())
 	})
 
 	It("serves a cache hit without going back to the registry", func() {

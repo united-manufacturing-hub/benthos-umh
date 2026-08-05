@@ -1,0 +1,3 @@
+kind: fixes
+body: UNS schema validation now reports a two-part data contract version (e.g. v1_1) in full instead of showing only the major version in the validation failure message (ENG-5500)
+time: 2026-08-05T09:00:22.261398+02:00
