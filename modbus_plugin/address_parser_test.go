@@ -324,3 +324,51 @@ var _ = Describe("ParseModbusAddress", func() {
 		})
 	})
 })
+
+var _ = Describe("FormatModbusAddress slaveID lists", func() {
+	It("should emit a comma-separated list", func() {
+		out := FormatModbusAddress(ModbusDataItemWithAddress{
+			Name:     "reg",
+			Register: "holding",
+			Address:  23,
+			Type:     "INT16",
+			SlaveIDs: []byte{3, 5, 6},
+		})
+		Expect(out).To(Equal("reg.holding.23.INT16:slaveID=3,5,6"))
+	})
+
+	It("should preserve list order", func() {
+		out := FormatModbusAddress(ModbusDataItemWithAddress{
+			Name:     "reg",
+			Register: "holding",
+			Address:  23,
+			Type:     "INT16",
+			SlaveIDs: []byte{6, 3, 5},
+		})
+		Expect(out).To(Equal("reg.holding.23.INT16:slaveID=6,3,5"))
+	})
+
+	It("should still emit a single slaveID unchanged", func() {
+		out := FormatModbusAddress(ModbusDataItemWithAddress{
+			Name:     "reg",
+			Register: "holding",
+			Address:  23,
+			Type:     "INT16",
+			SlaveID:  2,
+		})
+		Expect(out).To(Equal("reg.holding.23.INT16:slaveID=2"))
+	})
+
+	DescribeTable("should round-trip canonical strings",
+		func(addr string) {
+			item, err := ParseModbusAddress(addr)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(FormatModbusAddress(item)).To(Equal(addr))
+		},
+		Entry("no slave", "reg.holding.23.INT16"),
+		Entry("single slave", "reg.holding.23.INT16:slaveID=2"),
+		Entry("slave subset", "reg.holding.23.INT16:slaveID=3,5,6"),
+		Entry("unordered subset", "reg.holding.23.INT16:slaveID=6,3,5"),
+		Entry("subset with scale and output", "reg.holding.23.FLOAT32:slaveID=3,5:scale=0.1:output=FLOAT64"),
+	)
+})

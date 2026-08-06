@@ -219,7 +219,17 @@ func FormatModbusAddress(item ModbusDataItemWithAddress) string {
 
 	// Optional key-value pairs (in a stable order).
 	// Zero-value options (bit=0, length=0, slaveID=0, scale=0) are omitted to produce canonical form.
-	if item.SlaveID != 0 {
+	// A list wins over the single ID, matching targetSlaves precedence. Order is kept
+	// as configured so canonical strings round-trip.
+	if len(item.SlaveIDs) > 0 {
+		b.WriteString(":slaveID=")
+		for i, sid := range item.SlaveIDs {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			b.WriteString(strconv.Itoa(int(sid)))
+		}
+	} else if item.SlaveID != 0 {
 		b.WriteString(":slaveID=")
 		b.WriteString(strconv.Itoa(int(item.SlaveID)))
 	}
