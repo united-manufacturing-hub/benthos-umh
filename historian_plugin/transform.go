@@ -29,6 +29,7 @@ import (
 const (
 	maxTextRunes = 8192
 	maxJSDateMs  = 8.64e15 // JS Date valid range is +/- this
+	serverDiagnosticsPath = "Root.Objects.Server"
 )
 
 var (
@@ -244,7 +245,7 @@ func Transform(payload map[string]any, meta map[string]string, contract string, 
 	loc := info.LocationPath()
 	tag := info.Name
 	vp := info.GetVirtualPath()
-	if strings.HasPrefix(vp, "Root.Objects.Server") {
+	if vp == serverDiagnosticsPath || strings.HasPrefix(vp, serverDiagnosticsPath+".") {
 		return nil, DropInfo{Reason: DropServerVirtualPath}
 	}
 	value, hasValue := payload["value"]

@@ -336,12 +336,28 @@ var _ = Describe("Transform", func() {
 		Entry("Root.Objects.Server virtual_path", func(_ map[string]any, m map[string]string) {
 			m["umh_topic"] = "umh.v1.acme.line1._pump_v1.Root.Objects.Server.foo.x"
 		}, tsh.DropServerVirtualPath),
+		Entry("the diagnostics subtree with no further virtual path", func(_ map[string]any, m map[string]string) {
+			m["umh_topic"] = "umh.v1.acme.line1._pump_v1.Root.Objects.Server.CurrentTime"
+		}, tsh.DropServerVirtualPath),
 		Entry("absent value", func(p map[string]any, _ map[string]string) { delete(p, "value") }, tsh.DropMissingValue),
 		Entry("nil value", func(p map[string]any, _ map[string]string) { p["value"] = nil }, tsh.DropMissingValue),
 		Entry("absent timestamp_ms", func(p map[string]any, _ map[string]string) { delete(p, "timestamp_ms") }, tsh.DropMissingTimestamp),
 		Entry("nil timestamp_ms", func(p map[string]any, _ map[string]string) { p["timestamp_ms"] = nil }, tsh.DropMissingTimestamp),
 		Entry("non-finite value", func(p map[string]any, _ map[string]string) { p["value"] = math.Inf(1) }, tsh.DropUnclassifiableValue),
 		Entry("bad timestamp", func(p map[string]any, _ map[string]string) { p["timestamp_ms"] = "not-a-number" }, tsh.DropBadTimestamp),
+	)
+
+	DescribeTable("keeps a tag whose virtual path only starts with the diagnostics prefix",
+		func(topic string) {
+			p, m := base()
+			m["umh_topic"] = topic
+			row, drop := tsh.Transform(p, m, "pump", true, nil, nil, false, tsh.NewDedupCache().NewBatch())
+			Expect(drop.Reason).To(Equal(tsh.DropNone), "only the Root.Objects.Server subtree is OPC UA diagnostics; a sibling that shares its prefix is real data")
+			Expect(row).NotTo(BeNil())
+		},
+		Entry("ServerRoom", "umh.v1.acme.line1._pump_v1.Root.Objects.ServerRoom.temperature"),
+		Entry("Servers", "umh.v1.acme.line1._pump_v1.Root.Objects.Servers.count"),
+		Entry("nested under ServerRoom", "umh.v1.acme.line1._pump_v1.Root.Objects.ServerRoom.rack1.temperature"),
 	)
 
 	It("reports the observed contract when the contract does not match", func() {
