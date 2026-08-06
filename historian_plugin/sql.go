@@ -174,8 +174,7 @@ var topicResolveKeepTypeSQL = fmt.Sprintf(dimensionCTEFmt, "umh.tag.value_type")
 // topicLookupSQL resolves an existing topic via a read (no sequence burn); on a miss the caller
 // falls through to topicResolveSQL. value_type is in the WHERE deliberately: a datatype flip
 // misses here and hits the guarded upsert, which RAISEs. A value_type-agnostic lookup would match
-// the natural key and silently bypass tag_value_type_guard -- which is exactly what
-// topicLookupAnyTypeSQL below is for, on a contract that has no schema to pin a type with.
+// the natural key and silently bypass tag_value_type_guard.
 const topicLookupSQL = `SELECT t.topic_id
 FROM umh.topic t
 JOIN umh.location l ON l.location_id = t.location_id

@@ -516,10 +516,9 @@ func newTopicCache() *lru.Cache[topicKey, int64] {
 }
 
 // resolveTopicCached returns the topic_id for a row, consulting the process-wide cache before the
-// DB. topic_id is immutable for a given topicKey (value_type included), so a cached id is always
-// valid; a datatype flip is a different key, misses the cache, and still reaches the guarded upsert
-// that rejects it. Failed resolves are never cached. Out-of-band deletion of a topic row is
-// unsupported (the schema is append-only), so a stale entry cannot arise in normal operation.
+// DB. topic_id is immutable for a given topicKey, so a cached id is always valid. Failed resolves
+// are never cached. Out-of-band deletion of a topic row is unsupported (the schema is append-only),
+// so a stale entry cannot arise in normal operation.
 func (o *historianOutput) resolveTopicCached(ctx context.Context, pool *pgxpool.Pool, r *Row) (int64, error) {
 	k := topicKeyOf(r)
 	if id, ok := o.topicCache.Get(k); ok {
@@ -534,8 +533,8 @@ func (o *historianOutput) resolveTopicCached(ctx context.Context, pool *pgxpool.
 }
 
 // topicKey identifies a distinct topic within a batch. value_type is part of the key because
-// resolution is value_type-qualified: a datatype flip is a different key, so it misses any cached
-// entry and falls through to the guarded upsert that rejects it as poison.
+// resolution is value_type-qualified on a validated contract, so a datatype flip is a different key
+// and misses any cached entry.
 type topicKey struct {
 	loc, contract, vpath, tag string
 	vt                        ValueType
@@ -733,9 +732,6 @@ func (o *historianOutput) writeRowsIsolated(ctx context.Context, pool *pgxpool.P
 	return nil // ACK: good rows committed, poison rows dropped-with-signal
 }
 
-// noteStored logs once when the first value row for this contract lands, so an operator can confirm
-// data is being written -- the positive counterpart to the starving notice in WriteBatch. The
-// everStored fast path keeps this lock-free on every batch after the first store.
 func (o *historianOutput) noteStored() {
 	if o.everStored.Load() {
 		return
