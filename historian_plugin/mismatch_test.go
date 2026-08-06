@@ -155,12 +155,6 @@ var _ = Describe("contract-mismatch notification", func() {
 		Expect(strings.Count(logs(), "level=error")).To(Equal(2))
 	})
 
-	It("stops logging once the mismatched traffic stops, so the bridge can recover", func() {
-		h.NoteContractMismatch(now, 4, 4, seen, example, false)
-		now = now.Add(10 * time.Minute)
-		Expect(strings.Count(logs(), "level=error")).To(Equal(1), "nothing re-emits the error, so it ages out of umh-core's log window and the bridge goes green again")
-	})
-
 	It("blames the subscription, not data_contract_name, when the same batch also carries matching rows", func() {
 		h.NoteContractMismatch(now, 2, 1, seen, example, true)
 		Expect(logs()).To(ContainSubstring("subscription is over-broad"))

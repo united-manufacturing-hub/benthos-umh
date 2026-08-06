@@ -836,10 +836,6 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(h.CountAttributeRows(ctx, "reemit")).To(Equal(2))
 	})
 
-	// The metric counters (messages_dropped, historian_values_truncated) are not readable through
-	// benthos's mock harness (it backs metrics with a no-op), so these specs pin the co-located
-	// operator-facing log lines instead -- the same signal umh-core's log regex surfaces as degraded,
-	// and the guard against a regression that stops counting/logging a drop or truncation.
 	It("nacks and errors when data arrives but nothing matches the contract", func() {
 		h := connected("drops")
 		defer h.Close(ctx)
@@ -937,6 +933,47 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(h.WriteBatch(ctx, service.MessageBatch{msg})).To(Succeed())
 		Expect(h.CountValueRows(ctx, "relational")).To(Equal(0), "relational data must not land in a timeseries table")
 		Expect(logs()).To(ContainSubstring("reason=not_timeseries"))
+	})
+
+	It("reports a body that is not JSON, naming the topic that carried it", func() {
+		h := connected("notjson")
+		defer h.Close(ctx)
+		logs := h.CaptureLogs()
+		msg := service.NewMessage([]byte("<xml>not json</xml>"))
+		msg.MetaSet("umh_topic", "umh.v1.acme.line1._notjson_v1.vibration.t")
+		Expect(h.WriteBatch(ctx, service.MessageBatch{msg})).To(Succeed())
+		Expect(h.CountValueRows(ctx, "notjson")).To(Equal(0))
+		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: dropped 1 of 1 message(s) (reason=not_structured"), "an unparseable body must name itself, not fail silently")
+		Expect(logs()).To(ContainSubstring(`example umh_topic="umh.v1.acme.line1._notjson_v1.vibration.t"`), "the topic is the only handle an operator has on a body that cannot be parsed")
+	})
+
+	It("reports a JSON body that is not an object", func() {
+		h := connected("notobj")
+		defer h.Close(ctx)
+		logs := h.CaptureLogs()
+		arr := service.NewMessage(nil)
+		arr.SetStructured([]any{map[string]any{"value": 1.0, "timestamp_ms": float64(1000)}})
+		arr.MetaSet("umh_topic", "umh.v1.acme.line1._notobj_v1.vibration.t")
+		scalar := service.NewMessage(nil)
+		scalar.SetStructured(42.0)
+		scalar.MetaSet("umh_topic", "umh.v1.acme.line1._notobj_v1.vibration.s")
+		Expect(h.WriteBatch(ctx, service.MessageBatch{arr, scalar})).To(Succeed())
+		Expect(h.CountValueRows(ctx, "notobj")).To(Equal(0), "an array of points and a bare scalar are both outside the {value, timestamp_ms} contract")
+		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: dropped 2 of 2 message(s) (reason=not_object"))
+	})
+
+	It("nacks every mismatching batch while the error log is throttled", func() {
+		h := connected("throttle")
+		defer h.Close(ctx)
+		logs := h.CaptureLogs()
+		bad := func() service.MessageBatch {
+			return service.MessageBatch{mkMsg(1.0, 1000, "_other_v1", "acme.line1", "t", nil)}
+		}
+		for i := 0; i < 3; i++ {
+			Expect(h.WriteBatch(ctx, bad())).To(HaveOccurred(), "the throttle governs the log only; a refused batch must never be acked")
+		}
+		Expect(strings.Count(logs(), "level=error msg=TimescaleDB historian: no message carries")).To(Equal(1), "three batches inside one interval report once")
+		Expect(h.CountValueRows(ctx, "throttle")).To(Equal(0))
 	})
 
 	It("errors with the reason and the fix when a whole batch is dropped for a real fault", func() {
