@@ -792,8 +792,13 @@ func (o *historianOutput) reportDrops(total int, tally map[DropReason]dropTally)
 	sort.Strings(reasons)
 	for _, reason := range reasons {
 		t := tally[DropReason(reason)]
-		o.logger.Errorf("TimescaleDB historian: dropped %d of %d message(s) (reason=%s, example umh_topic=%q)%s",
+		line := fmt.Sprintf("TimescaleDB historian: dropped %d of %d message(s) (reason=%s, example umh_topic=%q)%s",
 			t.count, total, reason, t.example, dropHint(DropReason(reason)))
+		if DropReason(reason) == DropServerVirtualPath {
+			o.logger.Debugf("%s", line)
+			continue
+		}
+		o.logger.Errorf("%s", line)
 	}
 }
 

@@ -224,6 +224,15 @@ var _ = Describe("drop logging", func() {
 		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: dropped 4 of 4 message(s) (reason=missing_timestamp"), "a plugin usable outside umh-core cannot defer its errors for a host's startup gate")
 	})
 
+	It("keeps an OPC UA server-diagnostics drop at debug so it cannot degrade the bridge", func() {
+		h := tsh.NewHistorianTestHandle("", "historian")
+		logs := h.CaptureLogs()
+
+		h.ReportDropForTest(4, "server_virtual_path", 4, "umh.v1.acme._historian_v1.Root.Objects.Server.ServerStatus.CurrentTime")
+		Expect(logs()).To(ContainSubstring("level=debug msg=TimescaleDB historian: dropped 4 of 4 message(s) (reason=server_virtual_path"), "a broad OPC UA browse picks these up by accident; they are expected noise, not an operator error")
+		Expect(logs()).NotTo(ContainSubstring("level=error"))
+	})
+
 	It("reports one line per reason, naming each reason's share and an example topic", func() {
 		h := tsh.NewHistorianTestHandle("", "historian")
 		logs := h.CaptureLogs()
