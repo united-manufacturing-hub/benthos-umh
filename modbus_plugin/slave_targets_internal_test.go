@@ -19,6 +19,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 var _ = Describe("tagIDWithSlave", func() {
@@ -65,5 +66,60 @@ var _ = Describe("tagIDWithSlave", func() {
 		a.SlaveIDs = []byte{6, 3, 5}
 		_ = tagIDWithSlave(seed, a)
 		Expect(a.SlaveIDs).To(Equal([]byte{6, 3, 5}))
+	})
+})
+
+var _ = Describe("validateAndAppend with slave lists", func() {
+	var (
+		m          *ModbusInput
+		seed       maphash.Seed
+		seenFields map[uint64]struct{}
+	)
+
+	BeforeEach(func() {
+		m = &ModbusInput{
+			Log:      service.MockResources().Logger(),
+			SlaveIDs: []byte{1, 2, 3, 4, 5, 6},
+		}
+		seed = maphash.MakeSeed()
+		seenFields = make(map[uint64]struct{})
+	})
+
+	item := func(ids ...byte) ModbusDataItemWithAddress {
+		return ModbusDataItemWithAddress{
+			Name: "reg", Register: "holding", Address: 23, Type: "INT16", SlaveIDs: ids,
+		}
+	}
+
+	It("should accept a subset of the configured slaves", func() {
+		out, err := m.validateAndAppend(nil, item(3, 5, 6), seed, seenFields)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).To(HaveLen(1))
+		Expect(out[0].SlaveIDs).To(Equal([]byte{3, 5, 6}))
+	})
+
+	It("should reject an ID missing from the top-level slaveIDs", func() {
+		_, err := m.validateAndAppend(nil, item(3, 7), seed, seenFields)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("slaveID 7"))
+		Expect(err.Error()).To(ContainSubstring("top-level slaveIDs list"))
+	})
+
+	It("should drop a second identical entry as a duplicate", func() {
+		out, err := m.validateAndAppend(nil, item(3, 5), seed, seenFields)
+		Expect(err).NotTo(HaveOccurred())
+
+		out, err = m.validateAndAppend(out, item(5, 3), seed, seenFields)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).To(HaveLen(1))
+	})
+
+	It("should keep entries with different slave lists", func() {
+		out, err := m.validateAndAppend(nil, item(3, 5), seed, seenFields)
+		Expect(err).NotTo(HaveOccurred())
+
+		out, err = m.validateAndAppend(out, item(4, 6), seed, seenFields)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).To(HaveLen(2))
 	})
 })

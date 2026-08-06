@@ -227,6 +227,12 @@ func (m *ModbusInput) validateAndAppend(
 		return addresses, fmt.Errorf("address %q has slaveID %d which is not in the top-level slaveIDs list. Add %d to slaveIDs or set slaveID to 0 to read from all slaves", item.Name, item.SlaveID, item.SlaveID)
 	}
 
+	for _, sid := range item.SlaveIDs {
+		if !slices.Contains(m.SlaveIDs, sid) {
+			return addresses, fmt.Errorf("address %q has slaveID %d which is not in the top-level slaveIDs list. Add %d to slaveIDs or remove it from the address", item.Name, sid, sid)
+		}
+	}
+
 	if valErr := validateAddressItem(item); valErr != nil {
 		return addresses, valErr
 	}
