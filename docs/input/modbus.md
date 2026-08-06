@@ -266,7 +266,8 @@ name.register.address.type[:key=value]*
 4. `type` — one of: `BIT`, `INT8L`, `INT8H`, `UINT8L`, `UINT8H`, `INT16`, `UINT16`, `INT32`, `UINT32`, `INT64`, `UINT64`, `FLOAT16`, `FLOAT32`, `FLOAT64`, `STRING`
 
 **Optional key-value pairs** (colon-separated):
-- `slaveID=<0-255>` — restrict to specific slave ID (default: 0 = all)
+- `slaveID=<0-255>` — restrict to a specific slave ID (default: 0 = all)
+- `slaveID=<id>,<id>,...` — restrict to a subset of slaves, e.g. `slaveID=3,5,6`. Every ID must appear in the top-level `slaveIDs`. `0` means all slaves and cannot be combined with specific IDs.
 - `length=<n>` — register count, only valid for STRING type
 - `bit=<0-15>` — bit number, only valid for BIT type
 - `scale=<float>` — scaling factor
@@ -283,6 +284,38 @@ input:
       - "serial_number.holding.200.STRING:length=10"
       - "pressure.holding.300.FLOAT32:scale=0.1:output=FLOAT64:slaveID=2"
 ```
+
+**Reading one address from a subset of slaves**
+
+```yaml
+input:
+  modbus:
+    controller: 'tcp://localhost:502'
+    slaveIDs: [1, 2, 3, 4, 5, 6]
+    unifiedAddresses:
+      - "cycle_count.holding.23.INT16:slaveID=3,5,6"   # only slaves 3, 5 and 6
+      - "temperature.holding.100.INT16:slaveID=2"      # only slave 2
+      - "pressure.holding.300.FLOAT32"                 # all six slaves
+```
+
+Each listed slave produces its own message, all carrying the same `modbus_tag_name`
+and differing only in `modbus_tag_slaveid`. If your pipeline builds the topic from the
+tag name alone, all of them land on one topic and overwrite each other. Include the
+slave ID in the topic:
+
+```yaml
+pipeline:
+  processors:
+    - tag_processor:
+        defaults: |
+          msg.meta.tag_name = msg.meta.modbus_tag_name;
+          msg.meta.virtual_path = "slave" + msg.meta.modbus_tag_slaveid;
+          return msg;
+```
+
+This replaces the older workaround of duplicating the address once per slave under a
+different name. Subsets are supported in `unifiedAddresses` only; the deprecated
+`addresses` list keeps its single `slaveID` value.
 
 **Migration from `addresses` to `unifiedAddresses`**
 
@@ -408,6 +441,8 @@ input:
 * **Description**: Optionally restrict this address to a specific slave ID. When set, only the specified slave will read this address. When omitted or set to 0, all configured slaves (from the top-level `slaveIDs`) will read this address.
 * **Default**: 0 (all slaves)
 * **Validation**: If non-zero, the value must appear in the top-level `slaveIDs` list.
+* **Note**: This deprecated field accepts a single ID only. To read one address from
+  several slaves, use `unifiedAddresses` with `slaveID=3,5,6`.
 *   **Configuration Example**:
 
     ```yaml
