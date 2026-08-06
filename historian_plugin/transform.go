@@ -27,8 +27,8 @@ import (
 )
 
 const (
-	maxTextRunes = 8192
-	maxJSDateMs  = 8.64e15 // JS Date valid range is +/- this
+	maxTextRunes          = 8192
+	maxJSDateMs           = 8.64e15 // JS Date valid range is +/- this
 	serverDiagnosticsPath = "Root.Objects.Server"
 )
 
