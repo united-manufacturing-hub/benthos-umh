@@ -123,3 +123,85 @@ var _ = Describe("validateAndAppend with slave lists", func() {
 		Expect(out).To(HaveLen(2))
 	})
 })
+
+var _ = Describe("targetSlaves", func() {
+	configured := []byte{1, 2, 3, 4, 5, 6}
+
+	It("should return the list when one is set", func() {
+		item := ModbusDataItemWithAddress{SlaveIDs: []byte{3, 5, 6}}
+		Expect(item.targetSlaves(configured)).To(Equal([]byte{3, 5, 6}))
+	})
+
+	It("should prefer the list over a single ID", func() {
+		item := ModbusDataItemWithAddress{SlaveID: 2, SlaveIDs: []byte{3, 5}}
+		Expect(item.targetSlaves(configured)).To(Equal([]byte{3, 5}))
+	})
+
+	It("should return the single ID when no list is set", func() {
+		item := ModbusDataItemWithAddress{SlaveID: 2}
+		Expect(item.targetSlaves(configured)).To(Equal([]byte{2}))
+	})
+
+	It("should return every configured slave when nothing is set", func() {
+		item := ModbusDataItemWithAddress{}
+		Expect(item.targetSlaves(configured)).To(Equal(configured))
+	})
+})
+
+var _ = Describe("buildPerSlaveAddresses", func() {
+	newInput := func(addrs ...ModbusDataItemWithAddress) *ModbusInput {
+		return &ModbusInput{
+			Log:       service.MockResources().Logger(),
+			SlaveIDs:  []byte{1, 2, 3, 4, 5, 6},
+			Addresses: addrs,
+		}
+	}
+
+	named := func(name string, ids ...byte) ModbusDataItemWithAddress {
+		return ModbusDataItemWithAddress{
+			Name: name, Register: "holding", Address: 23, Type: "INT16", SlaveIDs: ids,
+		}
+	}
+
+	It("should assign a subset address to exactly its slaves", func() {
+		perSlave := newInput(named("reg", 3, 5, 6)).buildPerSlaveAddresses()
+		Expect(perSlave).To(HaveLen(3))
+		Expect(perSlave).To(HaveKey(byte(3)))
+		Expect(perSlave).To(HaveKey(byte(5)))
+		Expect(perSlave).To(HaveKey(byte(6)))
+		Expect(perSlave[byte(3)]).To(HaveLen(1))
+		Expect(perSlave[byte(3)][0].Name).To(Equal("reg"))
+	})
+
+	It("should not assign a subset address to unlisted slaves", func() {
+		perSlave := newInput(named("reg", 3, 5, 6)).buildPerSlaveAddresses()
+		Expect(perSlave).NotTo(HaveKey(byte(1)))
+		Expect(perSlave).NotTo(HaveKey(byte(2)))
+		Expect(perSlave).NotTo(HaveKey(byte(4)))
+	})
+
+	It("should assign a single-slave address to that slave only", func() {
+		item := ModbusDataItemWithAddress{Name: "one", Register: "holding", Address: 10, Type: "INT16", SlaveID: 2}
+		perSlave := newInput(item).buildPerSlaveAddresses()
+		Expect(perSlave).To(HaveLen(1))
+		Expect(perSlave).To(HaveKey(byte(2)))
+	})
+
+	It("should assign an unrestricted address to every configured slave", func() {
+		item := ModbusDataItemWithAddress{Name: "all", Register: "holding", Address: 11, Type: "INT16"}
+		perSlave := newInput(item).buildPerSlaveAddresses()
+		Expect(perSlave).To(HaveLen(6))
+	})
+
+	It("should mix subset, single and unrestricted addresses", func() {
+		perSlave := newInput(
+			named("sub", 3, 5),
+			ModbusDataItemWithAddress{Name: "one", Register: "holding", Address: 10, Type: "INT16", SlaveID: 1},
+			ModbusDataItemWithAddress{Name: "all", Register: "holding", Address: 11, Type: "INT16"},
+		).buildPerSlaveAddresses()
+
+		Expect(perSlave[byte(1)]).To(HaveLen(2)) // one + all
+		Expect(perSlave[byte(3)]).To(HaveLen(2)) // sub + all
+		Expect(perSlave[byte(2)]).To(HaveLen(1)) // all
+	})
+})

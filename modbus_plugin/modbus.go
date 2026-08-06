@@ -215,6 +215,44 @@ var ModbusConfigSpec = service.NewConfigSpec().
 		Optional().
 		Deprecated())
 
+// targetSlaves returns which slaves this address is read from. A configured list wins
+// over a single slave ID, and an address with neither is read from every configured
+// slave.
+func (i ModbusDataItemWithAddress) targetSlaves(configured []byte) []byte {
+	switch {
+	case len(i.SlaveIDs) > 0:
+		return i.SlaveIDs
+	case i.SlaveID != 0:
+		return []byte{i.SlaveID}
+	default:
+		return configured
+	}
+}
+
+// buildPerSlaveAddresses groups the parsed addresses by the slaves they are read from.
+func (m *ModbusInput) buildPerSlaveAddresses() map[byte][]ModbusDataItemWithAddress {
+	perSlaveAddresses := make(map[byte][]ModbusDataItemWithAddress)
+
+	for _, item := range m.Addresses {
+		targets := item.targetSlaves(m.SlaveIDs)
+
+		// A slave list yields one message per slave under the same tag name. Warn so a
+		// pipeline that builds its topic from modbus_tag_name alone does not silently
+		// collapse them. The all-slaves case is deliberately not warned about: it has
+		// always behaved this way and would fire on existing configs.
+		if len(item.SlaveIDs) > 1 {
+			m.Log.Warnf("Address %q is read from %d slaves (%v); include modbus_tag_slaveid in the topic to avoid collapsing them onto one tag",
+				item.Name, len(item.SlaveIDs), item.SlaveIDs)
+		}
+
+		for _, sid := range targets {
+			perSlaveAddresses[sid] = append(perSlaveAddresses[sid], item)
+		}
+	}
+
+	return perSlaveAddresses
+}
+
 // validateAndAppend checks slaveID membership, validates type/register compatibility,
 // deduplicates by tag ID, and appends the item to the address list.
 func (m *ModbusInput) validateAndAppend(
@@ -494,18 +532,7 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	}
 
 	// Build per-slave address lists
-	perSlaveAddresses := make(map[byte][]ModbusDataItemWithAddress)
-	for _, item := range m.Addresses {
-		// Specific slave: handle and continue
-		if item.SlaveID != 0 {
-			perSlaveAddresses[item.SlaveID] = append(perSlaveAddresses[item.SlaveID], item)
-			continue
-		}
-		// Global address: add to every slave
-		for _, sid := range m.SlaveIDs {
-			perSlaveAddresses[sid] = append(perSlaveAddresses[sid], item)
-		}
-	}
+	perSlaveAddresses := m.buildPerSlaveAddresses()
 
 	// Second-pass dedup: within each slave, dedup by register+address
 	// (catches overlap between global slaveID=0 entries and specific slaveID entries)
