@@ -17,6 +17,7 @@ package modbus_plugin
 import (
 	"fmt"
 	"hash/maphash"
+	"slices"
 	"strconv"
 )
 
@@ -84,6 +85,16 @@ func tagIDWithSlave(seed maphash.Seed, item ModbusDataItemWithAddress) uint64 {
 	mh.WriteString(strconv.Itoa(int(item.Address)))
 	mh.WriteByte(0)
 	mh.WriteByte(item.SlaveID)
+
+	// Hash a sorted copy so the same subset written in a different order dedups.
+	// Items without a list write nothing extra, keeping legacy hashes unchanged.
+	if len(item.SlaveIDs) > 0 {
+		sorted := slices.Clone(item.SlaveIDs)
+		slices.Sort(sorted)
+
+		mh.WriteByte(0)
+		mh.Write(sorted)
+	}
 
 	return mh.Sum64()
 }
