@@ -489,7 +489,7 @@ func (o *historianOutput) resolveTopic(ctx context.Context, pool *pgxpool.Pool, 
 	}
 	resolve := topicResolveSQL
 	if o.allowUnvalidated {
-		resolve = dimensionCTEKeepType
+		resolve = topicResolveKeepTypeSQL
 	}
 	switch {
 	case err == nil:
