@@ -63,14 +63,14 @@ var _ = Describe("reportedContracts", func() {
 		Expect(tsh.ReportedContractsForTest(seen)).To(Equal([]string{"_alpha", "_pump_v1", "_raw"}))
 	})
 
-	It("caps the list so one message cannot list a whole bus", func() {
+	It("lists every contract observed, however many arrived", func() {
 		seen := map[string]struct{}{}
-		for _, c := range []string{"_a", "_b", "_c", "_d", "_e", "_f", "_g"} {
+		for _, c := range []string{"_raw", "_historian", "_pump_v1", "_pump_v2", "_maintenance_v1", "_analytics_v1", "_tmp"} {
 			seen[c] = struct{}{}
 		}
 		got := tsh.ReportedContractsForTest(seen)
-		Expect(got).To(HaveLen(5))
-		Expect(got).To(Equal([]string{"_a", "_b", "_c", "_d", "_e"}))
+		Expect(got).To(HaveLen(7), "a real instance publishes more than a handful of contracts, and truncating hides the ones the operator has to narrow against")
+		Expect(got).To(Equal([]string{"_analytics_v1", "_historian", "_maintenance_v1", "_pump_v1", "_pump_v2", "_raw", "_tmp"}))
 	})
 
 	It("returns an empty list for no observations", func() {
@@ -237,7 +237,7 @@ var _ = Describe("drop logging", func() {
 		h := tsh.NewHistorianTestHandle("", "historian")
 		logs := h.CaptureLogs()
 
-		h.ReportDropsForTest(10, map[string]tsh.DropTallyForTest{
+		h.ReportDropsForTest(10, map[string]tsh.DropSummaryForTest{
 			"missing_value":     {Count: 7, Example: "umh.v1.acme._historian_v1.a"},
 			"missing_timestamp": {Count: 3, Example: "umh.v1.acme._historian_v1.b"},
 		})

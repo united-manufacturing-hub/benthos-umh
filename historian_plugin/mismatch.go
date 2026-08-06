@@ -21,10 +21,7 @@ import (
 	"time"
 )
 
-const (
-	mismatchLogInterval  = 2 * time.Minute
-	maxReportedContracts = 5
-)
+const mismatchLogInterval = 2 * time.Minute
 
 func suggestedTopicPattern(contract string) string {
 	return `^umh\.v1(?:\.[^._][^.]*)+\._` + contract + `(_v\d+)?\..+$`
@@ -36,9 +33,6 @@ func reportedContracts(seen map[string]struct{}) []string {
 		out = append(out, c)
 	}
 	sort.Strings(out)
-	if len(out) > maxReportedContracts {
-		out = out[:maxReportedContracts]
-	}
 	return out
 }
 

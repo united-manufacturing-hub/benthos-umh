@@ -407,7 +407,7 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	view := o.dedup.NewBatch()
 	rows := make([]*Row, 0, len(batch))
 	churn := map[string]struct{}{} // high-churn metadata keys seen anywhere in this batch (see below)
-	drops := map[DropReason]dropTally{}
+	drops := map[DropReason]dropSummary{}
 	mismatchedContracts := map[string]struct{}{}
 	for _, msg := range batch {
 		meta := map[string]string{}
@@ -766,34 +766,34 @@ func describeRow(r *Row) string {
 		r.ContractName, r.RawLocation, r.VirtualPath, r.TagName, r.TS)
 }
 
-type dropTally struct {
+type dropSummary struct {
 	example string
 	count   int
 }
 
-func (o *historianOutput) noteDrop(tally map[DropReason]dropTally, reason DropReason, topic string) {
+func (o *historianOutput) noteDrop(drops map[DropReason]dropSummary, reason DropReason, topic string) {
 	o.dropped.Incr(1, string(reason))
-	t := tally[reason]
-	t.count++
-	if t.example == "" {
-		t.example = topic
+	s := drops[reason]
+	s.count++
+	if s.example == "" {
+		s.example = topic
 	}
-	tally[reason] = t
+	drops[reason] = s
 }
 
-func (o *historianOutput) reportDrops(total int, tally map[DropReason]dropTally) {
-	if len(tally) == 0 {
+func (o *historianOutput) reportDrops(total int, drops map[DropReason]dropSummary) {
+	if len(drops) == 0 {
 		return
 	}
-	reasons := make([]string, 0, len(tally))
-	for reason := range tally {
+	reasons := make([]string, 0, len(drops))
+	for reason := range drops {
 		reasons = append(reasons, string(reason))
 	}
 	sort.Strings(reasons)
 	for _, reason := range reasons {
-		t := tally[DropReason(reason)]
+		d := drops[DropReason(reason)]
 		line := fmt.Sprintf("TimescaleDB historian: dropped %d of %d message(s) (reason=%s, example umh_topic=%q)%s",
-			t.count, total, reason, t.example, dropHint(DropReason(reason)))
+			d.count, total, reason, d.example, dropHint(DropReason(reason)))
 		if DropReason(reason) == DropServerVirtualPath {
 			o.logger.Debugf("%s", line)
 			continue
