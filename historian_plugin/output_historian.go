@@ -406,28 +406,24 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	rows := make([]*Row, 0, len(batch))
 	churn := map[string]struct{}{} // high-churn metadata keys seen anywhere in this batch (see below)
 	drops := map[DropReason]dropSummary{}
-	mismatchedContracts := map[string]struct{}{}
 	for _, msg := range batch {
 		meta := map[string]string{}
 		_ = msg.MetaWalk(func(k, v string) error { meta[k] = v; return nil })
 		structured, err := msg.AsStructured()
 		if err != nil {
-			o.noteDrop(drops, DropNotStructured, meta["umh_topic"])
+			o.noteDrop(drops, DropInfo{Reason: DropNotStructured}, meta["umh_topic"])
 			continue
 		}
 		payload, ok := structured.(map[string]any)
 		if !ok {
-			o.noteDrop(drops, DropNotObject, meta["umh_topic"])
+			o.noteDrop(drops, DropInfo{Reason: DropNotObject}, meta["umh_topic"])
 			continue
 		}
 		// Transform validates the umh_topic/contract and the value+timestamp, and decides whether
 		// this row also needs to write a metadata (attribute) row. A non-empty reason means drop.
 		row, drop := Transform(payload, meta, o.contract, o.metadataKeysAll, o.metadataKeys, o.metadataExclude, o.allowUnvalidated, view)
 		if drop.Reason != DropNone {
-			if drop.Reason == DropContractMismatch && drop.Contract != "" {
-				mismatchedContracts[drop.Contract] = struct{}{}
-			}
-			o.noteDrop(drops, drop.Reason, meta["umh_topic"])
+			o.noteDrop(drops, drop, meta["umh_topic"])
 			continue
 		}
 		for _, k := range row.churnKeys { // union across the whole batch, not just the first row
@@ -448,7 +444,7 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	// wants them out of metadata_keys.
 	o.warnHighChurnMetadata(churn)
 	if mismatch := drops[DropContractMismatch]; mismatch.count > 0 {
-		o.noteContractMismatch(time.Now(), len(batch), mismatch.count, mismatchedContracts, mismatch.example, len(rows) > 0)
+		o.noteContractMismatch(time.Now(), len(batch), mismatch.count, mismatch.contracts, mismatch.example, len(rows) > 0)
 		return errors.New(nackMessage(o.contract, len(batch), mismatch.count))
 	}
 	o.reportDrops(len(batch), drops)
@@ -461,22 +457,14 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	// re-resolving topics the fast path already resolved.
 	resolved := make(map[topicKey]int64)
 	err := o.writeBatchFast(ctx, pool, rows, view, resolved)
-	if err == nil {
+	switch {
+	case err == nil:
 		return nil
-	}
-	if errors.Is(err, errIntraBatchConflict) {
-		// Two rows in the batch shared (topic_id, ts) with differing values. Re-run row-by-row so
-		// the good rows land and the offending row is dropped with a signal.
+	case errors.Is(err, errIntraBatchConflict):
 		o.logger.Warnf("TimescaleDB historian: intra-batch (topic_id, ts) conflict, isolating good rows")
-		return o.writeRowsIsolated(ctx, pool, rows, resolved)
-	}
-	switch classify(err) {
-	case dispDropPoison:
-		// A poison row failed the fast batch. Re-run row-by-row so the good rows land and only
-		// the poison rows are dropped -- otherwise one bad value head-of-line-blocks the stream.
+	case classify(err) == dispDropPoison:
 		o.logger.Warnf("TimescaleDB historian: poison row in batch, isolating good rows: %v", o.redact(err))
-		return o.writeRowsIsolated(ctx, pool, rows, resolved)
-	case dispRetryStanding:
+	case classify(err) == dispRetryStanding:
 		// Config/resource/unknown: never drop good data. NACK for retry, but loudly -- this will
 		// not clear without an operator (e.g. missing table privilege, disk full).
 		o.logger.Errorf("TimescaleDB historian: write blocked by a standing fault; this requires operator intervention in the database and will NOT clear on its own. Holding the batch for retry (no data dropped); it resumes automatically once the cause is fixed in the database (e.g. grant the missing table privilege, free disk space): %v", o.redact(err))
@@ -484,6 +472,7 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	default: // dispRetryTransient: connection blip etc. -- benthos retries; stay quiet to avoid log spam
 		return err
 	}
+	return o.writeRowsIsolated(ctx, pool, rows, resolved)
 }
 
 // resolveTopic returns the topic_id for one row, read-first: an existing topic resolves via a
@@ -695,9 +684,13 @@ func (o *historianOutput) writeRowsIsolated(ctx context.Context, pool *pgxpool.P
 	vq := valueQueryFor(o.contract)
 	aq := attributeQueryFor(o.contract)
 	var written, attrs int
-	drop := func(err error, phase string, r *Row) {
+	dropped := func(err error, phase string, r *Row) bool {
+		if classify(err) != dispDropPoison {
+			return false
+		}
 		o.poisoned.Incr(1, pgSQLState(err), phase)
 		o.logger.Errorf("TimescaleDB historian: dropped poison row at %s for %s (sqlstate=%s): %v", phase, describeRow(r), pgSQLState(err), o.redact(err))
+		return true
 	}
 	for _, r := range rows {
 		// Reuse a topic_id the fast path (or an earlier row here) already resolved; only a genuinely
@@ -709,8 +702,7 @@ func (o *historianOutput) writeRowsIsolated(ctx context.Context, pool *pgxpool.P
 			var err error
 			id, err = o.resolveTopicCached(ctx, pool, r)
 			if err != nil {
-				if classify(err) == dispDropPoison {
-					drop(err, "resolve", r)
+				if dropped(err, "resolve", r) {
 					continue
 				}
 				return err // NACK: don't count; the successful retry re-counts via the fast path
@@ -718,8 +710,7 @@ func (o *historianOutput) writeRowsIsolated(ctx context.Context, pool *pgxpool.P
 			resolved[k] = id
 		}
 		if _, err := pool.Exec(ctx, vq, id, r.TS, r.ValueNum, r.ValueText); err != nil {
-			if classify(err) == dispDropPoison {
-				drop(err, "value", r)
+			if dropped(err, "value", r) {
 				continue
 			}
 			return err
@@ -728,8 +719,7 @@ func (o *historianOutput) writeRowsIsolated(ctx context.Context, pool *pgxpool.P
 		o.noteStored() // record now: a later non-poison error can return before the tail
 		if r.EmitMeta {
 			if _, err := pool.Exec(ctx, aq, id, r.TS, r.MetadataJSON); err != nil {
-				if classify(err) == dispDropPoison {
-					drop(err, "attribute", r)
+				if dropped(err, "attribute", r) {
 					continue
 				}
 				return err
@@ -765,18 +755,25 @@ func describeRow(r *Row) string {
 }
 
 type dropSummary struct {
-	example string
-	count   int
+	example   string
+	contracts map[string]struct{}
+	count     int
 }
 
-func (o *historianOutput) noteDrop(drops map[DropReason]dropSummary, reason DropReason, topic string) {
-	o.dropped.Incr(1, string(reason))
-	s := drops[reason]
+func (o *historianOutput) noteDrop(drops map[DropReason]dropSummary, drop DropInfo, topic string) {
+	o.dropped.Incr(1, string(drop.Reason))
+	s := drops[drop.Reason]
 	s.count++
 	if s.example == "" {
 		s.example = topic
 	}
-	drops[reason] = s
+	if drop.Contract != "" {
+		if s.contracts == nil {
+			s.contracts = map[string]struct{}{}
+		}
+		s.contracts[drop.Contract] = struct{}{}
+	}
+	drops[drop.Reason] = s
 }
 
 func (o *historianOutput) reportDrops(total int, drops map[DropReason]dropSummary) {
