@@ -72,6 +72,11 @@ type ModbusDataItemWithAddress struct {
 	// 0 means read from all configured slaves.
 	SlaveID byte
 
+	// SlaveIDs optionally restricts this address to a subset of the configured
+	// slaves. It is set only when two or more IDs are configured and takes
+	// precedence over SlaveID. Empty means fall back to SlaveID.
+	SlaveIDs []byte
+
 	ConverterFunc converterFunc
 }
 

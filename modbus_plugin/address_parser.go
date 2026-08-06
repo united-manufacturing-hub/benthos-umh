@@ -145,16 +145,13 @@ func ParseModbusAddress(addr string) (ModbusDataItemWithAddress, error) {
 
 		switch key {
 		case "slaveID":
-			slaveID, err := strconv.Atoi(value)
+			single, list, err := parseSlaveIDOption(value)
 			if err != nil {
-				return ModbusDataItemWithAddress{}, fmt.Errorf("invalid slaveID value %q: %w", value, err)
+				return ModbusDataItemWithAddress{}, err
 			}
 
-			if slaveID < 0 || slaveID > 255 {
-				return ModbusDataItemWithAddress{}, fmt.Errorf("slaveID %d out of range (0-255)", slaveID)
-			}
-
-			item.SlaveID = byte(slaveID)
+			item.SlaveID = single
+			item.SlaveIDs = list
 		case "length":
 			length, err := strconv.Atoi(value)
 			if err != nil {
@@ -248,4 +245,49 @@ func FormatModbusAddress(item ModbusDataItemWithAddress) string {
 	}
 
 	return b.String()
+}
+
+// parseSlaveIDOption parses the value of the slaveID option, which accepts either a
+// single ID or a comma-separated list. A single ID is returned in the first result to
+// keep the legacy single-slave path byte-identical; two or more IDs are returned in
+// the second result. Order is preserved so the canonical string round-trips.
+func parseSlaveIDOption(value string) (byte, []byte, error) {
+	rawIDs := strings.Split(value, ",")
+
+	ids := make([]byte, 0, len(rawIDs))
+	seen := make(map[byte]bool, len(rawIDs))
+
+	for _, raw := range rawIDs {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			return 0, nil, fmt.Errorf("empty slaveID in list %q", value)
+		}
+
+		id, err := strconv.Atoi(trimmed)
+		if err != nil {
+			return 0, nil, fmt.Errorf("invalid slaveID value %q: %w", trimmed, err)
+		}
+
+		if id < 0 || id > 255 {
+			return 0, nil, fmt.Errorf("slaveID %d out of range (0-255)", id)
+		}
+
+		if len(rawIDs) > 1 && id == 0 {
+			return 0, nil, fmt.Errorf("slaveID 0 means all slaves and cannot be combined with specific IDs in %q", value)
+		}
+
+		if seen[byte(id)] {
+			return 0, nil, fmt.Errorf("duplicate slaveID %d in list %q", id, value)
+		}
+		seen[byte(id)] = true
+
+		ids = append(ids, byte(id))
+	}
+
+	// A single ID keeps using SlaveID, so no existing config reaches the list path.
+	if len(ids) == 1 {
+		return ids[0], nil, nil
+	}
+
+	return 0, ids, nil
 }

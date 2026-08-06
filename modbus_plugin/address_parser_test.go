@@ -258,4 +258,69 @@ var _ = Describe("ParseModbusAddress", func() {
 			Entry("full example", "fullExample.holding.300.INT16:slaveID=55:scale=0.01:output=FLOAT64"),
 		)
 	})
+
+	Context("slaveID lists", func() {
+		It("should parse a multi-value slaveID into SlaveIDs", func() {
+			item, err := ParseModbusAddress("reg.holding.23.INT16:slaveID=3,5,6")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(item.SlaveIDs).To(Equal([]byte{3, 5, 6}))
+			Expect(item.SlaveID).To(Equal(byte(0)))
+		})
+
+		It("should trim spaces around list values", func() {
+			item, err := ParseModbusAddress("reg.holding.23.INT16:slaveID=3, 5 ,6")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(item.SlaveIDs).To(Equal([]byte{3, 5, 6}))
+		})
+
+		It("should preserve the configured order", func() {
+			item, err := ParseModbusAddress("reg.holding.23.INT16:slaveID=6,3,5")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(item.SlaveIDs).To(Equal([]byte{6, 3, 5}))
+		})
+
+		It("should keep a single value in SlaveID and leave SlaveIDs empty", func() {
+			item, err := ParseModbusAddress("reg.holding.23.INT16:slaveID=2")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(item.SlaveID).To(Equal(byte(2)))
+			Expect(item.SlaveIDs).To(BeEmpty())
+		})
+
+		It("should keep slaveID=0 meaning all slaves", func() {
+			item, err := ParseModbusAddress("reg.holding.23.INT16:slaveID=0")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(item.SlaveID).To(Equal(byte(0)))
+			Expect(item.SlaveIDs).To(BeEmpty())
+		})
+
+		It("should reject 0 inside a list", func() {
+			_, err := ParseModbusAddress("reg.holding.23.INT16:slaveID=3,0,5")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("cannot be combined"))
+		})
+
+		It("should reject duplicates inside a list", func() {
+			_, err := ParseModbusAddress("reg.holding.23.INT16:slaveID=3,3,5")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("duplicate slaveID 3"))
+		})
+
+		It("should reject an empty list element", func() {
+			_, err := ParseModbusAddress("reg.holding.23.INT16:slaveID=3,,5")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("empty slaveID"))
+		})
+
+		It("should reject an out-of-range list value", func() {
+			_, err := ParseModbusAddress("reg.holding.23.INT16:slaveID=3,300")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("out of range"))
+		})
+
+		It("should reject a non-numeric list value", func() {
+			_, err := ParseModbusAddress("reg.holding.23.INT16:slaveID=3,abc")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("invalid slaveID"))
+		})
+	})
 })
