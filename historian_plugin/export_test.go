@@ -158,7 +158,6 @@ func NewHistorianTestHandle(dsn string, contract string) *HistorianTestHandle {
 		topicCache:      newTopicCache(),
 		topicCacheSize:  mgr.Metrics().NewGauge("historian_topic_cache_size"),
 		warnedChurn:     map[string]struct{}{},
-		now:             time.Now,
 	}}
 }
 
@@ -325,10 +324,8 @@ func MismatchMessageForTest(contract string, everStored bool, total int, mismatc
 
 func MismatchLogIntervalForTest() time.Duration { return mismatchLogInterval }
 
-func (h *HistorianTestHandle) SetClock(fn func() time.Time) { h.o.now = fn }
-
-func (h *HistorianTestHandle) NoteContractMismatch(total int, mismatched int, seen map[string]struct{}, example string, sawMatching bool) {
-	h.o.noteContractMismatch(total, mismatched, seen, example, sawMatching)
+func (h *HistorianTestHandle) NoteContractMismatch(now time.Time, total int, mismatched int, seen map[string]struct{}, example string, sawMatching bool) {
+	h.o.noteContractMismatch(now, total, mismatched, seen, example, sawMatching)
 }
 
 func DropHintForTest(reason DropReason) string { return dropHint(reason) }

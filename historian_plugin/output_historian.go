@@ -71,7 +71,6 @@ type historianOutput struct {
 	maxInFlight                           int
 	writeTimeout                          time.Duration // 0 => unbounded (per-batch write deadline)
 	dsnOverride                           string        // set by tests; empty => build from fields
-	now                                   func() time.Time
 
 	logger    *service.Logger
 	dropped   *service.MetricCounter // labeled by drop reason
@@ -116,7 +115,6 @@ func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*hi
 		topicCache:     newTopicCache(),
 		topicCacheSize: mgr.Metrics().NewGauge("historian_topic_cache_size"),
 		warnedChurn:    map[string]struct{}{},
-		now:            time.Now,
 	}
 	var err error
 	str := func(field string, dst *string) bool {
@@ -450,7 +448,7 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	// wants them out of metadata_keys.
 	o.warnHighChurnMetadata(churn)
 	if mismatch := drops[DropContractMismatch]; mismatch.count > 0 {
-		o.noteContractMismatch(len(batch), mismatch.count, mismatchedContracts, mismatch.example, len(rows) > 0)
+		o.noteContractMismatch(time.Now(), len(batch), mismatch.count, mismatchedContracts, mismatch.example, len(rows) > 0)
 		return errors.New(nackMessage(o.contract, len(batch), mismatch.count))
 	}
 	o.reportDrops(len(batch), drops)

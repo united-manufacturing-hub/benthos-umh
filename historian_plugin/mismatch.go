@@ -51,10 +51,9 @@ func nackMessage(contract string, total int, mismatched int) string {
 		mismatched, total, contract, DropContractMismatch)
 }
 
-func (o *historianOutput) noteContractMismatch(total int, mismatched int, seen map[string]struct{}, example string, sawMatching bool) {
+func (o *historianOutput) noteContractMismatch(now time.Time, total int, mismatched int, seen map[string]struct{}, example string, sawMatching bool) {
 	o.logStateMu.Lock()
 	defer o.logStateMu.Unlock()
-	now := o.now()
 	if !o.lastMismatchLog.IsZero() && now.Sub(o.lastMismatchLog) < mismatchLogInterval {
 		return
 	}

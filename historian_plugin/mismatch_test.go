@@ -125,45 +125,44 @@ var _ = Describe("contract-mismatch notification", func() {
 	BeforeEach(func() {
 		h = tsh.NewHistorianTestHandle("", "historian")
 		now = time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
-		h.SetClock(func() time.Time { return now })
 		logs = h.CaptureLogs()
 	})
 
 	It("errors on the very first mismatch", func() {
-		h.NoteContractMismatch(4, 4, seen, example, false)
+		h.NoteContractMismatch(now, 4, 4, seen, example, false)
 		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: no message carries data contract _historian"), "the batch is NACKed from the first message, so the reason has to arrive with it")
 	})
 
 	It("names the contracts that arrived in the first error", func() {
-		h.NoteContractMismatch(4, 4, map[string]struct{}{"_pump_v1": {}}, example, false)
+		h.NoteContractMismatch(now, 4, 4, map[string]struct{}{"_pump_v1": {}}, example, false)
 		Expect(logs()).To(ContainSubstring("_pump_v1"))
 	})
 
 	It("throttles repeat mismatches instead of logging every batch", func() {
 		now = now.Add(31 * time.Second)
-		h.NoteContractMismatch(4, 4, seen, example, false)
-		h.NoteContractMismatch(4, 4, seen, example, false)
+		h.NoteContractMismatch(now, 4, 4, seen, example, false)
+		h.NoteContractMismatch(now, 4, 4, seen, example, false)
 		now = now.Add(1 * time.Minute)
-		h.NoteContractMismatch(4, 4, seen, example, false)
+		h.NoteContractMismatch(now, 4, 4, seen, example, false)
 		Expect(strings.Count(logs(), "level=error")).To(Equal(1))
 	})
 
 	It("re-logs after the interval so the bridge stays degraded", func() {
 		now = now.Add(31 * time.Second)
-		h.NoteContractMismatch(4, 4, seen, example, false)
+		h.NoteContractMismatch(now, 4, 4, seen, example, false)
 		now = now.Add(tsh.MismatchLogIntervalForTest() + time.Second)
-		h.NoteContractMismatch(4, 4, seen, example, false)
+		h.NoteContractMismatch(now, 4, 4, seen, example, false)
 		Expect(strings.Count(logs(), "level=error")).To(Equal(2))
 	})
 
 	It("stops logging once the mismatched traffic stops, so the bridge can recover", func() {
-		h.NoteContractMismatch(4, 4, seen, example, false)
+		h.NoteContractMismatch(now, 4, 4, seen, example, false)
 		now = now.Add(10 * time.Minute)
 		Expect(strings.Count(logs(), "level=error")).To(Equal(1), "nothing re-emits the error, so it ages out of umh-core's log window and the bridge goes green again")
 	})
 
 	It("blames the subscription, not data_contract_name, when the same batch also carries matching rows", func() {
-		h.NoteContractMismatch(2, 1, seen, example, true)
+		h.NoteContractMismatch(now, 2, 1, seen, example, true)
 		Expect(logs()).To(ContainSubstring("subscription is over-broad"))
 		Expect(logs()).To(ContainSubstring("even its matching message(s) are not written"))
 		Expect(logs()).NotTo(ContainSubstring("no message carries"))
