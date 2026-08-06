@@ -248,6 +248,11 @@ func Transform(payload map[string]any, meta map[string]string, contract string, 
 	if vp == serverDiagnosticsPath || strings.HasPrefix(vp, serverDiagnosticsPath+".") {
 		return nil, DropInfo{Reason: DropServerVirtualPath}
 	}
+	for k := range payload {
+		if k != "value" && k != "timestamp_ms" {
+			return nil, DropInfo{Reason: DropNotTimeseries}
+		}
+	}
 	value, hasValue := payload["value"]
 	if !hasValue || value == nil {
 		return nil, DropInfo{Reason: DropMissingValue}
@@ -255,9 +260,6 @@ func Transform(payload map[string]any, meta map[string]string, contract string, 
 	tsRaw, hasTS := payload["timestamp_ms"]
 	if !hasTS || tsRaw == nil {
 		return nil, DropInfo{Reason: DropMissingTimestamp}
-	}
-	if len(payload) != 2 {
-		return nil, DropInfo{Reason: DropNotTimeseries}
 	}
 	vt, num, text, ok, truncated := ClassifyValue(value)
 	if !ok {

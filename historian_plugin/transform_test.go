@@ -462,6 +462,17 @@ var _ = Describe("Transform validation guards", func() {
 		Expect(drop.Reason).To(Equal(tsh.DropNotTimeseries))
 	})
 
+	It("names a relational payload as such even when it carries neither value nor timestamp_ms", func() {
+		p, m := ts("_pump_v1")
+		delete(p, "value")
+		delete(p, "timestamp_ms")
+		p["orderId"] = "WO-42"
+		p["quantity"] = 5.0
+		row, drop := run(p, m, false)
+		Expect(row).To(BeNil())
+		Expect(drop.Reason).To(Equal(tsh.DropNotTimeseries), "reporting missing_value here sends the operator to add a value field, which converges on a payload the historian stores as JSON text")
+	})
+
 	It("accepts a payload carrying exactly value and timestamp_ms", func() {
 		p, m := ts("_pump_v1")
 		_, drop := run(p, m, false)
