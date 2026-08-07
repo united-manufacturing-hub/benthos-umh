@@ -97,6 +97,14 @@ func (p *MessageProcessor) ProcessRecord(record *kgo.Record) *service.Message {
 	// Add Kafka timestamp (when the record was written to Kafka) - this is used by the topic browser for ProducedAtMs
 	msg.MetaSetMut("kafka_timestamp_ms", fmt.Sprintf("%d", record.Timestamp.UnixMilli()))
 
+	// Partition and offset identify a record uniquely and survive redelivery, so downstream
+	// processors can tell a retried message from a new one (nodered_js/tag_processor dedupKey).
+	// An offset is only unique within its partition, so both are needed to compose a key.
+	// Types match Redpanda Connect's own redpanda/kafka_franz reader, which the uns_beta input
+	// delegates to, so a config written against either input behaves identically after a switch.
+	msg.MetaSetMut("kafka_partition", int(record.Partition))
+	msg.MetaSetMut("kafka_offset", int(record.Offset))
+
 	return msg
 }
 

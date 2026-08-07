@@ -717,6 +717,39 @@ var _ = Describe("MessageProcessor metadata format conversion", Label("message_p
 		})
 	})
 
+	Context("when a record carries a partition and an offset", func() {
+		// The nodered_js and tag_processor dedupKey feature identifies a retried message
+		// by a metadata field, read with MetaGet. Without these two fields the documented
+		// example (dedupKey: kafka_offset) matches nothing and dedup silently does not run.
+		It("exposes them as metadata so they can be used as a dedup key", func() {
+			processor, err := NewMessageProcessor([]string{".*"}, metrics, MetadataFormatString)
+			Expect(err).ToNot(HaveOccurred())
+
+			record := &kgo.Record{
+				Key:       []byte("umh.v1.enterprise.site.area.line._raw.temperature"),
+				Value:     []byte(`{"value": 42}`),
+				Topic:     "umh.messages",
+				Partition: 3,
+				Offset:    4242,
+			}
+
+			msg := processor.ProcessRecord(record)
+			Expect(msg).NotTo(BeNil())
+
+			// Stored as strings so MetaGet — the accessor the dedup path uses — returns
+			// the value directly.
+			offset, exists := msg.MetaGet("kafka_offset")
+			Expect(exists).To(BeTrue(), "kafka_offset must be present for dedupKey to work")
+			Expect(offset).To(Equal("4242"))
+
+			// An offset is only unique within its partition, so a correct dedup key
+			// composes both.
+			partition, exists := msg.MetaGet("kafka_partition")
+			Expect(exists).To(BeTrue(), "kafka_partition must be present to disambiguate offsets")
+			Expect(partition).To(Equal("3"))
+		})
+	})
+
 	Context("when metadataFormat is 'bytes'", func() {
 		It("should keep Kafka headers as byte arrays", func() {
 			processor, err := NewMessageProcessor([]string{".*"}, metrics, MetadataFormatBytes)
