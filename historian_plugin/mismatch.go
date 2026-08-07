@@ -36,10 +36,10 @@ func reportedContracts(seen map[string]struct{}) []string {
 	return out
 }
 
-func mismatchMessage(contract string, everStored bool, total int, mismatched int, contracts []string, example string) string {
+func mismatchMessage(contract string, overBroad bool, total int, mismatched int, contracts []string, example string) string {
 	seen := "[" + strings.Join(contracts, ", ") + "]"
-	if everStored {
-		return fmt.Sprintf("TimescaleDB historian: subscription is over-broad (reason=%s) -- %d of %d message(s) in this batch carry other data contracts %s (example: %s), so the whole batch is refused and even its matching message(s) are not written. Narrow umh_topics to %s",
+	if overBroad {
+		return fmt.Sprintf("TimescaleDB historian: subscription is over-broad (reason=%s) -- %d of %d message(s) in this batch carry other data contracts %s (example: %s), so the whole batch is refused and any matching message(s) are not written either. Narrow umh_topics to %s",
 			DropContractMismatch, mismatched, total, seen, example, suggestedTopicPattern(contract))
 	}
 	return fmt.Sprintf("TimescaleDB historian: no message carries data contract _%s (reason=%s); the subscription selects %s (example: %s) and every batch is refused. Either set data_contract_name to a contract that is published, or narrow umh_topics to %s",
@@ -58,5 +58,8 @@ func (o *historianOutput) noteContractMismatch(now time.Time, total int, mismatc
 		return
 	}
 	o.lastMismatchLog = now
-	o.logger.Errorf("%s", mismatchMessage(o.contract, o.everStored.Load() || sawMatching, total, mismatched, reportedContracts(seen), example))
+	// Only withhold the data_contract_name remedy on positive evidence that the configured contract
+	// is published: without it, narrowing umh_topics can leave a bridge matching nothing at all.
+	overBroad := o.everStored.Load() || sawMatching
+	o.logger.Errorf("%s", mismatchMessage(o.contract, overBroad, total, mismatched, reportedContracts(seen), example))
 }

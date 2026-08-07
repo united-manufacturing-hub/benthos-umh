@@ -97,19 +97,19 @@ var _ = Describe("mismatchMessage", func() {
 		Expect(got).To(ContainSubstring("subscription is over-broad"))
 		Expect(got).To(ContainSubstring("reason=contract_mismatch"))
 		Expect(got).To(ContainSubstring("12000 of 12084"))
-		Expect(got).To(ContainSubstring("even its matching message(s) are not written"))
+		Expect(got).To(ContainSubstring("any matching message(s) are not written either"))
 		Expect(got).To(ContainSubstring(`^umh\.v1(?:\.[^._][^.]*)+\._historian(_v\d+)?\..+$`))
 		Expect(got).NotTo(ContainSubstring("no message carries"))
 	})
 
 	DescribeTable("stays a single line so it survives being rendered as a bridge status reason",
-		func(everStored bool) {
-			got := tsh.MismatchMessageForTest("historian", everStored, 4, 4, contracts, example)
+		func(overBroad bool) {
+			got := tsh.MismatchMessageForTest("historian", overBroad, 4, 4, contracts, example)
 			Expect(got).NotTo(ContainSubstring("\n"))
 			Expect(got).To(HavePrefix("TimescaleDB historian: "))
 		},
-		Entry("never stored", false),
-		Entry("has stored", true),
+		Entry("contract never seen", false),
+		Entry("over-broad subscription", true),
 	)
 })
 
@@ -155,11 +155,11 @@ var _ = Describe("contract-mismatch notification", func() {
 		Expect(strings.Count(logs(), "level=error")).To(Equal(2))
 	})
 
-	It("blames the subscription, not data_contract_name, when the same batch also carries matching rows", func() {
+	It("blames the subscription, not data_contract_name, when the batch also carries the configured contract", func() {
 		h.NoteContractMismatch(now, 2, 1, seen, example, true)
 		Expect(logs()).To(ContainSubstring("subscription is over-broad"))
-		Expect(logs()).To(ContainSubstring("even its matching message(s) are not written"))
-		Expect(logs()).NotTo(ContainSubstring("no message carries"))
+		Expect(logs()).To(ContainSubstring("any matching message(s) are not written either"))
+		Expect(logs()).NotTo(ContainSubstring("no message carries"), "the contract is published, so narrowing is the fix and changing data_contract_name would match nothing")
 	})
 })
 

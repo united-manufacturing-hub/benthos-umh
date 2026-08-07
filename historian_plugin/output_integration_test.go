@@ -881,6 +881,19 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(logs()).To(ContainSubstring("1 of 2 message(s)"))
 	})
 
+	It("blames the subscription when the matching message is dropped for its payload, not its contract", func() {
+		h := connected("matchdrop")
+		defer h.Close(ctx)
+		logs := h.CaptureLogs()
+		batch := service.MessageBatch{
+			mkMsg(nil, 1000, "_matchdrop_v1", "acme.line1", "t", nil),
+			mkMsg(2.0, 2000, "_other_v1", "acme.line1", "t", nil),
+		}
+		Expect(h.WriteBatch(ctx, batch)).To(HaveOccurred())
+		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: subscription is over-broad"), "the contract did arrive, it just carried no value; sending the operator to data_contract_name would be the wrong fix")
+		Expect(logs()).NotTo(ContainSubstring("no message carries"))
+	})
+
 	It("nacks and reports the first batch without waiting out any startup hold", func() {
 		h := connected("grace")
 		defer h.Close(ctx)

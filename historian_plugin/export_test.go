@@ -318,8 +318,8 @@ func SuggestedTopicPatternForTest(contract string) string { return suggestedTopi
 
 func ReportedContractsForTest(seen map[string]struct{}) []string { return reportedContracts(seen) }
 
-func MismatchMessageForTest(contract string, everStored bool, total int, mismatched int, contracts []string, example string) string {
-	return mismatchMessage(contract, everStored, total, mismatched, contracts, example)
+func MismatchMessageForTest(contract string, overBroad bool, total int, mismatched int, contracts []string, example string) string {
+	return mismatchMessage(contract, overBroad, total, mismatched, contracts, example)
 }
 
 func MismatchLogIntervalForTest() time.Duration { return mismatchLogInterval }

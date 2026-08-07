@@ -406,6 +406,7 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	rows := make([]*Row, 0, len(batch))
 	churn := map[string]struct{}{} // high-churn metadata keys seen anywhere in this batch (see below)
 	drops := map[DropReason]dropSummary{}
+	sawMatching := false
 	for _, msg := range batch {
 		meta := map[string]string{}
 		_ = msg.MetaWalk(func(k, v string) error { meta[k] = v; return nil })
@@ -422,6 +423,12 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 		// Transform validates the umh_topic/contract and the value+timestamp, and decides whether
 		// this row also needs to write a metadata (attribute) row. A non-empty reason means drop.
 		row, drop := Transform(payload, meta, o.contract, o.metadataKeysAll, o.metadataKeys, o.metadataExclude, o.allowUnvalidated, view)
+		// Transform checks topic, then contract, then payload: any later reason means the contract
+		// matched. Counting rows instead would miss a matching message dropped for its payload, and
+		// then blame data_contract_name for what is an over-broad subscription.
+		if drop.Reason != DropInvalidTopic && drop.Reason != DropContractMismatch {
+			sawMatching = true
+		}
 		if drop.Reason != DropNone {
 			o.noteDrop(drops, drop, meta["umh_topic"])
 			continue
@@ -444,7 +451,7 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	// wants them out of metadata_keys.
 	o.warnHighChurnMetadata(churn)
 	if mismatch := drops[DropContractMismatch]; mismatch.count > 0 {
-		o.noteContractMismatch(time.Now(), len(batch), mismatch.count, mismatch.contracts, mismatch.example, len(rows) > 0)
+		o.noteContractMismatch(time.Now(), len(batch), mismatch.count, mismatch.contracts, mismatch.example, sawMatching)
 		return errors.New(nackMessage(o.contract, len(batch), mismatch.count))
 	}
 	o.reportDrops(len(batch), drops)
