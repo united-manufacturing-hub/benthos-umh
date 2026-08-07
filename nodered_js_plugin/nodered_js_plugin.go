@@ -774,6 +774,7 @@ msg.meta.count = (msg.meta.count || 0) + 1;
 return msg;
 
 // Example 7: Persistent counter across messages using cache
+// Set cache.dedupKey as well, or a redelivered message counts the same part twice.
 var count = 0;
 if (cache.exists("count")) { count = cache.get("count"); }
 count++;
@@ -781,18 +782,11 @@ cache.set("count", count);
 msg.payload = count;
 return msg;
 
-// Example 8: Alarm state that only fires once per active condition
-var alarmed = cache.exists("alarm_active") ? cache.get("alarm_active") : false;
-if (msg.payload.value > 100 && !alarmed) {
-  cache.set("alarm_active", true);
-  msg.meta.alarm = "triggered";
-  return msg;
-}
-if (msg.payload.value <= 100 && alarmed) {
-  cache.set("alarm_active", false);
-  msg.meta.alarm = "cleared";
-  return msg;
-}
+// Example 8: Alarm state, published on every message
+// Don't latch this in the cache to fire only on the transition: if the message
+// carrying the "triggered" annotation fails to send, the retry finds the state
+// already changed and the alarm reaches nobody.
+msg.meta.alarm_active = msg.payload.value > 100;
 return msg;`)).
 	Field(service.NewObjectField(
 		"cache",
@@ -810,7 +804,7 @@ return msg;`)).
 			Description("Time-to-live for cached entries. 0 (default) keeps entries until explicit delete or restart. Set a positive duration (e.g. '1h') to auto-expire entries N after the last write.").
 			Default("0s"),
 		service.NewStringField("dedupKey").
-			Description("Name of the message metadata field whose value identifies a message across retries (e.g. 'kafka_offset', 'opcua_source_timestamp', 'spb_sequence'). When set, the plugin remembers each seen value in the cache and skips cache writes when the same value arrives again — so retried messages don't double-write counters or state. Leave empty (default) to disable; a startup warning is logged when disabled.").
+			Description("Name of the message metadata field whose value identifies a message across retries (e.g. 'kafka_offset', 'opcua_source_timestamp', 'spb_sequence'). When set, the plugin remembers each seen value in the cache and skips cache writes when the same value arrives again — so retried messages don't double-write counters or state. Leave empty (default) to disable; a startup warning is logged when disabled. This field will become required in a future release.").
 			Default(""),
 	).
 		Description("Cache configuration for state across messages.").
@@ -867,7 +861,7 @@ func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (
 	}
 	processor.dedupKey = dedupKey
 	if dedupKey == "" {
-		mgr.Logger().Warnf("cache.dedupKey not set — retried messages will re-run cache writes. Set cache.dedupKey to a per-message identifier (e.g. kafka_offset) to skip already-processed messages.")
+		mgr.Logger().Warnf("cache.dedupKey not set — retried messages will re-run cache writes. Set cache.dedupKey to a per-message identifier (e.g. kafka_offset) to skip already-processed messages. This field will become required in a future release.")
 	}
 	return processor, nil
 }

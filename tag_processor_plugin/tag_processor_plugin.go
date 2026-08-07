@@ -82,7 +82,7 @@ Empty or undefined fields will be omitted from the topic.`).
 			Default("").
 			Optional()).
 		Field(service.NewStringField("dedupKey").
-			Description("Name of the message metadata field whose value identifies a message across retries (for example `kafka_offset`). When set, cache.set/delete calls from JavaScript are silently skipped for a message whose value has already been processed once, so the cache state stays idempotent under at-least-once retries. Leave empty to disable — a startup warning is logged if unset.").
+			Description("Name of the message metadata field whose value identifies a message across retries (for example `kafka_offset`). When set, cache.set/delete calls from JavaScript are silently skipped for a message whose value has already been processed once, so the cache state stays idempotent under at-least-once retries. Leave empty to disable — a startup warning is logged if unset. This field will become required in a future release.").
 			Default("").
 			Advanced())
 
@@ -132,7 +132,7 @@ Empty or undefined fields will be omitted from the topic.`).
 				return nil, err
 			}
 			if dedupKey == "" {
-				mgr.Logger().Warnf("tag_processor.dedupKey not set — retried messages will re-run cache writes. Set dedupKey to a per-message identifier (e.g. kafka_offset) to skip already-processed messages.")
+				mgr.Logger().Warnf("tag_processor.dedupKey not set — retried messages will re-run cache writes. Set dedupKey to a per-message identifier (e.g. kafka_offset) to skip already-processed messages. This field will become required in a future release.")
 			}
 
 			config := TagProcessorConfig{
