@@ -244,8 +244,9 @@ types on one tag.
 > the field and is not a defect. With `allow_unvalidated_data: true` the tag resolves on its natural
 > key alone and the change is accepted: one `topic_id` then holds numeric rows in `value_num` and
 > text rows in `value_text`, with `umh.tag.value_type` recording only the first type seen. Read such
-> a tag with `coalesce(value_num::text, value_text)`. Without the flag a flip is dropped as poison,
-> which is correct for a versioned contract whose schema pins the type.
+> a tag with `coalesce(value_num::text, value_text)`. Without the flag nothing is stored at all:
+> every unversioned message is dropped as `contract_unvalidated` before it reaches a write, flip or
+> not. A datatype flip is poison only on a versioned contract, whose schema pins the type.
 
 ## Throughput
 
