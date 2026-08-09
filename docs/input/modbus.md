@@ -300,8 +300,9 @@ input:
 
 Each listed slave produces its own message, all carrying the same `modbus_tag_name`
 and differing only in `modbus_tag_slaveid`. If your pipeline builds the topic from the
-tag name alone, all of them land on one topic and overwrite each other. Include the
-slave ID in the topic:
+tag name alone, all of them land on one topic and overwrite each other. The plugin logs
+a warning at startup whenever an address is read from more than one slave, so this is
+visible before any data flows. Include the slave ID in the topic:
 
 ```yaml
 pipeline:
@@ -313,8 +314,10 @@ pipeline:
           return msg;
 ```
 
-This replaces the older workaround of duplicating the address once per slave under a
-different name. Subsets are supported in `unifiedAddresses` only; the deprecated
+If an unrestricted address and a subset address point at the same register and address,
+each affected slave keeps whichever of the two comes first in the configuration and drops
+the other. This replaces the older workaround of duplicating the address once per slave
+under a different name. Subsets are supported in `unifiedAddresses` only; the deprecated
 `addresses` list keeps its single `slaveID` value.
 
 **Migration from `addresses` to `unifiedAddresses`**

@@ -193,11 +193,14 @@ var ModbusConfigSpec = service.NewConfigSpec().
 		Description("Modbus workarounds. Required by some devices to work correctly. Should be left alone by default and must not be changed unless necessary.").Advanced()).
 	Field(service.NewStringListField("unifiedAddresses").
 		Description("Unified address strings. Format: 'name.register.address.type[:key=value]*'. "+
-			"Mutually exclusive with 'addresses'; providing both will result in an error.").
+			"Mutually exclusive with 'addresses'; providing both will result in an error. "+
+			"The 'slaveID' key also accepts a comma-separated list, such as 'slaveID=3,5,6', "+
+			"to read the address from just that subset of the configured slaveIDs.").
 		Examples(
 			[]string{"temperature.holding.100.INT16"},
 			[]string{"motor_status.discrete.1.BIT:bit=3"},
 			[]string{"pressure.holding.300.FLOAT32:scale=0.1:output=FLOAT64:slaveID=2"},
+			[]string{"cycle_count.holding.23.INT16:slaveID=3,5,6"},
 		).
 		Default([]string{}).
 		Optional()).
@@ -217,7 +220,8 @@ var ModbusConfigSpec = service.NewConfigSpec().
 
 // targetSlaves returns which slaves this address is read from. A configured list wins
 // over a single slave ID, and an address with neither is read from every configured
-// slave.
+// slave. The returned slice aliases either the item's own list or the configured slice
+// passed in, so callers must treat it as read-only and not mutate it.
 func (i ModbusDataItemWithAddress) targetSlaves(configured []byte) []byte {
 	switch {
 	case len(i.SlaveIDs) > 0:
@@ -302,8 +306,8 @@ func (m *ModbusInput) validateAndAppend(
 
 	tid := tagIDWithSlave(seed, item)
 	if _, exists := seenFields[tid]; exists {
-		m.Log.Warnf("Duplicate field %q register=%s address=%d slaveID=%d, ignoring",
-			item.Name, item.Register, item.Address, item.SlaveID)
+		m.Log.Warnf("Duplicate field %q register=%s address=%d slaveID=%v, ignoring",
+			item.Name, item.Register, item.Address, item.targetSlaves(m.SlaveIDs))
 		return addresses, nil
 	}
 	seenFields[tid] = struct{}{}
