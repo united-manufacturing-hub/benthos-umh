@@ -359,33 +359,12 @@ var _ = Describe("Per-Slave Address Routing", func() {
 			}
 		}
 
-		// Build per-slave address lists
-		perSlaveAddresses := make(map[byte][]ModbusDataItemWithAddress)
-		for _, item := range input.Addresses {
-			if item.SlaveID == 0 {
-				for _, sid := range input.SlaveIDs {
-					perSlaveAddresses[sid] = append(perSlaveAddresses[sid], item)
-				}
-			} else {
-				perSlaveAddresses[item.SlaveID] = append(perSlaveAddresses[item.SlaveID], item)
-			}
-		}
-
-		// Second-pass dedup: within each slave, dedup by register+address
-		for sid, addrs := range perSlaveAddresses {
-			seen := make(map[string]bool)
-			deduped := make([]ModbusDataItemWithAddress, 0, len(addrs))
-			for _, item := range addrs {
-				key := fmt.Sprintf("%s:%d", item.Register, item.Address)
-				if seen[key] {
-					continue
-				}
-				seen[key] = true
-				deduped = append(deduped, item)
-			}
-			perSlaveAddresses[sid] = deduped
-			if tracking != nil {
-				tracking[sid] = deduped
+		// Distribution and dedup come straight from production so this helper cannot
+		// drift from the constructor.
+		perSlaveAddresses := input.DedupPerSlaveForTest(input.BuildPerSlaveAddressesForTest())
+		if tracking != nil {
+			for sid, addrs := range perSlaveAddresses {
+				tracking[sid] = addrs
 			}
 		}
 

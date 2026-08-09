@@ -253,6 +253,31 @@ func (m *ModbusInput) buildPerSlaveAddresses() map[byte][]ModbusDataItemWithAddr
 	return perSlaveAddresses
 }
 
+// dedupPerSlave drops, within each slave, every address that repeats a register+address
+// already seen for that slave, keeping the first occurrence in config order. This catches
+// the overlap between unrestricted entries and entries restricted to a slave subset, which
+// are distinct tags globally but collide once distributed onto a single slave. The map is
+// modified in place and returned for convenience.
+func (m *ModbusInput) dedupPerSlave(perSlaveAddresses map[byte][]ModbusDataItemWithAddress) map[byte][]ModbusDataItemWithAddress {
+	dedupSeed := maphash.MakeSeed()
+	for sid, addrs := range perSlaveAddresses {
+		seen := make(map[uint64]bool)
+		deduped := make([]ModbusDataItemWithAddress, 0, len(addrs))
+		for _, item := range addrs {
+			id := tagID(dedupSeed, item)
+			if seen[id] {
+				m.Log.Warnf("Duplicate register+address for slave %d: field %q register=%s address=%d, keeping first occurrence", sid, item.Name, item.Register, item.Address)
+				continue
+			}
+			seen[id] = true
+			deduped = append(deduped, item)
+		}
+		perSlaveAddresses[sid] = deduped
+	}
+
+	return perSlaveAddresses
+}
+
 // validateAndAppend checks slaveID membership, validates type/register compatibility,
 // deduplicates by tag ID, and appends the item to the address list.
 func (m *ModbusInput) validateAndAppend(
@@ -532,25 +557,7 @@ func newModbusInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	}
 
 	// Build per-slave address lists
-	perSlaveAddresses := m.buildPerSlaveAddresses()
-
-	// Second-pass dedup: within each slave, dedup by register+address
-	// (catches overlap between global slaveID=0 entries and specific slaveID entries)
-	dedupSeed := maphash.MakeSeed()
-	for sid, addrs := range perSlaveAddresses {
-		seen := make(map[uint64]bool)
-		deduped := make([]ModbusDataItemWithAddress, 0, len(addrs))
-		for _, item := range addrs {
-			id := tagID(dedupSeed, item)
-			if seen[id] {
-				m.Log.Warnf("Duplicate register+address for slave %d: field %q register=%s address=%d, keeping first occurrence", sid, item.Name, item.Register, item.Address)
-				continue
-			}
-			seen[id] = true
-			deduped = append(deduped, item)
-		}
-		perSlaveAddresses[sid] = deduped
-	}
+	perSlaveAddresses := m.dedupPerSlave(m.buildPerSlaveAddresses())
 
 	// Build per-slave RequestSets
 	m.RequestSets = make(map[byte]RequestSet)

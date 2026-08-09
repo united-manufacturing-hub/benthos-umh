@@ -205,3 +205,74 @@ var _ = Describe("buildPerSlaveAddresses", func() {
 		Expect(perSlave[byte(2)]).To(HaveLen(1)) // all
 	})
 })
+
+var _ = Describe("dedupPerSlave", func() {
+	newInput := func(addrs ...ModbusDataItemWithAddress) *ModbusInput {
+		return &ModbusInput{
+			Log:       service.MockResources().Logger(),
+			SlaveIDs:  []byte{1, 2, 3, 4, 5, 6},
+			Addresses: addrs,
+		}
+	}
+
+	// Same register+address, different tag names: which one survives on a given slave
+	// is decided by config order.
+	named := func(name string, ids ...byte) ModbusDataItemWithAddress {
+		return ModbusDataItemWithAddress{
+			Name: name, Register: "holding", Address: 23, Type: "INT16", SlaveIDs: ids,
+		}
+	}
+
+	unrestricted := func(name string) ModbusDataItemWithAddress {
+		return ModbusDataItemWithAddress{Name: name, Register: "holding", Address: 23, Type: "INT16"}
+	}
+
+	namesFor := func(perSlave map[byte][]ModbusDataItemWithAddress, sid byte) []string {
+		names := make([]string, 0, len(perSlave[sid]))
+		for _, item := range perSlave[sid] {
+			names = append(names, item.Name)
+		}
+		return names
+	}
+
+	It("should keep the subset entry on its slaves and the unrestricted entry elsewhere", func() {
+		m := newInput(named("a", 3, 5), unrestricted("b"))
+		perSlave := m.dedupPerSlave(m.buildPerSlaveAddresses())
+
+		Expect(namesFor(perSlave, 3)).To(Equal([]string{"a"}))
+		Expect(namesFor(perSlave, 5)).To(Equal([]string{"a"}))
+		Expect(namesFor(perSlave, 1)).To(Equal([]string{"b"}))
+		Expect(namesFor(perSlave, 2)).To(Equal([]string{"b"}))
+		Expect(namesFor(perSlave, 4)).To(Equal([]string{"b"}))
+		Expect(namesFor(perSlave, 6)).To(Equal([]string{"b"}))
+	})
+
+	It("should let config order decide, so a leading unrestricted entry wins everywhere", func() {
+		m := newInput(unrestricted("b"), named("a", 3, 5))
+		perSlave := m.dedupPerSlave(m.buildPerSlaveAddresses())
+
+		for _, sid := range m.SlaveIDs {
+			Expect(namesFor(perSlave, sid)).To(Equal([]string{"b"}), "slave %d", sid)
+		}
+	})
+
+	It("should keep entries that differ in register or address", func() {
+		other := ModbusDataItemWithAddress{Name: "c", Register: "input", Address: 23, Type: "INT16"}
+		m := newInput(named("a", 3), other)
+		perSlave := m.dedupPerSlave(m.buildPerSlaveAddresses())
+
+		Expect(namesFor(perSlave, 3)).To(ConsistOf("a", "c"))
+		Expect(namesFor(perSlave, 1)).To(Equal([]string{"c"}))
+	})
+
+	It("should leave a map without collisions untouched", func() {
+		m := newInput(named("a", 3), ModbusDataItemWithAddress{
+			Name: "d", Register: "holding", Address: 24, Type: "INT16", SlaveIDs: []byte{5},
+		})
+		perSlave := m.dedupPerSlave(m.buildPerSlaveAddresses())
+
+		Expect(perSlave).To(HaveLen(2))
+		Expect(namesFor(perSlave, 3)).To(Equal([]string{"a"}))
+		Expect(namesFor(perSlave, 5)).To(Equal([]string{"d"}))
+	})
+})
