@@ -45,4 +45,7 @@ const (
 
 	// Fixed by TwinCAT: AMS route registration and discovery always use UDP 48899.
 	adsDiscoveryPort = "48899"
+
+	// TwinCAT's default ADS gateway (route) port; used when targetAddress omits a port.
+	defaultTargetPort = 48898
 )
