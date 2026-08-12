@@ -16,6 +16,7 @@ package beckhoff_ads_plugin
 
 import (
 	"fmt"
+	"net"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -28,10 +29,9 @@ var adsConf = service.NewConfigSpec().
 	Summary("Creates an input that reads data from Beckhoff PLCs using ADS protocol.").
 	Description("This input plugin enables Benthos to read data directly from Beckhoff PLCs using the ADS protocol. " +
 		"Configure the plugin by specifying the PLC's IP address, runtime port, target AMS net ID, and symbols to read.").
-	Field(service.NewStringField("targetIP").Description("IP address of the Beckhoff PLC.")).
+	Field(service.NewStringField("targetAddress").Description("IP address (and optional port) of the PLC's ADS gateway, as 'ip' or 'ip:port'. Port defaults to 48898.").Examples("192.168.1.100", "192.168.1.100:48898")).
 	Field(service.NewStringField("targetAMS").Description("AMS net ID of the target PLC runtime (e.g. '192.168.1.100.1.1').")).
 	Field(service.NewIntField("runtimePort").Description("ADS runtime port. TwinCAT 3: 851, TwinCAT 2: 801.").Default(851).Advanced().Examples(851, 801)).
-	Field(service.NewIntField("targetPort").Description("TCP port of the PLC ADS gateway.").Default(48898).Advanced().Examples(48898)).
 	Field(service.NewStringField("hostAMS").Description("Local AMS net ID sent in ADS requests. 'auto' derives it from the outbound TCP source IP (or hostIP when set).").Default("auto").Advanced().Examples("auto")).
 	Field(service.NewIntField("hostPort").Description("AMS source port in protocol headers. 0 uses a random port per session (recommended). Set fixed only in firewalled environments.").Default(0).Advanced().Examples(0, 10500)).
 	Field(service.NewStringField("hostIP").Description("IP address the PLC uses to reach this client. Required in Docker bridge networking. When hostAMS is auto, derives NetID as hostIP+.1.1.").Default("").Advanced().Examples("192.168.1.50")).
@@ -56,6 +56,23 @@ func validateIP(s string) error {
 		return fmt.Errorf("%q is not a valid IPv4 address", s)
 	}
 	return nil
+}
+
+// parseTargetAddress splits targetAddress into an IPv4 host and port. A bare
+// IP (no ":port") defaults to defaultTargetPort.
+func parseTargetAddress(s string) (ip string, port int, err error) {
+	host, portStr, splitErr := net.SplitHostPort(s)
+	if splitErr != nil {
+		host, portStr = s, strconv.Itoa(defaultTargetPort)
+	}
+	if err = validateIP(host); err != nil {
+		return "", 0, err
+	}
+	port, err = strconv.Atoi(portStr)
+	if err != nil || port < 0 || port > 65535 {
+		return "", 0, fmt.Errorf("port %q out of range 0–65535", portStr)
+	}
+	return host, port, nil
 }
 
 // parseSymbolDuration parses a per-symbol timing override.

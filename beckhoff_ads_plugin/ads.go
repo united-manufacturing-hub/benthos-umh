@@ -87,7 +87,7 @@ func transmissionModeValue(s string) int {
 
 // NewAdsCommInput creates a new ADS input plugin from parsed Benthos configuration.
 func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
-	targetIP, err := conf.FieldString("targetIP")
+	targetAddress, err := conf.FieldString("targetAddress")
 	if err != nil {
 		return nil, err
 	}
@@ -97,19 +97,12 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 		return nil, err
 	}
 
-	if err = validateIP(targetIP); err != nil {
-		return nil, fmt.Errorf("targetIP: %w", err)
+	targetIP, targetPort, err := parseTargetAddress(targetAddress)
+	if err != nil {
+		return nil, fmt.Errorf("targetAddress: %w", err)
 	}
 	if err = validateAMSNetID(targetAMS); err != nil {
 		return nil, fmt.Errorf("targetAMS: %w", err)
-	}
-
-	targetPort, err := conf.FieldInt("targetPort")
-	if err != nil {
-		return nil, err
-	}
-	if targetPort < 0 || targetPort > 65535 {
-		return nil, fmt.Errorf("targetPort %d out of range 0–65535", targetPort)
 	}
 
 	runtimePort, err := conf.FieldInt("runtimePort")
