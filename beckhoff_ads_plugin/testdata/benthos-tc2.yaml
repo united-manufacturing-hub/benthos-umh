@@ -7,7 +7,7 @@
 # Set TEST_ADS_TC2_TARGET_IP and TEST_ADS_TC2_TARGET_AMS to run.
 input:
   ads:
-    targetIP: "${TEST_ADS_TC2_TARGET_IP}"
+    targetAddress: "${TEST_ADS_TC2_TARGET_IP}"
     targetAMS: "${TEST_ADS_TC2_TARGET_AMS}"
     runtimePort: ${TEST_ADS_TC2_RUNTIME_PORT:801}
     readType: interval

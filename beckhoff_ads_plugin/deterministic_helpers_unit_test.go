@@ -427,7 +427,7 @@ var _ = Describe("Plugin Internal Functions", func() {
 
 		It("NewAdsCommInput's config wiring produces the same UnifiedAddress result end-to-end", func() {
 			conf, err := adsConf.ParseYAML(`
-targetIP: "1.2.3.4"
+targetAddress: "1.2.3.4"
 targetAMS: "1.2.3.4.1.1"
 symbols:
   - "MAIN.regular"
