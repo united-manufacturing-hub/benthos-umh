@@ -22,7 +22,7 @@ The most common setup: umh-core running in a VM, connecting to a TwinCAT 3 PLC o
 ```yaml
 input:
   ads:
-    targetIP: "192.168.1.100"
+    targetAddress: "192.168.1.100"
     targetAMS: "192.168.1.100.1.1"
     runtimePort: 851
     hostIP: "192.168.1.50"                 # VM IP on the PLC network
@@ -55,7 +55,7 @@ Same pattern for TwinCAT 2 (runtime port 801, flat dot-prefixed namespace):
 ```yaml
 input:
   ads:
-    targetIP: "192.168.1.200"
+    targetAddress: "192.168.1.200"
     targetAMS: "5.3.69.134.1.1"
     runtimePort: 801
     hostIP: "192.168.1.50"                 # VM IP on the PLC network
@@ -88,7 +88,7 @@ TwinCAT 3 with a pre-configured static route on the PLC (no credentials needed):
 ```yaml
 input:
   ads:
-    targetIP: "192.168.1.100"
+    targetAddress: "192.168.1.100"
     targetAMS: "192.168.1.100.1.1"
     runtimePort: 851
     symbols:
@@ -117,7 +117,7 @@ TwinCAT 2 with a pre-configured static route (flat dot-prefixed namespace, runti
 ```yaml
 input:
   ads:
-    targetIP: "192.168.1.200"
+    targetAddress: "192.168.1.200"
     targetAMS: "5.3.69.134.1.1"
     runtimePort: 801
     symbols:
@@ -147,10 +147,9 @@ All fields with TC3 defaults and comments:
 input:
   ads:
     # Target connection
-    targetIP: "192.168.1.100"              # IP address of the Beckhoff PLC
+    targetAddress: "192.168.1.100:48898"   # PLC IP[:port]; port defaults to 48898
     targetAMS: "192.168.1.100.1.1"         # AMS net ID of the target runtime
     runtimePort: 851                       # TC3 runtime port (TC2: 801)
-    targetPort: 48898                      # TCP port of the PLC ADS gateway
     # Local AMS identity
     hostAMS: "auto"                        # auto = derived from outbound TCP source IP
     hostPort: 0                            # 0 = random per session (recommended)
@@ -180,10 +179,9 @@ All fields with TC2 differences highlighted:
 input:
   ads:
     # Target connection
-    targetIP: "192.168.1.200"              # IP address of the Beckhoff PLC
+    targetAddress: "192.168.1.200:48898"   # PLC IP[:port]; port defaults to 48898
     targetAMS: "5.3.69.134.1.1"            # AMS net ID of the target runtime
     runtimePort: 801                       # TC2 runtime port
-    targetPort: 48898
     # Local AMS identity
     hostAMS: "auto"
     hostPort: 0
@@ -258,7 +256,7 @@ The plugin registers a route on the PLC automatically via UDP before connecting.
 ```yaml
 input:
   ads:
-    targetIP: "192.168.1.100"
+    targetAddress: "192.168.1.100"
     targetAMS: "192.168.1.100.1.1"
     runtimePort: 851
     hostAMS: "auto"                        # derives NetID from hostIP
@@ -284,7 +282,7 @@ If you prefer not to use automatic registration, add a static route on the PLC v
 ```yaml
 input:
   ads:
-    targetIP: "192.168.1.100"
+    targetAddress: "192.168.1.100"
     targetAMS: "192.168.1.100.1.1"
     runtimePort: 851
     hostAMS: "192.168.1.50.1.1"            # must match the route on the PLC
@@ -300,7 +298,7 @@ When the container has a routable IP on the PLC network, `hostAMS: auto` works w
 ```yaml
 input:
   ads:
-    targetIP: "192.168.1.100"
+    targetAddress: "192.168.1.100"
     targetAMS: "192.168.1.100.1.1"
     runtimePort: 851
     hostAMS: "auto"                        # auto-derive from container's real IP
@@ -315,11 +313,10 @@ input:
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| **targetIP** | Yes | — | IP address of the Beckhoff PLC |
+| **targetAddress** | Yes | — | IP address (and optional port) of the PLC's ADS gateway, as `ip` or `ip:port`. Port defaults to `48898` if omitted |
 | **targetAMS** | Yes | — | AMS net ID of the target |
-| **symbols** | Yes | — | List of symbols to read (see [Symbols Format](#symbols-format) below) |
-| **unifiedAddress** | No | `[]` | Symbols in unified address form — same format and parsing rules as `symbols` (see [Symbols Format](#symbols-format)). Appended to `symbols` at connect time; use when symbol names come from a shared unified-address list rather than plugin-specific config |
-| **targetPort** | No | `48898` | Port of the target internal gateway |
+| **unifiedAddress** | No\* | `[]` | Symbols to read, in unified address form (see [Symbols Format](#symbols-format) below) |
+| **symbols** | No\* | `[]` | Symbols to read by PLC symbol name — same format and parsing rules as `unifiedAddress`. Appended after `unifiedAddress` at connect time; use as an alternative when symbol names don't come from a shared unified-address list |
 | **runtimePort** | No | `851` | Runtime port of PLC system. TwinCAT 3: 851, TwinCAT 2: 801 |
 | **hostAMS** | No | `auto` | Host AMS net ID. Usually the IP address + `.1.1`. Must match a route on the PLC. `auto` derives it from `hostIP` if set, otherwise from the outbound connection's local IP |
 | **hostPort** | No | `0` | AMS source port in protocol headers. `0` uses a random port per session (recommended — avoids notification handle conflicts across sessions). Set a fixed value only in firewalled environments with port allow-lists |
@@ -332,6 +329,8 @@ input:
 | **username** | No | `""` | Username for automatic UDP route registration on the PLC. Both `username` and `password` must be set to activate registration. Requires UDP port 48899 to be reachable (see [Route Registration](#route-registration)) |
 | **password** | No | `""` | Password for automatic UDP route registration on the PLC |
 | **hostIP** | No | `""` | IP address the PLC associates with the route. Required in Docker bridge networking on TwinCAT 2, where replies are routed via this address (set to Docker host's IP); optional on TwinCAT 3. When `hostAMS` is `auto`, the AMS NetID is also derived from this. Auto-detected from outbound connection if empty (only correct with `host_network` or macvlan) |
+
+\* At least one of `unifiedAddress` or `symbols` must be non-empty; the config is rejected otherwise.
 
 ADS library log verbosity follows the pipeline log level (`logger.level`); there is no separate setting.
 
@@ -475,13 +474,12 @@ The plugin can automatically register a route on the PLC using the Beckhoff UDP 
 
 ### PLC behind a port-forwarding router
 
-When an IT router maps an external port to the PLC's internal ADS port (for example, external `4233` → internal `48898`), configure `targetPort` to the **external** port:
+When an IT router maps an external port to the PLC's internal ADS port (for example, external `4233` → internal `48898`), set `targetAddress` to the **external** IP and port:
 
 ```yaml
 input:
   ads:
-    targetIP: "203.0.113.10"   # router's public / external IP
-    targetPort: 4233            # external port forwarded to PLC port 48898
+    targetAddress: "203.0.113.10:4233"   # router's public/external IP:port, forwarded to PLC port 48898
     targetAMS: "5.3.69.134.1.1"
     # ...
 ```
