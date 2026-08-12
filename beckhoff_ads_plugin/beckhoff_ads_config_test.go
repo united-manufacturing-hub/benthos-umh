@@ -82,7 +82,7 @@ func extractInputYAML(fullConfig string) string {
 const tc3NotificationConfigTpl = `
 input:
   ads:
-    targetIP: "${TEST_ADS_TC3_TARGET_IP}"
+    targetAddress: "${TEST_ADS_TC3_TARGET_IP}"
     targetAMS: "${TEST_ADS_TC3_TARGET_AMS}"
     runtimePort: ${TEST_ADS_TC3_RUNTIME_PORT:851}
     readType: notification
@@ -100,7 +100,7 @@ input:
 const tc2NotificationConfigTpl = `
 input:
   ads:
-    targetIP: "${TEST_ADS_TC2_TARGET_IP}"
+    targetAddress: "${TEST_ADS_TC2_TARGET_IP}"
     targetAMS: "${TEST_ADS_TC2_TARGET_AMS}"
     runtimePort: ${TEST_ADS_TC2_RUNTIME_PORT:801}
     readType: notification
@@ -386,7 +386,7 @@ var _ = Describe("Config-Driven ADS Pipeline Tests", func() {
 			builder := service.NewStreamBuilder()
 			err := builder.AddInputYAML(`
 ads:
-  targetIP: "1.2.3.4"
+  targetAddress: "1.2.3.4"
   targetAMS: "1.2.3.4.1.1"
   symbols:
     - "MAIN.var"
@@ -398,7 +398,7 @@ ads:
 			builder := service.NewStreamBuilder()
 			err := builder.AddInputYAML(`
 ads:
-  targetIP: "1.2.3.4"
+  targetAddress: "1.2.3.4"
   symbols:
     - "MAIN.var"
 `)
@@ -420,7 +420,7 @@ ads:
 			builder := service.NewStreamBuilder()
 			err := builder.AddInputYAML(`
 ads:
-  targetIP: "1.2.3.4"
+  targetAddress: "1.2.3.4"
   targetAMS: "1.2.3.4.1.1"
 `)
 			Expect(err).NotTo(HaveOccurred())

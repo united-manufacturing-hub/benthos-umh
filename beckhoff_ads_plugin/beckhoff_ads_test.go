@@ -209,7 +209,7 @@ func sanitizeSymbolName(s string) string {
 
 // adsHardwareTestConfig holds connection parameters for a Beckhoff PLC.
 type adsHardwareTestConfig struct {
-	targetIP      string
+	targetAddress string
 	targetAMS     string
 	runtimePort   int
 	routeUsername string
@@ -225,10 +225,10 @@ type adsHardwareTestConfig struct {
 // another ADS client from the same host is already connected.
 // TEST_ADS_TC3_HOST_PORT sets the local AMS port (0 uses go-ads default/random port).
 func loadADSConfig(ipEnv string, amsEnv string, portEnv string, defaultPort int, routeUserEnv string, routePassEnv string) (adsHardwareTestConfig, bool) {
-	targetIP := os.Getenv(ipEnv)
+	targetAddress := os.Getenv(ipEnv)
 	targetAMS := os.Getenv(amsEnv)
 
-	if targetIP == "" || targetAMS == "" {
+	if targetAddress == "" || targetAMS == "" {
 		return adsHardwareTestConfig{}, false
 	}
 
@@ -261,7 +261,7 @@ func loadADSConfig(ipEnv string, amsEnv string, portEnv string, defaultPort int,
 	}
 
 	return adsHardwareTestConfig{
-		targetIP:      targetIP,
+		targetAddress: targetAddress,
 		targetAMS:     targetAMS,
 		runtimePort:   runtimePort,
 		routeUsername: os.Getenv(routeUserEnv),
@@ -282,7 +282,7 @@ func createTestInput(cfg adsHardwareTestConfig, readType string, symbols []strin
 	ExpectWithOffset(1, warnings).To(BeEmpty())
 
 	return &ads.AdsCommInput{
-		TargetIP:         cfg.targetIP,
+		TargetIP:         cfg.targetAddress,
 		TargetAMS:        cfg.targetAMS,
 		TargetPort:       48898,
 		RuntimePort:      cfg.runtimePort,
@@ -303,7 +303,7 @@ func createTestInput(cfg adsHardwareTestConfig, readType string, symbols []strin
 // createTestInputWithCustomSymbols builds an input with pre-configured PlcSymbol list.
 func createTestInputWithCustomSymbols(cfg adsHardwareTestConfig, readType string, symbols []ads.PlcSymbol) *ads.AdsCommInput {
 	return &ads.AdsCommInput{
-		TargetIP:         cfg.targetIP,
+		TargetIP:         cfg.targetAddress,
 		TargetAMS:        cfg.targetAMS,
 		TargetPort:       48898,
 		RuntimePort:      cfg.runtimePort,
@@ -459,7 +459,7 @@ func describeADSHardwareTests(description string, ipEnv string, amsEnv string, p
 				// Step 1: Connect WITH credentials — plugin registers route internally.
 				syms0, _ := ads.CreateSymbolList([]string{syms.MasterCycleCounter}, 1000*time.Millisecond, 100*time.Millisecond)
 				inputWithRoute := &ads.AdsCommInput{
-					TargetIP:         cfg.targetIP,
+					TargetIP:         cfg.targetAddress,
 					TargetAMS:        cfg.targetAMS,
 					TargetPort:       48898,
 					RuntimePort:      cfg.runtimePort,
@@ -545,7 +545,7 @@ func describeADSHardwareTests(description string, ipEnv string, amsEnv string, p
 				builder := env.NewStreamBuilder()
 				err := builder.AddInputYAML(`
 ads:
-  targetIP: "` + cfg.targetIP + `"
+  targetAddress: "` + cfg.targetAddress + `"
   targetAMS: "` + cfg.targetAMS + `"
   runtimePort: ` + strconv.Itoa(cfg.runtimePort) + `
   readType: interval
@@ -564,7 +564,7 @@ ads:
 				builder := env.NewStreamBuilder()
 				err := builder.AddInputYAML(`
 ads:
-  targetIP: "` + cfg.targetIP + `"
+  targetAddress: "` + cfg.targetAddress + `"
   targetAMS: "` + cfg.targetAMS + `"
   runtimePort: ` + strconv.Itoa(cfg.runtimePort) + `
   readType: notification
