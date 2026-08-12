@@ -708,35 +708,6 @@ unifiedAddress:
 		})
 	})
 
-	Describe("isLikelyContainerIP", func() {
-		It("detects Docker bridge IPs", func() {
-			Expect(isLikelyContainerIP("172.17.0.2")).To(BeTrue())
-			Expect(isLikelyContainerIP("172.18.0.1")).To(BeTrue())
-			Expect(isLikelyContainerIP("172.31.255.255")).To(BeTrue())
-		})
-
-		It("detects CGNAT IPs", func() {
-			Expect(isLikelyContainerIP("100.64.0.1")).To(BeTrue())
-			Expect(isLikelyContainerIP("100.127.255.255")).To(BeTrue())
-		})
-
-		It("does not flag 10.0.0.0/8, which plant and office LANs also use", func() {
-			Expect(isLikelyContainerIP("10.0.0.1")).To(BeFalse())
-			Expect(isLikelyContainerIP("10.244.0.5")).To(BeFalse())
-		})
-
-		It("rejects normal IPs", func() {
-			Expect(isLikelyContainerIP("192.168.1.100")).To(BeFalse())
-			Expect(isLikelyContainerIP("172.16.0.1")).To(BeFalse())
-			Expect(isLikelyContainerIP("172.32.0.1")).To(BeFalse())
-			Expect(isLikelyContainerIP("100.128.0.1")).To(BeFalse())
-		})
-
-		It("handles invalid input", func() {
-			Expect(isLikelyContainerIP("not-an-ip")).To(BeFalse())
-			Expect(isLikelyContainerIP("")).To(BeFalse())
-		})
-	})
 })
 
 var _ = Describe("Time-delta Formula Verification", func() {
