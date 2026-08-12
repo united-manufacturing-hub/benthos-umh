@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"net/netip"
 	"strconv"
 	"time"
 
@@ -31,31 +30,6 @@ import (
 // importing the fork. All WithRoute/NewAMSAddress/type-mapping logic lives here.
 type goADSClient struct {
 	session *adsLib.Session
-}
-
-// containerIPRanges are ranges specific to container networking. Such an address
-// is unreachable from the PLC, which breaks TwinCAT 2; TwinCAT 3 is unaffected.
-var containerIPRanges = []netip.Prefix{
-	netip.MustParsePrefix("172.17.0.0/16"), // Docker default bridge
-	netip.MustParsePrefix("172.18.0.0/15"), // Docker user-defined bridge pool (172.18–172.31)
-	netip.MustParsePrefix("172.20.0.0/14"),
-	netip.MustParsePrefix("172.24.0.0/13"),
-	netip.MustParsePrefix("100.64.0.0/10"), // CGNAT, used by some Kubernetes CNIs
-}
-
-// isLikelyContainerIP reports whether route registration would advertise an IP
-// the PLC cannot reach.
-func isLikelyContainerIP(ip string) bool {
-	addr, err := netip.ParseAddr(ip)
-	if err != nil || !addr.Is4() {
-		return false
-	}
-	for _, r := range containerIPRanges {
-		if r.Contains(addr) {
-			return true
-		}
-	}
-	return false
 }
 
 // resolveRouteHostIP returns the local IP for the ADS route: the configured
@@ -91,11 +65,6 @@ func buildSessionOptions(ctx context.Context, cfg SessionConfig, log *service.Lo
 		hostAddr, err := resolveRouteHostIP(ctx, cfg, log)
 		if err != nil {
 			return nil, err
-		}
-		if isLikelyContainerIP(hostAddr) {
-			log.Warnf("Auto-detected IP %s looks like a container IP, which the PLC cannot reach. "+
-				"TwinCAT 2 routes replies via this address, so reads will time out — set hostIP to the address "+
-				"the PLC can reach this client at. TwinCAT 3 answers on the existing connection and is unaffected.", hostAddr)
 		}
 		routeName := fmt.Sprintf("benthosADS-%s", hostAddr)
 		log.Infof("Route will be registered on PLC %s: name=%s, clientIP=%s", cfg.TargetIP, routeName, hostAddr)
