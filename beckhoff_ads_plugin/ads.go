@@ -147,17 +147,18 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 		return nil, err
 	}
 
+	unifiedAddress, err := conf.FieldStringList("unifiedAddress")
+	if err != nil {
+		return nil, err
+	}
+
 	symbols, err := conf.FieldStringList("symbols")
 	if err != nil {
 		return nil, err
 	}
-	if len(symbols) == 0 {
-		return nil, fmt.Errorf("symbols: at least one symbol is required")
-	}
 
-	unifiedAddress, err := conf.FieldStringList("unifiedAddress")
-	if err != nil {
-		return nil, err
+	if len(symbols) == 0 && len(unifiedAddress) == 0 {
+		return nil, fmt.Errorf("at least one of unifiedAddress or symbols is required")
 	}
 
 	intervalTime, err := conf.FieldDuration("intervalTime")
