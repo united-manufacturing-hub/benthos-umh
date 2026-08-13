@@ -45,7 +45,10 @@ var adsConf = service.NewConfigSpec().
 	Field(service.NewDurationField("requestTimeout").Description("Timeout for individual ADS requests.").Default("5s").Advanced().Examples("5s", "10s")).
 	Field(service.NewBoolField("loadSymbols").Description("Download the full symbol and datatype table from the PLC on connect. Required for struct and array symbols. May cause brief real-time jitter on the PLC during initial connection; use with care on large programs.").Default(false).Advanced().Examples(true, false)).
 	Field(service.NewStringListField("unifiedAddress").Description("Symbols to read, in unified address form. Format: 'name', 'name:maxDelayMs:cycleTimeMs', or 'name:maxDelay=100ms:cycleTime=100ms'. " +
-		"Examples: 'GVL.counter', 'GVL.trigger:0s:10ms', '.globalVar:maxDelay=0s:cycleTime=50ms'.").Default([]string{})).
+		"TwinCAT 3 qualifies globals with the Global Variable List name and program variables with the POU name: " +
+		"'GVL.counter', 'GVL_ProcessData.nCounter:0s:10ms', 'MAIN.myVar'. " +
+		"TwinCAT 2 has one flat global namespace reached by a leading dot, while program variables keep the POU name: " +
+		"'.globalVar:maxDelay=0s:cycleTime=50ms', 'MAIN.myVar'.").Default([]string{})).
 	Field(service.NewStringListField("symbols").Description("Symbols to read by PLC symbol name; same parsing as `unifiedAddress`. Alternative to unifiedAddress — at least one of the two must be non-empty.").Default([]string{}).Advanced())
 
 // validateIP checks that s is a valid IPv4 address. Is4 also rejects the
