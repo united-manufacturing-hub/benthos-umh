@@ -363,9 +363,9 @@ Symbols are specified as `name[:opt1[:opt2...]]`. Options are either positional 
 - `MAIN.MYSENSOR::10` — default max delay, 10ms cycle time
 - `.superDuperInt` — global variable (TC2, must start with `.`)
 
-**TwinCAT 3** uses GVL-prefixed symbols: `GVL_ProcessData.nCounter`, `MAIN.MyVariable`
+**TwinCAT 3** qualifies every symbol with the object that declares it. Global variables are `<GVL name>.<variable>`, where `<GVL name>` is the name you gave the Global Variable List object — TwinCAT names a new GVL `GVL`, so `GVL.nCounter` is the common case, while a list named `GVL_ProcessData` yields `GVL_ProcessData.nCounter`. Program variables use the POU name: `MAIN.MyVariable`, `PRG_Machine.nUpdates`. There is no fixed `GVL_` prefix and no leading dot.
 
-**TwinCAT 2** uses a flat namespace with dot prefix: `.nCounter`, `.myVariable`. Symbol names are case-insensitive — the PLC accepts any casing, and the plugin always preserves the casing you configured (TC3 returns original casing; TC2 returns uppercase, which the plugin maps back to your configured casing).
+**TwinCAT 2** puts globals in one flat namespace with no list name, reached by a leading dot: `.nCounter`, `.stProcessData.fValue`. Program variables still carry the POU name and no dot: `MAIN.someVar`. Symbol names are case-insensitive — the PLC accepts any casing, and the plugin always preserves the casing you configured (TC3 returns original casing; TC2 returns uppercase, which the plugin maps back to your configured casing).
 
 ## Transmission Modes
 
