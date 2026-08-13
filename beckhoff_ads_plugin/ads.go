@@ -190,6 +190,13 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 	if err != nil {
 		return nil, err
 	}
+	// Empty means auto-detect on connect. A non-empty value feeds both route
+	// registration and the derived hostAMS below, neither of which re-checks it.
+	if hostIP != "" {
+		if err = validateIP(hostIP); err != nil {
+			return nil, fmt.Errorf("hostIP: %w", err)
+		}
+	}
 
 	loadSymbols, err := conf.FieldBool("loadSymbols")
 	if err != nil {
