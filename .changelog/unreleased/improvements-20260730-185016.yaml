@@ -1,0 +1,3 @@
+kind: improvements
+body: The historian output refuses a whole batch carrying a message for a data contract other than its configured data_contract_name, rather than discarding those messages silently, and the batch is not retried. The error names the contracts that arrived and the umh_topics pattern to narrow to, so a subscription broader than one contract stores nothing until it is narrowed (ENG-5413)
+time: 2026-07-30T18:50:16.000000+02:00

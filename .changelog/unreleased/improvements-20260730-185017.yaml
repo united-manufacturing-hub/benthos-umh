@@ -1,0 +1,3 @@
+kind: improvements
+body: The historian output stores only schema-validated data. A versioned data contract whose schema was bypassed is always rejected, and an unversioned contract such as _historian is rejected unless the new allow_unvalidated_data option is set, which also lets its tags change datatype instead of being dropped as poison. Payloads carrying fields beyond value and timestamp_ms are rejected as not_timeseries (ENG-5419, ENG-5415, ENG-5468)
+time: 2026-07-30T18:50:17.000000+02:00

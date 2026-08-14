@@ -1,3 +1,0 @@
-kind: breaking
-body: The historian output's drop counter is renamed from historian_messages_dropped to messages_dropped, matching every other benthos-umh plugin, so umh-core can subtract dropped messages from the reported write throughput (ENG-5507)
-time: 2026-08-04T14:22:29.185665+02:00

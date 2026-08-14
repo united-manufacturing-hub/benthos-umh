@@ -1,3 +1,3 @@
 kind: improvements
-body: The historian output explains how to supply a missing timestamp_ms, naming the Node-RED JavaScript processor as the usual cause since it does not add the field the way the tag processor does (ENG-5412)
+body: A message dropped for a missing timestamp_ms says how to supply one, noting that the tag processor sets the field automatically and that any other processing has to carry it in the payload (ENG-5412)
 time: 2026-07-30T18:50:12.917473+02:00

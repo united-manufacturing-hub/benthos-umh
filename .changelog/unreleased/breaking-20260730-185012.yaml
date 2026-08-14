@@ -1,3 +1,0 @@
-kind: breaking
-body: The historian output reports dropped messages at error level from the first batch onwards, one line per drop reason per batch, naming the reason, how many of the batch it accounted for, an example topic and the fix, so a bridge discarding data no longer looks healthy. Reports are no longer held back for the first 30 seconds, so a bridge fed malformed data reports it immediately instead of appearing healthy while it starts. The reasonless "dropped all N message(s)" warning is gone and the missing_value_or_timestamp reason is split into missing_value and missing_timestamp (ENG-5414)
-time: 2026-07-30T18:50:12.910879+02:00
