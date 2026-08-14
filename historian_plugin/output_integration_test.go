@@ -997,7 +997,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(h.WriteBatch(ctx, service.MessageBatch{bad})).To(Succeed())
 		Expect(h.CountValueRows(ctx, "drops")).To(Equal(0))
 		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: dropped 1 of 1 message(s) (reason=missing_value"), "a malformed message must log at error level so umh-core degrades the bridge")
-		Expect(logs()).To(ContainSubstring("set msg.payload.value in the processing step"), "the drop log must tell the user how to fix it")
+		Expect(logs()).To(ContainSubstring("payload has no value field"), "the drop log must name what was wrong with the message")
 		Expect(logs()).NotTo(ContainSubstring("level=warning"), "the per-message error already carries the reason and the fix; a reasonless batch summary on top of it is noise")
 	})
 
@@ -1016,7 +1016,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(logs()).To(ContainSubstring("dropped 2 of 4 message(s) (reason=missing_value"), "two messages, one line, with the share of the batch")
 		Expect(logs()).To(ContainSubstring("dropped 1 of 4 message(s) (reason=missing_timestamp"), "a second reason gets its own line, not a merged one")
 		Expect(strings.Count(logs(), "level=error")).To(Equal(2), "one line per reason, never one per message")
-		Expect(logs()).To(ContainSubstring("Date.now()"), "each line keeps the fix for its own reason")
+		Expect(logs()).To(ContainSubstring("tag processor sets timestamp_ms"), "each line keeps the fix for its own reason")
 	})
 
 	It("truncates an over-long value_text and warns exactly once", func() {

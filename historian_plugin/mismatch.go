@@ -16,8 +16,6 @@ package historian_plugin
 
 import (
 	"fmt"
-	"sort"
-	"strings"
 	"time"
 )
 
@@ -27,23 +25,13 @@ func suggestedTopicPattern(contract string) string {
 	return `^umh\.v1(?:\.[^._][^.]*)+\._` + contract + `(_v\d+)?\..+$`
 }
 
-func reportedContracts(seen map[string]struct{}) []string {
-	out := make([]string, 0, len(seen))
-	for c := range seen {
-		out = append(out, c)
+func mismatchMessage(contract string, contractIsPublished bool, total int, mismatched int) string {
+	if contractIsPublished {
+		return fmt.Sprintf("TimescaleDB historian: subscription is over-broad, %d of %d message(s) carry another data contract (reason=%s). Narrow umh_topics to %s",
+			mismatched, total, DropContractMismatch, suggestedTopicPattern(contract))
 	}
-	sort.Strings(out)
-	return out
-}
-
-func mismatchMessage(contract string, overBroad bool, total int, mismatched int, contracts []string, example string) string {
-	seen := "[" + strings.Join(contracts, ", ") + "]"
-	if overBroad {
-		return fmt.Sprintf("TimescaleDB historian: subscription is over-broad (reason=%s) -- %d of %d message(s) in this batch carry other data contracts %s (example: %s), so the whole batch is refused and any matching message(s) are not written either. Narrow umh_topics to %s",
-			DropContractMismatch, mismatched, total, seen, example, suggestedTopicPattern(contract))
-	}
-	return fmt.Sprintf("TimescaleDB historian: no message carries data contract _%s (reason=%s); the subscription selects %s (example: %s) and every batch is refused. Either set data_contract_name to a contract that is published, or narrow umh_topics to %s",
-		contract, DropContractMismatch, seen, example, suggestedTopicPattern(contract))
+	return fmt.Sprintf("TimescaleDB historian: no message carries data contract _%s, %d of %d message(s) carry another (reason=%s). Either set data_contract_name to a published contract, or narrow umh_topics to %s",
+		contract, mismatched, total, DropContractMismatch, suggestedTopicPattern(contract))
 }
 
 func nackMessage(contract string, total int, mismatched int) string {
@@ -51,15 +39,22 @@ func nackMessage(contract string, total int, mismatched int) string {
 		mismatched, total, contract, DropContractMismatch)
 }
 
-func (o *historianOutput) noteContractMismatch(now time.Time, total int, mismatched int, seen map[string]struct{}, example string, sawMatching bool) {
+func (o *historianOutput) noteContractMismatch(now time.Time, total int, mismatched int, batchCarriedConfiguredContract bool) {
+	if !o.claimMismatchLogSlot(now) {
+		return
+	}
+	contractIsPublished := o.everStored.Load() || batchCarriedConfiguredContract
+	o.logger.Errorf("%s", mismatchMessage(o.contract, contractIsPublished, total, mismatched))
+}
+
+// claimMismatchLogSlot reports whether the caller may log now, taking the slot if so. Mismatches
+// repeat every batch, so without this a misconfigured subscription floods the log.
+func (o *historianOutput) claimMismatchLogSlot(now time.Time) bool {
 	o.logStateMu.Lock()
 	defer o.logStateMu.Unlock()
 	if !o.lastMismatchLog.IsZero() && now.Sub(o.lastMismatchLog) < mismatchLogInterval {
-		return
+		return false
 	}
 	o.lastMismatchLog = now
-	// Only withhold the data_contract_name remedy on positive evidence that the configured contract
-	// is published: without it, narrowing umh_topics can leave a bridge matching nothing at all.
-	overBroad := o.everStored.Load() || sawMatching
-	o.logger.Errorf("%s", mismatchMessage(o.contract, overBroad, total, mismatched, reportedContracts(seen), example))
+	return true
 }

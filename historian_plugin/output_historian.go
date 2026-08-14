@@ -406,30 +406,31 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	rows := make([]*Row, 0, len(batch))
 	churn := map[string]struct{}{} // high-churn metadata keys seen anywhere in this batch (see below)
 	drops := map[DropReason]dropSummary{}
-	sawMatching := false
+	sawConfiguredContract := false
 	for _, msg := range batch {
 		meta := map[string]string{}
 		_ = msg.MetaWalk(func(k, v string) error { meta[k] = v; return nil })
 		structured, err := msg.AsStructured()
 		if err != nil {
-			o.noteDrop(drops, DropInfo{Reason: DropNotStructured}, meta["umh_topic"])
+			o.noteDrop(drops, DropNotStructured, meta["umh_topic"])
 			continue
 		}
 		payload, ok := structured.(map[string]any)
 		if !ok {
-			o.noteDrop(drops, DropInfo{Reason: DropNotObject}, meta["umh_topic"])
+			o.noteDrop(drops, DropNotObject, meta["umh_topic"])
 			continue
 		}
 		// Transform validates the umh_topic/contract and the value+timestamp, and decides whether
 		// this row also needs to write a metadata (attribute) row. A non-empty reason means drop.
 		row, drop := Transform(payload, meta, o.contract, o.metadataKeysAll, o.metadataKeys, o.metadataExclude, o.allowUnvalidated, view)
-		// Transform checks topic, then contract, then payload: any later reason means the contract
-		// matched. Counting rows instead would miss a matching message dropped for its payload, and
-		// then blame data_contract_name for what is an over-broad subscription.
-		if drop.Reason != DropInvalidTopic && drop.Reason != DropContractMismatch {
-			sawMatching = true
+		// A message that got past the contract check proves the configured contract is published, which
+		// is what picks the remedy in noteContractMismatch. Deriving this from the surviving rows
+		// instead would lose the proof whenever the payload is also bad, and send the operator to
+		// data_contract_name when the real fix is narrowing umh_topics.
+		if drop != DropInvalidTopic && drop != DropContractMismatch {
+			sawConfiguredContract = true
 		}
-		if drop.Reason != DropNone {
+		if drop != DropNone {
 			o.noteDrop(drops, drop, meta["umh_topic"])
 			continue
 		}
@@ -451,7 +452,7 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	// wants them out of metadata_keys.
 	o.warnHighChurnMetadata(churn)
 	if mismatch := drops[DropContractMismatch]; mismatch.count > 0 {
-		o.noteContractMismatch(time.Now(), len(batch), mismatch.count, mismatch.contracts, mismatch.example, sawMatching)
+		o.noteContractMismatch(time.Now(), len(batch), mismatch.count, sawConfiguredContract)
 		return errors.New(nackMessage(o.contract, len(batch), mismatch.count))
 	}
 	o.reportDrops(len(batch), drops)
@@ -489,14 +490,12 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 func (o *historianOutput) resolveTopic(ctx context.Context, pool *pgxpool.Pool, r *Row) (int64, error) {
 	var id int64
 	var err error
-	if o.allowUnvalidated {
-		err = pool.QueryRow(ctx, topicLookupAnyTypeSQL, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName).Scan(&id)
-	} else {
-		err = pool.QueryRow(ctx, topicLookupSQL, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType)).Scan(&id)
-	}
 	resolve := topicResolveSQL
 	if o.allowUnvalidated {
 		resolve = topicResolveKeepTypeSQL
+		err = pool.QueryRow(ctx, topicLookupAnyTypeSQL, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName).Scan(&id)
+	} else {
+		err = pool.QueryRow(ctx, topicLookupSQL, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName, string(r.ValueType)).Scan(&id)
 	}
 	switch {
 	case err == nil:
@@ -758,25 +757,18 @@ func describeRow(r *Row) string {
 }
 
 type dropSummary struct {
-	example   string
-	contracts map[string]struct{}
-	count     int
+	example string
+	count   int
 }
 
-func (o *historianOutput) noteDrop(drops map[DropReason]dropSummary, drop DropInfo, topic string) {
-	o.dropped.Incr(1, string(drop.Reason))
-	s := drops[drop.Reason]
+func (o *historianOutput) noteDrop(drops map[DropReason]dropSummary, drop DropReason, topic string) {
+	o.dropped.Incr(1, string(drop))
+	s := drops[drop]
 	s.count++
 	if s.example == "" {
 		s.example = topic
 	}
-	if drop.Contract != "" {
-		if s.contracts == nil {
-			s.contracts = map[string]struct{}{}
-		}
-		s.contracts[drop.Contract] = struct{}{}
-	}
-	drops[drop.Reason] = s
+	drops[drop] = s
 }
 
 func (o *historianOutput) reportDrops(total int, drops map[DropReason]dropSummary) {

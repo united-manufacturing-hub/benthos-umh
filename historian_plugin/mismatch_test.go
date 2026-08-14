@@ -57,54 +57,38 @@ var _ = Describe("suggestedTopicPattern", func() {
 	)
 })
 
-var _ = Describe("reportedContracts", func() {
-	It("sorts ascending", func() {
-		seen := map[string]struct{}{"_raw": {}, "_alpha": {}, "_pump_v1": {}}
-		Expect(tsh.ReportedContractsForTest(seen)).To(Equal([]string{"_alpha", "_pump_v1", "_raw"}))
-	})
-
-	It("lists every contract observed, however many arrived", func() {
-		seen := map[string]struct{}{}
-		for _, c := range []string{"_raw", "_historian", "_pump_v1", "_pump_v2", "_maintenance_v1", "_analytics_v1", "_tmp"} {
-			seen[c] = struct{}{}
-		}
-		got := tsh.ReportedContractsForTest(seen)
-		Expect(got).To(HaveLen(7), "a real instance publishes more than a handful of contracts, and truncating hides the ones the operator has to narrow against")
-		Expect(got).To(Equal([]string{"_analytics_v1", "_historian", "_maintenance_v1", "_pump_v1", "_pump_v2", "_raw", "_tmp"}))
-	})
-
-	It("returns an empty list for no observations", func() {
-		Expect(tsh.ReportedContractsForTest(map[string]struct{}{})).To(BeEmpty())
-	})
-})
-
 var _ = Describe("mismatchMessage", func() {
-	contracts := []string{"_pump_v1", "_raw"}
-	const example = "umh.v1.acme.berlin._raw.temperature"
-
-	It("names the wrong contract, what arrived, and the fix when nothing has been stored", func() {
-		got := tsh.MismatchMessageForTest("historian", false, 4, 4, contracts, example)
+	It("names the wrong contract, the refused share and both fixes when nothing has been stored", func() {
+		got := tsh.MismatchMessageForTest("historian", false, 4, 4)
 		Expect(got).To(ContainSubstring("no message carries data contract _historian"))
 		Expect(got).To(ContainSubstring("reason=contract_mismatch"))
-		Expect(got).To(ContainSubstring("[_pump_v1, _raw]"))
-		Expect(got).To(ContainSubstring(example))
+		Expect(got).To(ContainSubstring("4 of 4"))
 		Expect(got).To(ContainSubstring("set data_contract_name"))
 		Expect(got).To(ContainSubstring(`^umh\.v1(?:\.[^._][^.]*)+\._historian(_v\d+)?\..+$`))
 	})
 
 	It("reports the over-broad subscription and the refused share once rows are landing", func() {
-		got := tsh.MismatchMessageForTest("historian", true, 12084, 12000, contracts, example)
+		got := tsh.MismatchMessageForTest("historian", true, 12084, 12000)
 		Expect(got).To(ContainSubstring("subscription is over-broad"))
 		Expect(got).To(ContainSubstring("reason=contract_mismatch"))
 		Expect(got).To(ContainSubstring("12000 of 12084"))
-		Expect(got).To(ContainSubstring("any matching message(s) are not written either"))
 		Expect(got).To(ContainSubstring(`^umh\.v1(?:\.[^._][^.]*)+\._historian(_v\d+)?\..+$`))
 		Expect(got).NotTo(ContainSubstring("no message carries"))
 	})
 
-	DescribeTable("stays a single line so it survives being rendered as a bridge status reason",
-		func(overBroad bool) {
-			got := tsh.MismatchMessageForTest("historian", overBroad, 4, 4, contracts, example)
+	DescribeTable("carries neither an example topic nor the contracts that arrived",
+		func(contractIsPublished bool) {
+			got := tsh.MismatchMessageForTest("historian", contractIsPublished, 4, 4)
+			Expect(got).NotTo(ContainSubstring("example"))
+			Expect(got).NotTo(ContainSubstring("--"))
+		},
+		Entry("contract never seen", false),
+		Entry("over-broad subscription", true),
+	)
+
+	DescribeTable("stays a single line so it survives being rendered as a status reason",
+		func(contractIsPublished bool) {
+			got := tsh.MismatchMessageForTest("historian", contractIsPublished, 4, 4)
 			Expect(got).NotTo(ContainSubstring("\n"))
 			Expect(got).To(HavePrefix("TimescaleDB historian: "))
 		},
@@ -119,9 +103,6 @@ var _ = Describe("contract-mismatch notification", func() {
 		logs func() string
 		now  time.Time
 	)
-	seen := map[string]struct{}{"_raw": {}}
-	const example = "umh.v1.acme.berlin._raw.temperature"
-
 	BeforeEach(func() {
 		h = tsh.NewHistorianTestHandle("", "historian")
 		now = time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
@@ -129,36 +110,31 @@ var _ = Describe("contract-mismatch notification", func() {
 	})
 
 	It("errors on the very first mismatch", func() {
-		h.NoteContractMismatch(now, 4, 4, seen, example, false)
+		h.NoteContractMismatch(now, 4, 4, false)
 		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: no message carries data contract _historian"), "the batch is NACKed from the first message, so the reason has to arrive with it")
-	})
-
-	It("names the contracts that arrived in the first error", func() {
-		h.NoteContractMismatch(now, 4, 4, map[string]struct{}{"_pump_v1": {}}, example, false)
-		Expect(logs()).To(ContainSubstring("_pump_v1"))
 	})
 
 	It("throttles repeat mismatches instead of logging every batch", func() {
 		now = now.Add(31 * time.Second)
-		h.NoteContractMismatch(now, 4, 4, seen, example, false)
-		h.NoteContractMismatch(now, 4, 4, seen, example, false)
+		h.NoteContractMismatch(now, 4, 4, false)
+		h.NoteContractMismatch(now, 4, 4, false)
 		now = now.Add(1 * time.Minute)
-		h.NoteContractMismatch(now, 4, 4, seen, example, false)
+		h.NoteContractMismatch(now, 4, 4, false)
 		Expect(strings.Count(logs(), "level=error")).To(Equal(1))
 	})
 
-	It("re-logs after the interval so the bridge stays degraded", func() {
+	It("re-logs after the interval so the fault stays visible", func() {
 		now = now.Add(31 * time.Second)
-		h.NoteContractMismatch(now, 4, 4, seen, example, false)
+		h.NoteContractMismatch(now, 4, 4, false)
 		now = now.Add(tsh.MismatchLogIntervalForTest() + time.Second)
-		h.NoteContractMismatch(now, 4, 4, seen, example, false)
+		h.NoteContractMismatch(now, 4, 4, false)
 		Expect(strings.Count(logs(), "level=error")).To(Equal(2))
 	})
 
 	It("blames the subscription, not data_contract_name, when the batch also carries the configured contract", func() {
-		h.NoteContractMismatch(now, 2, 1, seen, example, true)
+		h.NoteContractMismatch(now, 2, 1, true)
 		Expect(logs()).To(ContainSubstring("subscription is over-broad"))
-		Expect(logs()).To(ContainSubstring("any matching message(s) are not written either"))
+		Expect(logs()).To(ContainSubstring("1 of 2"))
 		Expect(logs()).NotTo(ContainSubstring("no message carries"), "the contract is published, so narrowing is the fix and changing data_contract_name would match nothing")
 	})
 })
@@ -167,12 +143,14 @@ var _ = Describe("dropHint", func() {
 	It("tells the user how to supply a missing timestamp_ms", func() {
 		got := tsh.DropHintForTest(tsh.DropMissingTimestamp)
 		Expect(got).To(ContainSubstring("timestamp_ms"))
-		Expect(got).To(ContainSubstring("Date.now()"))
 		Expect(got).To(ContainSubstring("tag processor"))
+		Expect(got).NotTo(ContainSubstring("Node-RED"), "the hint names the processor that supplies the field, not the ones that do not")
 	})
 
 	It("tells the user how to supply a missing value", func() {
-		Expect(tsh.DropHintForTest(tsh.DropMissingValue)).To(ContainSubstring("msg.payload.value"))
+		got := tsh.DropHintForTest(tsh.DropMissingValue)
+		Expect(got).To(ContainSubstring("no value field"))
+		Expect(got).NotTo(ContainSubstring("msg.payload"), "the value comes from the input, and msg.payload is syntax only some processors have")
 	})
 
 	DescribeTable("stays empty for reasons with no actionable fix",
@@ -185,9 +163,22 @@ var _ = Describe("dropHint", func() {
 		Entry("unclassifiable value", tsh.DropUnclassifiableValue),
 	)
 
-	It("keeps the hint on one line so it survives as a bridge status reason", func() {
+	It("keeps the hint on one line so it survives as a status reason", func() {
 		Expect(tsh.DropHintForTest(tsh.DropMissingTimestamp)).NotTo(ContainSubstring("\n"))
 	})
+
+	DescribeTable("joins the log line with a sentence break rather than a dash",
+		func(reason tsh.DropReason) {
+			got := tsh.DropHintForTest(reason)
+			Expect(got).NotTo(ContainSubstring("--"))
+			Expect(got).To(HavePrefix(". "))
+		},
+		Entry("missing value", tsh.DropMissingValue),
+		Entry("missing timestamp", tsh.DropMissingTimestamp),
+		Entry("contract bypassed", tsh.DropContractBypassed),
+		Entry("contract unvalidated", tsh.DropContractUnvalidated),
+		Entry("not timeseries", tsh.DropNotTimeseries),
+	)
 })
 
 var _ = Describe("dropHint for the validation guards", func() {
@@ -238,7 +229,7 @@ var _ = Describe("drop logging", func() {
 		Expect(logs()).To(ContainSubstring(`dropped 7 of 10 message(s) (reason=missing_value, example umh_topic="umh.v1.acme._historian_v1.a")`))
 		Expect(logs()).To(ContainSubstring(`dropped 3 of 10 message(s) (reason=missing_timestamp, example umh_topic="umh.v1.acme._historian_v1.b")`))
 		Expect(strings.Count(logs(), "level=error")).To(Equal(2), "one line per reason, not one per message")
-		Expect(logs()).To(ContainSubstring("msg.payload.value"), "each line keeps its own fix")
-		Expect(logs()).To(ContainSubstring("Date.now()"))
+		Expect(logs()).To(ContainSubstring("no value field"), "each line keeps its own hint")
+		Expect(logs()).To(ContainSubstring("tag processor sets timestamp_ms"))
 	})
 })

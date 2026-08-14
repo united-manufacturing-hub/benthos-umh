@@ -316,16 +316,14 @@ func PolicyDriftWarningsForTest(compressWant int64, appliedComp *int64, retentio
 
 func SuggestedTopicPatternForTest(contract string) string { return suggestedTopicPattern(contract) }
 
-func ReportedContractsForTest(seen map[string]struct{}) []string { return reportedContracts(seen) }
-
-func MismatchMessageForTest(contract string, overBroad bool, total int, mismatched int, contracts []string, example string) string {
-	return mismatchMessage(contract, overBroad, total, mismatched, contracts, example)
+func MismatchMessageForTest(contract string, contractIsPublished bool, total int, mismatched int) string {
+	return mismatchMessage(contract, contractIsPublished, total, mismatched)
 }
 
 func MismatchLogIntervalForTest() time.Duration { return mismatchLogInterval }
 
-func (h *HistorianTestHandle) NoteContractMismatch(now time.Time, total int, mismatched int, seen map[string]struct{}, example string, sawMatching bool) {
-	h.o.noteContractMismatch(now, total, mismatched, seen, example, sawMatching)
+func (h *HistorianTestHandle) NoteContractMismatch(now time.Time, total int, mismatched int, batchCarriedConfiguredContract bool) {
+	h.o.noteContractMismatch(now, total, mismatched, batchCarriedConfiguredContract)
 }
 
 func DropHintForTest(reason DropReason) string { return dropHint(reason) }
