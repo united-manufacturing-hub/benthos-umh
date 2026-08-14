@@ -148,25 +148,24 @@ ORDER  BY v.ts DESC;
 - **The payload must be exactly `{value, timestamp_ms}`.** A missing field is dropped as
   `missing_value` or `missing_timestamp`, an extra top-level field as `not_timeseries`, which is what
   refuses a relational record. Neither rule is configurable. The
-  [tag processor](../processing/tag-processor.md) fills `timestamp_ms`; the
-  [Node-RED JavaScript processor](../processing/node-red-javascript-processor.md) does not, so a
-  write flow that reshapes the payload has to carry it across.
+  [tag processor](../processing/tag-processor.md) sets `timestamp_ms` automatically; with any other
+  processing the payload has to carry it.
 - **A malformed message is dropped, never nacked.** An unparseable `umh_topic`
   (`invalid_topic`), a non-finite number (`unclassifiable_value`), an unreadable timestamp
   (`bad_timestamp`) and a payload that is not a JSON object (`not_structured`, `not_object`) are
   skipped; the rest of the batch is written. Each reason logs one error per batch with its share of
-  the batch, an example topic and its fix, which umh-core reads as a degraded bridge. The log clears
-  once the bad messages stop and the last error ages out of umh-core's window.
+  the batch, an example topic and its fix, so the loss shows up in the log rather than passing
+  unnoticed. The errors stop once the bad messages stop.
 - **A wrong data contract refuses the whole batch.** A batch holding any message whose data-contract
   segment is not the configured `data_contract_name` is NACKed from the first batch on: nothing in it
   is written, not even its matching messages, and `output_sent` never counts it, so write throughput
-  reports rows stored. The error names the contracts that arrived and the `umh_topics` pattern to
-  narrow to, throttled to once every 2 minutes; the `uns` input logs its own error per refused batch,
-  unthrottled.
+  reports rows stored. The error names how much of the batch was foreign and the `umh_topics` pattern
+  to narrow to, throttled to once every 2 minutes; the `uns` input logs its own error per refused
+  batch, unthrottled.
 
   A NACKed batch is not replayed: the `uns` input leaves its offsets uncommitted and the next ACKed
   batch commits past them, so the refused messages are lost. Fix the subscription, then redeploy.
-- **Subscribe only to this contract.** Anything wider errors the bridge. Use
+- **Subscribe only to this contract.** Anything wider makes the output refuse batches. Use
   `^umh\.v1(?:\.[^._][^.]*)+\._<contract>(_v\d+)?\..+$`: any location depth, both the bare and `_vN`
   forms, and no match on a virtual-path segment sharing the contract's name.
 - **Metadata de-duplication.** An attribute row is rewritten only when its key set changes,
@@ -273,9 +272,11 @@ On top of benthos's built-in output metrics (`output_sent`, `output_error`,
 - `historian_value_rows_written` — value rows upserted (counted after the batch commits).
 - `historian_attribute_rows_written` — attribute rows upserted; the gap below the value-row
   count is metadata de-duplication at work.
-- `messages_dropped` (labelled by `reason`) — messages dropped before any write. The name has no
-  plugin prefix because every benthos-umh plugin uses the same drop counter, which is how umh-core
-  subtracts it from `output_sent`.
+- `messages_dropped` (labelled by `reason`) — messages dropped before any write. The counter carries
+  no plugin prefix, so it reads the same across plugins. `output_sent` counts messages the output
+  accepted rather than rows stored, so subtract `messages_dropped` from it for the rows actually
+  written — leaving out `reason=contract_mismatch`, whose batch is refused whole and never reaches
+  `output_sent` in the first place.
 - `historian_dedup_cache_size` — current dedup-cache entry count.
 
 ## Numeric precision
