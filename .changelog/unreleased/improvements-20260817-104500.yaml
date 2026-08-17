@@ -1,0 +1,3 @@
+kind: improvements
+body: The historian output keeps `data_contract_version` in the stored metadata, readable as `attribute->>'data_contract_version'`, so a connected application can tell which contract version a reading arrived under. All versions share one table and one `umh.tag` row, so no column recorded it and excluding it as structural discarded it outright (ENG-5474)
+time: 2026-08-17T10:45:00.000000+02:00
