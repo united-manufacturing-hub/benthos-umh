@@ -57,28 +57,69 @@ var _ = Describe("suggestedTopicPattern", func() {
 	)
 })
 
+var _ = Describe("reportedContracts", func() {
+	It("sorts so the line is stable across batches", func() {
+		Expect(tsh.ReportedContractsForTest([]string{"_raw", "_pump_v1", "_other"})).
+			To(Equal("[_other, _pump_v1, _raw]"))
+	})
+
+	It("collapses a subscription broad enough to name more contracts than fit", func() {
+		got := tsh.ReportedContractsForTest([]string{"_a", "_b", "_c", "_d", "_e", "_f", "_g"})
+		Expect(got).To(Equal("[_a, _b, _c, _d, _e, and others]"))
+	})
+
+	It("names every contract up to the cap", func() {
+		Expect(tsh.ReportedContractsForTest([]string{"_a", "_b", "_c", "_d", "_e"})).
+			To(Equal("[_a, _b, _c, _d, _e]"))
+	})
+})
+
+var _ = Describe("noteArrivedContract", func() {
+	It("takes the contract segment from the topic", func() {
+		seen := map[string]struct{}{}
+		tsh.NoteArrivedContractForTest(seen, "umh.v1.acme.line1._other_v1.vibration.t")
+		Expect(seen).To(HaveKey("_other_v1"))
+	})
+
+	It("ignores a topic that does not parse rather than reporting a blank contract", func() {
+		seen := map[string]struct{}{}
+		tsh.NoteArrivedContractForTest(seen, "not-a-topic")
+		Expect(seen).To(BeEmpty())
+	})
+
+	It("stops collecting past the cap so a broad subscription cannot grow the set unbounded", func() {
+		seen := map[string]struct{}{}
+		for _, c := range []string{"_a", "_b", "_c", "_d", "_e", "_f", "_g", "_h", "_i"} {
+			tsh.NoteArrivedContractForTest(seen, "umh.v1.acme.line1."+c+".vibration.t")
+		}
+		Expect(len(seen)).To(BeNumerically("<=", 6), "one over the cap is enough to render the overflow")
+	})
+})
+
 var _ = Describe("mismatchMessage", func() {
-	It("names the wrong contract, the refused share and both fixes when nothing has been stored", func() {
-		got := tsh.MismatchMessageForTest("historian", false, 4, 4)
+	It("names the wrong contract, the refused share, what arrived and both fixes when nothing has been stored", func() {
+		got := tsh.MismatchMessageForTest("historian", false, 4, 4, "[_other_v1]")
 		Expect(got).To(ContainSubstring("no message carries data contract _historian"))
 		Expect(got).To(ContainSubstring("reason=contract_mismatch"))
 		Expect(got).To(ContainSubstring("4 of 4"))
+		Expect(got).To(ContainSubstring("[_other_v1]"), "narrowing umh_topics is impossible without knowing what arrived")
 		Expect(got).To(ContainSubstring("set data_contract_name"))
 		Expect(got).To(ContainSubstring(`^umh\.v1(?:\.[^._][^.]*)+\._historian(_v\d+)?\..+$`))
 	})
 
-	It("reports the over-broad subscription and the refused share once rows are landing", func() {
-		got := tsh.MismatchMessageForTest("historian", true, 12084, 12000)
+	It("reports the over-broad subscription, the refused share and what arrived once rows are landing", func() {
+		got := tsh.MismatchMessageForTest("historian", true, 12084, 12000, "[_pump_v1, _raw]")
 		Expect(got).To(ContainSubstring("subscription is over-broad"))
 		Expect(got).To(ContainSubstring("reason=contract_mismatch"))
 		Expect(got).To(ContainSubstring("12000 of 12084"))
+		Expect(got).To(ContainSubstring("[_pump_v1, _raw]"))
 		Expect(got).To(ContainSubstring(`^umh\.v1(?:\.[^._][^.]*)+\._historian(_v\d+)?\..+$`))
 		Expect(got).NotTo(ContainSubstring("no message carries"))
 	})
 
-	DescribeTable("carries neither an example topic nor the contracts that arrived",
+	DescribeTable("carries no example topic, which the arrived contracts replace",
 		func(contractIsPublished bool) {
-			got := tsh.MismatchMessageForTest("historian", contractIsPublished, 4, 4)
+			got := tsh.MismatchMessageForTest("historian", contractIsPublished, 4, 4, "[_other_v1]")
 			Expect(got).NotTo(ContainSubstring("example"))
 			Expect(got).NotTo(ContainSubstring("--"))
 		},
@@ -88,7 +129,7 @@ var _ = Describe("mismatchMessage", func() {
 
 	DescribeTable("stays a single line so it survives being rendered as a status reason",
 		func(contractIsPublished bool) {
-			got := tsh.MismatchMessageForTest("historian", contractIsPublished, 4, 4)
+			got := tsh.MismatchMessageForTest("historian", contractIsPublished, 4, 4, "[_other_v1]")
 			Expect(got).NotTo(ContainSubstring("\n"))
 			Expect(got).To(HavePrefix("TimescaleDB historian: "))
 		},

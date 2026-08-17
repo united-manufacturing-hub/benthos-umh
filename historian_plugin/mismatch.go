@@ -16,22 +16,66 @@ package historian_plugin
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"time"
+
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 )
 
 const mismatchLogInterval = 2 * time.Minute
+
+// maxReportedContracts bounds both the log line and the work behind it. A subscription broad
+// enough to select hundreds of contracts would otherwise name all of them on one line, and the
+// collection stops parsing topics once the cap is exceeded -- past that point the operator's fix
+// is the same whether the overflow is 6 contracts or 600.
+const maxReportedContracts = 5
+
+// contractOfTopic returns the data-contract segment of a umh_topic, or "" when it does not parse.
+func contractOfTopic(umhTopic string) string {
+	ut, err := topic.NewUnsTopic(umhTopic)
+	if err != nil {
+		return ""
+	}
+	return ut.Info().DataContract
+}
+
+// noteArrivedContract records a contract the batch carried instead of the configured one, up to
+// the cap. Returns false once the caller should stop collecting.
+func noteArrivedContract(seen map[string]struct{}, umhTopic string) {
+	if len(seen) > maxReportedContracts {
+		return
+	}
+	if c := contractOfTopic(umhTopic); c != "" {
+		seen[c] = struct{}{}
+	}
+}
+
+// reportedContracts renders the arrived contracts for the error, sorted so the line is stable
+// across batches and diffable between reports.
+func reportedContracts(seen map[string]struct{}) string {
+	out := make([]string, 0, len(seen))
+	for c := range seen {
+		out = append(out, c)
+	}
+	sort.Strings(out)
+	if len(out) > maxReportedContracts {
+		out = append(out[:maxReportedContracts], "and others")
+	}
+	return "[" + strings.Join(out, ", ") + "]"
+}
 
 func suggestedTopicPattern(contract string) string {
 	return `^umh\.v1(?:\.[^._][^.]*)+\._` + contract + `(_v\d+)?\..+$`
 }
 
-func mismatchMessage(contract string, contractIsPublished bool, total int, mismatched int) string {
+func mismatchMessage(contract string, contractIsPublished bool, total int, mismatched int, arrived string) string {
 	if contractIsPublished {
-		return fmt.Sprintf("TimescaleDB historian: subscription is over-broad, %d of %d message(s) carry another data contract (reason=%s). Narrow umh_topics to %s",
-			mismatched, total, DropContractMismatch, suggestedTopicPattern(contract))
+		return fmt.Sprintf("TimescaleDB historian: subscription is over-broad, %d of %d message(s) carry another data contract %s (reason=%s). Narrow umh_topics to %s",
+			mismatched, total, arrived, DropContractMismatch, suggestedTopicPattern(contract))
 	}
-	return fmt.Sprintf("TimescaleDB historian: no message carries data contract _%s, %d of %d message(s) carry another (reason=%s). Either set data_contract_name to a published contract, or narrow umh_topics to %s",
-		contract, mismatched, total, DropContractMismatch, suggestedTopicPattern(contract))
+	return fmt.Sprintf("TimescaleDB historian: no message carries data contract _%s, %d of %d message(s) carry %s instead (reason=%s). Either set data_contract_name to a published contract, or narrow umh_topics to %s",
+		contract, mismatched, total, arrived, DropContractMismatch, suggestedTopicPattern(contract))
 }
 
 func nackMessage(contract string, total int, mismatched int) string {
@@ -39,12 +83,12 @@ func nackMessage(contract string, total int, mismatched int) string {
 		mismatched, total, contract, DropContractMismatch)
 }
 
-func (o *historianOutput) noteContractMismatch(now time.Time, total int, mismatched int, batchCarriedConfiguredContract bool) {
+func (o *historianOutput) noteContractMismatch(now time.Time, total int, mismatched int, batchCarriedConfiguredContract bool, arrived map[string]struct{}) {
 	if !o.claimMismatchLogSlot(now) {
 		return
 	}
 	contractIsPublished := o.everStored.Load() || batchCarriedConfiguredContract
-	o.logger.Errorf("%s", mismatchMessage(o.contract, contractIsPublished, total, mismatched))
+	o.logger.Errorf("%s", mismatchMessage(o.contract, contractIsPublished, total, mismatched, reportedContracts(arrived)))
 }
 
 // claimMismatchLogSlot reports whether the caller may log now, taking the slot if so. Mismatches

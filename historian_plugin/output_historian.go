@@ -406,6 +406,7 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	rows := make([]*Row, 0, len(batch))
 	churn := map[string]struct{}{} // high-churn metadata keys seen anywhere in this batch (see below)
 	drops := map[DropReason]dropSummary{}
+	arrivedContracts := map[string]struct{}{} // contracts a refused batch carried instead of the configured one
 	sawConfiguredContract := false
 	for _, msg := range batch {
 		meta := map[string]string{}
@@ -431,6 +432,9 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 			sawConfiguredContract = true
 		}
 		if drop != DropNone {
+			if drop == DropContractMismatch {
+				noteArrivedContract(arrivedContracts, meta["umh_topic"])
+			}
 			o.noteDrop(drops, drop, meta["umh_topic"])
 			continue
 		}
@@ -452,7 +456,7 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	// wants them out of metadata_keys.
 	o.warnHighChurnMetadata(churn)
 	if mismatch := drops[DropContractMismatch]; mismatch.count > 0 {
-		o.noteContractMismatch(time.Now(), len(batch), mismatch.count, sawConfiguredContract)
+		o.noteContractMismatch(time.Now(), len(batch), mismatch.count, sawConfiguredContract, arrivedContracts)
 		return errors.New(nackMessage(o.contract, len(batch), mismatch.count))
 	}
 	o.reportDrops(len(batch), drops)

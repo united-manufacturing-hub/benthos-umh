@@ -316,14 +316,30 @@ func PolicyDriftWarningsForTest(compressWant int64, appliedComp *int64, retentio
 
 func SuggestedTopicPatternForTest(contract string) string { return suggestedTopicPattern(contract) }
 
-func MismatchMessageForTest(contract string, contractIsPublished bool, total int, mismatched int) string {
-	return mismatchMessage(contract, contractIsPublished, total, mismatched)
+func ReportedContractsForTest(seen []string) string {
+	set := map[string]struct{}{}
+	for _, c := range seen {
+		set[c] = struct{}{}
+	}
+	return reportedContracts(set)
+}
+
+func NoteArrivedContractForTest(seen map[string]struct{}, umhTopic string) {
+	noteArrivedContract(seen, umhTopic)
+}
+
+func MismatchMessageForTest(contract string, contractIsPublished bool, total int, mismatched int, arrived string) string {
+	return mismatchMessage(contract, contractIsPublished, total, mismatched, arrived)
 }
 
 func MismatchLogIntervalForTest() time.Duration { return mismatchLogInterval }
 
-func (h *HistorianTestHandle) NoteContractMismatch(now time.Time, total int, mismatched int, batchCarriedConfiguredContract bool) {
-	h.o.noteContractMismatch(now, total, mismatched, batchCarriedConfiguredContract)
+func (h *HistorianTestHandle) NoteContractMismatch(now time.Time, total int, mismatched int, batchCarriedConfiguredContract bool, arrived ...string) {
+	set := map[string]struct{}{}
+	for _, c := range arrived {
+		set[c] = struct{}{}
+	}
+	h.o.noteContractMismatch(now, total, mismatched, batchCarriedConfiguredContract, set)
 }
 
 func DropHintForTest(reason DropReason) string { return dropHint(reason) }
