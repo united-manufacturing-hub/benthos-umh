@@ -139,19 +139,17 @@ ORDER  BY v.ts DESC;
   (see [Error handling](#error-handling)). This includes a tag emitting two distinct values
   within one millisecond, which the millisecond UNS timestamp cannot distinguish from a real
   conflict, so this contract is unsuitable for tags that emit distinct values faster than 1 kHz.
-  The datatype half of that is the one you can turn off: `allow_datatype_changes: true` stores
-  both types on the tag instead (see [Runbook: poisoned tags](#runbook-poisoned-tags)). The
-  same-`(tag, ts)` conflict is not configurable.
+  Only the datatype half is configurable: `allow_datatype_changes: true` stores both types on the
+  tag (see [Runbook: poisoned tags](#runbook-poisoned-tags)). The same-`(tag, ts)` conflict is not.
 - **A schema that was expected and not applied is refused.** A **versioned** contract (`_pump_v1`)
-  carrying `data_contract_bypassed=true` is dropped as `contract_bypassed`, with no way to override
-  it: the version claims a schema, so unchecked data under that name would make the contract a lie.
-  The `uns` output sets that meta when the registry was unreachable or no schema is registered for
-  the version, so the fix belongs upstream, at the registry.
+  carrying `data_contract_bypassed=true` is dropped as `contract_bypassed`, and no setting overrides
+  it: the version names a schema that was never checked. The `uns` output sets that meta when the
+  registry was unreachable or when no schema is registered for the version, so fix it at the
+  registry.
 
-  An **unversioned** contract (`_historian`) is stored. It carries that same meta on *every*
-  message — the `uns` output sets it for anything it cannot version-check — so it means nothing
-  there and is ignored. An unversioned contract never claimed a schema, so nothing was broken by
-  its absence; the only thing its lack of type-checking costs you is the datatype guard above.
+  An **unversioned** contract (`_historian`) is stored. It carries the same meta on *every* message,
+  because the `uns` output sets it for anything it cannot version-check, so it says nothing there and
+  is ignored. Unchecked types are the only consequence, and the datatype guard above covers them.
 - **The payload must be exactly `{value, timestamp_ms}`.** A missing field is dropped as
   `missing_value` or `missing_timestamp`, an extra top-level field as `not_timeseries`, which is what
   refuses a relational record. Neither rule is configurable. The
@@ -217,10 +215,9 @@ phase alone tells the two apart.
 
 **Datatype flip / accidental first type.** A tag's type is fixed by its first stored value:
 one stray string (e.g. `"N/A"`) locks the tag to text, and later numeric readings are then
-rejected. In practice this shows up on generic contracts like `_historian`, which carry no
-upstream type validation — a modelled contract validates types before the historian ever sees
-them — but the policy is the same on both: the flag decides, not the contract. Confirm the
-established type first:
+rejected. Most reports come from generic contracts like `_historian`, which have no upstream
+type validation, but `allow_datatype_changes` applies the same way to a modelled contract.
+Confirm the established type first:
 
 ```sql
 -- what type is this tag locked to?
@@ -230,17 +227,16 @@ WHERE name = 'temperature' AND virtual_path = '' AND data_contract_name = '_hist
 
 Then pick one of two fixes.
 
-*Keep both types.* Set `allow_datatype_changes: true` on the output. Nothing is lost and no
-history is touched: the tag resolves on its natural key, later rows land in whichever column
-suits them, and `umh.tag.value_type` keeps reporting the first type seen. The cost is that
-reading the tag now needs `coalesce(value_num::text, value_text)`, and the recorded
-`value_type` no longer describes every row. Right when the type change is real — a counter
-that became a status string, a device firmware upgrade.
+*Keep both types.* Set `allow_datatype_changes: true` on the output. No history changes: the tag
+keeps its existing `topic_id`, numeric readings still go to `value_num` and text to `value_text`,
+and `umh.tag.value_type` keeps reporting the first type seen. Two costs: reading the tag needs
+`coalesce(value_num::text, value_text)`, and the stored `value_type` no longer describes every
+row. Use this when the type change is genuine, such as a counter the firmware turned into a
+status string.
 
 *Re-pin the intended type.* Delete the tag's stored value history and its tag row, so the next
-message re-establishes the type. Right when one stray sample locked the tag to the wrong type
-and you want the original back. This discards that tag's history for the contract — take a
-copy first if you need it:
+message re-establishes the type. Use this when one stray sample locked the tag to the wrong type.
+It discards that tag's history for the contract, so take a copy first if you need it:
 
 ```sql
 -- resolve the topic, delete its values, then remove the topic + tag so the type is no longer pinned
@@ -258,12 +254,11 @@ not representable by the millisecond UNS timestamp and unsuitable for this contr
 define it), and route text or high-precision counters to a text contract rather than mixing
 types on one tag.
 
-> **Generic contracts (`_historian`/`_raw`).** These don't pin a type, so a type change happens in
-> the field and is not necessarily a defect — which is why `allow_datatype_changes` exists and why
-> it is most often set on a contract like these. It is not restricted to them: a versioned contract
-> whose schema turns out to permit both types takes the same setting, and a generic contract left at
-> the default still drops flips as poison. The contract's shape is a hint about which setting you
-> want, never the thing that decides it.
+> **Generic contracts (`_historian`/`_raw`).** These don't pin a type, so a type change in the field
+> is not necessarily a defect, which is what `allow_datatype_changes` is for. The setting is not tied
+> to the contract kind, though: a generic contract left at the default still drops flips as poison,
+> and a versioned contract can be set to keep both types. Which contract you are on suggests the
+> setting you probably want; it does not select it for you.
 
 ## Throughput
 

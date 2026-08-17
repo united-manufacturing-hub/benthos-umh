@@ -212,10 +212,9 @@ var dropHints = map[DropReason]string{
 
 func dropHint(reason DropReason) string { return dropHints[reason] }
 
-// datatypeFlipHint names the flag that stores a tag whose datatype changed, for the poison-row log.
-// P0001 at the resolve phase identifies the flip exactly: the P0001 invariant in errclass.go admits
-// only two sources, and the other one -- raise_pk_conflict, an append-only conflict the flag cannot
-// fix -- can only fire on the value and attribute inserts.
+// datatypeFlipHint names the flag that would have stored a tag whose datatype changed, for the
+// poison-row log. Only the datatype guard raises P0001 at the resolve phase: the other sanctioned
+// source, raise_pk_conflict, runs on the value and attribute inserts (see classify in errclass.go).
 func datatypeFlipHint(phase string, sqlstate string) string {
 	if phase != phaseResolve || sqlstate != sqlstateRaise {
 		return ""
@@ -238,11 +237,10 @@ func Transform(payload map[string]any, meta map[string]string, contract string, 
 	if NormalizeContract(info.DataContract) != want {
 		return nil, DropContractMismatch
 	}
-	// the version check is load-bearing, not a narrowing: the uns output stamps
-	// data_contract_bypassed=true on EVERY unversioned message (uns_plugin/schema_validation/
-	// validator.go:198-210, "unversioned contract - bypassing validation"), so hoisting this out of
-	// the version check would drop all _historian traffic as contract_bypassed. On a versioned
-	// contract the same meta means something else entirely: a schema was expected and not applied.
+	// check the version before the bypass meta: the uns output sets data_contract_bypassed=true on
+	// every unversioned message (uns_plugin/schema_validation/validator.go:198-210), so reading that
+	// meta on its own would drop all _historian traffic. On a versioned contract it means a schema
+	// was expected and never applied.
 	if reVersionSuffix.MatchString(info.DataContract) && meta["data_contract_bypassed"] == "true" {
 		return nil, DropContractBypassed
 	}

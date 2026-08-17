@@ -20,14 +20,13 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// sqlstateRaise is plpgsql's bare RAISE. Which of the two sanctioned guards raised it (see the
-// P0001 invariant on classify) is told apart by the write phase that failed, so the two are named
-// together and read together.
+// sqlstateRaise is the SQLSTATE plpgsql gives a bare RAISE. Only two guards use it (see the
+// invariant on classify below); the failing write phase says which.
 const sqlstateRaise = "P0001"
 
-// The phases a row passes through in writeRowsIsolated, used to attribute its failure.
+// Write phases, used as the phase label on a dropped poison row.
 const (
-	phaseResolve   = "resolve"   // topic_id upsert; the only phase tag_value_type_guard can fire in
+	phaseResolve   = "resolve"   // topic_id upsert; the only phase tag_value_type_guard runs in
 	phaseValue     = "value"     // value row insert
 	phaseAttribute = "attribute" // attribute row insert
 )

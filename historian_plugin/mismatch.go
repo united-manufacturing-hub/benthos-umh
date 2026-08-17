@@ -25,34 +25,32 @@ import (
 
 const mismatchLogInterval = 2 * time.Minute
 
-// maxReportedContracts bounds both the log line and the work behind it. A subscription broad
-// enough to select hundreds of contracts would otherwise name all of them on one line, and the
-// collection stops parsing topics once the cap is exceeded -- past that point the operator's fix
-// is the same whether the overflow is 6 contracts or 600.
+// maxReportedContracts caps how many contracts the error names, and how many topics are parsed to
+// find them: past the cap the fix is the same whether 6 arrived or 600.
 const maxReportedContracts = 5
 
-// contractOfTopic returns the data-contract segment of a umh_topic, or "" when it does not parse.
-func contractOfTopic(umhTopic string) string {
+// contractOfTopic returns the data-contract segment of a umh_topic. The second result is false when
+// the topic does not parse.
+func contractOfTopic(umhTopic string) (string, bool) {
 	ut, err := topic.NewUnsTopic(umhTopic)
 	if err != nil {
-		return ""
+		return "", false
 	}
-	return ut.Info().DataContract
+	return ut.Info().DataContract, true
 }
 
 // noteArrivedContract records a contract the batch carried instead of the configured one, up to
-// the cap. Returns false once the caller should stop collecting.
+// maxReportedContracts.
 func noteArrivedContract(seen map[string]struct{}, umhTopic string) {
 	if len(seen) > maxReportedContracts {
 		return
 	}
-	if c := contractOfTopic(umhTopic); c != "" {
-		seen[c] = struct{}{}
+	if contract, ok := contractOfTopic(umhTopic); ok {
+		seen[contract] = struct{}{}
 	}
 }
 
-// reportedContracts renders the arrived contracts for the error, sorted so the line is stable
-// across batches and diffable between reports.
+// reportedContracts formats the arrived contracts for the error, sorted so repeated reports match.
 func reportedContracts(seen map[string]struct{}) string {
 	out := make([]string, 0, len(seen))
 	for c := range seen {

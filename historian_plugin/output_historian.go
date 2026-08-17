@@ -406,7 +406,7 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 	rows := make([]*Row, 0, len(batch))
 	churn := map[string]struct{}{} // high-churn metadata keys seen anywhere in this batch (see below)
 	drops := map[DropReason]dropSummary{}
-	arrivedContracts := map[string]struct{}{} // contracts a refused batch carried instead of the configured one
+	arrivedContracts := map[string]struct{}{} // mismatched contracts only, never the configured one
 	sawConfiguredContract := false
 	for _, msg := range batch {
 		meta := map[string]string{}
@@ -745,7 +745,7 @@ func (o *historianOutput) writeRowsIsolated(ctx context.Context, pool *pgxpool.P
 }
 
 func (o *historianOutput) noteStored() {
-	if o.everStored.Load() { // hot path: a plain load once the first row is in
+	if o.everStored.Load() { // a plain load, not CompareAndSwap: this runs on every stored row
 		return
 	}
 	if o.everStored.CompareAndSwap(false, true) {
