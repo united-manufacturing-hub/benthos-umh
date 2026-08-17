@@ -905,24 +905,24 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(logs()).To(ContainSubstring(`^umh\.v1(?:\.[^._][^.]*)+\._grace(_v\d+)?\..+$`))
 	})
 
-	It("refuses an unversioned contract until unvalidated data is explicitly allowed", func() {
+	It("stores an unversioned contract with no configuration at all", func() {
 		h := connected("unver")
 		defer h.Close(ctx)
 		logs := h.CaptureLogs()
 		msg := mkMsg(1.0, 1000, "_unver", "acme.line1", "t", nil)
 		Expect(h.WriteBatch(ctx, service.MessageBatch{msg})).To(Succeed())
-		Expect(h.CountValueRows(ctx, "unver")).To(Equal(0), "an unversioned contract is never schema-validated, so it must not be stored by default")
-		Expect(logs()).To(ContainSubstring("reason=contract_unvalidated"))
-		Expect(logs()).To(ContainSubstring("allow_unvalidated_data: true"), "the log must name the flag that enables it")
+		Expect(h.CountValueRows(ctx, "unver")).To(Equal(1), "a default _historian bridge must store without any opt-in")
+		Expect(logs()).NotTo(ContainSubstring("reason=contract_"))
 	})
 
-	It("stores an unversioned contract once unvalidated data is allowed", func() {
-		h := connected("unverok")
+	It("stores an unversioned contract carrying the bypass flag the uns output stamps on all of them", func() {
+		h := connected("unverbypass")
 		defer h.Close(ctx)
-		h.SetAllowUnvalidated(true)
-		msg := mkMsg(1.0, 1000, "_unverok", "acme.line1", "t", nil)
+		logs := h.CaptureLogs()
+		msg := mkMsg(1.0, 1000, "_unverbypass", "acme.line1", "t", map[string]string{"data_contract_bypassed": "true"})
 		Expect(h.WriteBatch(ctx, service.MessageBatch{msg})).To(Succeed())
-		Expect(h.CountValueRows(ctx, "unverok")).To(Equal(1))
+		Expect(h.CountValueRows(ctx, "unverbypass")).To(Equal(1), "honouring the flag here would drop every _historian message")
+		Expect(logs()).NotTo(ContainSubstring("reason=contract_bypassed"))
 	})
 
 	It("refuses a versioned contract whose schema was bypassed, even with unvalidated data allowed", func() {

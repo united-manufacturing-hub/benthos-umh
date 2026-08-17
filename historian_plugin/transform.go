@@ -198,24 +198,22 @@ const (
 	DropUnclassifiableValue DropReason = "unclassifiable_value"
 	DropBadTimestamp        DropReason = "bad_timestamp"
 	DropContractBypassed    DropReason = "contract_bypassed"
-	DropContractUnvalidated DropReason = "contract_unvalidated"
 	DropNotTimeseries       DropReason = "not_timeseries"
 	DropNotStructured       DropReason = "not_structured"
 	DropNotObject           DropReason = "not_object"
 )
 
 var dropHints = map[DropReason]string{
-	DropMissingValue:        ". The payload has no value field; the historian needs {value, timestamp_ms}",
-	DropMissingTimestamp:    ". The historian needs a {value, timestamp_ms} payload; the tag processor sets timestamp_ms automatically, otherwise ensure the payload carries it",
-	DropContractBypassed:    ". This versioned data contract carries data_contract_bypassed=true, so its schema was never applied (the registry was unreachable, or no schema is registered for this version) and the payload is unchecked; register the schema or restore the registry, then redeploy. This cannot be overridden by allow_unvalidated_data",
-	DropContractUnvalidated: ". An unversioned data contract cannot be schema-validated, so datatypes are never checked; set allow_unvalidated_data: true on this output to store it anyway, or publish to a versioned contract (e.g. _pump_v1) to get validation",
-	DropNotTimeseries:       ". The historian stores timeseries only, and this payload carries fields beyond {value, timestamp_ms}; route relational data to a different data contract",
+	DropMissingValue:     ". The payload has no value field; the historian needs {value, timestamp_ms}",
+	DropMissingTimestamp: ". The historian needs a {value, timestamp_ms} payload; the tag processor sets timestamp_ms automatically, otherwise ensure the payload carries it",
+	DropContractBypassed: ". This versioned data contract carries data_contract_bypassed=true, so its schema was never applied (the registry was unreachable, or no schema is registered for this version) and the payload is unchecked; register the schema or restore the registry, then redeploy. This cannot be overridden by allow_unvalidated_data",
+	DropNotTimeseries:    ". The historian stores timeseries only, and this payload carries fields beyond {value, timestamp_ms}; route relational data to a different data contract",
 }
 
 func dropHint(reason DropReason) string { return dropHints[reason] }
 
 // Transform maps one UNS message to a Row, or returns a non-empty DropReason to drop it.
-func Transform(payload map[string]any, meta map[string]string, contract string, allMeta bool, allowlist []string, excl *MetaExcluder, allowUnvalidated bool, view *BatchView) (*Row, DropReason) {
+func Transform(payload map[string]any, meta map[string]string, contract string, allMeta bool, allowlist []string, excl *MetaExcluder, view *BatchView) (*Row, DropReason) {
 	// Parse the canonical umh_topic via the shared parser rather than trusting separate
 	// location/contract/tag meta: a pipeline may not have run the tag_processor, so a missing or
 	// malformed topic is dropped here.
@@ -229,12 +227,13 @@ func Transform(payload map[string]any, meta map[string]string, contract string, 
 	if NormalizeContract(info.DataContract) != want {
 		return nil, DropContractMismatch
 	}
-	if reVersionSuffix.MatchString(info.DataContract) {
-		if meta["data_contract_bypassed"] == "true" {
-			return nil, DropContractBypassed
-		}
-	} else if !allowUnvalidated {
-		return nil, DropContractUnvalidated
+	// the version check is load-bearing, not a narrowing: the uns output stamps
+	// data_contract_bypassed=true on EVERY unversioned message (uns_plugin/schema_validation/
+	// validator.go:198-210, "unversioned contract - bypassing validation"), so hoisting this out of
+	// the version check would drop all _historian traffic as contract_bypassed. On a versioned
+	// contract the same meta means something else entirely: a schema was expected and not applied.
+	if reVersionSuffix.MatchString(info.DataContract) && meta["data_contract_bypassed"] == "true" {
+		return nil, DropContractBypassed
 	}
 	// NewUnsTopic already rejects empty/dotted location and empty name, so no re-check here.
 	loc := info.LocationPath()

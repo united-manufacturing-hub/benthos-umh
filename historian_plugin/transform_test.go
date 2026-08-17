@@ -256,7 +256,7 @@ var _ = Describe("Transform", func() {
 			map[string]string{"umh_topic": "umh.v1.acme.line1._pump_v1.vibration.x"}
 	}
 	tr := func(p map[string]any, m map[string]string) (*tsh.Row, tsh.DropReason) {
-		row, drop := tsh.Transform(p, m, "pump", true, nil, nil, false, tsh.NewDedupCache().NewBatch())
+		row, drop := tsh.Transform(p, m, "pump", true, nil, nil, tsh.NewDedupCache().NewBatch())
 		return row, drop
 	}
 
@@ -351,7 +351,7 @@ var _ = Describe("Transform", func() {
 		func(topic string) {
 			p, m := base()
 			m["umh_topic"] = topic
-			row, drop := tsh.Transform(p, m, "pump", true, nil, nil, false, tsh.NewDedupCache().NewBatch())
+			row, drop := tsh.Transform(p, m, "pump", true, nil, nil, tsh.NewDedupCache().NewBatch())
 			Expect(drop).To(Equal(tsh.DropNone), "only the Root.Objects.Server subtree is OPC UA diagnostics; a sibling that shares its prefix is real data")
 			Expect(row).NotTo(BeNil())
 		},
@@ -364,14 +364,14 @@ var _ = Describe("Transform", func() {
 		view := tsh.NewDedupCache().NewBatch()
 		p1, m1 := base()
 		m1["serialNumber"] = "abc"
-		row1, drop1 := tsh.Transform(p1, m1, "pump", true, nil, nil, false, view)
+		row1, drop1 := tsh.Transform(p1, m1, "pump", true, nil, nil, view)
 		Expect(drop1).To(Equal(tsh.DropNone))
 		Expect(row1.EmitMeta).To(BeTrue())
 
 		p2, m2 := base()
 		p2["timestamp_ms"] = float64(1) // distinct value row, same metadata
 		m2["serialNumber"] = "abc"
-		row2, drop2 := tsh.Transform(p2, m2, "pump", true, nil, nil, false, view)
+		row2, drop2 := tsh.Transform(p2, m2, "pump", true, nil, nil, view)
 		Expect(drop2).To(Equal(tsh.DropNone))
 		Expect(row2.EmitMeta).To(BeFalse())
 	})
@@ -382,57 +382,44 @@ var _ = Describe("Transform validation guards", func() {
 		return map[string]any{"value": 3.5, "timestamp_ms": float64(0)},
 			map[string]string{"umh_topic": "umh.v1.acme.line1." + contract + ".x"}
 	}
-	run := func(p map[string]any, m map[string]string, allowUnvalidated bool) (*tsh.Row, tsh.DropReason) {
-		return tsh.Transform(p, m, "pump", true, nil, nil, allowUnvalidated, tsh.NewDedupCache().NewBatch())
+	run := func(p map[string]any, m map[string]string) (*tsh.Row, tsh.DropReason) {
+		return tsh.Transform(p, m, "pump", true, nil, nil, tsh.NewDedupCache().NewBatch())
 	}
 
 	It("rejects a versioned contract whose schema was bypassed", func() {
 		p, m := ts("_pump_v1")
 		m["data_contract_bypassed"] = "true"
-		row, drop := run(p, m, false)
+		row, drop := run(p, m)
 		Expect(row).To(BeNil())
 		Expect(drop).To(Equal(tsh.DropContractBypassed))
 	})
 
-	It("still rejects a bypassed versioned contract when unvalidated data is allowed", func() {
-		p, m := ts("_pump_v1")
-		m["data_contract_bypassed"] = "true"
-		_, drop := run(p, m, true)
-		Expect(drop).To(Equal(tsh.DropContractBypassed), "allow_unvalidated_data must not override a missing schema on a versioned contract")
-	})
-
 	It("accepts a versioned contract that was validated", func() {
 		p, m := ts("_pump_v1")
-		row, drop := run(p, m, false)
+		row, drop := run(p, m)
 		Expect(drop).To(Equal(tsh.DropNone))
 		Expect(row).NotTo(BeNil())
 	})
 
-	It("rejects an unversioned contract by default", func() {
+	It("accepts an unversioned contract, which is never schema-validated", func() {
 		p, m := ts("_pump")
-		row, drop := run(p, m, false)
-		Expect(row).To(BeNil())
-		Expect(drop).To(Equal(tsh.DropContractUnvalidated))
-	})
-
-	It("accepts an unversioned contract when unvalidated data is allowed", func() {
-		p, m := ts("_pump")
-		row, drop := run(p, m, true)
-		Expect(drop).To(Equal(tsh.DropNone))
+		row, drop := run(p, m)
+		Expect(drop).To(Equal(tsh.DropNone), "an unversioned contract is stored; only a datatype change on it needs a config opt-in")
 		Expect(row).NotTo(BeNil())
 	})
 
-	It("ignores the bypass flag on an unversioned contract, which can never be validated", func() {
+	It("accepts an unversioned contract carrying the bypass flag", func() {
 		p, m := ts("_pump")
 		m["data_contract_bypassed"] = "true"
-		_, drop := run(p, m, true)
-		Expect(drop).To(Equal(tsh.DropNone), "the flag carries no information for an unversioned contract")
+		row, drop := run(p, m)
+		Expect(drop).To(Equal(tsh.DropNone), "the uns output stamps this flag on EVERY unversioned message, so honouring it here would drop all _historian traffic")
+		Expect(row).NotTo(BeNil())
 	})
 
 	It("rejects a relational payload that happens to carry value and timestamp_ms", func() {
 		p, m := ts("_pump_v1")
 		p["orderId"] = "WO-42"
-		row, drop := run(p, m, false)
+		row, drop := run(p, m)
 		Expect(row).To(BeNil())
 		Expect(drop).To(Equal(tsh.DropNotTimeseries))
 	})
@@ -443,14 +430,14 @@ var _ = Describe("Transform validation guards", func() {
 		delete(p, "timestamp_ms")
 		p["orderId"] = "WO-42"
 		p["quantity"] = 5.0
-		row, drop := run(p, m, false)
+		row, drop := run(p, m)
 		Expect(row).To(BeNil())
 		Expect(drop).To(Equal(tsh.DropNotTimeseries), "reporting missing_value here sends the operator to add a value field, which converges on a payload the historian stores as JSON text")
 	})
 
 	It("accepts a payload carrying exactly value and timestamp_ms", func() {
 		p, m := ts("_pump_v1")
-		_, drop := run(p, m, false)
+		_, drop := run(p, m)
 		Expect(drop).To(Equal(tsh.DropNone))
 	})
 })

@@ -176,18 +176,11 @@ var _ = Describe("dropHint", func() {
 		Entry("missing value", tsh.DropMissingValue),
 		Entry("missing timestamp", tsh.DropMissingTimestamp),
 		Entry("contract bypassed", tsh.DropContractBypassed),
-		Entry("contract unvalidated", tsh.DropContractUnvalidated),
 		Entry("not timeseries", tsh.DropNotTimeseries),
 	)
 })
 
 var _ = Describe("dropHint for the validation guards", func() {
-	It("names the flag and the alternative for an unvalidated contract", func() {
-		got := tsh.DropHintForTest(tsh.DropContractUnvalidated)
-		Expect(got).To(ContainSubstring("allow_unvalidated_data: true"))
-		Expect(got).To(ContainSubstring("versioned contract"))
-	})
-
 	It("says a bypassed versioned contract cannot be overridden", func() {
 		got := tsh.DropHintForTest(tsh.DropContractBypassed)
 		Expect(got).To(ContainSubstring("cannot be overridden"))

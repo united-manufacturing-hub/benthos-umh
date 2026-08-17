@@ -422,7 +422,7 @@ func (o *historianOutput) WriteBatch(ctx context.Context, batch service.MessageB
 		}
 		// Transform validates the umh_topic/contract and the value+timestamp, and decides whether
 		// this row also needs to write a metadata (attribute) row. A non-empty reason means drop.
-		row, drop := Transform(payload, meta, o.contract, o.metadataKeysAll, o.metadataKeys, o.metadataExclude, o.allowUnvalidated, view)
+		row, drop := Transform(payload, meta, o.contract, o.metadataKeysAll, o.metadataKeys, o.metadataExclude, view)
 		// A message that got past the contract check proves the configured contract is published, which
 		// is what picks the remedy in noteContractMismatch. Deriving this from the surviving rows
 		// instead would lose the proof whenever the payload is also bad, and send the operator to
