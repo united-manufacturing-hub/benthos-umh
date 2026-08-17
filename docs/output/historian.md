@@ -28,7 +28,7 @@ No JavaScript processor or hand-written `sql_raw` is needed.
 | `password` | yes | — | Role password (plaintext in config; redacted in logs). |
 | `sslmode` | no | `require` | `require` \| `disable` \| `verify-full`. |
 | `sslrootcert` / `sslcert` / `sslkey` | no | `""` | TLS cert paths inside the container. |
-| `allow_unvalidated_data` | no | `false` | Store data from an **unversioned** contract (e.g. `_historian`), accepting that its datatypes are never schema-checked. No effect on a versioned contract, where a bypassed schema is always rejected. |
+| `allow_datatype_changes` | no | `false` | Let a tag change datatype (numeric ↔ text) instead of dropping the offending rows as poison. The tag then holds both, and `umh.tag.value_type` keeps the first type seen — read it with `coalesce(value_num::text, value_text)`. Applies to every contract, versioned or not. |
 | `data_contract_name` | yes | — | Bare lowercase contract name, e.g. `pump`; no leading `_`, no `_vN` suffix. Stored in `umh.tag.data_contract_name` in its UNS form with a leading underscore (`_pump`), matching the topic's data-contract segment. |
 | `metadata_keys_all` | no | `true` | Store every metadata key except structural/high-churn keys and any `metadata_keys_exclude` match. |
 | `metadata_keys` | no | `[]` | Allowlist used only when `metadata_keys_all=false`. |
@@ -139,12 +139,19 @@ ORDER  BY v.ts DESC;
   (see [Error handling](#error-handling)). This includes a tag emitting two distinct values
   within one millisecond, which the millisecond UNS timestamp cannot distinguish from a real
   conflict, so this contract is unsuitable for tags that emit distinct values faster than 1 kHz.
-- **Only schema-validated data is stored.** A **versioned** contract (`_pump_v1`) carrying
-  `data_contract_bypassed=true`, which the `uns` output sets when the registry was unreachable or no
-  schema is registered, is dropped as `contract_bypassed` with no way to override it. An
-  **unversioned** contract (`_historian`) can never be validated, so it is dropped as
-  `contract_unvalidated` unless you set `allow_unvalidated_data: true` and accept unchecked
-  datatypes.
+  The datatype half of that is the one you can turn off: `allow_datatype_changes: true` stores
+  both types on the tag instead (see [Runbook: poisoned tags](#runbook-poisoned-tags)). The
+  same-`(tag, ts)` conflict is not configurable.
+- **A schema that was expected and not applied is refused.** A **versioned** contract (`_pump_v1`)
+  carrying `data_contract_bypassed=true` is dropped as `contract_bypassed`, with no way to override
+  it: the version claims a schema, so unchecked data under that name would make the contract a lie.
+  The `uns` output sets that meta when the registry was unreachable or no schema is registered for
+  the version, so the fix belongs upstream, at the registry.
+
+  An **unversioned** contract (`_historian`) is stored. It carries that same meta on *every*
+  message — the `uns` output sets it for anything it cannot version-check — so it means nothing
+  there and is ignored. An unversioned contract never claimed a schema, so nothing was broken by
+  its absence; the only thing its lack of type-checking costs you is the datatype guard above.
 - **The payload must be exactly `{value, timestamp_ms}`.** A missing field is dropped as
   `missing_value` or `missing_timestamp`, an extra top-level field as `not_timeseries`, which is what
   refuses a relational record. Neither rule is configurable. The
@@ -203,15 +210,17 @@ bridge at startup with a named error, instead of connecting and then stalling on
 
 **Find them.** A non-zero `historian_rows_poisoned` counter means rows are being dropped.
 The error log names each one: `dropped poison row at <phase> for contract=… location=…
-virtual_path=… tag=… (sqlstate=…)`. `phase=resolve` with `sqlstate=P0001` is almost always a
-**datatype flip**; `phase=value` with `P0001` is an **append-only conflict** (two different
-values at the same millisecond).
+virtual_path=… tag=… (sqlstate=…)`. `phase=resolve` with `sqlstate=P0001` is a **datatype flip**
+and says so, naming `allow_datatype_changes`; `phase=value` with `P0001` is an **append-only
+conflict** (two different values at the same millisecond). Nothing else raises `P0001`, so the
+phase alone tells the two apart.
 
 **Datatype flip / accidental first type.** A tag's type is fixed by its first stored value:
 one stray string (e.g. `"N/A"`) locks the tag to text, and later numeric readings are then
-rejected. This only arises on generic contracts like `_historian` that carry no upstream type
-validation; a modelled contract validates types before the historian ever sees them. Confirm
-the established type, then decide:
+rejected. In practice this shows up on generic contracts like `_historian`, which carry no
+upstream type validation — a modelled contract validates types before the historian ever sees
+them — but the policy is the same on both: the flag decides, not the contract. Confirm the
+established type first:
 
 ```sql
 -- what type is this tag locked to?
@@ -219,9 +228,19 @@ SELECT value_type FROM umh.tag
 WHERE name = 'temperature' AND virtual_path = '' AND data_contract_name = '_historian';
 ```
 
-To reset a tag that was locked to the wrong type, delete its stored value history and its tag
-row so the next message re-establishes the type (this discards that tag's history for the
-contract — take a copy first if you need it):
+Then pick one of two fixes.
+
+*Keep both types.* Set `allow_datatype_changes: true` on the output. Nothing is lost and no
+history is touched: the tag resolves on its natural key, later rows land in whichever column
+suits them, and `umh.tag.value_type` keeps reporting the first type seen. The cost is that
+reading the tag now needs `coalesce(value_num::text, value_text)`, and the recorded
+`value_type` no longer describes every row. Right when the type change is real — a counter
+that became a status string, a device firmware upgrade.
+
+*Re-pin the intended type.* Delete the tag's stored value history and its tag row, so the next
+message re-establishes the type. Right when one stray sample locked the tag to the wrong type
+and you want the original back. This discards that tag's history for the contract — take a
+copy first if you need it:
 
 ```sql
 -- resolve the topic, delete its values, then remove the topic + tag so the type is no longer pinned
@@ -240,12 +259,11 @@ define it), and route text or high-precision counters to a text contract rather 
 types on one tag.
 
 > **Generic contracts (`_historian`/`_raw`).** These don't pin a type, so a type change happens in
-> the field and is not a defect. With `allow_unvalidated_data: true` the tag resolves on its natural
-> key alone and the change is accepted: one `topic_id` then holds numeric rows in `value_num` and
-> text rows in `value_text`, with `umh.tag.value_type` recording only the first type seen. Read such
-> a tag with `coalesce(value_num::text, value_text)`. Without the flag nothing is stored at all:
-> every unversioned message is dropped as `contract_unvalidated` before it reaches a write, flip or
-> not. A datatype flip is poison only on a versioned contract, whose schema pins the type.
+> the field and is not necessarily a defect — which is why `allow_datatype_changes` exists and why
+> it is most often set on a contract like these. It is not restricted to them: a versioned contract
+> whose schema turns out to permit both types takes the same setting, and a generic contract left at
+> the default still drops flips as poison. The contract's shape is a hint about which setting you
+> want, never the thing that decides it.
 
 ## Throughput
 
