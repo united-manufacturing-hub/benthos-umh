@@ -203,10 +203,10 @@ var _ = Describe("datatypeFlipHint", func() {
 })
 
 var _ = Describe("dropHint for the validation guards", func() {
-	It("says a bypassed versioned contract cannot be overridden", func() {
+	It("names the cause for a bypassed versioned contract without prescribing a remedy", func() {
 		got := tsh.DropHintForTest(tsh.DropContractBypassed)
-		Expect(got).To(ContainSubstring("cannot be overridden"))
-		Expect(got).To(ContainSubstring("register the schema"))
+		Expect(got).To(ContainSubstring("data_contract_bypassed=true"))
+		Expect(got).NotTo(ContainSubstring("redeploy"), "redeploying is umh-core's model; this plugin also runs under plain benthos")
 	})
 
 	It("points relational data elsewhere", func() {

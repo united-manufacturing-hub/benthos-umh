@@ -206,7 +206,7 @@ const (
 var dropHints = map[DropReason]string{
 	DropMissingValue:     ". The payload has no value field; the historian needs {value, timestamp_ms}",
 	DropMissingTimestamp: ". The historian needs a {value, timestamp_ms} payload; the tag processor sets timestamp_ms automatically, otherwise ensure the payload carries it",
-	DropContractBypassed: ". This versioned data contract carries data_contract_bypassed=true, so its schema was never applied (the registry was unreachable, or no schema is registered for this version) and the payload is unchecked; register the schema or restore the registry, then redeploy. This cannot be overridden by allow_unvalidated_data",
+	DropContractBypassed: ". This versioned data contract carries data_contract_bypassed=true, so its schema was never applied (the registry was unreachable, or no schema is registered for this version) and the payload is unchecked",
 	DropNotTimeseries:    ". The historian stores timeseries only, and this payload carries fields beyond {value, timestamp_ms}; route relational data to a different data contract",
 }
 
