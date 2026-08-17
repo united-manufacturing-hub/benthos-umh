@@ -950,7 +950,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		logs := h.CaptureLogs()
 		msg := mkMsg(1.0, 1000, "_unverbypass", "acme.line1", "t", map[string]string{"data_contract_bypassed": "true"})
 		Expect(h.WriteBatch(ctx, service.MessageBatch{msg})).To(Succeed())
-		Expect(h.CountValueRows(ctx, "unverbypass")).To(Equal(1), "honouring the flag here would drop every _historian message")
+		Expect(h.CountValueRows(ctx, "unverbypass")).To(Equal(1), "honoring the flag here would drop every _historian message")
 		Expect(logs()).NotTo(ContainSubstring("reason=contract_bypassed"))
 	})
 

@@ -412,7 +412,7 @@ var _ = Describe("Transform validation guards", func() {
 		p, m := ts("_pump")
 		m["data_contract_bypassed"] = "true"
 		row, drop := run(p, m)
-		Expect(drop).To(Equal(tsh.DropNone), "the uns output stamps this flag on EVERY unversioned message, so honouring it here would drop all _historian traffic")
+		Expect(drop).To(Equal(tsh.DropNone), "the uns output stamps this flag on EVERY unversioned message, so honoring it here would drop all _historian traffic")
 		Expect(row).NotTo(BeNil())
 	})
 
