@@ -50,8 +50,8 @@ func (o *historianOutput) noteContractMismatch(now time.Time, total int, mismatc
 // claimMismatchLogSlot reports whether the caller may log now, taking the slot if so. Mismatches
 // repeat every batch, so without this a misconfigured subscription floods the log.
 func (o *historianOutput) claimMismatchLogSlot(now time.Time) bool {
-	o.logStateMu.Lock()
-	defer o.logStateMu.Unlock()
+	o.mismatchLogMu.Lock()
+	defer o.mismatchLogMu.Unlock()
 	if !o.lastMismatchLog.IsZero() && now.Sub(o.lastMismatchLog) < mismatchLogInterval {
 		return false
 	}

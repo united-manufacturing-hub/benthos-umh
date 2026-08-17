@@ -96,9 +96,9 @@ type historianOutput struct {
 
 	warnedTruncate atomic.Bool // warn-once guard for truncation
 
-	logStateMu sync.Mutex  // linearizes the everStored transition with the mismatch-report decision
 	everStored atomic.Bool // set once the first value row is stored; lock-free reads gate the hot path
 
+	mismatchLogMu   sync.Mutex // guards lastMismatchLog against concurrent WriteBatch calls (max_in_flight)
 	lastMismatchLog time.Time
 }
 
@@ -741,13 +741,10 @@ func (o *historianOutput) writeRowsIsolated(ctx context.Context, pool *pgxpool.P
 }
 
 func (o *historianOutput) noteStored() {
-	if o.everStored.Load() {
+	if o.everStored.Load() { // hot path: a plain load once the first row is in
 		return
 	}
-	o.logStateMu.Lock()
-	defer o.logStateMu.Unlock()
-	if !o.everStored.Load() { // recheck under the lock; only this method writes everStored
-		o.everStored.Store(true)
+	if o.everStored.CompareAndSwap(false, true) {
 		o.logger.Infof("TimescaleDB historian: first message stored for data contract _%s.", o.contract)
 	}
 }
