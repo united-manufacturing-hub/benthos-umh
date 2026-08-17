@@ -39,22 +39,22 @@ data_contract_name: pump
 		Expect(h.BuildDSN()).To(Equal("postgres://umh_owner:secret@db.example.com:5432/umh?sslmode=require"))
 	})
 
-	It("defaults allow_unvalidated_data to false so unversioned data is not stored by accident", func() {
+	It("defaults allow_datatype_changes to false so a tag keeps one datatype unless asked otherwise", func() {
 		yaml := "host: h\npassword: p\ndata_contract_name: pump\n"
 		parsed, err := tsh.HistorianConfig().ParseYAML(yaml, service.NewEnvironment())
 		Expect(err).NotTo(HaveOccurred())
 		h, err := tsh.NewHistorianForConfig(parsed)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(h.AllowUnvalidated()).To(BeFalse())
+		Expect(h.AllowDatatypeChanges()).To(BeFalse())
 	})
 
-	It("parses allow_unvalidated_data through to the output", func() {
-		yaml := "host: h\npassword: p\ndata_contract_name: pump\nallow_unvalidated_data: true\n"
+	It("parses allow_datatype_changes through to the output", func() {
+		yaml := "host: h\npassword: p\ndata_contract_name: pump\nallow_datatype_changes: true\n"
 		parsed, err := tsh.HistorianConfig().ParseYAML(yaml, service.NewEnvironment())
 		Expect(err).NotTo(HaveOccurred())
 		h, err := tsh.NewHistorianForConfig(parsed)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(h.AllowUnvalidated()).To(BeTrue())
+		Expect(h.AllowDatatypeChanges()).To(BeTrue())
 	})
 
 	It("rejects an invalid data_contract_name at construction", func() {

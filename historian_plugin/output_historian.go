@@ -46,7 +46,7 @@ func historianConfig() *service.ConfigSpec {
 		Field(service.NewStringField("sslrootcert").Description("CA cert path, as seen by the benthos process.").Default("").Advanced()).
 		Field(service.NewStringField("sslcert").Description("Client cert path.").Default("").Advanced()).
 		Field(service.NewStringField("sslkey").Description("Client key path.").Default("").Advanced()).
-		Field(service.NewBoolField("allow_unvalidated_data").Description("Store data from an unversioned data contract (e.g. _historian). Unversioned contracts are never schema-validated, so datatypes are unchecked. Has no effect on a versioned contract: one whose schema was bypassed is always rejected.").Default(false).Examples(true, false).Advanced()).
+		Field(service.NewBoolField("allow_datatype_changes").Description("Let a tag change datatype instead of dropping the offending rows. Its stored value_type keeps the first type seen and the tag then holds both numeric and text values, so read it with coalesce(value_num::text, value_text). Applies to every data contract, versioned or not.").Default(false).Examples(true, false).Advanced()).
 		Field(service.NewBoolField("metadata_keys_all").Description("Store all metadata keys except blacklists.").Default(true).Examples(true, false).Advanced()).
 		Field(service.NewStringListField("metadata_keys").Description("Allowlist when metadata_keys_all=false.").Default([]any{}).Advanced()).
 		Field(service.NewStringListField("metadata_keys_exclude").Description("Blacklist applied only when metadata_keys_all=true: drop these metadata keys on top of the built-in structural/high-churn exclusions. Each entry is an exact key name or a trailing-* prefix (e.g. \"opcua_*\"). Ignored in allowlist mode.").Default([]any{}).Examples([]any{"serialNumber"}, []any{"opcua_*", "spb_*"}).Advanced()).
@@ -63,7 +63,7 @@ type historianOutput struct {
 	sslmode, sslrootcert, sslcert, sslkey string
 	contract                              string
 	metadataKeysAll                       bool
-	allowUnvalidated                      bool
+	allowDatatypeChanges                  bool
 	metadataKeys                          []string
 	metadataExclude                       *MetaExcluder
 	compressAfter, retention              time.Duration
@@ -142,7 +142,7 @@ func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*hi
 	if err = ValidateContract(o.contract); err != nil {
 		return nil, err
 	}
-	if o.allowUnvalidated, err = conf.FieldBool("allow_unvalidated_data"); err != nil {
+	if o.allowDatatypeChanges, err = conf.FieldBool("allow_datatype_changes"); err != nil {
 		return nil, err
 	}
 	if o.metadataKeysAll, err = conf.FieldBool("metadata_keys_all"); err != nil {
@@ -491,7 +491,7 @@ func (o *historianOutput) resolveTopic(ctx context.Context, pool *pgxpool.Pool, 
 	var id int64
 	var err error
 	resolve := topicResolveSQL
-	if o.allowUnvalidated {
+	if o.allowDatatypeChanges {
 		resolve = topicResolveKeepTypeSQL
 		err = pool.QueryRow(ctx, topicLookupAnyTypeSQL, r.RawLocation, r.ContractName, r.VirtualPath, r.TagName).Scan(&id)
 	} else {

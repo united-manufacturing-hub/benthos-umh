@@ -253,11 +253,11 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(h.CountValueRows(ctx, "flip2")).To(Equal(1)) // numeric kept, flip dropped
 	})
 
-	It("keeps both datatypes for one tag when unvalidated data is allowed", func() {
+	It("keeps both datatypes for one tag when datatype changes are allowed", func() {
 		h := connected("flipok")
-		defer h.SetAllowUnvalidated(false)
+		defer h.SetAllowDatatypeChanges(false)
 		defer h.Close(ctx)
-		h.SetAllowUnvalidated(true)
+		h.SetAllowDatatypeChanges(true)
 		logs := h.CaptureLogs()
 		Expect(h.WriteBatch(ctx, service.MessageBatch{
 			mkMsg(1.0, 1000, "_flipok", "l.a", "t", nil),
@@ -265,7 +265,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(h.WriteBatch(ctx, service.MessageBatch{
 			mkMsg("now-text", 2000, "_flipok", "l.a", "t", nil),
 		})).To(Succeed())
-		Expect(h.CountValueRows(ctx, "flipok")).To(Equal(2), "an unversioned contract pins no datatype, so a change is not poison")
+		Expect(h.CountValueRows(ctx, "flipok")).To(Equal(2), "the flag stores both types on one tag")
 		Expect(logs()).NotTo(ContainSubstring("dropped poison row"))
 		id, ok := h.GetTopicID(ctx, "l.a", "vibration", "flipok", "t")
 		Expect(ok).To(BeTrue())
@@ -925,10 +925,10 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(logs()).NotTo(ContainSubstring("reason=contract_bypassed"))
 	})
 
-	It("refuses a versioned contract whose schema was bypassed, even with unvalidated data allowed", func() {
+	It("refuses a versioned contract whose schema was bypassed, even with datatype changes allowed", func() {
 		h := connected("bypassed")
 		defer h.Close(ctx)
-		h.SetAllowUnvalidated(true)
+		h.SetAllowDatatypeChanges(true)
 		logs := h.CaptureLogs()
 		msg := mkMsg(1.0, 1000, "_bypassed_v1", "acme.line1", "t", map[string]string{"data_contract_bypassed": "true"})
 		Expect(h.WriteBatch(ctx, service.MessageBatch{msg})).To(Succeed())

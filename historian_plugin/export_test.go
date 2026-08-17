@@ -328,9 +328,9 @@ func (h *HistorianTestHandle) NoteContractMismatch(now time.Time, total int, mis
 
 func DropHintForTest(reason DropReason) string { return dropHint(reason) }
 
-func (h *HistorianTestHandle) SetAllowUnvalidated(v bool) { h.o.allowUnvalidated = v }
+func (h *HistorianTestHandle) SetAllowDatatypeChanges(v bool) { h.o.allowDatatypeChanges = v }
 
-func (h *HistorianTestHandle) AllowUnvalidated() bool { return h.o.allowUnvalidated }
+func (h *HistorianTestHandle) AllowDatatypeChanges() bool { return h.o.allowDatatypeChanges }
 
 func (h *HistorianTestHandle) ReportDropForTest(total int, reason string, count int, topic string) {
 	h.o.reportDrops(total, map[DropReason]dropSummary{
