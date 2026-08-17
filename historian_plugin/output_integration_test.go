@@ -253,6 +253,35 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(h.CountValueRows(ctx, "flip2")).To(Equal(1)) // numeric kept, flip dropped
 	})
 
+	It("names the flag that would have stored the flip in the poison log", func() {
+		h := connected("fliphint")
+		defer h.Close(ctx)
+		logs := h.CaptureLogs()
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(1.0, 1000, "_fliphint_v1", "l.a", "t", nil),
+		})).To(Succeed())
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg("now-text", 2000, "_fliphint_v1", "l.a", "t", nil),
+		})).To(Succeed())
+		Expect(logs()).To(ContainSubstring("level=error"))
+		Expect(logs()).To(ContainSubstring("dropped poison row at resolve"))
+		Expect(logs()).To(ContainSubstring("allow_datatype_changes: true"), "the operator must learn the fix from the log, not from the docs")
+	})
+
+	It("leaves an append-only value conflict unhinted, since the flag cannot fix it", func() {
+		h := connected("conflicthint")
+		defer h.Close(ctx)
+		logs := h.CaptureLogs()
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(1.0, 1000, "_conflicthint_v1", "l.a", "t", nil),
+		})).To(Succeed())
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(2.0, 1000, "_conflicthint_v1", "l.a", "t", nil),
+		})).To(Succeed())
+		Expect(logs()).To(ContainSubstring("dropped poison row at value"))
+		Expect(logs()).NotTo(ContainSubstring("allow_datatype_changes"), "two values at one timestamp is not a datatype problem")
+	})
+
 	It("keeps both datatypes for one tag when datatype changes are allowed", func() {
 		h := connected("flipok")
 		defer h.SetAllowDatatypeChanges(false)

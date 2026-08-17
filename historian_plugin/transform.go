@@ -212,6 +212,17 @@ var dropHints = map[DropReason]string{
 
 func dropHint(reason DropReason) string { return dropHints[reason] }
 
+// datatypeFlipHint names the flag that stores a tag whose datatype changed, for the poison-row log.
+// P0001 at the resolve phase identifies the flip exactly: the P0001 invariant in errclass.go admits
+// only two sources, and the other one -- raise_pk_conflict, an append-only conflict the flag cannot
+// fix -- can only fire on the value and attribute inserts.
+func datatypeFlipHint(phase string, sqlstate string) string {
+	if phase != phaseResolve || sqlstate != sqlstateRaise {
+		return ""
+	}
+	return ". This tag is stored as a different datatype; set allow_datatype_changes: true on this output to keep both types on it, or fix the source so the tag emits one type"
+}
+
 // Transform maps one UNS message to a Row, or returns a non-empty DropReason to drop it.
 func Transform(payload map[string]any, meta map[string]string, contract string, allMeta bool, allowlist []string, excl *MetaExcluder, view *BatchView) (*Row, DropReason) {
 	// Parse the canonical umh_topic via the shared parser rather than trusting separate

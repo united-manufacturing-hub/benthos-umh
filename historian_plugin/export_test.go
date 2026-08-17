@@ -328,6 +328,10 @@ func (h *HistorianTestHandle) NoteContractMismatch(now time.Time, total int, mis
 
 func DropHintForTest(reason DropReason) string { return dropHint(reason) }
 
+func DatatypeFlipHintForTest(phase string, sqlstate string) string {
+	return datatypeFlipHint(phase, sqlstate)
+}
+
 func (h *HistorianTestHandle) SetAllowDatatypeChanges(v bool) { h.o.allowDatatypeChanges = v }
 
 func (h *HistorianTestHandle) AllowDatatypeChanges() bool { return h.o.allowDatatypeChanges }

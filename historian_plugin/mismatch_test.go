@@ -180,6 +180,28 @@ var _ = Describe("dropHint", func() {
 	)
 })
 
+var _ = Describe("datatypeFlipHint", func() {
+	It("names the flag when a poison row was rejected by the datatype guard", func() {
+		got := tsh.DatatypeFlipHintForTest("resolve", "P0001")
+		Expect(got).To(ContainSubstring("allow_datatype_changes: true"))
+	})
+
+	It("stays silent for an append-only value conflict, which the flag cannot fix", func() {
+		Expect(tsh.DatatypeFlipHintForTest("value", "P0001")).To(BeEmpty())
+		Expect(tsh.DatatypeFlipHintForTest("attribute", "P0001")).To(BeEmpty())
+	})
+
+	It("stays silent for a non-guard failure at the resolve phase", func() {
+		Expect(tsh.DatatypeFlipHintForTest("resolve", "23505")).To(BeEmpty())
+	})
+
+	It("joins the log line with a sentence break rather than a dash", func() {
+		got := tsh.DatatypeFlipHintForTest("resolve", "P0001")
+		Expect(got).NotTo(ContainSubstring("--"))
+		Expect(got).To(HavePrefix(". "))
+	})
+})
+
 var _ = Describe("dropHint for the validation guards", func() {
 	It("says a bypassed versioned contract cannot be overridden", func() {
 		got := tsh.DropHintForTest(tsh.DropContractBypassed)

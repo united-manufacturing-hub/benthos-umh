@@ -693,8 +693,10 @@ func (o *historianOutput) writeRowsIsolated(ctx context.Context, pool *pgxpool.P
 		if classify(err) != dispDropPoison {
 			return false
 		}
-		o.poisoned.Incr(1, pgSQLState(err), phase)
-		o.logger.Errorf("TimescaleDB historian: dropped poison row at %s for %s (sqlstate=%s): %v", phase, describeRow(r), pgSQLState(err), o.redact(err))
+		sqlstate := pgSQLState(err)
+		o.poisoned.Incr(1, sqlstate, phase)
+		o.logger.Errorf("TimescaleDB historian: dropped poison row at %s for %s (sqlstate=%s): %v%s",
+			phase, describeRow(r), sqlstate, o.redact(err), datatypeFlipHint(phase, sqlstate))
 		return true
 	}
 	for _, r := range rows {
@@ -707,7 +709,7 @@ func (o *historianOutput) writeRowsIsolated(ctx context.Context, pool *pgxpool.P
 			var err error
 			id, err = o.resolveTopicCached(ctx, pool, r)
 			if err != nil {
-				if dropped(err, "resolve", r) {
+				if dropped(err, phaseResolve, r) {
 					continue
 				}
 				return err // NACK: don't count; the successful retry re-counts via the fast path
@@ -715,7 +717,7 @@ func (o *historianOutput) writeRowsIsolated(ctx context.Context, pool *pgxpool.P
 			resolved[k] = id
 		}
 		if _, err := pool.Exec(ctx, vq, id, r.TS, r.ValueNum, r.ValueText); err != nil {
-			if dropped(err, "value", r) {
+			if dropped(err, phaseValue, r) {
 				continue
 			}
 			return err
@@ -724,7 +726,7 @@ func (o *historianOutput) writeRowsIsolated(ctx context.Context, pool *pgxpool.P
 		o.noteStored() // record now: a later non-poison error can return before the tail
 		if r.EmitMeta {
 			if _, err := pool.Exec(ctx, aq, id, r.TS, r.MetadataJSON); err != nil {
-				if dropped(err, "attribute", r) {
+				if dropped(err, phaseAttribute, r) {
 					continue
 				}
 				return err
