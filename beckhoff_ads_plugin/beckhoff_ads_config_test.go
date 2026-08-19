@@ -141,7 +141,7 @@ var _ = Describe("Config-Driven ADS Pipeline Tests", func() {
 			symbolsSeen := make(map[string]string)
 
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
-				name, _ := msg.MetaGet("symbol_name")
+				name, _ := msg.MetaGet("ads_symbol_name")
 				b, _ := msg.AsBytes()
 				mu.Lock()
 				symbolsSeen[name] = string(b)
@@ -207,7 +207,7 @@ var _ = Describe("Config-Driven ADS Pipeline Tests", func() {
 			symbolCounts := make(map[string]int)
 
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
-				name, _ := msg.MetaGet("symbol_name")
+				name, _ := msg.MetaGet("ads_symbol_name")
 				mu.Lock()
 				symbolCounts[name]++
 				mu.Unlock()
@@ -272,7 +272,7 @@ var _ = Describe("Config-Driven ADS Pipeline Tests", func() {
 			symbolsSeen := make(map[string]string)
 
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
-				name, _ := msg.MetaGet("symbol_name")
+				name, _ := msg.MetaGet("ads_symbol_name")
 				b, _ := msg.AsBytes()
 				mu.Lock()
 				symbolsSeen[name] = string(b)
@@ -338,7 +338,7 @@ var _ = Describe("Config-Driven ADS Pipeline Tests", func() {
 			symbolCounts := make(map[string]int)
 
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
-				name, _ := msg.MetaGet("symbol_name")
+				name, _ := msg.MetaGet("ads_symbol_name")
 				mu.Lock()
 				symbolCounts[name]++
 				mu.Unlock()

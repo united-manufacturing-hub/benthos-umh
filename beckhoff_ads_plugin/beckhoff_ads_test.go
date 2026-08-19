@@ -334,7 +334,7 @@ func extractSymbolValue(batch service.MessageBatch, symbolName string) (string, 
 	}
 
 	for _, msg := range batch {
-		if name, ok := msg.MetaGet("symbol_name"); ok && name == sanitized {
+		if name, ok := msg.MetaGet("ads_symbol_name"); ok && name == sanitized {
 			b, err := msg.AsBytes()
 			if err != nil {
 				return "", false
@@ -1025,7 +1025,7 @@ ads:
 						break
 					}
 					for _, msg := range batch {
-						if name, ok := msg.MetaGet("symbol_name"); ok {
+						if name, ok := msg.MetaGet("ads_symbol_name"); ok {
 							b, err := msg.AsBytes()
 							Expect(err).NotTo(HaveOccurred())
 							valuesBySymbol[name] = append(valuesBySymbol[name], string(b))
@@ -1054,7 +1054,7 @@ ads:
 
 				seen := make(map[string]bool)
 				for _, msg := range batch {
-					if name, ok := msg.MetaGet("symbol_name"); ok {
+					if name, ok := msg.MetaGet("ads_symbol_name"); ok {
 						seen[name] = true
 					}
 				}
@@ -1082,7 +1082,7 @@ ads:
 
 				seen := make(map[string]bool)
 				for _, msg := range batch {
-					if name, ok := msg.MetaGet("symbol_name"); ok {
+					if name, ok := msg.MetaGet("ads_symbol_name"); ok {
 						seen[name] = true
 					}
 				}
@@ -1301,7 +1301,7 @@ ads:
 							break
 						}
 						for _, msg := range batch {
-							if name, ok := msg.MetaGet("symbol_name"); ok && name == key {
+							if name, ok := msg.MetaGet("ads_symbol_name"); ok && name == key {
 								timestamps = append(timestamps, time.Now())
 							}
 							_ = msg
