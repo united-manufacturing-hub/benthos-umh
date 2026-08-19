@@ -1,0 +1,3 @@
+kind: improvements
+body: The historian output's drop counter is renamed from `historian_messages_dropped` to `messages_dropped`, matching the metric name every other plugin already uses (ENG-5507)
+time: 2026-08-04T14:22:29.185665+02:00

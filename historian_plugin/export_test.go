@@ -148,7 +148,7 @@ func NewHistorianTestHandle(dsn string, contract string) *HistorianTestHandle {
 		compressAfter:   168 * time.Hour,
 		maxInFlight:     8,
 		logger:          mgr.Logger(),
-		dropped:         mgr.Metrics().NewCounter("historian_messages_dropped", "reason"),
+		dropped:         mgr.Metrics().NewCounter("messages_dropped", "reason"),
 		valueRows:       mgr.Metrics().NewCounter("historian_value_rows_written"),
 		attrRows:        mgr.Metrics().NewCounter("historian_attribute_rows_written"),
 		dedupSize:       mgr.Metrics().NewGauge("historian_dedup_cache_size"),
@@ -312,4 +312,61 @@ func (h *HistorianTestHandle) AttributeValue(ctx context.Context, contract strin
 // PolicyDriftWarningsForTest exposes policyDriftWarnings to the external test package.
 func PolicyDriftWarningsForTest(compressWant int64, appliedComp *int64, retentionWant *int64, appliedRet *int64) []string {
 	return policyDriftWarnings(compressWant, appliedComp, retentionWant, appliedRet)
+}
+
+func SuggestedTopicPatternForTest(contract string) string { return suggestedTopicPattern(contract) }
+
+func ReportedContractsForTest(seen []string) string {
+	set := map[string]struct{}{}
+	for _, c := range seen {
+		set[c] = struct{}{}
+	}
+	return reportedContracts(set)
+}
+
+func NoteArrivedContractForTest(seen map[string]struct{}, umhTopic string) {
+	noteArrivedContract(seen, umhTopic)
+}
+
+func MismatchMessageForTest(contract string, contractIsPublished bool, total int, mismatched int, arrived string) string {
+	return mismatchMessage(contract, contractIsPublished, total, mismatched, arrived)
+}
+
+func MismatchLogIntervalForTest() time.Duration { return mismatchLogInterval }
+
+func (h *HistorianTestHandle) NoteContractMismatch(now time.Time, total int, mismatched int, batchCarriedConfiguredContract bool, arrived ...string) {
+	set := map[string]struct{}{}
+	for _, c := range arrived {
+		set[c] = struct{}{}
+	}
+	h.o.noteContractMismatch(now, total, mismatched, batchCarriedConfiguredContract, set)
+}
+
+func DropHintForTest(reason DropReason) string { return dropHint(reason) }
+
+func DatatypeFlipHintForTest(phase string, sqlstate string) string {
+	return datatypeFlipHint(phase, sqlstate)
+}
+
+func (h *HistorianTestHandle) SetAllowDatatypeChanges(v bool) { h.o.allowDatatypeChanges = v }
+
+func (h *HistorianTestHandle) AllowDatatypeChanges() bool { return h.o.allowDatatypeChanges }
+
+func (h *HistorianTestHandle) ReportDropForTest(total int, reason string, count int, topic string) {
+	h.o.reportDrops(total, map[DropReason]dropSummary{
+		DropReason(reason): {count: count, example: topic},
+	})
+}
+
+type DropSummaryForTest struct {
+	Example string
+	Count   int
+}
+
+func (h *HistorianTestHandle) ReportDropsForTest(total int, summaries map[string]DropSummaryForTest) {
+	m := make(map[DropReason]dropSummary, len(summaries))
+	for reason, s := range summaries {
+		m[DropReason(reason)] = dropSummary{count: s.Count, example: s.Example}
+	}
+	h.o.reportDrops(total, m)
 }

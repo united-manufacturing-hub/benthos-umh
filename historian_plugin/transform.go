@@ -27,8 +27,9 @@ import (
 )
 
 const (
-	maxTextRunes = 8192
-	maxJSDateMs  = 8.64e15 // JS Date valid range is +/- this
+	maxTextRunes          = 8192
+	maxJSDateMs           = 8.64e15 // JS Date valid range is +/- this
+	serverDiagnosticsPath = "Root.Objects.Server"
 )
 
 var (
@@ -188,14 +189,38 @@ type Row struct {
 type DropReason string
 
 const (
-	DropNone                    DropReason = ""
-	DropInvalidTopic            DropReason = "invalid_topic"
-	DropContractMismatch        DropReason = "contract_mismatch"
-	DropServerVirtualPath       DropReason = "server_virtual_path"
-	DropMissingValueOrTimestamp DropReason = "missing_value_or_timestamp"
-	DropUnclassifiableValue     DropReason = "unclassifiable_value"
-	DropBadTimestamp            DropReason = "bad_timestamp"
+	DropNone                DropReason = ""
+	DropInvalidTopic        DropReason = "invalid_topic"
+	DropContractMismatch    DropReason = "contract_mismatch"
+	DropServerVirtualPath   DropReason = "server_virtual_path"
+	DropMissingValue        DropReason = "missing_value"
+	DropMissingTimestamp    DropReason = "missing_timestamp"
+	DropUnclassifiableValue DropReason = "unclassifiable_value"
+	DropBadTimestamp        DropReason = "bad_timestamp"
+	DropContractBypassed    DropReason = "contract_bypassed"
+	DropNotTimeseries       DropReason = "not_timeseries"
+	DropNotStructured       DropReason = "not_structured"
+	DropNotObject           DropReason = "not_object"
 )
+
+var dropHints = map[DropReason]string{
+	DropMissingValue:     ". The payload has no value field; the historian needs {value, timestamp_ms}",
+	DropMissingTimestamp: ". The historian needs a {value, timestamp_ms} payload; the tag processor sets timestamp_ms automatically, otherwise ensure the payload carries it",
+	DropContractBypassed: ". This versioned data contract carries data_contract_bypassed=true, so its schema was never applied (the registry was unreachable, or no schema is registered for this version) and the payload is unchecked",
+	DropNotTimeseries:    ". The historian stores timeseries only, and this payload carries fields beyond {value, timestamp_ms}; route relational data to a different data contract",
+}
+
+func dropHint(reason DropReason) string { return dropHints[reason] }
+
+// datatypeFlipHint names the flag that would have stored a tag whose datatype changed, for the
+// poison-row log. Only the datatype guard raises P0001 at the resolve phase: the other sanctioned
+// source, raise_pk_conflict, runs on the value and attribute inserts (see classify in errclass.go).
+func datatypeFlipHint(phase string, sqlstate string) string {
+	if phase != phaseResolve || sqlstate != sqlstateRaise {
+		return ""
+	}
+	return ". This tag is stored as a different datatype; set allow_datatype_changes: true on this output to keep both types on it, or fix the source so the tag emits one type"
+}
 
 // Transform maps one UNS message to a Row, or returns a non-empty DropReason to drop it.
 func Transform(payload map[string]any, meta map[string]string, contract string, allMeta bool, allowlist []string, excl *MetaExcluder, view *BatchView) (*Row, DropReason) {
@@ -212,17 +237,32 @@ func Transform(payload map[string]any, meta map[string]string, contract string, 
 	if NormalizeContract(info.DataContract) != want {
 		return nil, DropContractMismatch
 	}
+	// check the version before the bypass meta: the uns output sets data_contract_bypassed=true on
+	// every unversioned message (uns_plugin/schema_validation/validator.go:198-210), so reading that
+	// meta on its own would drop all _historian traffic. On a versioned contract it means a schema
+	// was expected and never applied.
+	if reVersionSuffix.MatchString(info.DataContract) && meta["data_contract_bypassed"] == "true" {
+		return nil, DropContractBypassed
+	}
 	// NewUnsTopic already rejects empty/dotted location and empty name, so no re-check here.
 	loc := info.LocationPath()
 	tag := info.Name
 	vp := info.GetVirtualPath()
-	if strings.HasPrefix(vp, "Root.Objects.Server") {
+	if vp == serverDiagnosticsPath || strings.HasPrefix(vp, serverDiagnosticsPath+".") {
 		return nil, DropServerVirtualPath
 	}
+	for k := range payload {
+		if k != "value" && k != "timestamp_ms" {
+			return nil, DropNotTimeseries
+		}
+	}
 	value, hasValue := payload["value"]
+	if !hasValue || value == nil {
+		return nil, DropMissingValue
+	}
 	tsRaw, hasTS := payload["timestamp_ms"]
-	if !hasValue || value == nil || !hasTS || tsRaw == nil {
-		return nil, DropMissingValueOrTimestamp
+	if !hasTS || tsRaw == nil {
+		return nil, DropMissingTimestamp
 	}
 	vt, num, text, ok, truncated := ClassifyValue(value)
 	if !ok {

@@ -1,0 +1,3 @@
+kind: improvements
+body: A versioned data contract whose schema was bypassed is rejected by the historian output, because the version claims a schema that was never applied; an unversioned contract such as `_historian` is stored, since it never claimed one. A tag that changes datatype still has its offending rows dropped, and the error names the new `allow_datatype_changes` option that stores both types on it instead. Payloads carrying fields beyond `value` and `timestamp_ms` are rejected as `not_timeseries` (ENG-5419, ENG-5415, ENG-5468)
+time: 2026-07-30T18:50:17.000000+02:00
