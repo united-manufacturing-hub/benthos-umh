@@ -28,6 +28,7 @@ No JavaScript processor or hand-written `sql_raw` is needed.
 | `password` | yes | — | Role password (plaintext in config; redacted in logs). |
 | `sslmode` | no | `require` | `require` \| `disable` \| `verify-full`. |
 | `sslrootcert` / `sslcert` / `sslkey` | no | `""` | TLS cert paths inside the container. |
+| `allow_datatype_changes` | no | `false` | Let a tag change datatype (numeric ↔ text) instead of dropping the offending rows as poison. The tag then holds both, and `umh.tag.value_type` keeps the first type seen — read it with `coalesce(value_num::text, value_text)`. Applies to every contract, versioned or not. |
 | `data_contract_name` | yes | — | Bare lowercase contract name, e.g. `pump`; no leading `_`, no `_vN` suffix. Stored in `umh.tag.data_contract_name` in its UNS form with a leading underscore (`_pump`), matching the topic's data-contract segment. |
 | `metadata_keys_all` | no | `true` | Store every metadata key except structural/high-churn keys and any `metadata_keys_exclude` match. |
 | `metadata_keys` | no | `[]` | Allowlist used only when `metadata_keys_all=false`. |
@@ -50,6 +51,16 @@ and writes two hypertables:
 
 `umh.get_topic_id(location_path, virtual_path, data_contract, tag_name)` resolves a tag to
 its `topic_id` for ad-hoc and Grafana queries.
+
+> **Where the contract version is stored.** `_pump_v1` and `_pump_v2` both write to
+> `umh.value_pump` and share one `umh.tag` row, so no column records which version a reading
+> arrived under. The version is stored as metadata instead, read as
+> `attribute->>'data_contract_version'`.
+>
+> The `uns` output sets that key only after a schema check passes, so an unversioned contract like
+> `_historian` has no version key rather than an empty one. The version is part of the
+> de-duplication fingerprint, so moving a tag to a new contract version writes a fresh attribute
+> row.
 
 > **Note on the contract name.** You configure the bare form (`pump`), which is used verbatim
 > in the table names (`umh.value_pump`, `umh.attribute_pump`). The `umh.tag.data_contract_name`
@@ -138,10 +149,40 @@ ORDER  BY v.ts DESC;
   (see [Error handling](#error-handling)). This includes a tag emitting two distinct values
   within one millisecond, which the millisecond UNS timestamp cannot distinguish from a real
   conflict, so this contract is unsuitable for tags that emit distinct values faster than 1 kHz.
-- **Malformed messages are dropped, not nacked.** A wrong `data_contract`, an absent or
-  invalid `umh_topic` (validated by the canonical topic parser), a non-finite number, or an
-  unparseable timestamp drop the message and increment the `historian_messages_dropped` metric
-  (labelled by `reason`), so one bad message never stalls the stream.
+  Only the datatype half is configurable: `allow_datatype_changes: true` stores both types on the
+  tag (see [Runbook: poisoned tags](#runbook-poisoned-tags)). The same-`(tag, ts)` conflict is not.
+- **A schema that was expected and not applied is refused.** A **versioned** contract (`_pump_v1`)
+  carrying `data_contract_bypassed=true` is dropped as `contract_bypassed`, and no setting overrides
+  it: the version names a schema that was never checked. The `uns` output sets that meta when the
+  registry was unreachable or when no schema is registered for the version, so fix it at the
+  registry.
+
+  An **unversioned** contract (`_historian`) is stored. It carries the same meta on *every* message,
+  because the `uns` output sets it for anything it cannot version-check, so it says nothing there and
+  is ignored. Unchecked types are the only consequence, and the datatype guard above covers them.
+- **The payload must be exactly `{value, timestamp_ms}`.** A missing field is dropped as
+  `missing_value` or `missing_timestamp`, an extra top-level field as `not_timeseries`, which is what
+  refuses a relational record. Neither rule is configurable. The
+  [tag processor](../processing/tag-processor.md) sets `timestamp_ms` automatically; with any other
+  processing the payload has to carry it.
+- **A malformed message is dropped, never nacked.** An unparseable `umh_topic`
+  (`invalid_topic`), a non-finite number (`unclassifiable_value`), an unreadable timestamp
+  (`bad_timestamp`) and a payload that is not a JSON object (`not_structured`, `not_object`) are
+  skipped; the rest of the batch is written. Each reason logs one error per batch with its share of
+  the batch, an example topic and its fix, so the loss shows up in the log rather than passing
+  unnoticed. The errors stop once the bad messages stop.
+- **A wrong data contract refuses the whole batch.** A batch holding any message whose data-contract
+  segment is not the configured `data_contract_name` is NACKed from the first batch on: nothing in it
+  is written, not even its matching messages, and `output_sent` never counts it, so write throughput
+  reports rows stored. The error names how much of the batch was foreign and the `umh_topics` pattern
+  to narrow to, throttled to once every 2 minutes; the `uns` input logs its own error per refused
+  batch, unthrottled.
+
+  A NACKed batch is not replayed: the `uns` input leaves its offsets uncommitted and the next ACKed
+  batch commits past them, so the refused messages are lost. Fix the subscription, then redeploy.
+- **Subscribe only to this contract.** Anything wider makes the output refuse batches. Use
+  `^umh\.v1(?:\.[^._][^.]*)+\._<contract>(_v\d+)?\..+$`: any location depth, both the bare and `_vN`
+  forms, and no match on a virtual-path segment sharing the contract's name.
 - **Metadata de-duplication.** An attribute row is rewritten only when its key set changes,
   via an in-process, LRU-bounded fingerprint cache. The cache is process-local and cleared on
   restart, so the plugin re-emits at most one attribute row per topic per restart: the first
@@ -177,15 +218,16 @@ bridge at startup with a named error, instead of connecting and then stalling on
 
 **Find them.** A non-zero `historian_rows_poisoned` counter means rows are being dropped.
 The error log names each one: `dropped poison row at <phase> for contract=… location=…
-virtual_path=… tag=… (sqlstate=…)`. `phase=resolve` with `sqlstate=P0001` is almost always a
-**datatype flip**; `phase=value` with `P0001` is an **append-only conflict** (two different
-values at the same millisecond).
+virtual_path=… tag=… (sqlstate=…)`. `phase=resolve` with `sqlstate=P0001` is a **datatype flip**
+and says so, naming `allow_datatype_changes`; `phase=value` with `P0001` is an **append-only
+conflict** (two different values at the same millisecond). Nothing else raises `P0001`, so the
+phase alone tells the two apart.
 
 **Datatype flip / accidental first type.** A tag's type is fixed by its first stored value:
 one stray string (e.g. `"N/A"`) locks the tag to text, and later numeric readings are then
-rejected. This only arises on generic contracts like `_historian` that carry no upstream type
-validation; a modelled contract validates types before the historian ever sees them. Confirm
-the established type, then decide:
+rejected. Most reports come from generic contracts like `_historian`, which have no upstream
+type validation, but `allow_datatype_changes` applies the same way to a modelled contract.
+Confirm the established type first:
 
 ```sql
 -- what type is this tag locked to?
@@ -193,9 +235,18 @@ SELECT value_type FROM umh.tag
 WHERE name = 'temperature' AND virtual_path = '' AND data_contract_name = '_historian';
 ```
 
-To reset a tag that was locked to the wrong type, delete its stored value history and its tag
-row so the next message re-establishes the type (this discards that tag's history for the
-contract — take a copy first if you need it):
+Then pick one of two fixes.
+
+*Keep both types.* Set `allow_datatype_changes: true` on the output. No history changes: the tag
+keeps its existing `topic_id`, numeric readings still go to `value_num` and text to `value_text`,
+and `umh.tag.value_type` keeps reporting the first type seen. Two costs: reading the tag needs
+`coalesce(value_num::text, value_text)`, and the stored `value_type` no longer describes every
+row. Use this when the type change is genuine, such as a counter the firmware turned into a
+status string.
+
+*Re-pin the intended type.* Delete the tag's stored value history and its tag row, so the next
+message re-establishes the type. Use this when one stray sample locked the tag to the wrong type.
+It discards that tag's history for the contract, so take a copy first if you need it:
 
 ```sql
 -- resolve the topic, delete its values, then remove the topic + tag so the type is no longer pinned
@@ -213,11 +264,11 @@ not representable by the millisecond UNS timestamp and unsuitable for this contr
 define it), and route text or high-precision counters to a text contract rather than mixing
 types on one tag.
 
-> **Generic contracts (`_historian`/`_raw`).** These deliberately don't pin a type, so a type
-> change is a realistic operational event rather than a defect. How the plugin should treat a
-> type change there — reject as poison (today), tolerate both `value_num` and `value_text`, or
-> promote the tag to text — is an open policy decision tracked separately; today it is dropped
-> as poison like any other flip.
+> **Generic contracts (`_historian`/`_raw`).** These don't pin a type, so a type change in the field
+> is not necessarily a defect, which is what `allow_datatype_changes` is for. The setting is not tied
+> to the contract kind, though: a generic contract left at the default still drops flips as poison,
+> and a versioned contract can be set to keep both types. Which contract you are on suggests the
+> setting you probably want; it does not select it for you.
 
 ## Throughput
 
@@ -244,7 +295,11 @@ On top of benthos's built-in output metrics (`output_sent`, `output_error`,
 - `historian_value_rows_written` — value rows upserted (counted after the batch commits).
 - `historian_attribute_rows_written` — attribute rows upserted; the gap below the value-row
   count is metadata de-duplication at work.
-- `historian_messages_dropped` (labelled by `reason`) — messages dropped before any write.
+- `messages_dropped` (labelled by `reason`) — messages dropped before any write. The counter carries
+  no plugin prefix, so it reads the same across plugins. `output_sent` counts messages the output
+  accepted rather than rows stored, so subtract `messages_dropped` from it for the rows actually
+  written — leaving out `reason=contract_mismatch`, whose batch is refused whole and never reaches
+  `output_sent` in the first place.
 - `historian_dedup_cache_size` — current dedup-cache entry count.
 
 ## Numeric precision
@@ -309,7 +364,9 @@ drift warning on restart.
 input:
   uns:
     umh_topics:
-      - '^umh\.v1\..*\._pump_v.*'
+      # Substitute your own contract for "pump", here and in data_contract_name below.
+      # Both must name the same contract: a batch carrying any other one is refused whole.
+      - '^umh\.v1(?:\.[^._][^.]*)+\._pump(_v\d+)?\..+$'
 output:
   historian:
     host: timescaledb.example.com

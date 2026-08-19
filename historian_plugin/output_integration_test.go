@@ -54,6 +54,12 @@ func mkMsg(value any, tsMs float64, contract string, loc string, tag string, ext
 	return m
 }
 
+func mkMsgNoTimestamp(value any, contract string, loc string, tag string, extraMeta map[string]string) *service.Message {
+	m := mkMsg(value, 0, contract, loc, tag, extraMeta)
+	m.SetStructured(map[string]any{"value": value})
+	return m
+}
+
 var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 	var ctx context.Context
 
@@ -245,6 +251,56 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		})).To(Succeed())
 		Expect(h.LookupMisses()).To(BeNumerically(">=", misses+1), "the flip must miss the value_type-aware lookup and fall to the upsert")
 		Expect(h.CountValueRows(ctx, "flip2")).To(Equal(1)) // numeric kept, flip dropped
+	})
+
+	It("names the flag that would have stored the flip in the poison log", func() {
+		h := connected("fliphint")
+		defer h.Close(ctx)
+		logs := h.CaptureLogs()
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(1.0, 1000, "_fliphint_v1", "l.a", "t", nil),
+		})).To(Succeed())
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg("now-text", 2000, "_fliphint_v1", "l.a", "t", nil),
+		})).To(Succeed())
+		Expect(logs()).To(ContainSubstring("level=error"))
+		Expect(logs()).To(ContainSubstring("dropped poison row at resolve"))
+		Expect(logs()).To(ContainSubstring("allow_datatype_changes: true"), "the operator must learn the fix from the log, not from the docs")
+	})
+
+	It("leaves an append-only value conflict unhinted, since the flag cannot fix it", func() {
+		h := connected("conflicthint")
+		defer h.Close(ctx)
+		logs := h.CaptureLogs()
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(1.0, 1000, "_conflicthint_v1", "l.a", "t", nil),
+		})).To(Succeed())
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(2.0, 1000, "_conflicthint_v1", "l.a", "t", nil),
+		})).To(Succeed())
+		Expect(logs()).To(ContainSubstring("dropped poison row at value"))
+		Expect(logs()).NotTo(ContainSubstring("allow_datatype_changes"), "two values at one timestamp is not a datatype problem")
+	})
+
+	It("keeps both datatypes for one tag when datatype changes are allowed", func() {
+		h := connected("flipok")
+		defer h.SetAllowDatatypeChanges(false)
+		defer h.Close(ctx)
+		h.SetAllowDatatypeChanges(true)
+		logs := h.CaptureLogs()
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(1.0, 1000, "_flipok", "l.a", "t", nil),
+		})).To(Succeed())
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg("now-text", 2000, "_flipok", "l.a", "t", nil),
+		})).To(Succeed())
+		Expect(h.CountValueRows(ctx, "flipok")).To(Equal(2), "the flag stores both types on one tag")
+		Expect(logs()).NotTo(ContainSubstring("dropped poison row"))
+		id, ok := h.GetTopicID(ctx, "l.a", "vibration", "flipok", "t")
+		Expect(ok).To(BeTrue())
+		num, text := h.ValueRow(ctx, "flipok", id)
+		Expect(num).NotTo(BeNil(), "the first row keeps its numeric column")
+		Expect(text).To(BeNil())
 	})
 
 	It("two handles concurrently creating the same new topic converge on one id, no dropped rows", func() {
@@ -761,6 +817,41 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(v).To(Equal("abc"))
 	})
 
+	It("stores the data contract version, which no column holds, in the attribute row", func() {
+		h := connected("ver")
+		defer h.Close(ctx)
+		msg := mkMsg(1.0, 1000, "_ver_v3", "l.a", "t", map[string]string{
+			"data_contract_name":    "_ver",
+			"data_contract_version": "3",
+			"serialNumber":          "abc",
+		})
+		Expect(h.WriteBatch(ctx, service.MessageBatch{msg})).To(Succeed())
+		v, ok := h.AttributeValue(ctx, "ver", "data_contract_version")
+		Expect(ok).To(BeTrue(), "all versions share one umh.tag row, so metadata is the only place the version survives")
+		Expect(v).To(Equal("3"))
+		_, ok = h.AttributeValue(ctx, "ver", "data_contract_name")
+		Expect(ok).To(BeFalse(), "the name is already a column on umh.tag")
+	})
+
+	It("writes no version key for a contract that never carried one", func() {
+		h := connected("nover")
+		defer h.Close(ctx)
+		msg := mkMsg(1.0, 1000, "_nover", "l.a", "t", map[string]string{"serialNumber": "abc"})
+		Expect(h.WriteBatch(ctx, service.MessageBatch{msg})).To(Succeed())
+		_, ok := h.AttributeValue(ctx, "nover", "data_contract_version")
+		Expect(ok).To(BeFalse(), "the uns output sets the version only on the validated path, and an absent key is not stored blank")
+	})
+
+	It("emits a fresh attribute row when the contract version changes", func() {
+		h := connected("verbump")
+		defer h.Close(ctx)
+		v1 := mkMsg(1.0, 1000, "_verbump_v1", "l.a", "t", map[string]string{"data_contract_version": "1"})
+		v2 := mkMsg(2.0, 2000, "_verbump_v2", "l.a", "t", map[string]string{"data_contract_version": "2"})
+		Expect(h.WriteBatch(ctx, service.MessageBatch{v1})).To(Succeed())
+		Expect(h.WriteBatch(ctx, service.MessageBatch{v2})).To(Succeed())
+		Expect(h.CountAttributeRows(ctx, "verbump")).To(Equal(2), "the version is part of the dedup fingerprint, so a bump is recorded rather than swallowed")
+	})
+
 	It("omits blacklisted metadata keys from the stored attribute row", func() {
 		h := connected("excl")
 		defer h.Close(ctx)
@@ -809,66 +900,187 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(h.CountAttributeRows(ctx, "reemit")).To(Equal(2))
 	})
 
-	// The metric counters (historian_messages_dropped, _values_truncated) are not readable through
-	// benthos's mock harness (it backs metrics with a no-op), so these specs pin the co-located
-	// operator-facing log lines instead -- the same signal umh-core's log regex surfaces as degraded,
-	// and the guard against a regression that stops counting/logging a drop or truncation.
-	It("logs 'nothing stored yet' once at info (never warning) when data arrives but nothing matches the contract", func() {
+	It("nacks and errors when data arrives but nothing matches the contract", func() {
 		h := connected("drops")
 		defer h.Close(ctx)
 		logs := h.CaptureLogs()
-		bad := mkMsg(1.0, 1000, "_other_v1", "acme.line1", "t", nil) // contract mismatch vs "drops"
-		Expect(h.WriteBatch(ctx, service.MessageBatch{bad})).To(Succeed())
-		Expect(h.WriteBatch(ctx, service.MessageBatch{bad})).To(Succeed()) // still nothing stored for "drops"
+		bad := mkMsg(1.0, 1000, "_other_v1", "acme.line1", "t", nil)
+		err := h.WriteBatch(ctx, service.MessageBatch{bad})
+		Expect(err).To(HaveOccurred(), "a contract mismatch nacks the batch, so throughput cannot count it as sent")
+		Expect(err.Error()).To(ContainSubstring("batch refused"))
 		Expect(h.CountValueRows(ctx, "drops")).To(Equal(0))
-		Expect(logs()).To(ContainSubstring("reason=contract_mismatch"), "the per-drop log must name the reason")
-		Expect(logs()).To(ContainSubstring("level=info msg=TimescaleDB historian: nothing stored for data contract _drops yet"), "the starving notice must be info, not a warning")
-		Expect(strings.Count(logs(), "nothing stored for data contract _drops yet")).To(Equal(1), "the starving notice must be logged once per process, not per batch")
-		Expect(logs()).NotTo(ContainSubstring("level=warning"), "a contract-mismatch-only batch must not warn")
-		Expect(logs()).NotTo(ContainSubstring("level=error"), "a contract-mismatch-only batch must not error")
+		Expect(logs()).To(ContainSubstring("reason=contract_mismatch"), "the error must name the drop reason")
+		Expect(logs()).NotTo(ContainSubstring("(reason=contract_mismatch, example"), "a refused batch reports through the throttled mismatch error only; the drop tally is discarded with it")
+		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: no message carries data contract _drops"), "a wrong contract must error, so umh-core degrades the bridge")
+		Expect(logs()).To(ContainSubstring("_other_v1"), "the error must name the contract that actually arrived")
+		Expect(logs()).To(ContainSubstring(`^umh\.v1(?:\.[^._][^.]*)+\._drops(_v\d+)?\..+$`), "the error must carry the regex to paste")
 	})
 
-	It("confirms the first stored message, then stays quiet on later other-contract-only batches", func() {
-		h := connected("stored") // own contract: this spec writes a row, so it must not pollute the "drops" tables
+	It("confirms the first stored message, then nacks a later other-contract batch", func() {
+		h := connected("stored")
 		defer h.Close(ctx)
 		logs := h.CaptureLogs()
-		good := mkMsg(1.0, 1000, "_stored_v1", "acme.line1", "t", nil) // matches "stored"
+		good := mkMsg(1.0, 1000, "_stored_v1", "acme.line1", "t", nil)
 		Expect(h.WriteBatch(ctx, service.MessageBatch{good})).To(Succeed())
 		Expect(h.CountValueRows(ctx, "stored")).To(Equal(1))
 		Expect(logs()).To(ContainSubstring("level=info msg=TimescaleDB historian: first message stored for data contract _stored"), "a successful first store must be confirmed at info")
-		// Data has flowed, so a later all-other-contract batch is an expected lull: no starving notice, no warning.
 		other := mkMsg(2.0, 2000, "_other_v1", "acme.line1", "t", nil)
-		Expect(h.WriteBatch(ctx, service.MessageBatch{other})).To(Succeed())
-		Expect(logs()).NotTo(ContainSubstring("nothing stored for data contract _stored yet"), "once data has flowed, an other-contract batch must not read as starving")
-		Expect(logs()).NotTo(ContainSubstring("level=warning"))
+		Expect(h.WriteBatch(ctx, service.MessageBatch{other})).To(HaveOccurred())
+		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: subscription is over-broad"), "once rows are landing, a foreign contract means the subscription is too wide")
 	})
 
-	It("stores the matching messages in a mixed batch and never reads as starving", func() {
-		h := connected("overbroad") // own contract: mixed batch writes a row, must not collide with other specs
+	It("nacks a mixed batch whole, so the matching message is not written either", func() {
+		h := connected("overbroad")
 		defer h.Close(ctx)
 		logs := h.CaptureLogs()
 		batch := service.MessageBatch{
-			mkMsg(1.0, 1000, "_overbroad_v1", "acme.line1", "t", nil), // matches "overbroad" -> stored
-			mkMsg(2.0, 2000, "_other_v1", "acme.line1", "t", nil),     // other contract -> dropped
+			mkMsg(1.0, 1000, "_overbroad_v1", "acme.line1", "t", nil),
+			mkMsg(2.0, 2000, "_other_v1", "acme.line1", "t", nil),
 		}
-		Expect(h.WriteBatch(ctx, batch)).To(Succeed())
-		Expect(h.CountValueRows(ctx, "overbroad")).To(Equal(1))
-		Expect(logs()).To(ContainSubstring("reason=contract_mismatch"), "the other-contract message must be dropped by reason")
-		Expect(logs()).To(ContainSubstring("level=info msg=TimescaleDB historian: first message stored for data contract _overbroad"), "a stored row must be confirmed")
-		Expect(logs()).NotTo(ContainSubstring("nothing stored for data contract _overbroad yet"), "a mixed batch that stored a row must not read as starving")
-		Expect(logs()).NotTo(ContainSubstring("level=warning"), "a mixed batch must not warn")
+		Expect(h.WriteBatch(ctx, batch)).To(HaveOccurred())
+		Expect(h.CountValueRows(ctx, "overbroad")).To(Equal(0), "nacking the batch costs the matching row: it is refused with the rest and only returns if the offset is replayed")
+		Expect(logs()).To(ContainSubstring("reason=contract_mismatch"))
+		Expect(logs()).NotTo(ContainSubstring("first message stored for data contract _overbroad"), "nothing was written, so there is no first store to confirm")
+		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: subscription is over-broad"), "a mixed batch is the case that made throughput lie, so it must error")
+		Expect(logs()).To(ContainSubstring("1 of 2 message(s)"))
 	})
 
-	It("warns when a whole batch is dropped for a real fault", func() {
+	It("blames the subscription when the matching message is dropped for its payload, not its contract", func() {
+		h := connected("matchdrop")
+		defer h.Close(ctx)
+		logs := h.CaptureLogs()
+		batch := service.MessageBatch{
+			mkMsg(nil, 1000, "_matchdrop_v1", "acme.line1", "t", nil),
+			mkMsg(2.0, 2000, "_other_v1", "acme.line1", "t", nil),
+		}
+		Expect(h.WriteBatch(ctx, batch)).To(HaveOccurred())
+		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: subscription is over-broad"), "the contract did arrive, it just carried no value; sending the operator to data_contract_name would be the wrong fix")
+		Expect(logs()).NotTo(ContainSubstring("no message carries"))
+	})
+
+	It("nacks and reports the first batch without waiting out any startup hold", func() {
+		h := connected("grace")
+		defer h.Close(ctx)
+		logs := h.CaptureLogs()
+		bad := mkMsg(1.0, 1000, "_other_v1", "acme.line1", "t", nil)
+		Expect(h.WriteBatch(ctx, service.MessageBatch{bad})).To(HaveOccurred(), "the very first batch must nack, so a wrong subscription never reports throughput")
+		Expect(h.CountValueRows(ctx, "grace")).To(Equal(0))
+		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: no message carries data contract _grace"), "the actionable reason must arrive with the nack, not 30s later")
+		Expect(logs()).To(ContainSubstring(`^umh\.v1(?:\.[^._][^.]*)+\._grace(_v\d+)?\..+$`))
+	})
+
+	It("stores an unversioned contract with no configuration at all", func() {
+		h := connected("unver")
+		defer h.Close(ctx)
+		logs := h.CaptureLogs()
+		msg := mkMsg(1.0, 1000, "_unver", "acme.line1", "t", nil)
+		Expect(h.WriteBatch(ctx, service.MessageBatch{msg})).To(Succeed())
+		Expect(h.CountValueRows(ctx, "unver")).To(Equal(1), "a default _historian bridge must store without any opt-in")
+		Expect(logs()).NotTo(ContainSubstring("reason=contract_"))
+	})
+
+	It("stores an unversioned contract carrying the bypass flag the uns output stamps on all of them", func() {
+		h := connected("unverbypass")
+		defer h.Close(ctx)
+		logs := h.CaptureLogs()
+		msg := mkMsg(1.0, 1000, "_unverbypass", "acme.line1", "t", map[string]string{"data_contract_bypassed": "true"})
+		Expect(h.WriteBatch(ctx, service.MessageBatch{msg})).To(Succeed())
+		Expect(h.CountValueRows(ctx, "unverbypass")).To(Equal(1), "honoring the flag here would drop every _historian message")
+		Expect(logs()).NotTo(ContainSubstring("reason=contract_bypassed"))
+	})
+
+	It("refuses a versioned contract whose schema was bypassed, even with datatype changes allowed", func() {
+		h := connected("bypassed")
+		defer h.Close(ctx)
+		h.SetAllowDatatypeChanges(true)
+		logs := h.CaptureLogs()
+		msg := mkMsg(1.0, 1000, "_bypassed_v1", "acme.line1", "t", map[string]string{"data_contract_bypassed": "true"})
+		Expect(h.WriteBatch(ctx, service.MessageBatch{msg})).To(Succeed())
+		Expect(h.CountValueRows(ctx, "bypassed")).To(Equal(0), "a versioned contract with an unapplied schema is never stored")
+		Expect(logs()).To(ContainSubstring("reason=contract_bypassed"))
+	})
+
+	It("refuses a relational payload carrying extra fields alongside value and timestamp_ms", func() {
+		h := connected("relational")
+		defer h.Close(ctx)
+		logs := h.CaptureLogs()
+		msg := service.NewMessage(nil)
+		msg.SetStructured(map[string]any{"value": 1.0, "timestamp_ms": float64(1000), "orderId": "WO-42"})
+		msg.MetaSet("umh_topic", "umh.v1.acme.line1._relational_v1.vibration.t")
+		Expect(h.WriteBatch(ctx, service.MessageBatch{msg})).To(Succeed())
+		Expect(h.CountValueRows(ctx, "relational")).To(Equal(0), "relational data must not land in a timeseries table")
+		Expect(logs()).To(ContainSubstring("reason=not_timeseries"))
+	})
+
+	It("reports a body that is not JSON, naming the topic that carried it", func() {
+		h := connected("notjson")
+		defer h.Close(ctx)
+		logs := h.CaptureLogs()
+		msg := service.NewMessage([]byte("<xml>not json</xml>"))
+		msg.MetaSet("umh_topic", "umh.v1.acme.line1._notjson_v1.vibration.t")
+		Expect(h.WriteBatch(ctx, service.MessageBatch{msg})).To(Succeed())
+		Expect(h.CountValueRows(ctx, "notjson")).To(Equal(0))
+		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: dropped 1 of 1 message(s) (reason=not_structured"), "an unparseable body must name itself, not fail silently")
+		Expect(logs()).To(ContainSubstring(`example umh_topic="umh.v1.acme.line1._notjson_v1.vibration.t"`), "the topic is the only handle an operator has on a body that cannot be parsed")
+	})
+
+	It("reports a JSON body that is not an object", func() {
+		h := connected("notobj")
+		defer h.Close(ctx)
+		logs := h.CaptureLogs()
+		arr := service.NewMessage(nil)
+		arr.SetStructured([]any{map[string]any{"value": 1.0, "timestamp_ms": float64(1000)}})
+		arr.MetaSet("umh_topic", "umh.v1.acme.line1._notobj_v1.vibration.t")
+		scalar := service.NewMessage(nil)
+		scalar.SetStructured(42.0)
+		scalar.MetaSet("umh_topic", "umh.v1.acme.line1._notobj_v1.vibration.s")
+		Expect(h.WriteBatch(ctx, service.MessageBatch{arr, scalar})).To(Succeed())
+		Expect(h.CountValueRows(ctx, "notobj")).To(Equal(0), "an array of points and a bare scalar are both outside the {value, timestamp_ms} contract")
+		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: dropped 2 of 2 message(s) (reason=not_object"))
+	})
+
+	It("nacks every mismatching batch while the error log is throttled", func() {
+		h := connected("throttle")
+		defer h.Close(ctx)
+		logs := h.CaptureLogs()
+		bad := func() service.MessageBatch {
+			return service.MessageBatch{mkMsg(1.0, 1000, "_other_v1", "acme.line1", "t", nil)}
+		}
+		for i := 0; i < 3; i++ {
+			Expect(h.WriteBatch(ctx, bad())).To(HaveOccurred(), "the throttle governs the log only; a refused batch must never be acked")
+		}
+		Expect(strings.Count(logs(), "level=error msg=TimescaleDB historian: no message carries")).To(Equal(1), "three batches inside one interval report once")
+		Expect(h.CountValueRows(ctx, "throttle")).To(Equal(0))
+	})
+
+	It("errors with the reason and the fix when a whole batch is dropped for a real fault", func() {
 		h := connected("drops")
 		defer h.Close(ctx)
 		logs := h.CaptureLogs()
 		bad := mkMsg(nil, 1000, "_drops_v1", "acme.line1", "t", nil) // matching contract, missing value
 		Expect(h.WriteBatch(ctx, service.MessageBatch{bad})).To(Succeed())
 		Expect(h.CountValueRows(ctx, "drops")).To(Equal(0))
-		Expect(logs()).To(ContainSubstring("reason=missing_value_or_timestamp"), "the per-drop log must name the reason")
-		Expect(logs()).To(ContainSubstring("level=warning msg=TimescaleDB historian: dropped all 1 message(s)"), "a 100%-dropped non-empty batch for a real fault must warn (not silent)")
-		Expect(logs()).To(ContainSubstring("Check the source data and metadata configuration"))
+		Expect(logs()).To(ContainSubstring("level=error msg=TimescaleDB historian: dropped 1 of 1 message(s) (reason=missing_value"), "a malformed message must log at error level so umh-core degrades the bridge")
+		Expect(logs()).To(ContainSubstring("payload has no value field"), "the drop log must name what was wrong with the message")
+		Expect(logs()).NotTo(ContainSubstring("level=warning"), "the per-message error already carries the reason and the fix; a reasonless batch summary on top of it is noise")
+	})
+
+	It("reports each reason once per batch with its share, and still writes the good rows", func() {
+		h := connected("tally")
+		defer h.Close(ctx)
+		logs := h.CaptureLogs()
+		batch := service.MessageBatch{
+			mkMsg(1.0, 1000, "_tally_v1", "acme.line1", "good", nil),
+			mkMsg(nil, 2000, "_tally_v1", "acme.line1", "noval1", nil),
+			mkMsg(nil, 3000, "_tally_v1", "acme.line1", "noval2", nil),
+			mkMsgNoTimestamp(4.0, "_tally_v1", "acme.line1", "nots", nil),
+		}
+		Expect(h.WriteBatch(ctx, batch)).To(Succeed())
+		Expect(h.CountValueRows(ctx, "tally")).To(Equal(1), "a partly-dropped batch still writes what it can")
+		Expect(logs()).To(ContainSubstring("dropped 2 of 4 message(s) (reason=missing_value"), "two messages, one line, with the share of the batch")
+		Expect(logs()).To(ContainSubstring("dropped 1 of 4 message(s) (reason=missing_timestamp"), "a second reason gets its own line, not a merged one")
+		Expect(strings.Count(logs(), "level=error")).To(Equal(2), "one line per reason, never one per message")
+		Expect(logs()).To(ContainSubstring("tag processor sets timestamp_ms"), "each line keeps the fix for its own reason")
 	})
 
 	It("truncates an over-long value_text and warns exactly once", func() {

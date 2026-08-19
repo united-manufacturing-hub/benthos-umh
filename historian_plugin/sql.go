@@ -141,7 +141,7 @@ MIGRATIONS_SLOT
 -- ======================================================
 COMMIT;`
 
-const dimensionCTE = `WITH loc AS (
+const dimensionCTEFmt = `WITH loc AS (
   INSERT INTO umh.location (path) VALUES (umh.to_ltree_path($1))
   ON CONFLICT (path) DO UPDATE SET path = EXCLUDED.path
   RETURNING location_id
@@ -149,7 +149,7 @@ const dimensionCTE = `WITH loc AS (
 tg AS (
   INSERT INTO umh.tag (name, virtual_path, data_contract_name, value_type)
   VALUES ($4, $3, $2, $5::umh.value_type)
-  ON CONFLICT (virtual_path, name, data_contract_name) DO UPDATE SET value_type = EXCLUDED.value_type
+  ON CONFLICT (virtual_path, name, data_contract_name) DO UPDATE SET value_type = %s
   RETURNING tag_id
 ),
 tp AS (
@@ -160,12 +160,16 @@ tp AS (
 )
 `
 
+var dimensionCTE = fmt.Sprintf(dimensionCTEFmt, "EXCLUDED.value_type")
+
 // topicResolveSQL upserts the location/tag/topic dimension rows and returns topic_id. Run once
 // per distinct topic in its own autocommit statement so the shared location-row lock releases
 // at once; held for the whole value write it would serialize concurrent batches.
 // A Phase-2 RAISE leaves these upserts committed, orphaning a topic row with no value: wasted
 // rows, reused on retry, not a correctness bug.
-const topicResolveSQL = dimensionCTE + `SELECT topic_id FROM tp;`
+var topicResolveSQL = dimensionCTE + `SELECT topic_id FROM tp;`
+
+var topicResolveKeepTypeSQL = fmt.Sprintf(dimensionCTEFmt, "umh.tag.value_type") + `SELECT topic_id FROM tp;`
 
 // topicLookupSQL resolves an existing topic via a read (no sequence burn); on a miss the caller
 // falls through to topicResolveSQL. value_type is in the WHERE deliberately: a datatype flip
@@ -180,6 +184,15 @@ WHERE l.path = umh.to_ltree_path($1)
   AND g.virtual_path       = $3
   AND g.name               = $4
   AND g.value_type         = $5::umh.value_type;`
+
+const topicLookupAnyTypeSQL = `SELECT t.topic_id
+FROM umh.topic t
+JOIN umh.location l ON l.location_id = t.location_id
+JOIN umh.tag      g ON g.tag_id      = t.tag_id
+WHERE l.path = umh.to_ltree_path($1)
+  AND g.data_contract_name = $2
+  AND g.virtual_path       = $3
+  AND g.name               = $4;`
 
 // valueInsert / attributeInsert write one row against an already-resolved topic_id (passed as
 // $1), so the value-write phase only touches distinct (topic_id, ts) rows and concurrent

@@ -27,10 +27,29 @@ var _ = Describe("metadata", func() {
 		"location_path":          "acme.line1", // structural -> excluded in all-mode
 		"opcua_source_timestamp": "x",          // high-churn -> excluded in all-mode
 		"_ltree":                 "internal",   // underscore-prefixed -> excluded in all-mode
+		"data_contract_version":  "1",          // kept: no column holds it (ENG-5474)
 	}
 
 	It("all-mode excludes structural, high-churn, and _-prefixed", func() {
-		Expect(tsh.SelectMetaKeys(meta, true, nil, nil)).To(ConsistOf("serialNumber"))
+		Expect(tsh.SelectMetaKeys(meta, true, nil, nil)).To(ConsistOf("serialNumber", "data_contract_version"))
+	})
+
+	It("keeps data_contract_version, which no column holds, while still dropping the name, which one does", func() {
+		m := map[string]string{
+			"data_contract_name":          "_pump",
+			"data_contract_version":       "3",
+			"data_contract_bypassed":      "true",
+			"data_contract_bypass_reason": "registry unreachable",
+		}
+		got := tsh.SelectMetaKeys(m, true, nil, nil)
+		Expect(got).To(ConsistOf("data_contract_version"),
+			"NormalizeContract strips _vN so all versions share one umh.tag row; without this the version is discarded outright")
+	})
+
+	It("still drops the version when the user blacklists it", func() {
+		m := map[string]string{"data_contract_version": "3", "serialNumber": "abc"}
+		excl := tsh.NewMetaExcluder([]string{"data_contract_version"})
+		Expect(tsh.SelectMetaKeys(m, true, nil, excl)).To(ConsistOf("serialNumber"))
 	})
 	It("allowlist-mode takes the list verbatim (blacklist NOT applied)", func() {
 		Expect(tsh.SelectMetaKeys(meta, false, []string{"serialNumber", "opcua_source_timestamp"}, nil)).

@@ -20,6 +20,17 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+// sqlstateRaise is the SQLSTATE plpgsql gives a bare RAISE. Only two guards use it (see the
+// invariant on classify below); the failing write phase says which.
+const sqlstateRaise = "P0001"
+
+// Write phases, used as the phase label on a dropped poison row.
+const (
+	phaseResolve   = "resolve"   // topic_id upsert; the only phase tag_value_type_guard runs in
+	phaseValue     = "value"     // value row insert
+	phaseAttribute = "attribute" // attribute row insert
+)
+
 // disposition is how WriteBatch should handle a write error. It splits on two axes:
 // (1) is the error caused by the payload itself (deterministic, never succeeds on retry)?
 // -- that is the only axis that drops data. (2) for everything we keep NACKing, is it a
@@ -56,7 +67,7 @@ func classify(err error) disposition {
 	// this plugin installs may RAISE P0001 for a retryable/operational reason (a new trigger,
 	// migration, or function must signal those via a proper SQLSTATE), or that data would be
 	// silently dropped here instead of held for retry.
-	if pg.Code == "P0001" {
+	if pg.Code == sqlstateRaise {
 		return dispDropPoison
 	}
 	// Note: 21000 (cardinality_violation) is NOT mapped here. Its only expected source is the batched
