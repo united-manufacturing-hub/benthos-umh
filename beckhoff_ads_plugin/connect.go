@@ -24,10 +24,20 @@ import (
 // initSymbolIndex builds the lower-cased symbol lookup and resolves each
 // symbol's DataType/BaseType/Size via the PLC symbol table.
 func (a *AdsCommInput) initSymbolIndex(ctx context.Context) {
+	// Index first: it needs no PLC round-trip, so a half-built one would be a
+	// pointless second failure mode when the lookups below are cut short.
 	a.symbolByName = make(map[string]*PlcSymbol, len(a.Symbols))
 	for i := range a.Symbols {
+		a.symbolByName[strings.ToLower(a.Symbols[i].Name)] = &a.Symbols[i]
+	}
+	for i := range a.Symbols {
 		sym := &a.Symbols[i]
-		a.symbolByName[strings.ToLower(sym.Name)] = sym
+		// Stop rather than continue: on shutdown every remaining lookup would
+		// fail the same way, one log line each.
+		if shuttingDown(ctx) {
+			a.Log.Debugf("Symbol metadata resolution abandoned during shutdown at %q", sym.Name)
+			return
+		}
 		info, err := a.client.GetSymbol(ctx, sym.Name)
 		if err != nil {
 			a.Log.Warnf("Failed to resolve metadata for ADS symbol %q: %v", sym.Name, err)
@@ -42,12 +52,12 @@ func (a *AdsCommInput) initSymbolIndex(ctx context.Context) {
 // loadSymbolTable downloads the full symbol and datatype table from the PLC;
 // required for struct/array symbols.
 func (a *AdsCommInput) loadSymbolTable(ctx context.Context) error {
-	a.Log.Infof("Loading symbol and datatype table from PLC")
+	a.Log.Debugf("Loading symbol and datatype table from PLC")
 	if err := a.client.LoadSymbols(ctx); err != nil {
 		a.Log.Errorf("Loading symbol and datatype table from PLC failed: %v", err)
 		return err
 	}
-	a.Log.Infof("Loading symbol and datatype table from PLC succeeded")
+	a.Log.Debugf("Loading symbol and datatype table from PLC succeeded")
 	return nil
 }
 
@@ -66,7 +76,7 @@ func (a *AdsCommInput) setupNotifications(ctx context.Context) error {
 
 	// Connect() already ensures session is stable; no retry needed here.
 	// If this fails, return error and let Benthos retry Connect().
-	a.Log.Infof("Registering notifications for %d symbols", len(cfgs))
+	a.Log.Debugf("Registering notifications for %d symbols", len(cfgs))
 	results, err := a.client.AddNotifications(ctx, cfgs, a.NotificationChan)
 	if err != nil {
 		a.Log.Errorf("Registering notifications for %d symbols failed: %v", len(cfgs), err)
@@ -132,6 +142,10 @@ func (a *AdsCommInput) waitForInitialSamples(ctx context.Context, results []Noti
 				delete(needed, strings.ToLower(sampleName(update)))
 			}
 		case <-initialCtx.Done():
+			// select picks at random when ctx.Done() is ready too.
+			if shuttingDown(ctx) {
+				return ctx.Err()
+			}
 			a.Log.Warnf("Timed out waiting for initial samples; %d symbols not yet received: %v", len(needed), needed)
 			return nil
 		case <-ctx.Done():
