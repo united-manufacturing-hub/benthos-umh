@@ -16,7 +16,10 @@ package beckhoff_ads_plugin
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
+	"strconv"
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -270,36 +273,35 @@ func (a *AdsCommInput) sessionConfig() SessionConfig {
 	}
 }
 
-// targetSummary lists the PLC-side connection parameters for logging.
-func (a *AdsCommInput) targetSummary() string {
-	return fmt.Sprintf(
-		"  target IP:    %s\n"+
-			"  target port:  %d\n"+
-			"  target AMS:   %s\n"+
-			"  runtime port: %d",
-		a.TargetIP, a.TargetPort, a.TargetAMS, a.RuntimePort)
+// shuttingDown reports whether Benthos is stopping the pipeline. Operations
+// aborted then are expected, so they are logged at debug rather than as faults.
+func shuttingDown(ctx context.Context) bool { return ctx.Err() != nil }
+
+// connectHint names the likely cause: a failed dial is a transport problem,
+// anything later means the PLC rejected the session at the AMS layer.
+func connectHint(err error) string {
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && opErr.Op == "dial" {
+		return "the PLC did not accept a TCP connection - check targetAddress, that the PLC is powered and reachable, and that no firewall blocks the ADS port"
+	}
+	return "the PLC accepted the TCP connection then rejected the ADS session - check that targetAMS matches the PLC's own AMS NetID, that username/password are valid for route registration, and that runtimePort addresses a running runtime (851 on TwinCAT 3, 801 on TwinCAT 2)"
 }
 
-// hostSummary lists our own AMS identity for logging, marking the values that
-// are derived at runtime rather than configured.
-func (a *AdsCommInput) hostSummary() string {
-	hostAMS := a.HostAMS
-	if hostAMS == "auto" {
-		hostAMS = "auto (derived on connect)"
-	}
-	hostPort := fmt.Sprintf("%d", a.HostPort)
+// connLogger attaches the connection parameters as structured fields, verbatim;
+// go-ads separately logs what "auto" resolved to.
+func (a *AdsCommInput) connLogger() *service.Logger {
+	hostPort := strconv.Itoa(a.HostPort)
 	if a.HostPort == 0 {
 		hostPort = "random"
 	}
-	hostIP := a.HostIP
-	if hostIP == "" {
-		hostIP = "auto-detected"
-	}
-	return fmt.Sprintf(
-		"  host AMS:     %s\n"+
-			"  host port:    %s\n"+
-			"  host IP:      %s",
-		hostAMS, hostPort, hostIP)
+	return a.Log.With(
+		"targetAddress", net.JoinHostPort(a.TargetIP, strconv.Itoa(a.TargetPort)),
+		"targetAMS", a.TargetAMS,
+		"runtimePort", a.RuntimePort,
+		"hostAMS", a.HostAMS,
+		"hostPort", hostPort,
+		"hostIP", a.HostIP,
+	)
 }
 
 // Connect establishes the ADS session, resolves symbol metadata, and (depending
@@ -326,18 +328,20 @@ func (a *AdsCommInput) Connect(ctx context.Context) error {
 // finishConnect drives connect → symbol resolution → (optional) symbol table
 // load → (optional) notification setup; split out so Connect can clean up a.client on failure.
 func (a *AdsCommInput) finishConnect(ctx context.Context) error {
-	a.Log.Infof("Connecting to PLC:\n%s\n%s", a.targetSummary(), a.hostSummary())
+	a.connLogger().Info("Connecting to PLC")
 	if err := a.client.Connect(ctx); err != nil {
-		a.Log.Errorf("Connecting to PLC failed:\n%s\n  error:        %v", a.targetSummary(), err)
+		a.connLogger().With("hint", connectHint(err)).Errorf("Connecting to PLC failed: %v", err)
 		return err
 	}
-	a.Log.Infof("Connecting to PLC succeeded:\n%s", a.targetSummary())
-	a.initSymbolIndex(ctx)
+	a.Log.Info("Connected to PLC")
+	// Before the index: resolving a user-defined type to its primitive needs the
+	// datatype table, and an unresolved BaseType is never retried afterwards.
 	if a.LoadSymbols {
 		if err := a.loadSymbolTable(ctx); err != nil {
 			return err
 		}
 	}
+	a.initSymbolIndex(ctx)
 	if a.ReadType == "notification" {
 		if err := a.setupNotifications(ctx); err != nil {
 			return err
@@ -359,14 +363,14 @@ func (a *AdsCommInput) Close(_ context.Context) error {
 	if a.client == nil {
 		return nil
 	}
-	a.Log.Infof("Closing connection to PLC:\n%s", a.targetSummary())
+	a.connLogger().With("readType", a.ReadType, "symbols", len(a.Symbols)).Debug("Closing connection to PLC")
 
 	err := a.client.Close()
 	a.client = nil
 	if err != nil {
-		a.Log.Errorf("Closing connection to PLC failed:\n%s\n  error:        %v", a.targetSummary(), err)
+		a.connLogger().Errorf("Closing connection to PLC failed: %v", err)
 		return err
 	}
-	a.Log.Infof("Closing connection to PLC succeeded:\n%s", a.targetSummary())
+	a.Log.Debug("Closed connection to PLC")
 	return nil
 }

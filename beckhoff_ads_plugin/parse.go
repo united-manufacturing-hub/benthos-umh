@@ -49,14 +49,23 @@ func classifyBaseType(bt string) tagKind {
 func adsValueBytes(typ string, decoded string) ([]byte, string) {
 	switch classifyBaseType(typ) {
 	case tagNumber:
-		return []byte(decoded), "number"
-	case tagBool:
-		return []byte(decoded), "bool"
-	default:
-		b, err := json.Marshal(decoded)
-		if err != nil {
-			b = []byte(strconv.Quote(decoded))
+		// A PLC REAL can hold NaN or an infinity, which go-ads formats as text
+		// JSON rejects. Ask the JSON parser rather than strconv, which also
+		// accepts "+1" and hex floats that would not survive downstream.
+		if json.Valid([]byte(decoded)) {
+			return []byte(decoded), "number"
 		}
-		return b, "string"
+	case tagBool:
+		if b, err := strconv.ParseBool(decoded); err == nil {
+			return []byte(strconv.FormatBool(b)), "bool"
+		}
+	case tagString:
 	}
+	// Either a string type, or a value that would not survive as JSON in the
+	// shape its type promised; quoting keeps the message parseable downstream.
+	b, err := json.Marshal(decoded)
+	if err != nil {
+		b = []byte(strconv.Quote(decoded))
+	}
+	return b, "string"
 }

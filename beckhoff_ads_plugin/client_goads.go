@@ -34,7 +34,7 @@ type goADSClient struct {
 
 // resolveRouteHostIP returns the local IP for the ADS route: the configured
 // hostIP, else the source IP of a TCP dial to the ADS port (same interface).
-func resolveRouteHostIP(ctx context.Context, cfg SessionConfig, log *service.Logger) (string, error) {
+func resolveRouteHostIP(ctx context.Context, cfg SessionConfig) (string, error) {
 	if cfg.HostIP != "" {
 		return cfg.HostIP, nil
 	}
@@ -44,8 +44,7 @@ func resolveRouteHostIP(ctx context.Context, cfg SessionConfig, log *service.Log
 		// PLC unreachable; fall back to a UDP routing lookup (no packet sent).
 		udpConn, udpErr := net.Dial("udp4", net.JoinHostPort(cfg.TargetIP, adsDiscoveryPort))
 		if udpErr != nil {
-			log.Errorf("Failed to auto-detect local address: %v", dialErr)
-			return "", dialErr
+			return "", fmt.Errorf("could not auto-detect a local IP for the route (set hostIP explicitly): %w", dialErr)
 		}
 		defer udpConn.Close()
 		return udpConn.LocalAddr().(*net.UDPAddr).IP.String(), nil
@@ -62,12 +61,13 @@ func buildSessionOptions(ctx context.Context, cfg SessionConfig, log *service.Lo
 	opts := []adsLib.SessionOption{adsLib.WithLogger(slog.New(&benthosLogHandler{logger: log}))}
 
 	if cfg.Username != "" && cfg.Password != "" {
-		hostAddr, err := resolveRouteHostIP(ctx, cfg, log)
+		hostAddr, err := resolveRouteHostIP(ctx, cfg)
 		if err != nil {
 			return nil, err
 		}
 		routeName := fmt.Sprintf("benthosADS-%s", hostAddr)
-		log.Infof("Route will be registered on PLC %s: name=%s, clientIP=%s", cfg.TargetIP, routeName, hostAddr)
+		log.With("routeName", routeName, "clientIP", hostAddr, "targetIP", cfg.TargetIP).
+			Info("Registering route on PLC")
 		opts = append(opts, adsLib.WithRoute(routeName, cfg.Username, cfg.Password), adsLib.WithHostIP(hostAddr))
 	}
 
@@ -75,8 +75,7 @@ func buildSessionOptions(ctx context.Context, cfg SessionConfig, log *service.Lo
 	if cfg.HostAMS != "" && cfg.HostAMS != "auto" {
 		localAMS, err := adsLib.NewAMSAddress(cfg.HostAMS, uint16(cfg.HostPort))
 		if err != nil {
-			log.Errorf("Invalid local AMS %q: %v", cfg.HostAMS, err)
-			return nil, err
+			return nil, fmt.Errorf("hostAMS %q is not a valid AMS NetID: %w", cfg.HostAMS, err)
 		}
 		opts = append(opts, adsLib.WithLocalAMS(localAMS))
 	}
@@ -95,8 +94,7 @@ func newGoADSClient(ctx context.Context, cfg SessionConfig, log *service.Logger)
 	}
 	targetAMS, err := adsLib.NewAMSAddress(cfg.TargetAMS, uint16(cfg.RuntimePort))
 	if err != nil {
-		log.Errorf("Invalid target AMS %q: %v", cfg.TargetAMS, err)
-		return nil, err
+		return nil, fmt.Errorf("targetAMS %q is not a valid AMS NetID: %w", cfg.TargetAMS, err)
 	}
 	// Background ctx: session lifetime is driven by Close, not the per-call
 	// construction ctx (which would tear the session down on return).
@@ -104,8 +102,7 @@ func newGoADSClient(ctx context.Context, cfg SessionConfig, log *service.Logger)
 		IP: cfg.TargetIP, Port: cfg.TargetPort, AMS: targetAMS,
 	}, opts...)
 	if err != nil {
-		log.Errorf("Failed to create connection: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("creating the ADS session failed: %w", err)
 	}
 	return &goADSClient{session: sess}, nil
 }

@@ -63,15 +63,15 @@ func validateIP(s string) error {
 
 // parseTargetAddress splits targetAddress into an IPv4 host and port. A bare
 // IP (no ":port") defaults to defaultTargetPort.
-func parseTargetAddress(s string) (ip string, port int, err error) {
+func parseTargetAddress(s string) (string, int, error) {
 	host, portStr, splitErr := net.SplitHostPort(s)
 	if splitErr != nil {
 		host, portStr = s, strconv.Itoa(defaultTargetPort)
 	}
-	if err = validateIP(host); err != nil {
+	if err := validateIP(host); err != nil {
 		return "", 0, err
 	}
-	port, err = strconv.Atoi(portStr)
+	port, err := strconv.Atoi(portStr)
 	if err != nil || port < 0 || port > 65535 {
 		return "", 0, fmt.Errorf("port %q out of range 0–65535", portStr)
 	}
