@@ -48,16 +48,18 @@ func (a *AdsCommInput) newSymbolMessage(sym *PlcSymbol, value string, ts time.Ti
 	}
 	payload, tagType := adsValueBytes(typeName, value)
 	msg := service.NewMessage(payload)
-	msg.MetaSet("tag_type", tagType)
-	msg.MetaSet("symbol_name", sanitize(sym.Name))
+	// ads_ prefix per repo convention (modbus_tag_*, opcua_tag_*);
+	// timestamp_ms stays unprefixed as the UMH-wide payload timestamp.
+	msg.MetaSet("ads_tag_type", tagType)
+	msg.MetaSet("ads_symbol_name", sanitize(sym.Name))
 	if sym.DataType != "" {
-		msg.MetaSet("data_type", sym.DataType)
+		msg.MetaSet("ads_datatype", sym.DataType)
 	}
 	if sym.BaseType != "" {
-		msg.MetaSet("base_type", sym.BaseType)
+		msg.MetaSet("ads_base_type", sym.BaseType)
 	}
 	if sym.Size != 0 {
-		msg.MetaSet("data_size", strconv.FormatUint(uint64(sym.Size), 10))
+		msg.MetaSet("ads_data_size", strconv.FormatUint(uint64(sym.Size), 10))
 	}
 	if !ts.IsZero() {
 		msg.MetaSet("timestamp_ms", strconv.FormatInt(ts.UnixMilli(), 10))
@@ -144,6 +146,10 @@ func (a *AdsCommInput) ReadBatchPull(ctx context.Context) (service.MessageBatch,
 
 	values, err := a.client.ReadMultipleSymbols(ctx, names)
 	if err != nil {
+		if shuttingDown(ctx) {
+			a.Log.Debugf("Batch read aborted during shutdown: %v", err)
+			return nil, nil, ctx.Err()
+		}
 		a.Log.Errorf("Batch read failed: %v", err)
 		if a.client.IsClosed() {
 			// Session permanently dead — async close to avoid blocking.
@@ -185,6 +191,10 @@ func (a *AdsCommInput) ReadBatchPull(ctx context.Context) (service.MessageBatch,
 	if len(msgs) == 0 && len(a.Symbols) > 0 {
 		a.Log.Warnf("Batch read returned no results for %d symbols, falling back to individual reads", len(a.Symbols))
 		for i := range a.Symbols {
+			if shuttingDown(ctx) {
+				a.Log.Debugf("Individual reads abandoned during shutdown at %q", a.Symbols[i].Name)
+				return nil, nil, ctx.Err()
+			}
 			val, readErr := a.client.ReadFromSymbol(ctx, a.Symbols[i].Name)
 			if readErr != nil {
 				a.Log.Errorf("Individual read failed for %s: %v", a.Symbols[i].Name, readErr)

@@ -63,7 +63,11 @@ func (h *benthosLogHandler) Handle(_ context.Context, r slog.Record) error {
 }
 
 func (h *benthosLogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &benthosLogHandler{logger: h.logger, attrs: append(h.attrs, attrs...)}
+	// Clone: appending in place would let two handlers derived from the same
+	// parent overwrite each other's attributes via the shared backing array.
+	merged := make([]slog.Attr, 0, len(h.attrs)+len(attrs))
+	merged = append(append(merged, h.attrs...), attrs...)
+	return &benthosLogHandler{logger: h.logger, attrs: merged}
 }
 
 func (h *benthosLogHandler) WithGroup(_ string) slog.Handler { return h }
