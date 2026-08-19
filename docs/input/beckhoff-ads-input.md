@@ -8,11 +8,11 @@ Beckhoff recommends limiting notifications to approximately 500 per connection t
 
 | Metadata Field | Description |
 |---|---|
-| `symbol_name` | Sanitized PLC symbol name (dots and special characters replaced with `_`) |
-| `data_type` | PLC data type string as reported by the symbol table (e.g. `DINT`, `E_MachineState`, `REAL`). Set after first successful symbol resolution — may be absent on the very first batch after connect. |
-| `base_type` | Resolved IEC 61131-3 primitive underlying the symbol (e.g. `DINT` for an INT-aliased enum). Only set when the type resolves to a known primitive. |
-| `data_size` | Byte length of the symbol as reported by the PLC (e.g. `4` for DINT, `82` for STRING). |
-| `tag_type` | Value shape of the payload: `number`, `bool`, or `string`. Set for every message so downstream processors can branch on payload type without inspecting `data_type`/`base_type`. |
+| `ads_symbol_name` | Sanitized PLC symbol name (dots and special characters replaced with `_`) |
+| `ads_datatype` | PLC data type string as reported by the symbol table (e.g. `DINT`, `E_MachineState`, `REAL`). Set after first successful symbol resolution — may be absent on the very first batch after connect. |
+| `ads_base_type` | Resolved IEC 61131-3 primitive underlying the symbol (e.g. `DINT` for an INT-aliased enum). Only set when the type resolves to a known primitive. |
+| `ads_data_size` | Byte length of the symbol as reported by the PLC (e.g. `4` for DINT, `82` for STRING). |
+| `ads_tag_type` | Value shape of the payload: `number`, `bool`, or `string`. Set for every message so downstream processors can branch on payload type without inspecting `ads_datatype`/`ads_base_type`. |
 | `timestamp_ms` | Unix milliseconds for when the value was captured. For `readType: notification`, this is the PLC's sample time for that update; for `readType: interval`, this is the time the plugin performed the read. |
 
 ## Typical Deployment — TwinCAT 3
@@ -40,7 +40,7 @@ pipeline:
         defaults: |-
           msg.meta.location_path = "enterprise.site.area.line";
           msg.meta.data_contract = "_historian";
-          msg.meta.tag_name      = msg.meta.symbol_name;
+          msg.meta.tag_name      = msg.meta.ads_symbol_name;
           return msg;
 ```
 ```yaml
@@ -73,7 +73,7 @@ pipeline:
         defaults: |-
           msg.meta.location_path = "enterprise.site.area.line";
           msg.meta.data_contract = "_historian";
-          msg.meta.tag_name      = msg.meta.symbol_name;
+          msg.meta.tag_name      = msg.meta.ads_symbol_name;
           return msg;
 ```
 ```yaml
@@ -102,7 +102,7 @@ pipeline:
         defaults: |-
           msg.meta.location_path = "enterprise.site.area.line";
           msg.meta.data_contract = "_historian";
-          msg.meta.tag_name      = msg.meta.symbol_name;
+          msg.meta.tag_name      = msg.meta.ads_symbol_name;
           return msg;
 ```
 ```yaml
@@ -131,7 +131,7 @@ pipeline:
         defaults: |-
           msg.meta.location_path = "enterprise.site.area.line";
           msg.meta.data_contract = "_historian";
-          msg.meta.tag_name      = msg.meta.symbol_name;
+          msg.meta.tag_name      = msg.meta.ads_symbol_name;
           return msg;
 ```
 ```yaml
@@ -518,7 +518,7 @@ No manual intervention is needed.
 
 ## Output
 
-Each symbol produces a single message with the payload being the value read from the PLC. Use `meta("symbol_name")` in a following benthos bloblang processor to distinguish messages.
+Each symbol produces a single message with the payload being the value read from the PLC. Use `meta("ads_symbol_name")` in a following benthos bloblang processor to distinguish messages.
 
 ## Testing
 
