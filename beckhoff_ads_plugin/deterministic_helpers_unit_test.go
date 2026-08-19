@@ -507,20 +507,20 @@ unifiedAddress:
 			Expect(err).NotTo(HaveOccurred())
 			Expect(msgs).To(HaveLen(2))
 
-			name0, _ := msgs[0].MetaGet("symbol_name")
+			name0, _ := msgs[0].MetaGet("ads_symbol_name")
 			Expect(name0).To(Equal("MAIN_Known"))
-			dataType0, _ := msgs[0].MetaGet("data_type")
+			dataType0, _ := msgs[0].MetaGet("ads_datatype")
 			Expect(dataType0).To(Equal("INT"))
-			tagType0, _ := msgs[0].MetaGet("tag_type")
+			tagType0, _ := msgs[0].MetaGet("ads_tag_type")
 			Expect(tagType0).To(Equal("number"))
 			b0, _ := msgs[0].AsBytes()
 			Expect(string(b0)).To(Equal("42"))
 
-			name1, _ := msgs[1].MetaGet("symbol_name")
+			name1, _ := msgs[1].MetaGet("ads_symbol_name")
 			Expect(name1).To(Equal("MAIN_Unknown"))
-			_, hasDataType1 := msgs[1].MetaGet("data_type")
+			_, hasDataType1 := msgs[1].MetaGet("ads_datatype")
 			Expect(hasDataType1).To(BeFalse(), "unresolved symbol should not carry a data_type")
-			tagType1, _ := msgs[1].MetaGet("tag_type")
+			tagType1, _ := msgs[1].MetaGet("ads_tag_type")
 			Expect(tagType1).To(Equal("string"), "unresolved symbol falls back to string classification")
 			b1, _ := msgs[1].AsBytes()
 			Expect(string(b1)).To(Equal(`"99"`))
@@ -552,26 +552,26 @@ unifiedAddress:
 
 			byName := make(map[string]service.MessageBatch)
 			for _, msg := range msgs {
-				name, _ := msg.MetaGet("symbol_name")
+				name, _ := msg.MetaGet("ads_symbol_name")
 				byName[name] = append(byName[name], msg)
 			}
 
 			tempMsg := byName["MAIN_temp"][0]
-			dataType, _ := tempMsg.MetaGet("data_type")
+			dataType, _ := tempMsg.MetaGet("ads_datatype")
 			Expect(dataType).To(Equal("REAL"))
-			tagType, _ := tempMsg.MetaGet("tag_type")
+			tagType, _ := tempMsg.MetaGet("ads_tag_type")
 			Expect(tagType).To(Equal("number"))
 			b, _ := tempMsg.AsBytes()
 			Expect(string(b)).To(Equal("42.5"))
 
 			nameMsg := byName["MAIN_name"][0]
-			tagType, _ = nameMsg.MetaGet("tag_type")
+			tagType, _ = nameMsg.MetaGet("ads_tag_type")
 			Expect(tagType).To(Equal("string"))
 			b, _ = nameMsg.AsBytes()
 			Expect(string(b)).To(Equal(`"hello"`))
 
 			numstrMsg := byName["MAIN_numstr"][0]
-			tagType, _ = numstrMsg.MetaGet("tag_type")
+			tagType, _ = numstrMsg.MetaGet("ads_tag_type")
 			Expect(tagType).To(Equal("string"))
 			b, _ = numstrMsg.AsBytes()
 			Expect(string(b)).To(Equal(`"007"`), "numeric-looking STRING value must stay JSON-quoted")
@@ -593,9 +593,9 @@ unifiedAddress:
 			msgs, _, err := a.ReadBatchPull(context.Background())
 			Expect(err).NotTo(HaveOccurred())
 			Expect(msgs).To(HaveLen(1))
-			dataType, _ := msgs[0].MetaGet("data_type")
+			dataType, _ := msgs[0].MetaGet("ads_datatype")
 			Expect(dataType).To(Equal("DINT"))
-			tagType, _ := msgs[0].MetaGet("tag_type")
+			tagType, _ := msgs[0].MetaGet("ads_tag_type")
 			Expect(tagType).To(Equal("number"))
 			// The resolved type must also be cached on a.Symbols for subsequent polls.
 			Expect(a.Symbols[0].DataType).To(Equal("DINT"))
@@ -615,7 +615,7 @@ unifiedAddress:
 			msgs, _, err := a.ReadBatchPull(context.Background())
 			Expect(err).NotTo(HaveOccurred())
 			Expect(msgs).To(HaveLen(1))
-			tagType, _ := msgs[0].MetaGet("tag_type")
+			tagType, _ := msgs[0].MetaGet("ads_tag_type")
 			Expect(tagType).To(Equal("bool"))
 			b, _ := msgs[0].AsBytes()
 			Expect(string(b)).To(Equal("true"))
