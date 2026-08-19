@@ -32,7 +32,21 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
+      # Depot occasionally drops the build stream mid-`go build`
+      # ("keepalive ping failed to receive ACK"), which fails the job even though
+      # nothing is wrong with the tree. One automatic retry keeps a PR's image
+      # available for umh-core testing without a manual re-run.
       - name: Build and Push Docker Image
+        id: build
+        continue-on-error: true
+        uses: ./.github/actions/build-docker
+        with:
+          image-name: ${{ github.repository }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          depot-project-id: ${{ secrets.DEPOT_PROJECT_ID }}
+          depot-token: ${{ secrets.DEPOT_TOKEN }}
+      - name: Build and Push Docker Image (retry)
+        if: steps.build.outcome == 'failure'
         uses: ./.github/actions/build-docker
         with:
           image-name: ${{ github.repository }}
@@ -57,13 +71,26 @@ jobs:
         with:
           header: docker-image
           message: |
-            **Docker Image Built**
+            **Docker Image Built** (linux/amd64 + linux/arm64)
 
-            ```
-            ghcr.io/united-manufacturing-hub/benthos-umh:sha-${{ steps.short-sha.outputs.SHORT_SHA }}
-            ```
+            | Tag | Points at |
+            |---|---|
+            | `sha-${{ steps.short-sha.outputs.SHORT_SHA }}` | this exact commit — use this for reproducible runs |
+            | `pr-${{ github.event.pull_request.number }}` | latest push to this PR — moves as you push |
 
-            Pull with:
+            Pull it:
             ```bash
             docker pull ghcr.io/united-manufacturing-hub/benthos-umh:sha-${{ steps.short-sha.outputs.SHORT_SHA }}
+            ```
+
+            Run it against umh-core — in `umh-core/Makefile`, set:
+            ```make
+            BENTHOS_UMH_VERSION = sha-${{ steps.short-sha.outputs.SHORT_SHA }}
+            ```
+            then `make build` in `umh-core/`. The Makefile extracts the `/benthos`
+            binary from this image for both architectures.
+
+            Check which plugins the image carries:
+            ```bash
+            docker run --rm ghcr.io/united-manufacturing-hub/benthos-umh:sha-${{ steps.short-sha.outputs.SHORT_SHA }} list inputs
             ```
