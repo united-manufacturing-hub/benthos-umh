@@ -18,7 +18,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"math"
+	"net"
 	"strings"
 	"time"
 
@@ -36,14 +38,22 @@ type fakeClient struct {
 	readFromSymbolValue map[string]string
 	readFromSymbolErr   error
 	closed              bool
+	getSymbolCalls      int
+	readFromSymbolCalls int
+	callOrder           []string
 }
 
-func (f *fakeClient) Connect(_ context.Context) error     { return nil }
-func (f *fakeClient) Close() error                        { f.closed = true; return nil }
-func (f *fakeClient) IsClosed() bool                      { return f.closed }
-func (f *fakeClient) LoadSymbols(_ context.Context) error { return nil }
+func (f *fakeClient) Connect(_ context.Context) error { return nil }
+func (f *fakeClient) Close() error                    { f.closed = true; return nil }
+func (f *fakeClient) IsClosed() bool                  { return f.closed }
+func (f *fakeClient) LoadSymbols(_ context.Context) error {
+	f.callOrder = append(f.callOrder, "LoadSymbols")
+	return nil
+}
 
 func (f *fakeClient) GetSymbol(_ context.Context, name string) (SymbolInfo, error) {
+	f.getSymbolCalls++
+	f.callOrder = append(f.callOrder, "GetSymbol")
 	if info, ok := f.symbols[name]; ok {
 		return info, nil
 	}
@@ -66,6 +76,7 @@ func (f *fakeClient) ReadMultipleSymbols(_ context.Context, _ []string) (map[str
 }
 
 func (f *fakeClient) ReadFromSymbol(_ context.Context, name string) (string, error) {
+	f.readFromSymbolCalls++
 	if f.readFromSymbolErr != nil {
 		return "", f.readFromSymbolErr
 	}
@@ -528,7 +539,7 @@ unifiedAddress:
 	})
 
 	Describe("ReadBatchPull via fakeClient", func() {
-		It("emits metadata (symbol_name, data_type, tag_type) and quotes strings but not numbers", func() {
+		It("emits metadata (ads_symbol_name, ads_datatype, ads_tag_type) and quotes strings but not numbers", func() {
 			client := &fakeClient{
 				multiValues: map[string]string{
 					"MAIN.temp":   "42.5",
@@ -707,7 +718,6 @@ unifiedAddress:
 			Expect(sanitize("MAIN.MyVar[0]")).To(Equal("MAIN_MyVar_0_"))
 		})
 	})
-
 })
 
 var _ = Describe("Time-delta Formula Verification", func() {
@@ -892,5 +902,143 @@ var _ = Describe("Multi-symbol Consistency", func() {
 
 		expectedYield := 100.0 - (float64(rejected) * 100.0 / float64(produced))
 		Expect(yield).To(BeNumerically("~", expectedYield, 1e-9))
+	})
+})
+
+var _ = Describe("connectHint", func() {
+	It("blames the transport when the dial itself failed", func() {
+		err := &net.OpError{Op: "dial", Err: errors.New("connection refused")}
+		Expect(connectHint(err)).To(ContainSubstring("targetAddress"))
+		Expect(connectHint(err)).NotTo(ContainSubstring("targetAMS"))
+	})
+
+	It("blames the AMS layer when the PLC reset an established connection", func() {
+		err := &net.OpError{Op: "read", Err: errors.New("connection reset by peer")}
+		hint := connectHint(err)
+		Expect(hint).To(ContainSubstring("targetAMS"))
+		Expect(hint).To(ContainSubstring("username/password"))
+		Expect(hint).To(ContainSubstring("runtimePort"))
+	})
+
+	It("treats a non-net error as an AMS-layer rejection", func() {
+		Expect(connectHint(errors.New("boom"))).To(ContainSubstring("targetAMS"))
+	})
+})
+
+var _ = Describe("Shutdown quiets expected failures", func() {
+	It("stops resolving symbols instead of failing once per remaining symbol", func() {
+		client := &fakeClient{symbols: map[string]SymbolInfo{}}
+		a := &AdsCommInput{
+			Log:    service.MockResources().Logger(),
+			client: client,
+			Symbols: []PlcSymbol{
+				{Name: "MAIN.a"}, {Name: "MAIN.b"}, {Name: "MAIN.c"},
+			},
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		a.initSymbolIndex(ctx)
+
+		Expect(client.getSymbolCalls).To(BeZero())
+		// The index is still fully populated so later reads can resolve names.
+		Expect(a.symbolByName).To(HaveLen(3))
+	})
+
+	It("returns the context error rather than retrying a pull read", func() {
+		client := &fakeClient{multiErr: context.Canceled}
+		a := &AdsCommInput{
+			Log:     service.MockResources().Logger(),
+			client:  client,
+			Symbols: []PlcSymbol{{Name: "MAIN.a"}},
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		msgs, _, err := a.ReadBatchPull(ctx)
+
+		Expect(err).To(MatchError(context.Canceled))
+		Expect(msgs).To(BeNil())
+	})
+
+	It("abandons the individual-read fallback", func() {
+		// Batch read yields nothing, which normally triggers per-symbol reads.
+		client := &fakeClient{multiValues: map[string]string{}}
+		a := &AdsCommInput{
+			Log:     service.MockResources().Logger(),
+			client:  client,
+			Symbols: []PlcSymbol{{Name: "MAIN.a"}, {Name: "MAIN.b"}},
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		_, _, err := a.ReadBatchPull(ctx)
+
+		Expect(err).To(MatchError(context.Canceled))
+		Expect(client.readFromSymbolCalls).To(BeZero())
+	})
+})
+
+var _ = Describe("adsValueBytes value validation", func() {
+	DescribeTable("emits a number only when the value survives as JSON",
+		func(typ, decoded, wantPayload, wantTag string) {
+			payload, tag := adsValueBytes(typ, decoded)
+			Expect(string(payload)).To(Equal(wantPayload))
+			Expect(tag).To(Equal(wantTag))
+		},
+		Entry("integer", "DINT", "42", "42", "number"),
+		Entry("negative integer", "INT", "-7", "-7", "number"),
+		Entry("float", "REAL", "42.5", "42.5", "number"),
+		// A PLC REAL holds these after an uninitialised read or 0.0/0.0.
+		Entry("NaN falls back to a string", "REAL", "NaN", `"NaN"`, "string"),
+		Entry("+Inf falls back to a string", "REAL", "+Inf", `"+Inf"`, "string"),
+		Entry("-Inf falls back to a string", "LREAL", "-Inf", `"-Inf"`, "string"),
+		Entry("empty numeric falls back to a string", "DINT", "", `""`, "string"),
+		// strconv would accept both of these; encoding/json does not.
+		Entry("leading plus falls back to a string", "DINT", "+1", `"+1"`, "string"),
+		Entry("hex float falls back to a string", "REAL", "0x1p+2", `"0x1p+2"`, "string"),
+		Entry("bool true", "BOOL", "true", "true", "bool"),
+		Entry("bool false", "BOOL", "false", "false", "bool"),
+		Entry("unparseable bool falls back to a string", "BOOL", "maybe", `"maybe"`, "string"),
+		Entry("string stays quoted", "STRING", "hello", `"hello"`, "string"),
+		Entry("numeric-looking string stays quoted", "STRING", "007", `"007"`, "string"),
+	)
+})
+
+var _ = Describe("benthosLogHandler.WithAttrs", func() {
+	It("does not let sibling handlers share a backing array", func() {
+		base := &benthosLogHandler{logger: service.MockResources().Logger()}
+		parent := base.WithAttrs([]slog.Attr{slog.String("a", "1")}).(*benthosLogHandler)
+
+		left := parent.WithAttrs([]slog.Attr{slog.String("b", "left")}).(*benthosLogHandler)
+		right := parent.WithAttrs([]slog.Attr{slog.String("b", "right")}).(*benthosLogHandler)
+
+		Expect(left.attrs).To(HaveLen(2))
+		Expect(right.attrs).To(HaveLen(2))
+		Expect(left.attrs[1].Value.String()).To(Equal("left"))
+		Expect(right.attrs[1].Value.String()).To(Equal("right"))
+		Expect(parent.attrs).To(HaveLen(1))
+	})
+})
+
+var _ = Describe("finishConnect ordering", func() {
+	It("loads the datatype table before resolving symbol metadata", func() {
+		// A user-defined type only resolves to its primitive once the datatype
+		// table is cached, and an unresolved base type is never retried.
+		client := &fakeClient{symbols: map[string]SymbolInfo{
+			"MAIN.state": {DataType: "E_MachineState", BaseType: "DINT", Length: 4},
+		}}
+		a := &AdsCommInput{
+			Log:         service.MockResources().Logger(),
+			client:      client,
+			LoadSymbols: true,
+			ReadType:    "interval",
+			Symbols:     []PlcSymbol{{Name: "MAIN.state"}},
+		}
+
+		Expect(a.finishConnect(context.Background())).To(Succeed())
+
+		Expect(client.callOrder).To(Equal([]string{"LoadSymbols", "GetSymbol"}))
+		Expect(a.Symbols[0].BaseType).To(Equal("DINT"))
 	})
 })
