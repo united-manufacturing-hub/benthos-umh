@@ -52,6 +52,16 @@ and writes two hypertables:
 `umh.get_topic_id(location_path, virtual_path, data_contract, tag_name)` resolves a tag to
 its `topic_id` for ad-hoc and Grafana queries.
 
+> **Where the contract version is stored.** `_pump_v1` and `_pump_v2` both write to
+> `umh.value_pump` and share one `umh.tag` row, so no column records which version a reading
+> arrived under. The version is stored as metadata instead, read as
+> `attribute->>'data_contract_version'`.
+>
+> The `uns` output sets that key only after a schema check passes, so an unversioned contract like
+> `_historian` has no version key rather than an empty one. The version is part of the
+> de-duplication fingerprint, so moving a tag to a new contract version writes a fresh attribute
+> row.
+
 > **Note on the contract name.** You configure the bare form (`pump`), which is used verbatim
 > in the table names (`umh.value_pump`, `umh.attribute_pump`). The `umh.tag.data_contract_name`
 > *column*, however, stores the UNS form with a leading underscore (`_pump`) to match the

@@ -21,9 +21,12 @@ import (
 )
 
 // Structural keys are already stored as columns/dimensions or are transport routing.
+// data_contract_version is not in this list: NormalizeContract strips _vN, so all versions share one
+// umh.tag row and no column holds the version. Excluding it dropped it entirely (ENG-5474); it is
+// stored as metadata, read as attribute->>'data_contract_version'.
 var skipStructural = toSet(
 	"location_path", "data_contract", "virtual_path", "tag_name",
-	"data_contract_name", "data_contract_version",
+	"data_contract_name",
 	"data_contract_bypassed", "data_contract_bypass_reason",
 	"umh_topic", "bridged_by", "origin", "origin_id",
 	"kafka_topic", "kafka_key", "kafka_msg_key", "kafka_partition", "kafka_offset",

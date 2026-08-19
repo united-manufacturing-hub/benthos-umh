@@ -817,6 +817,41 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(v).To(Equal("abc"))
 	})
 
+	It("stores the data contract version, which no column holds, in the attribute row", func() {
+		h := connected("ver")
+		defer h.Close(ctx)
+		msg := mkMsg(1.0, 1000, "_ver_v3", "l.a", "t", map[string]string{
+			"data_contract_name":    "_ver",
+			"data_contract_version": "3",
+			"serialNumber":          "abc",
+		})
+		Expect(h.WriteBatch(ctx, service.MessageBatch{msg})).To(Succeed())
+		v, ok := h.AttributeValue(ctx, "ver", "data_contract_version")
+		Expect(ok).To(BeTrue(), "all versions share one umh.tag row, so metadata is the only place the version survives")
+		Expect(v).To(Equal("3"))
+		_, ok = h.AttributeValue(ctx, "ver", "data_contract_name")
+		Expect(ok).To(BeFalse(), "the name is already a column on umh.tag")
+	})
+
+	It("writes no version key for a contract that never carried one", func() {
+		h := connected("nover")
+		defer h.Close(ctx)
+		msg := mkMsg(1.0, 1000, "_nover", "l.a", "t", map[string]string{"serialNumber": "abc"})
+		Expect(h.WriteBatch(ctx, service.MessageBatch{msg})).To(Succeed())
+		_, ok := h.AttributeValue(ctx, "nover", "data_contract_version")
+		Expect(ok).To(BeFalse(), "the uns output sets the version only on the validated path, and an absent key is not stored blank")
+	})
+
+	It("emits a fresh attribute row when the contract version changes", func() {
+		h := connected("verbump")
+		defer h.Close(ctx)
+		v1 := mkMsg(1.0, 1000, "_verbump_v1", "l.a", "t", map[string]string{"data_contract_version": "1"})
+		v2 := mkMsg(2.0, 2000, "_verbump_v2", "l.a", "t", map[string]string{"data_contract_version": "2"})
+		Expect(h.WriteBatch(ctx, service.MessageBatch{v1})).To(Succeed())
+		Expect(h.WriteBatch(ctx, service.MessageBatch{v2})).To(Succeed())
+		Expect(h.CountAttributeRows(ctx, "verbump")).To(Equal(2), "the version is part of the dedup fingerprint, so a bump is recorded rather than swallowed")
+	})
+
 	It("omits blacklisted metadata keys from the stored attribute row", func() {
 		h := connected("excl")
 		defer h.Close(ctx)
