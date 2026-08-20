@@ -343,6 +343,7 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 			return fmt.Errorf("schema bootstrap failed: %w", err) // guard stays false -> next Connect retries
 		}
 		o.warnPolicyDrift(bootCtx)
+		o.warnChunkDrift(bootCtx)
 		o.bootstrapped = true
 	}
 	// Verify write permission on every Connect (a grant can be revoked between reconnects), so a
@@ -406,6 +407,26 @@ func (o *historianOutput) warnPolicyDrift(ctx context.Context) {
 	}
 	for _, w := range policyDriftWarnings(int64(o.compressAfter.Seconds()), appliedComp, retentionWant, appliedRet) {
 		o.logger.Warnf("TimescaleDB historian: %s. Policies are applied once at first bootstrap and not re-applied on restart, so a config change alone does not update them. Change them on the database directly with the TimescaleDB policy functions (remove_/add_compression_policy, remove_/add_retention_policy) on umh.value_%s and umh.attribute_%s, then set the same value in this output's config to silence this warning.", w, o.contract, o.contract)
+	}
+}
+
+// readChunkInterval reads the chunk width applied to one hypertable, in seconds. Best-effort: an
+// unreadable catalog returns nil, which warnChunkDrift treats as "say nothing".
+func (o *historianOutput) readChunkInterval(ctx context.Context, table string) *int64 {
+	var applied *int64
+	if err := o.pool.QueryRow(ctx, chunkIntervalSQL(), table).Scan(&applied); err != nil {
+		return nil
+	}
+	return applied
+}
+
+// warnChunkDrift warns when a table's chunk interval differs from config. create_hypertable is a
+// no-op once the table exists, so editing an interval and restarting otherwise has no visible effect.
+func (o *historianOutput) warnChunkDrift(ctx context.Context) {
+	appliedValue := o.readChunkInterval(ctx, "value_"+o.contract)
+	appliedAttribute := o.readChunkInterval(ctx, "attribute_"+o.contract)
+	for _, w := range chunkDriftWarnings(int64(o.valueChunk.Seconds()), appliedValue, int64(o.attributeChunk.Seconds()), appliedAttribute) {
+		o.logger.Warnf("TimescaleDB historian: %s. The chunk interval is set when the table is created and never re-applied, so a config change alone does not update it. Change it on the database with set_chunk_time_interval on umh.value_%s and umh.attribute_%s -- existing chunks keep the width they were created with -- then set the same value in this output's config to silence this warning.", w, o.contract, o.contract)
 	}
 }
 

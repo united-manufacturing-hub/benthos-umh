@@ -196,3 +196,23 @@ var _ = Describe("chunk interval config", func() {
 		Expect(err).To(MatchError(ContainSubstring("attribute_chunk_interval must be at least 1s")))
 	})
 })
+
+var _ = Describe("chunk interval drift warnings", func() {
+	const (
+		sevenDays = int64(7 * 24 * 60 * 60)
+		oneDay    = int64(24 * 60 * 60)
+	)
+	sec := func(v int64) *int64 { return &v } // nil = the applied interval could not be read
+
+	DescribeTable("flags drift between the configured and the applied chunk intervals",
+		func(valueWant int64, appliedValue *int64, attributeWant int64, appliedAttribute *int64, wantWarns int) {
+			Expect(tsh.ChunkDriftWarningsForTest(valueWant, appliedValue, attributeWant, appliedAttribute)).To(HaveLen(wantWarns))
+		},
+		Entry("quiet: neither interval is readable (not bootstrapped)", sevenDays, nil, sevenDays, nil, 0),
+		Entry("quiet: both intervals match", sevenDays, sec(sevenDays), sevenDays, sec(sevenDays), 0),
+		Entry("quiet: value matches and the attribute table is unreadable", sevenDays, sec(sevenDays), sevenDays, nil, 0),
+		Entry("warn: value_chunk_interval changed after the table was created", oneDay, sec(sevenDays), sevenDays, sec(sevenDays), 1),
+		Entry("warn: attribute_chunk_interval changed after the table was created", sevenDays, sec(sevenDays), oneDay, sec(sevenDays), 1),
+		Entry("warn: both changed", oneDay, sec(sevenDays), oneDay, sec(sevenDays), 2),
+	)
+})

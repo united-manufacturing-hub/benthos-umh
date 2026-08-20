@@ -382,6 +382,11 @@ func (h *HistorianTestHandle) ReportDropsForTest(total int, summaries map[string
 // assert what the configured values turn into (BootstrapSQLForTest renders fixed defaults instead).
 func (h *HistorianTestHandle) BootstrapStmt() string { return h.o.bootstrapStmt() }
 
+// ChunkDriftWarningsForTest exposes chunkDriftWarnings to the external test package.
+func ChunkDriftWarningsForTest(valueWant int64, appliedValue *int64, attributeWant int64, appliedAttribute *int64) []string {
+	return chunkDriftWarnings(valueWant, appliedValue, attributeWant, appliedAttribute)
+}
+
 // SetChunkIntervals overrides the chunk widths the bootstrap renders (integration tests).
 func (h *HistorianTestHandle) SetChunkIntervals(value time.Duration, attribute time.Duration) {
 	h.o.valueChunk = value

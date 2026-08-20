@@ -383,6 +383,29 @@ type bootstrapConfig struct {
 // The chunk interval needs no ledger gate: create_hypertable with if_not_exists => TRUE is a no-op
 // once the table is a hypertable, so a changed interval never retro-applies. Consequence: an edit
 // reaches an existing database only via set_chunk_time_interval, and only for new chunks.
+// chunkIntervalSQL reads the chunk width TimescaleDB has applied to a umh hypertable, in seconds,
+// as a scalar subquery so it always yields one row (NULL when the table is not a hypertable here).
+func chunkIntervalSQL() string {
+	return `SELECT (
+  SELECT EXTRACT(EPOCH FROM time_interval)::bigint
+    FROM timescaledb_information.dimensions
+   WHERE hypertable_schema = 'umh' AND hypertable_name = $1 AND column_name = 'ts'
+   LIMIT 1)`
+}
+
+// chunkDriftWarnings compares the configured chunk intervals against the ones the tables were
+// actually created with (in seconds; nil = unreadable, so no warning rather than a false one).
+func chunkDriftWarnings(valueWant int64, appliedValue *int64, attributeWant int64, appliedAttribute *int64) []string {
+	var warns []string
+	if appliedValue != nil && *appliedValue != valueWant {
+		warns = append(warns, fmt.Sprintf("configured value_chunk_interval (%ds) does not match the chunk interval the value hypertable was created with (%ds)", valueWant, *appliedValue))
+	}
+	if appliedAttribute != nil && *appliedAttribute != attributeWant {
+		warns = append(warns, fmt.Sprintf("configured attribute_chunk_interval (%ds) does not match the chunk interval the attribute hypertable was created with (%ds)", attributeWant, *appliedAttribute))
+	}
+	return warns
+}
+
 func bootstrapSQL(cfg bootstrapConfig) string {
 	s := bootstrapTemplate
 	s = strings.Replace(s, "VALUE_CHUNK_SLOT", intervalSQL(cfg.valueChunk), 1)

@@ -104,6 +104,26 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(h.AppliedChunkInterval(ctx, "attribute_chunky")).To(HaveValue(Equal(int64(2592000))))
 	})
 
+	It("warns on restart when the configured chunk interval no longer matches the table", func() {
+		first := tsh.NewHistorianTestHandle(sharedDSN, "chunkdrift")
+		first.SetChunkIntervals(168*time.Hour, 168*time.Hour)
+		Expect(first.Connect(ctx)).To(Succeed())
+		first.Close(ctx)
+
+		// create_hypertable is a no-op on the existing table, so the edited interval never applies:
+		// the warning is the only signal the operator gets.
+		restarted := tsh.NewHistorianTestHandle(sharedDSN, "chunkdrift")
+		restarted.SetChunkIntervals(24*time.Hour, 168*time.Hour)
+		logs := restarted.CaptureLogs()
+		Expect(restarted.Connect(ctx)).To(Succeed())
+		defer restarted.Close(ctx)
+
+		Expect(logs()).To(ContainSubstring("configured value_chunk_interval (86400s)"))
+		Expect(logs()).To(ContainSubstring("set_chunk_time_interval"))
+		Expect(logs()).NotTo(ContainSubstring("attribute_chunk_interval"))
+		Expect(restarted.AppliedChunkInterval(ctx, "value_chunkdrift")).To(HaveValue(Equal(int64(604800))))
+	})
+
 	It("bootstraps idempotently (Connect twice)", func() {
 		h := connected("pump")
 		defer h.Close(ctx)
