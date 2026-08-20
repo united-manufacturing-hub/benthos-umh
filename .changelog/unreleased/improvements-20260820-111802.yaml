@@ -1,3 +1,3 @@
 kind: improvements
-body: The historian output takes `value_chunk_interval` and `attribute_chunk_interval`, setting how wide a TimescaleDB chunk is for each of its two hypertables. Both default to 168h, the width the tables were previously fixed at. The interval applies when a table is created, so a later edit needs `set_chunk_time_interval` on the database; a restart warns when a configured interval no longer matches its table
+body: The historian output takes `value_chunk_interval` and `attribute_chunk_interval`, setting how wide a TimescaleDB chunk is for each of its two hypertables. Both default to 168h, the width the tables were previously fixed at. The interval applies when a table is created, so a later edit needs `set_chunk_time_interval` on the database; a restart warns when a configured interval no longer matches its table (ENG-5689)
 time: 2026-08-20T11:18:02.200235+02:00
