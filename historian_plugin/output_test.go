@@ -150,3 +150,49 @@ var _ = Describe("policy drift warnings", func() {
 		Entry("warn: retention removed from config but still applied", sevenDays, sec(sevenDays), nil, sec(thirtyDays), 1),
 	)
 })
+
+var _ = Describe("chunk interval config", func() {
+	const (
+		oneDay      = "INTERVAL '86400 seconds'"
+		sevenDays   = "INTERVAL '604800 seconds'"
+		thirtyDays  = "INTERVAL '2592000 seconds'"
+		valueTable  = "create_hypertable('umh.value_pump', 'ts', chunk_time_interval => "
+		attribTable = "create_hypertable('umh.attribute_pump', 'ts', chunk_time_interval => "
+	)
+
+	bootstrapFor := func(yaml string) string {
+		parsed, err := tsh.HistorianConfig().ParseYAML(yaml, service.NewEnvironment())
+		Expect(err).NotTo(HaveOccurred())
+		h, err := tsh.NewHistorianForConfig(parsed)
+		Expect(err).NotTo(HaveOccurred())
+		return h.BootstrapStmt()
+	}
+
+	It("defaults both hypertables to 7-day chunks", func() {
+		got := bootstrapFor("host: h\npassword: p\ndata_contract_name: pump\n")
+		Expect(got).To(ContainSubstring(valueTable + sevenDays))
+		Expect(got).To(ContainSubstring(attribTable + sevenDays))
+	})
+
+	It("renders each configured interval into its own hypertable", func() {
+		got := bootstrapFor("host: h\npassword: p\ndata_contract_name: pump\nvalue_chunk_interval: 24h\nattribute_chunk_interval: 720h\n")
+		Expect(got).To(ContainSubstring(valueTable + oneDay))
+		Expect(got).To(ContainSubstring(attribTable + thirtyDays))
+	})
+
+	It("rejects a sub-second value_chunk_interval (would render INTERVAL '0 seconds')", func() {
+		yaml := "host: h\npassword: p\ndata_contract_name: pump\nvalue_chunk_interval: 100ms\n"
+		parsed, err := tsh.HistorianConfig().ParseYAML(yaml, service.NewEnvironment())
+		Expect(err).NotTo(HaveOccurred())
+		_, err = tsh.NewHistorianForConfig(parsed)
+		Expect(err).To(MatchError(ContainSubstring("value_chunk_interval must be at least 1s")))
+	})
+
+	It("rejects a sub-second attribute_chunk_interval", func() {
+		yaml := "host: h\npassword: p\ndata_contract_name: pump\nattribute_chunk_interval: 0s\n"
+		parsed, err := tsh.HistorianConfig().ParseYAML(yaml, service.NewEnvironment())
+		Expect(err).NotTo(HaveOccurred())
+		_, err = tsh.NewHistorianForConfig(parsed)
+		Expect(err).To(MatchError(ContainSubstring("attribute_chunk_interval must be at least 1s")))
+	})
+})

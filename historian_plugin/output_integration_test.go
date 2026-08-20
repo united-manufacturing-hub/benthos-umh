@@ -94,6 +94,16 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		return h
 	}
 
+	It("creates each hypertable with its own configured chunk interval", func() {
+		h := tsh.NewHistorianTestHandle(sharedDSN, "chunky")
+		h.SetChunkIntervals(24*time.Hour, 720*time.Hour)
+		Expect(h.Connect(ctx)).To(Succeed())
+		defer h.Close(ctx)
+
+		Expect(h.AppliedChunkInterval(ctx, "value_chunky")).To(HaveValue(Equal(int64(86400))))
+		Expect(h.AppliedChunkInterval(ctx, "attribute_chunky")).To(HaveValue(Equal(int64(2592000))))
+	})
+
 	It("bootstraps idempotently (Connect twice)", func() {
 		h := connected("pump")
 		defer h.Close(ctx)

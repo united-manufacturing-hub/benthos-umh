@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS umh.value_CONTRACT_SLOT (
   CONSTRAINT ck_value_text_max_size
     CHECK (octet_length(value_text) <= 65536)
 );
-SELECT create_hypertable('umh.value_CONTRACT_SLOT', 'ts', chunk_time_interval => INTERVAL '7 days', if_not_exists => TRUE);
+SELECT create_hypertable('umh.value_CONTRACT_SLOT', 'ts', chunk_time_interval => VALUE_CHUNK_SLOT, if_not_exists => TRUE);
 VALUE_POLICY_SLOT
 CREATE TABLE IF NOT EXISTS umh.attribute_CONTRACT_SLOT (
   topic_id  BIGINT      NOT NULL,
@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS umh.attribute_CONTRACT_SLOT (
   attribute JSONB       NOT NULL,
   PRIMARY KEY (topic_id, ts)
 );
-SELECT create_hypertable('umh.attribute_CONTRACT_SLOT', 'ts', if_not_exists => TRUE);
+SELECT create_hypertable('umh.attribute_CONTRACT_SLOT', 'ts', chunk_time_interval => ATTRIBUTE_CHUNK_SLOT, if_not_exists => TRUE);
 ATTR_POLICY_SLOT
 CREATE OR REPLACE FUNCTION umh.to_ltree_path(p_location_path text)
 RETURNS ltree
@@ -318,10 +318,10 @@ BEGIN
       timescaledb.compress_segmentby = 'topic_id',
       timescaledb.compress_orderby   = 'ts DESC'
     );
-    PERFORM add_compression_policy('%[1]s', INTERVAL '%[2]d seconds');
-`, table, int64(compressAfter.Seconds()))
+    PERFORM add_compression_policy('%[1]s', %[2]s);
+`, table, intervalSQL(compressAfter))
 	if retentionSet {
-		fmt.Fprintf(&b, "    PERFORM add_retention_policy('%s', INTERVAL '%d seconds');\n", table, int64(retention.Seconds()))
+		fmt.Fprintf(&b, "    PERFORM add_retention_policy('%s', %s);\n", table, intervalSQL(retention))
 	}
 	b.WriteString("  END IF;\nEND $pol$;")
 	return b.String()
@@ -367,12 +367,30 @@ func policyDriftWarnings(compressWant int64, appliedComp *int64, retentionWant *
 	return warns
 }
 
-func bootstrapSQL(contract string, compressAfter time.Duration, retention time.Duration, retentionSet bool) string {
+func intervalSQL(d time.Duration) string {
+	return fmt.Sprintf("INTERVAL '%d seconds'", int64(d.Seconds()))
+}
+
+type bootstrapConfig struct {
+	contract       string
+	compressAfter  time.Duration
+	retention      time.Duration
+	retentionSet   bool
+	valueChunk     time.Duration
+	attributeChunk time.Duration
+}
+
+// The chunk interval needs no ledger gate: create_hypertable with if_not_exists => TRUE is a no-op
+// once the table is a hypertable, so a changed interval never retro-applies. Consequence: an edit
+// reaches an existing database only via set_chunk_time_interval, and only for new chunks.
+func bootstrapSQL(cfg bootstrapConfig) string {
 	s := bootstrapTemplate
-	s = strings.Replace(s, "VALUE_POLICY_SLOT", policyBlock("umh.value_CONTRACT_SLOT", compressAfter, retention, retentionSet), 1)
-	s = strings.Replace(s, "ATTR_POLICY_SLOT", policyBlock("umh.attribute_CONTRACT_SLOT", compressAfter, retention, retentionSet), 1)
+	s = strings.Replace(s, "VALUE_CHUNK_SLOT", intervalSQL(cfg.valueChunk), 1)
+	s = strings.Replace(s, "ATTRIBUTE_CHUNK_SLOT", intervalSQL(cfg.attributeChunk), 1)
+	s = strings.Replace(s, "VALUE_POLICY_SLOT", policyBlock("umh.value_CONTRACT_SLOT", cfg.compressAfter, cfg.retention, cfg.retentionSet), 1)
+	s = strings.Replace(s, "ATTR_POLICY_SLOT", policyBlock("umh.attribute_CONTRACT_SLOT", cfg.compressAfter, cfg.retention, cfg.retentionSet), 1)
 	s = strings.Replace(s, "MIGRATIONS_SLOT", migrationsBlock(), 1)
-	return sub(s, contract)
+	return sub(s, cfg.contract)
 }
 
 func valueQueryFor(contract string) string     { return sub(valueInsert, contract) }

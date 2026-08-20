@@ -32,7 +32,12 @@ func HistorianConfig() *service.ConfigSpec { return historianConfig() }
 
 // BootstrapSQLForTest renders the bootstrap DDL for a contract (default policies).
 func BootstrapSQLForTest(contract string) string {
-	return bootstrapSQL(contract, 168*time.Hour, 0, false)
+	return bootstrapSQL(bootstrapConfig{
+		contract:       contract,
+		compressAfter:  168 * time.Hour,
+		valueChunk:     168 * time.Hour,
+		attributeChunk: 168 * time.Hour,
+	})
 }
 
 // SchemaVersionForTest exposes the highest schema-migration version the bootstrap applies
@@ -146,6 +151,8 @@ func NewHistorianTestHandle(dsn string, contract string) *HistorianTestHandle {
 		contract:        contract,
 		metadataKeysAll: true,
 		compressAfter:   168 * time.Hour,
+		valueChunk:      168 * time.Hour,
+		attributeChunk:  168 * time.Hour,
 		maxInFlight:     8,
 		logger:          mgr.Logger(),
 		dropped:         mgr.Metrics().NewCounter("messages_dropped", "reason"),
@@ -369,4 +376,28 @@ func (h *HistorianTestHandle) ReportDropsForTest(total int, summaries map[string
 		m[DropReason(reason)] = dropSummary{count: s.Count, example: s.Example}
 	}
 	h.o.reportDrops(total, m)
+}
+
+// BootstrapStmt renders the bootstrap DDL from the output's own config, so a config-parse test can
+// assert what the configured values turn into (BootstrapSQLForTest renders fixed defaults instead).
+func (h *HistorianTestHandle) BootstrapStmt() string { return h.o.bootstrapStmt() }
+
+// SetChunkIntervals overrides the chunk widths the bootstrap renders (integration tests).
+func (h *HistorianTestHandle) SetChunkIntervals(value time.Duration, attribute time.Duration) {
+	h.o.valueChunk = value
+	h.o.attributeChunk = attribute
+}
+
+// AppliedChunkInterval reads the chunk width TimescaleDB has applied to one umh hypertable, in
+// seconds (nil when the table is not a hypertable here). It queries the catalog itself rather than
+// going through the output's own reader, so a test asserting the created width has an independent
+// oracle.
+func (h *HistorianTestHandle) AppliedChunkInterval(ctx context.Context, table string) *int64 {
+	ExpectWithOffset(1, h.o.pool).NotTo(BeNil(), "Connect must succeed before AppliedChunkInterval")
+	var applied *int64
+	err := h.o.pool.QueryRow(ctx,
+		"SELECT EXTRACT(EPOCH FROM time_interval)::bigint FROM timescaledb_information.dimensions WHERE hypertable_schema = 'umh' AND hypertable_name = $1 AND column_name = 'ts'",
+		table).Scan(&applied)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	return applied
 }
