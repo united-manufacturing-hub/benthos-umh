@@ -49,7 +49,7 @@ Run against physical Beckhoff PLCs with the deterministic test PLC program (`tc3
 
 **TwinCAT 3 (CX7000):**
 
-`ROUTE_USER`/`ROUTE_PASS` are optional (enable route-registration tests); `HOST_AMS` is optional (explicit local AMS to avoid conflicts).
+`TEST_ADS_TC3_ROUTE_USER`/`TEST_ADS_TC3_ROUTE_PASS` are optional (enable route-registration tests); `TEST_ADS_TC3_HOST_AMS` is optional (explicit local AMS to avoid conflicts).
 
 ```bash
 TEST_ADS_TC3_TARGET_IP="192.168.1.100" \
@@ -63,7 +63,7 @@ make test-ads
 
 **TwinCAT 2 (CX1020):**
 
-`ROUTE_USER`/`ROUTE_PASS` and `HOST_AMS` are optional (same as above).
+`TEST_ADS_TC2_ROUTE_USER`/`TEST_ADS_TC2_ROUTE_PASS` and `TEST_ADS_TC2_HOST_AMS` are optional (same as above).
 
 ```bash
 TEST_ADS_TC2_TARGET_IP="192.168.1.200" \
@@ -120,7 +120,7 @@ All variables are deterministic functions of `GVL_ProcessData.nMasterCycleCounte
 | Symbol | Type | Update Formula |
 |--------|------|----------------|
 | `nMasterCycleCounter` | ULINT | Increments every PLC cycle (10 ms) |
-| `sStatusMessage` | STRING | `"{prefix}_{(N/100/26)%1000:03d}_{chr(A + (N/100)%26)}"` every 100 cycles |
+| `sStatusMessage` | STRING | `"Machine_{(N/100/26)%1000:03d}_{chr(A + (N/100)%26)}"` every 100 cycles, e.g. `Machine_000_A` |
 | `eMachineState` | INT (enum) | `(N/100) % 6` → cycles through IDLE(0), STARTING(1), RUNNING(2), STOPPING(3), ERROR(4), MAINTENANCE(5) |
 | `fGlobalReal` | REAL | Copy of `PRG_Machine.fbTempSensor.stReading.fValue` |
 | `anCounters[0..4]` | ARRAY OF DINT | `anCounters[i] = DINT((N/100) * (i+1))` |
@@ -132,7 +132,7 @@ All variables are deterministic functions of `GVL_ProcessData.nMasterCycleCounte
 |--------|------|----------------|
 | `.nPartsProduced` | UDINT | `(N/100) * 2` |
 | `.nPartsRejected` | UDINT | `(N/100) / 10` |
-| `.fYieldPercent` | REAL | `100.0 - (rejected * 100.0 / produced)` |
+| `.fYieldPercent` | REAL | `100.0 - (rejected * 100.0 / produced)`, and `100.0` while `produced` is still 0 (N < 100) — see `ExpectedProductionYield` |
 | `.nBatchNumber` | UDINT | `(N/100) / 50` |
 
 #### GVL_ProcessData.stMachineStatus.stMotor1 (ST_Motor)
@@ -170,7 +170,7 @@ All variables are deterministic functions of `GVL_ProcessData.nMasterCycleCounte
 | `nWord` | WORD | `(N/100) % 65536` |
 | `fReal` | REAL | `((N/100) % 1000) * 0.1` (sawtooth 0.0–99.9) |
 | `bHeartbeat` | BOOL | `(N/50) % 2 = 1` (toggles every 50 cycles) |
-| `nFastInt` | INT | Fast-updating variant |
+| `nFastInt` | INT | Fast-updating counter; no formula verified against hardware, so the deterministic tests do not assert it |
 | `nFastDint` | DINT | `DINT(N)` (updates every cycle) |
 | `tTime` | TIME | Non-empty time value |
 | `dDate` | DATE | Non-empty date value |
