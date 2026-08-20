@@ -35,6 +35,8 @@ No JavaScript processor or hand-written `sql_raw` is needed.
 | `metadata_keys_exclude` | no | `[]` | Blacklist applied only when `metadata_keys_all=true`. Each entry is an exact key name or a trailing-`*` prefix (e.g. `opcua_*`); matches are dropped on top of the built-in exclusions. A bare `*` drops everything. Ignored in allowlist mode. |
 | `compress_after` | no | `168h` | Compress chunks older than this. **Applied once at first bootstrap** — changing it in the bridge afterward has no effect (see [Changing compression or retention](#changing-compression-or-retention)). |
 | `retention` | no | `""` | Drop chunks older than this; empty keeps data forever. **Applied once at first bootstrap** — changing it in the bridge afterward has no effect (see [Changing compression or retention](#changing-compression-or-retention)). |
+| `value_chunk_interval` | no | `168h` | Chunk width of `umh.value_<contract>`. **Applied once, when the table is created** — changing it in the bridge afterward has no effect (see [Changing the chunk interval](#changing-the-chunk-interval)). |
+| `attribute_chunk_interval` | no | `168h` | Chunk width of `umh.attribute_<contract>`. Attribute rows are written only when a tag's metadata changes, so this table is far sparser than the value table and rarely needs a different width. **Applied once, when the table is created.** |
 | `batching` | no | — | benthos batch policy (`count` / `period` / `byte_size`). The whole batch is written in one transaction, so larger batches raise throughput; e.g. `count: 1000`, `period: 1s`. |
 | `max_in_flight` | no | `8` | Batches written to the database concurrently. Throughput scales with this and with batch size (see Throughput below). |
 | `write_timeout` | no | `""` | Per-batch write timeout as a Go duration (e.g. `30s`). Empty/`0s` means no timeout (a write hung on a lock or half-open connection blocks until the context is cancelled). When set, a timed-out batch is held for retry (NACK), never dropped; set it above the largest expected batch commit time. |
@@ -357,6 +359,27 @@ not re-add it. Changing either policy takes effect immediately and never needs a
 After changing a policy on the database, set the **same** value in the bridge config too. The
 config value is still what a fresh bootstrap of a new database uses, and matching it silences the
 drift warning on restart.
+
+## Changing the chunk interval
+
+A hypertable is stored as chunks, each holding one time range of rows; `value_chunk_interval` and
+`attribute_chunk_interval` set how wide that range is. The width decides how much a time-filtered
+query can skip, and how coarsely compression and retention act, since both work on whole chunks.
+
+The interval reaches the database only when the table is created, and for the same reason the
+policies do: a config edit should not silently reorganize production history. On restart the bridge
+warns when a configured interval differs from the one its table was created with.
+
+To change it on an existing database, for a contract named `pump`:
+
+```sql
+SELECT set_chunk_time_interval('umh.value_pump', INTERVAL '1 day');
+SELECT set_chunk_time_interval('umh.attribute_pump', INTERVAL '7 days');
+```
+
+Only chunks created after the call use the new width; existing chunks keep the one they were created
+with. As with the policies, set the same value in the bridge config afterward — it is what a fresh
+bootstrap of a new database uses, and matching it silences the drift warning on restart.
 
 ## Quick example
 
