@@ -4361,7 +4361,6 @@ tag_processor:
 	})
 })
 
-
 var _ = Describe("VM Pooling Optimization", func() {
 	BeforeEach(func() {
 		testActivated := os.Getenv("TEST_TAG_PROCESSOR")
