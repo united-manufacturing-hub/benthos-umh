@@ -44,7 +44,7 @@ var _ = Describe("Acquire", func() {
 		Expect(err).NotTo(HaveOccurred())
 		defer b.Close()
 
-		Expect(a.Set(ctx, "k", "v")).To(Succeed())
+		Expect(a.Set(ctx, "k", cache.Payload{Value: "v", TimestampMs: 1})).To(Succeed())
 		v, ok := b.Get(ctx, "k")
 		Expect(ok).To(BeTrue())
 		Expect(v).To(Equal("v"))
@@ -64,7 +64,7 @@ var _ = Describe("Acquire", func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(a.Set(ctx, "k", "v")).To(Succeed())
+		Expect(a.Set(ctx, "k", cache.Payload{Value: "v", TimestampMs: 1})).To(Succeed())
 		Expect(a.Close()).To(Succeed())
 
 		v, ok := b.Get(ctx, "k")

@@ -21,10 +21,10 @@ import (
 	"time"
 )
 
-// Item wraps a cached value with an optional expiration timestamp.
 type Item struct {
-	Value      any
-	Expiration int64 // UnixNano; 0 means no expiration
+	Value       any
+	Expiration  int64 // UnixNano; 0 = no expiration
+	TimestampMs int64 // caller-supplied; used by Set to reject replays
 }
 
 // Expired returns true if the item has a set expiration that is in the past.
@@ -61,7 +61,8 @@ func NewMemoryStore(defaultExpiration time.Duration) *MemoryStore {
 	return m
 }
 
-func (m *MemoryStore) Set(_ context.Context, key string, value any) error {
+// Set drops the write silently when entry.TimestampMs is not strictly newer than the stored one.
+func (m *MemoryStore) Set(_ context.Context, key string, entry Payload) error {
 	if key == "" {
 		return fmt.Errorf("cache: key must not be empty")
 	}
@@ -71,9 +72,15 @@ func (m *MemoryStore) Set(_ context.Context, key string, value any) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if existing, ok := m.items[key]; ok && !existing.Expired() {
+		if entry.TimestampMs <= existing.TimestampMs {
+			return ErrOldTimestamp
+		}
+	}
 	m.items[key] = Item{
-		Value:      value,
-		Expiration: expiration,
+		Value:       entry.Value,
+		Expiration:  expiration,
+		TimestampMs: entry.TimestampMs,
 	}
 	return nil
 }

@@ -22,8 +22,6 @@ import (
 	"maps"
 	"math"
 	"math/big"
-	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -37,34 +35,24 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin/protobuf"
 )
 
-const (
-	// cacheStatsInterval controls how often the cache metrics are sampled.
-	cacheStatsInterval = 30 * time.Second
-
-	// DedupCacheKeyPrefix isolates dedup markers from user keys.
-	// Full Key: DedupCacheKeyPrefix + <dedupKey meta value>.
-	DedupCacheKeyPrefix = "__dedup__:"
-)
+// cacheStatsInterval controls how often the cache metrics are sampled.
+const cacheStatsInterval = 30 * time.Second
 
 // NodeREDJSProcessor defines the processor that wraps the JavaScript processor.
 type NodeREDJSProcessor struct {
-	program             *goja.Program
-	originalCode        string
-	vmpool              sync.Pool
-	logger              *service.Logger
-	cache               cache.Cache
-	dedupKey            string
-	dedupMissingWarned  bool
-	suppressCacheWrites bool
-	messagesProcessed   *service.MetricCounter
-	messagesDropped     *service.MetricCounter
-	vmPoolHits          *service.MetricCounter
-	vmPoolMisses        *service.MetricCounter
-	cacheKeys           *service.MetricGauge
-	cacheDiskBytes      *service.MetricGauge
-	cacheDedupSuppress  *service.MetricCounter
-	metricsCancel       context.CancelFunc
-	metricsWG           sync.WaitGroup
+	program           *goja.Program
+	originalCode      string
+	vmpool            sync.Pool
+	logger            *service.Logger
+	cache             cache.Cache
+	messagesProcessed *service.MetricCounter
+	messagesDropped   *service.MetricCounter
+	vmPoolHits        *service.MetricCounter
+	vmPoolMisses      *service.MetricCounter
+	cacheKeys         *service.MetricGauge
+	cacheDiskBytes    *service.MetricGauge
+	metricsCancel     context.CancelFunc
+	metricsWG         sync.WaitGroup
 }
 
 // NewNodeREDJSProcessor creates a new NodeREDJSProcessor instance.
@@ -76,18 +64,17 @@ func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service
 	}
 
 	processor := &NodeREDJSProcessor{
-		program:            program,
-		originalCode:       code,
-		vmpool:             sync.Pool{}, // No New function - Get() will return nil when pool is empty
-		logger:             logger,
-		cache:              c,
-		messagesProcessed:  metrics.NewCounter("messages_processed"),
-		messagesDropped:    metrics.NewCounter("messages_dropped", "reason"),
-		vmPoolHits:         metrics.NewCounter("vm_pool_hits"),
-		vmPoolMisses:       metrics.NewCounter("vm_pool_misses"),
-		cacheKeys:          metrics.NewGauge("cache_keys"),
-		cacheDiskBytes:     metrics.NewGauge("cache_disk_bytes"),
-		cacheDedupSuppress: metrics.NewCounter("cache_dedup_suppressed"),
+		program:           program,
+		originalCode:      code,
+		vmpool:            sync.Pool{}, // No New function - Get() will return nil when pool is empty
+		logger:            logger,
+		cache:             c,
+		messagesProcessed: metrics.NewCounter("messages_processed"),
+		messagesDropped:   metrics.NewCounter("messages_dropped", "reason"),
+		vmPoolHits:        metrics.NewCounter("vm_pool_hits"),
+		vmPoolMisses:      metrics.NewCounter("vm_pool_misses"),
+		cacheKeys:         metrics.NewGauge("cache_keys"),
+		cacheDiskBytes:    metrics.NewGauge("cache_disk_bytes"),
 	}
 
 	metricsCtx, cancel := context.WithCancel(context.Background())
@@ -359,13 +346,20 @@ func (u *NodeREDJSProcessor) setupConsole(vm *goja.Runtime) error {
 	return vm.Set("console", console)
 }
 
+// setupCache binds the store to the JS runtime; validation + timestamp gating live in the cache pkg.
 func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) error {
 	cacheObj := map[string]any{
-		"set": func(key string, value any) {
-			if u.suppressCacheWrites {
+		"set": func(key string, msg map[string]any) {
+			payload, err := cache.ParsePayload(msg)
+			if err != nil {
+				u.logger.Errorf("cache.set: %v (got %v)", err, msg)
 				return
 			}
-			err := u.cache.Set(ctx, key, value)
+			err = u.cache.Set(ctx, key, payload)
+			if errors.Is(err, cache.ErrOldTimestamp) {
+				u.logger.Warnf("cache.set: dropped stale write for key %q (timestamp_ms=%d not newer than stored)", key, payload.TimestampMs)
+				return
+			}
 			if err != nil {
 				u.logger.Errorf("cache.set failed: %v", err)
 			}
@@ -383,9 +377,6 @@ func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) e
 			return exists
 		},
 		"delete": func(key string) {
-			if u.suppressCacheWrites {
-				return
-			}
 			err := u.cache.Delete(ctx, key)
 			if err != nil {
 				u.logger.Errorf("cache.delete failed: %v", err)
@@ -547,42 +538,6 @@ func (u *NodeREDJSProcessor) cacheCommit(ctx context.Context) {
 	u.cache.Unlock()
 }
 
-// SetSuppressCacheWrites toggles whether cache.set/delete bindings silently drop
-// writes. Callers that own a batch scope (e.g. tag_processor) use this to gate
-// writes for retried messages.
-func (u *NodeREDJSProcessor) SetSuppressCacheWrites(v bool) {
-	u.suppressCacheWrites = v
-}
-
-// checkDedup returns true when the message's dedupKey value was seen before, so the
-// caller can suppress cache writes. New values are recorded here. Returns false when
-// dedupKey is unset or missing from meta (with a one-time warning).
-func (u *NodeREDJSProcessor) checkDedup(ctx context.Context, msg *service.Message) bool {
-	if u.dedupKey == "" {
-		return false
-	}
-	v, ok := msg.MetaGet(u.dedupKey)
-	if !ok || v == "" {
-		if !u.dedupMissingWarned {
-			u.logger.Warnf("cache.dedupKey %q missing on message; dedup skipped when the field is absent", u.dedupKey)
-			u.dedupMissingWarned = true
-		}
-		return false
-	}
-	cacheKey := DedupCacheKeyPrefix + v
-	_, seen := u.cache.Get(ctx, cacheKey)
-	if seen {
-		u.cacheDedupSuppress.Incr(1)
-		u.logger.Warnf("cache: suppressing writes for retried message (dedupKey=%q value=%q). If this fires often, investigate the upstream retry source.", u.dedupKey, v)
-		return true
-	}
-	err := u.cache.Set(ctx, cacheKey, true)
-	if err != nil {
-		u.logger.Errorf("cache.dedup record failed: %v", err)
-	}
-	return false
-}
-
 func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	err := u.cacheBegin(ctx)
 	if err != nil {
@@ -597,7 +552,6 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		if msg == nil {
 			continue
 		}
-		u.suppressCacheWrites = u.checkDedup(ctx, msg)
 
 		processedMsgs, dropped, reason, err := u.processSingleMessage(ctx, msg)
 		if err != nil {
@@ -809,9 +763,6 @@ return msg;`)).
 		service.NewDurationField("ttl").
 			Description("Time-to-live for cached entries. 0 (default) keeps entries until explicit delete or restart. Set a positive duration (e.g. '1h') to auto-expire entries N after the last write.").
 			Default("0s"),
-		service.NewStringField("dedupKey").
-			Description("Name of the message metadata field whose value identifies a message across retries (e.g. 'kafka_offset', 'opcua_source_timestamp', 'spb_sequence'). When set, the plugin remembers each seen value in the cache and skips cache writes when the same value arrives again — so retried messages don't double-write counters or state. Leave empty (default) to disable; a startup warning is logged when disabled.").
-			Default(""),
 	).
 		Description("Cache configuration for state across messages.").
 		Default(map[string]any{}).
@@ -843,12 +794,7 @@ func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (
 		return nil, fmt.Errorf("parse cache.ttl: %w", err)
 	}
 
-	dedupKey, err := conf.FieldString("cache", "dedupKey")
-	if err != nil {
-		return nil, fmt.Errorf("parse cache.dedupKey: %w", err)
-	}
-
-	store, err := openCacheStore(backend, cacheName, path, ttl)
+	store, err := cache.New(backend, cacheName, path, ttl)
 	if err != nil {
 		return nil, err
 	}
@@ -865,55 +811,7 @@ func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (
 		_ = store.Close()
 		return nil, err
 	}
-	processor.dedupKey = dedupKey
-	if dedupKey == "" {
-		mgr.Logger().Warnf("cache.dedupKey not set — retried messages will re-run cache writes. Set cache.dedupKey to a per-message identifier (e.g. kafka_offset) to skip already-processed messages.")
-	}
 	return processor, nil
-}
-
-func openCacheStore(backend string, name string, path string, ttl time.Duration) (cache.Cache, error) {
-	switch backend {
-	case "memory":
-		if name == "" {
-			return cache.NewMemoryStore(ttl), nil
-		}
-		return cache.Acquire("mem:"+name, func() (cache.Cache, error) {
-			return cache.NewMemoryStore(ttl), nil
-		})
-	case "persistent":
-		var absPath string
-		if path != "" {
-			expanded := path
-			if strings.HasPrefix(expanded, "~") {
-				home, err := os.UserHomeDir()
-				if err != nil {
-					return nil, fmt.Errorf("expand cache.path %q: %w", path, err)
-				}
-				expanded = filepath.Join(home, expanded[1:])
-			}
-			abs, err := filepath.Abs(expanded)
-			if err != nil {
-				return nil, fmt.Errorf("resolve cache.path %q: %w", path, err)
-			}
-			absPath = abs
-		}
-		key := "bbolt:name:" + name
-		if name == "" {
-			if absPath == "" {
-				return nil, fmt.Errorf("cache.path is required when cache.name is empty")
-			}
-			key = "bbolt:path:" + absPath
-		}
-		return cache.Acquire(key, func() (cache.Cache, error) {
-			if absPath == "" {
-				return nil, fmt.Errorf("cache %q has not been opened yet; the first processor that uses this name must define cache.path", name)
-			}
-			return cache.NewBboltStore(absPath, ttl)
-		})
-	default:
-		return nil, fmt.Errorf("unsupported cache.backend %q (want 'memory' or 'persistent')", backend)
-	}
 }
 
 func init() {

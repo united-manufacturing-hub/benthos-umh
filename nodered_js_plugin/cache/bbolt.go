@@ -89,7 +89,7 @@ func NewBboltStore(path string, defaultExpiration time.Duration) (*BboltStore, e
 	return s, nil
 }
 
-func (b *BboltStore) Set(ctx context.Context, key string, value any) error {
+func (b *BboltStore) Set(ctx context.Context, key string, payload Payload) error {
 	err := ctx.Err()
 	if err != nil {
 		return err
@@ -98,12 +98,28 @@ func (b *BboltStore) Set(ctx context.Context, key string, value any) error {
 		return fmt.Errorf("cache: key must not be empty")
 	}
 
+	raw := b.readRaw(key)
+	if raw != nil {
+		var existing Item
+		unmarshalErr := json.Unmarshal(raw, &existing)
+		if unmarshalErr == nil && !existing.Expired() {
+			if payload.TimestampMs <= existing.TimestampMs {
+				return ErrOldTimestamp
+			}
+		}
+	}
+
 	var expiration int64
 	if b.defaultExpiration > 0 {
 		expiration = time.Now().Add(b.defaultExpiration).UnixNano()
 	}
 
-	data, err := json.Marshal(Item{Value: value, Expiration: expiration})
+	data, err := json.Marshal(
+		Item{
+			Value:       payload.Value,
+			Expiration:  expiration,
+			TimestampMs: payload.TimestampMs,
+		})
 	if err != nil {
 		return fmt.Errorf("cache: encode value: %w", err)
 	}

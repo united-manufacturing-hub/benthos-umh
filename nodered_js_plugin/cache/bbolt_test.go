@@ -17,8 +17,6 @@ package cache_test
 import (
 	"context"
 	"path/filepath"
-	"sync"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -26,7 +24,9 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin/cache"
 )
 
-var _ = Describe("BboltStore", func() {
+// Bbolt-only specs. Interface-level behavior (Set/Get/Delete, timestamp gating,
+// expiration, empty-key errors) is exercised for both stores in cache_test.go.
+var _ = Describe("BboltStore bbolt-specific", func() {
 	var (
 		store *cache.BboltStore
 		path  string
@@ -47,67 +47,10 @@ var _ = Describe("BboltStore", func() {
 		}
 	})
 
-	DescribeTable(
-		"Set then Get round-trips for JSON-compatible types",
-		func(key string, value any, matcher OmegaMatcher) {
-			Expect(store.Set(ctx, key, value)).To(Succeed())
-			v, ok := store.Get(ctx, key)
-			Expect(ok).To(BeTrue())
-			Expect(v).To(matcher)
-		},
-		Entry("string", "s", "hello", Equal("hello")),
-		Entry("number", "n", float64(42), Equal(float64(42))),
-		Entry("boolean true", "b", true, BeTrue()),
-		Entry("boolean false", "b2", false, BeFalse()),
-		Entry("map", "obj", map[string]any{"foo": "bar"}, Equal(map[string]any{"foo": "bar"})),
-		Entry("nested", "nest", map[string]any{"k": []any{float64(1), float64(2)}},
-			Equal(map[string]any{"k": []any{float64(1), float64(2)}})),
-		Entry("explicit nil", "null", nil, BeNil()),
-	)
-
-	DescribeTable(
-		"rejects invalid arguments",
-		func(call func(*cache.BboltStore) error, substr string) {
-			err := call(store)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring(substr))
-		},
-		Entry("Set with empty key",
-			func(s *cache.BboltStore) error { return s.Set(context.Background(), "", "v") },
-			"key must not be empty"),
-		Entry("Delete with empty key",
-			func(s *cache.BboltStore) error { return s.Delete(context.Background(), "") },
-			"key must not be empty"),
-	)
-
 	It("empty path errors on NewBboltStore", func() {
 		_, err := cache.NewBboltStore("", 0)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("path must not be empty"))
-	})
-
-	It("Get on missing key returns false", func() {
-		_, ok := store.Get(ctx, "missing")
-		Expect(ok).To(BeFalse())
-	})
-
-	It("overwrites an existing key", func() {
-		Expect(store.Set(ctx, "k", "first")).To(Succeed())
-		Expect(store.Set(ctx, "k", "second")).To(Succeed())
-		v, ok := store.Get(ctx, "k")
-		Expect(ok).To(BeTrue())
-		Expect(v).To(Equal("second"))
-	})
-
-	It("Delete removes key", func() {
-		Expect(store.Set(ctx, "k", "v")).To(Succeed())
-		Expect(store.Delete(ctx, "k")).To(Succeed())
-		_, ok := store.Get(ctx, "k")
-		Expect(ok).To(BeFalse())
-	})
-
-	It("Delete missing key is a no-op", func() {
-		Expect(store.Delete(ctx, "nope")).To(Succeed())
 	})
 
 	Describe("file lock", func() {
@@ -128,7 +71,7 @@ var _ = Describe("BboltStore", func() {
 	})
 
 	It("persists across close + reopen", func() {
-		Expect(store.Set(ctx, "k", "persisted")).To(Succeed())
+		Expect(store.Set(ctx, "k", cache.Payload{Value: "persisted", TimestampMs: 1})).To(Succeed())
 		Expect(store.Close()).To(Succeed())
 		store = nil
 
@@ -148,26 +91,7 @@ var _ = Describe("BboltStore", func() {
 		store = nil
 	})
 
-	It("does not panic under parallel writers and readers", func() {
-		const goroutines = 50
-		var wg sync.WaitGroup
-		wg.Add(goroutines * 2)
-
-		for range goroutines {
-			go func() {
-				defer wg.Done()
-				_ = store.Set(ctx, "shared", 1)
-			}()
-			go func() {
-				defer wg.Done()
-				store.Get(ctx, "shared")
-			}()
-		}
-		wg.Wait()
-	})
-
-	DescribeTable(
-		"ctx cancellation",
+	DescribeTable("ctx cancellation",
 		func(call func(*cache.BboltStore, context.Context) (any, bool, error), wantErr error, wantOk bool) {
 			cancelled, cancel := context.WithCancel(context.Background())
 			cancel()
@@ -182,7 +106,7 @@ var _ = Describe("BboltStore", func() {
 		},
 		Entry("Set returns ctx.Err",
 			func(s *cache.BboltStore, c context.Context) (any, bool, error) {
-				return nil, false, s.Set(c, "k", "v")
+				return nil, false, s.Set(c, "k", cache.Payload{Value: "v", TimestampMs: 1})
 			},
 			context.Canceled, false),
 		Entry("Delete returns ctx.Err",
@@ -196,31 +120,5 @@ var _ = Describe("BboltStore", func() {
 				return v, ok, nil
 			},
 			nil, false),
-	)
-
-	DescribeTable(
-		"expiration",
-		func(expiration time.Duration, sleep time.Duration, wantOk bool) {
-			Expect(store.Close()).To(Succeed())
-			store = nil
-
-			expStore, err := cache.NewBboltStore(path, expiration)
-			Expect(err).NotTo(HaveOccurred())
-			defer expStore.Close()
-
-			Expect(expStore.Set(ctx, "k", "v")).To(Succeed())
-			if sleep > 0 {
-				time.Sleep(sleep)
-			}
-
-			_, ok := expStore.Get(ctx, "k")
-			Expect(ok).To(Equal(wantOk))
-		},
-		Entry("expires after the configured duration",
-			50*time.Millisecond, 100*time.Millisecond, false),
-		Entry("survives within the configured duration",
-			500*time.Millisecond, 10*time.Millisecond, true),
-		Entry("0 expiration never expires",
-			time.Duration(0), 50*time.Millisecond, true),
 	)
 })
