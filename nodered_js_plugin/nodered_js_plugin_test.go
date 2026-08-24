@@ -1994,6 +1994,116 @@ nodered_js:
 	})
 })
 
+var _ = Describe("NodeREDJS cache binding (JS side)", func() {
+	BeforeEach(func() {
+		if os.Getenv("TEST_NODERED_JS") == "" {
+			Skip("Skipping Node-RED JS tests: TEST_NODERED_JS not set")
+		}
+	})
+
+	// buildCacheStream builds a nodered_js pipeline running the given JS code
+	// under a fresh named cache. Returns a handler, the collected output
+	// messages, and a cancel func for the stream.
+	buildCacheStream := func(code string) (service.MessageHandlerFunc, *[]*service.Message, context.CancelFunc) {
+		builder := service.NewStreamBuilder()
+		handler, err := builder.AddProducerFunc()
+		Expect(err).NotTo(HaveOccurred())
+
+		indented := ""
+		for _, line := range strings.Split(code, "\n") {
+			if line != "" {
+				indented += "    " + line + "\n"
+			} else {
+				indented += "\n"
+			}
+		}
+		yaml := fmt.Sprintf("nodered_js:\n  cache:\n    name: %q\n  code: |\n%s",
+			fmt.Sprintf("bind-%d", time.Now().UnixNano()), indented)
+		Expect(builder.AddProcessorYAML(yaml)).To(Succeed())
+
+		var msgs []*service.Message
+		Expect(builder.AddConsumerFunc(func(_ context.Context, m *service.Message) error {
+			msgs = append(msgs, m)
+			return nil
+		})).To(Succeed())
+
+		stream, err := builder.Build()
+		Expect(err).NotTo(HaveOccurred())
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		go func() { _ = stream.Run(ctx) }()
+		return handler, &msgs, cancel
+	}
+
+	newBytesMsg := func(payload string) *service.Message {
+		return service.NewMessage([]byte(payload))
+	}
+
+	It("happy path: cache.set({value, timestamp_ms}) then cache.get returns value", func() {
+		handler, msgs, cancel := buildCacheStream(`
+cache.set("k", { value: 42, timestamp_ms: 1000 });
+msg.payload = cache.get("k");
+return msg;
+`)
+		defer cancel()
+
+		Expect(handler(context.Background(), newBytesMsg("ignored"))).To(Succeed())
+		Eventually(func() int { return len(*msgs) }).Should(Equal(1))
+
+		v, err := (*msgs)[0].AsStructured()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(v).To(BeNumerically("==", 42))
+	})
+
+	It("missing value: cache.set drops the write, cache stays empty", func() {
+		handler, msgs, cancel := buildCacheStream(`
+cache.set("k", { timestamp_ms: 1000 });
+msg.payload = cache.exists("k") ? "present" : "absent";
+return msg;
+`)
+		defer cancel()
+
+		Expect(handler(context.Background(), newBytesMsg("ignored"))).To(Succeed())
+		Eventually(func() int { return len(*msgs) }).Should(Equal(1))
+
+		v, err := (*msgs)[0].AsStructured()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(v).To(Equal("absent"))
+	})
+
+	It("missing timestamp_ms: cache.set drops the write, cache stays empty", func() {
+		handler, msgs, cancel := buildCacheStream(`
+cache.set("k", { value: "hello" });
+msg.payload = cache.exists("k") ? "present" : "absent";
+return msg;
+`)
+		defer cancel()
+
+		Expect(handler(context.Background(), newBytesMsg("ignored"))).To(Succeed())
+		Eventually(func() int { return len(*msgs) }).Should(Equal(1))
+
+		v, err := (*msgs)[0].AsStructured()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(v).To(Equal("absent"))
+	})
+
+	It("older timestamp: second write is dropped, cache keeps first value", func() {
+		handler, msgs, cancel := buildCacheStream(`
+cache.set("k", { value: "first",  timestamp_ms: 1000 });
+cache.set("k", { value: "second", timestamp_ms: 500 });
+msg.payload = cache.get("k");
+return msg;
+`)
+		defer cancel()
+
+		Expect(handler(context.Background(), newBytesMsg("ignored"))).To(Succeed())
+		Eventually(func() int { return len(*msgs) }).Should(Equal(1))
+
+		v, err := (*msgs)[0].AsStructured()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(v).To(Equal("first"))
+	})
+})
 
 // counterCaptureMetrics is a service.MetricsExporter that aggregates integer
 // counter increments by counter name and label values. It is the only public
