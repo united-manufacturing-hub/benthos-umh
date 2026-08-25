@@ -30,7 +30,7 @@ var adsConf = service.NewConfigSpec().
 	Description("This input plugin enables Benthos to read data directly from Beckhoff PLCs using the ADS protocol. " +
 		"Configure the plugin by specifying the PLC's IP address, runtime port, target AMS net ID, and symbols to read.").
 	Field(service.NewStringField("targetAddress").Description("IP address (and optional port) of the PLC's ADS gateway, as 'ip' or 'ip:port'. Port defaults to 48898.").Examples("192.168.1.100", "192.168.1.100:48898")).
-	Field(service.NewStringField("targetAMS").Description("AMS net ID of the target PLC runtime (e.g. '192.168.1.100.1.1').")).
+	Field(service.NewStringField("targetAMS").Description("AMS net ID of the target PLC runtime (e.g. '5.66.133.203.1.1'). Leave empty to ask the PLC for its own NetID on connect. When set, it is checked against what the PLC reports and a mismatch is logged as a warning — not an error, because pointing at a router whose target sits behind it is legitimate.").Default("").Examples("", "5.66.133.203.1.1")).
 	Field(service.NewIntField("runtimePort").Description("ADS runtime port. TwinCAT 3: 851, TwinCAT 2: 801.").Default(851).Advanced().Examples(851, 801)).
 	Field(service.NewStringField("hostAMS").Description("Local AMS net ID sent in ADS requests. 'auto' derives it from the outbound TCP source IP (or hostIP when set).").Default("auto").Advanced().Examples("auto")).
 	Field(service.NewIntField("hostPort").Description("AMS source port in protocol headers. 0 uses a random port per session (recommended). Set fixed only in firewalled environments.").Default(0).Advanced().Examples(0, 10500)).
