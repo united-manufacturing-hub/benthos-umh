@@ -69,10 +69,9 @@ func (f *fakeClient) AddNotifications(_ context.Context, cfgs []NotifyConfig, _ 
 }
 
 func (f *fakeClient) ReadMultipleSymbols(_ context.Context, _ []string) (map[string]string, error) {
-	if f.multiErr != nil {
-		return nil, f.multiErr
-	}
-	return f.multiValues, nil
+	// Mirrors the real adapter since go-ads v2.3.0: a partial batch returns the
+	// values that succeeded *and* an error naming the ones that did not.
+	return f.multiValues, f.multiErr
 }
 
 func (f *fakeClient) ReadFromSymbol(_ context.Context, name string) (string, error) {
@@ -1040,5 +1039,81 @@ var _ = Describe("finishConnect ordering", func() {
 
 		Expect(client.callOrder).To(Equal([]string{"LoadSymbols", "GetSymbol"}))
 		Expect(a.Symbols[0].BaseType).To(Equal("DINT"))
+	})
+})
+
+var _ = Describe("Partial batch reads", func() {
+	// go-ads v2.3.0 reports a partial batch as an error while still returning
+	// every value that succeeded. Treating that as a failed poll would discard
+	// good data on every read because one symbol name was wrong.
+	newInput := func(client *fakeClient) *AdsCommInput {
+		return &AdsCommInput{
+			Log:    service.MockResources().Logger(),
+			client: client,
+			Symbols: []PlcSymbol{
+				{Name: "MAIN.ok1", DataType: "DINT", BaseType: "DINT"},
+				{Name: "MAIN.ok2", DataType: "DINT", BaseType: "DINT"},
+				{Name: "MAIN.missing", DataType: "DINT", BaseType: "DINT"},
+			},
+		}
+	}
+	partial := func() (*fakeClient, *BatchReadError) {
+		err := &BatchReadError{
+			Requested: 3,
+			Failed:    []NotifyResult{{SymbolName: "MAIN.missing", Code: 0x710}},
+		}
+		return &fakeClient{
+			multiValues: map[string]string{"MAIN.ok1": "1", "MAIN.ok2": "2"},
+			multiErr:    err,
+		}, err
+	}
+
+	It("emits the symbols that succeeded instead of dropping the batch", func() {
+		client, _ := partial()
+		a := newInput(client)
+
+		msgs, _, err := a.ReadBatchPull(context.Background())
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(msgs).To(HaveLen(2))
+		names := []string{}
+		for _, m := range msgs {
+			n, _ := m.MetaGet("ads_symbol_name")
+			names = append(names, n)
+		}
+		Expect(names).To(ConsistOf("MAIN_ok1", "MAIN_ok2"))
+	})
+
+	It("does not fall back to individual reads when some symbols succeeded", func() {
+		client, _ := partial()
+		a := newInput(client)
+
+		_, _, err := a.ReadBatchPull(context.Background())
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(client.readFromSymbolCalls).To(BeZero())
+	})
+
+	It("names each failed symbol once per session, not once per poll", func() {
+		client, _ := partial()
+		a := newInput(client)
+
+		for i := 0; i < 3; i++ {
+			_, _, err := a.ReadBatchPull(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		Expect(a.warnedBatchFailures).To(HaveLen(1))
+		Expect(a.warnedBatchFailures).To(HaveKey("MAIN.missing"))
+	})
+
+	It("still treats a whole-batch failure as a failed poll", func() {
+		client := &fakeClient{multiErr: errors.New("transport down")}
+		a := newInput(client)
+
+		msgs, _, err := a.ReadBatchPull(context.Background())
+
+		Expect(err).NotTo(HaveOccurred()) // transient: empty batch, caller retries
+		Expect(msgs).To(BeEmpty())
 	})
 })
