@@ -16,7 +16,6 @@ package cache
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,36 +23,24 @@ import (
 	"time"
 )
 
-// ErrOldTimestamp is when the incoming TimestampMs is not strictly newer than the stored one.
-var ErrOldTimestamp = errors.New("dropped write with timestamp older/equal to stored")
-
-// ErrMissingValue is when the passed msg has no "value" field.
-var ErrMissingValue = errors.New("msg is missing the 'value' field")
-
-// ErrMissingTimestamp is when the passed msg has no "timestamp_ms" field.
-var ErrMissingTimestamp = errors.New("msg is missing the 'timestamp_ms' field")
-
-// ErrTimestampNotNumeric is when msg.timestamp_ms is not a number.
-var ErrTimestampNotNumeric = errors.New("msg.timestamp_ms must be numeric (unix milliseconds)")
-
 // Stats reports the current size of a Cache.
 type Stats struct {
 	Keys      int64
 	DiskBytes int64
 }
 
-// Payload carries TimestampMs so Set can drop replayed / out-of-order writes.
+// Payload carries Watermark so Set can drop replayed / out-of-order writes.
 type Payload struct {
-	Value       any
-	TimestampMs int64
+	Value     any
+	Watermark int64
 }
 
 // Cache is used as the caching interface for nodered_js.
 type Cache interface {
-	// Set writes payload only when payload.TimestampMs is strictly newer than the stored one.
+	// Set writes payload only when payload.Watermark is strictly newer than the stored one.
 	Set(ctx context.Context, key string, payload Payload) error
-	// Get returns the stored value and whether the key exists.
-	Get(ctx context.Context, key string) (any, bool)
+	// Get returns the stored Payload (value + watermark) and whether the key exists.
+	Get(ctx context.Context, key string) (Payload, bool)
 	// Delete removes the entry for key. No-op when key does not exist.
 	Delete(ctx context.Context, key string) error
 	// Lock holds a per-cache mutex across a multi-step operation.

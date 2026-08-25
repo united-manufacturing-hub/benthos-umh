@@ -44,10 +44,10 @@ var _ = Describe("Acquire", func() {
 		Expect(err).NotTo(HaveOccurred())
 		defer b.Close()
 
-		Expect(a.Set(ctx, "k", cache.Payload{Value: "v", TimestampMs: 1})).To(Succeed())
+		Expect(a.Set(ctx, "k", cache.Payload{Value: "v", Watermark: 1})).To(Succeed())
 		v, ok := b.Get(ctx, "k")
 		Expect(ok).To(BeTrue())
-		Expect(v).To(Equal("v"))
+		Expect(v.Value).To(Equal("v"))
 	})
 
 	It("only closes the underlying store on the last release", func() {
@@ -64,12 +64,12 @@ var _ = Describe("Acquire", func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(a.Set(ctx, "k", cache.Payload{Value: "v", TimestampMs: 1})).To(Succeed())
+		Expect(a.Set(ctx, "k", cache.Payload{Value: "v", Watermark: 1})).To(Succeed())
 		Expect(a.Close()).To(Succeed())
 
 		v, ok := b.Get(ctx, "k")
 		Expect(ok).To(BeTrue(), "underlying store closed too early")
-		Expect(v).To(Equal("v"))
+		Expect(v.Value).To(Equal("v"))
 
 		Expect(b.Close()).To(Succeed())
 	})

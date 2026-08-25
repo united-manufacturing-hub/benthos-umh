@@ -22,9 +22,9 @@ import (
 )
 
 type Item struct {
-	Value       any
-	Expiration  int64 // UnixNano; 0 = no expiration
-	TimestampMs int64 // caller-supplied; used by Set to reject replays
+	Value      any   `json:"value"`
+	Expiration int64 `json:"expiration"` // UnixNano; 0 = no expiration
+	Watermark  int64 `json:"watermark"`  // caller-supplied; used by Set to reject replays
 }
 
 // Expired returns true if the item has a set expiration that is in the past.
@@ -61,7 +61,7 @@ func NewMemoryStore(defaultExpiration time.Duration) *MemoryStore {
 	return m
 }
 
-// Set drops the write silently when entry.TimestampMs is not strictly newer than the stored one.
+// Set drops the write silently when entry.Watermark is not strictly newer than the stored one.
 func (m *MemoryStore) Set(_ context.Context, key string, entry Payload) error {
 	if key == "" {
 		return fmt.Errorf("cache: key must not be empty")
@@ -73,29 +73,29 @@ func (m *MemoryStore) Set(_ context.Context, key string, entry Payload) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if existing, ok := m.items[key]; ok && !existing.Expired() {
-		if entry.TimestampMs <= existing.TimestampMs {
-			return ErrOldTimestamp
+		if entry.Watermark <= existing.Watermark {
+			return &StaleWriteError{Key: key, Incoming: entry.Watermark, Stored: existing.Watermark}
 		}
 	}
 	m.items[key] = Item{
-		Value:       entry.Value,
-		Expiration:  expiration,
-		TimestampMs: entry.TimestampMs,
+		Value:      entry.Value,
+		Expiration: expiration,
+		Watermark:  entry.Watermark,
 	}
 	return nil
 }
 
-func (m *MemoryStore) Get(_ context.Context, key string) (any, bool) {
+func (m *MemoryStore) Get(_ context.Context, key string) (Payload, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	item, ok := m.items[key]
 	if !ok {
-		return nil, false
+		return Payload{}, false
 	}
 	if item.Expired() {
-		return nil, false
+		return Payload{}, false
 	}
-	return item.Value, true
+	return Payload{Value: item.Value, Watermark: item.Watermark}, true
 }
 
 func (m *MemoryStore) Delete(_ context.Context, key string) error {

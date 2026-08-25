@@ -334,7 +334,8 @@ func (p *TagProcessor) beginBatch(ctx context.Context) error {
 	return nil
 }
 
-// endBatch commits the batch tx and releases the mutex under one defer.
+// endBatch always commits: per-message JS errors already dropped via RecordDrop,
+// and cache writes for other successful messages in the same batch must not be lost.
 func (p *TagProcessor) endBatch(ctx context.Context) {
 	err := p.cache.Commit(ctx)
 	if err != nil {

@@ -71,7 +71,7 @@ var _ = Describe("BboltStore bbolt-specific", func() {
 	})
 
 	It("persists across close + reopen", func() {
-		Expect(store.Set(ctx, "k", cache.Payload{Value: "persisted", TimestampMs: 1})).To(Succeed())
+		Expect(store.Set(ctx, "k", cache.Payload{Value: "persisted", Watermark: 1})).To(Succeed())
 		Expect(store.Close()).To(Succeed())
 		store = nil
 
@@ -81,7 +81,7 @@ var _ = Describe("BboltStore bbolt-specific", func() {
 
 		v, ok := reopened.Get(ctx, "k")
 		Expect(ok).To(BeTrue())
-		Expect(v).To(Equal("persisted"))
+		Expect(v.Value).To(Equal("persisted"))
 	})
 
 	It("Close is idempotent", func() {
@@ -106,7 +106,7 @@ var _ = Describe("BboltStore bbolt-specific", func() {
 		},
 		Entry("Set returns ctx.Err",
 			func(s *cache.BboltStore, c context.Context) (any, bool, error) {
-				return nil, false, s.Set(c, "k", cache.Payload{Value: "v", TimestampMs: 1})
+				return nil, false, s.Set(c, "k", cache.Payload{Value: "v", Watermark: 1})
 			},
 			context.Canceled, false),
 		Entry("Delete returns ctx.Err",
@@ -114,10 +114,10 @@ var _ = Describe("BboltStore bbolt-specific", func() {
 				return nil, false, s.Delete(c, "k")
 			},
 			context.Canceled, false),
-		Entry("Get returns (nil,false) with no error",
+		Entry("Get returns (Payload{},false) with no error",
 			func(s *cache.BboltStore, c context.Context) (any, bool, error) {
 				v, ok := s.Get(c, "k")
-				return v, ok, nil
+				return v.Value, ok, nil
 			},
 			nil, false),
 	)

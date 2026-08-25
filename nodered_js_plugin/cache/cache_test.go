@@ -60,9 +60,9 @@ func newFactories() []storeFactory {
 	}
 }
 
-// payload builds a Payload with a fixed TimestampMs for round-trip specs where timing is not the point.
+// payload builds a Payload with a fixed Watermark for round-trip specs where timing is not the point.
 func payload(v any, ts int64) cache.Payload {
-	return cache.Payload{Value: v, TimestampMs: ts}
+	return cache.Payload{Value: v, Watermark: ts}
 }
 
 var _ = Describe("Cache interface", func() {
@@ -78,10 +78,11 @@ var _ = Describe("Cache interface", func() {
 			})
 
 			Describe("Get on missing key", func() {
-				It("returns (nil, false)", func() {
+				It("returns (Payload{}, false)", func() {
 					v, ok := store.Get(ctx, "missing")
 					Expect(ok).To(BeFalse())
-					Expect(v).To(BeNil())
+					Expect(v.Value).To(BeNil())
+					Expect(v.Watermark).To(Equal(int64(0)))
 				})
 			})
 
@@ -90,7 +91,8 @@ var _ = Describe("Cache interface", func() {
 					Expect(store.Set(ctx, key, payload(value, 1))).To(Succeed())
 					v, ok := store.Get(ctx, key)
 					Expect(ok).To(BeTrue())
-					Expect(v).To(matcher)
+					Expect(v.Value).To(matcher)
+					Expect(v.Watermark).To(Equal(int64(1)))
 				},
 				Entry("string", "s", "hello", Equal("hello")),
 				Entry("boolean true", "b1", true, BeTrue()),
@@ -103,7 +105,7 @@ var _ = Describe("Cache interface", func() {
 				Expect(store.Set(ctx, "n", payload(42, 1))).To(Succeed())
 				v, ok := store.Get(ctx, "n")
 				Expect(ok).To(BeTrue())
-				Expect(toInt(v)).To(Equal(int64(42)))
+				Expect(toInt(v.Value)).To(Equal(int64(42)))
 			})
 
 			It("Delete removes a key", func() {
@@ -156,25 +158,32 @@ var _ = Describe("Cache interface", func() {
 					}
 					v, ok := store.Get(ctx, "k")
 					Expect(ok).To(BeTrue())
-					Expect(toInt(v)).To(Equal(int64(4)))
+					Expect(toInt(v.Value)).To(Equal(int64(4)))
+					Expect(v.Watermark).To(Equal(int64(103)))
 				})
 
-				It("drops an older-timestamp write with ErrOldTimestamp", func() {
+				It("drops an older-timestamp write with ErrOldWatermark", func() {
 					Expect(store.Set(ctx, "k", payload("newer", 200))).To(Succeed())
 					err := store.Set(ctx, "k", payload("older", 150))
-					Expect(err).To(MatchError(cache.ErrOldTimestamp))
+					Expect(err).To(MatchError(cache.ErrOldWatermark))
+					var stale *cache.StaleWriteError
+					Expect(errors.As(err, &stale)).To(BeTrue())
+					Expect(stale.Key).To(Equal("k"))
+					Expect(stale.Incoming).To(Equal(int64(150)))
+					Expect(stale.Stored).To(Equal(int64(200)))
 					v, ok := store.Get(ctx, "k")
 					Expect(ok).To(BeTrue())
-					Expect(v).To(Equal("newer"))
+					Expect(v.Value).To(Equal("newer"))
+					Expect(v.Watermark).To(Equal(int64(200)))
 				})
 
-				It("drops a replay (equal timestamp) with ErrOldTimestamp", func() {
+				It("drops a replay (equal timestamp) with ErrOldWatermark", func() {
 					Expect(store.Set(ctx, "k", payload("first", 500))).To(Succeed())
 					err := store.Set(ctx, "k", payload("replay", 500))
-					Expect(err).To(MatchError(cache.ErrOldTimestamp))
+					Expect(err).To(MatchError(cache.ErrOldWatermark))
 					v, ok := store.Get(ctx, "k")
 					Expect(ok).To(BeTrue())
-					Expect(v).To(Equal("first"))
+					Expect(v.Value).To(Equal("first"))
 				})
 
 				It("gates per-key (different keys are independent)", func() {
@@ -182,8 +191,8 @@ var _ = Describe("Cache interface", func() {
 					Expect(store.Set(ctx, "b", payload("B@100", 100))).To(Succeed())
 					vA, _ := store.Get(ctx, "a")
 					vB, _ := store.Get(ctx, "b")
-					Expect(vA).To(Equal("A@200"))
-					Expect(vB).To(Equal("B@100"))
+					Expect(vA.Value).To(Equal("A@200"))
+					Expect(vB.Value).To(Equal("B@100"))
 				})
 
 				It("handles a burst of out-of-order arrivals and settles on the newest", func() {
@@ -204,7 +213,7 @@ var _ = Describe("Cache interface", func() {
 						switch {
 						case err == nil:
 							accepted++
-						case errors.Is(err, cache.ErrOldTimestamp):
+						case errors.Is(err, cache.ErrOldWatermark):
 							dropped++
 						default:
 							Fail("unexpected error: " + err.Error())
@@ -215,7 +224,8 @@ var _ = Describe("Cache interface", func() {
 
 					v, ok := store.Get(ctx, "k")
 					Expect(ok).To(BeTrue())
-					Expect(v).To(Equal("v@500"))
+					Expect(v.Value).To(Equal("v@500"))
+					Expect(v.Watermark).To(Equal(int64(500)))
 				})
 
 				It("Delete clears the gate: subsequent Set at any timestamp is accepted", func() {
@@ -224,7 +234,8 @@ var _ = Describe("Cache interface", func() {
 					Expect(store.Set(ctx, "k", payload("reset", 50))).To(Succeed())
 					v, ok := store.Get(ctx, "k")
 					Expect(ok).To(BeTrue())
-					Expect(v).To(Equal("reset"))
+					Expect(v.Value).To(Equal("reset"))
+					Expect(v.Watermark).To(Equal(int64(50)))
 				})
 			})
 
@@ -235,7 +246,7 @@ var _ = Describe("Cache interface", func() {
 
 					v, ok := expStore.Get(ctx, "k")
 					Expect(ok).To(BeTrue())
-					Expect(v).To(Equal("v"))
+					Expect(v.Value).To(Equal("v"))
 
 					time.Sleep(100 * time.Millisecond)
 
@@ -248,7 +259,7 @@ var _ = Describe("Cache interface", func() {
 					time.Sleep(10 * time.Millisecond)
 					v, ok := store.Get(ctx, "k")
 					Expect(ok).To(BeTrue())
-					Expect(v).To(Equal("v"))
+					Expect(v.Value).To(Equal("v"))
 				})
 			})
 		})

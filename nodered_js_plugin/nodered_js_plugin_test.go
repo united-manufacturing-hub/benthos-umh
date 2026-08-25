@@ -2039,10 +2039,11 @@ var _ = Describe("NodeREDJS cache binding (JS side)", func() {
 		return service.NewMessage([]byte(payload))
 	}
 
-	It("happy path: cache.set({value, timestamp_ms}) then cache.get returns value", func() {
+	It("happy path: cache.set({value, timestamp_ms}) then cache.get returns {value, watermark}", func() {
 		handler, msgs, cancel := buildCacheStream(`
 cache.set("k", { value: 42, timestamp_ms: 1000 });
-msg.payload = cache.get("k");
+var got = cache.get("k");
+msg.payload = { v: got.value, w: got.watermark };
 return msg;
 `)
 		defer cancel()
@@ -2052,7 +2053,10 @@ return msg;
 
 		v, err := (*msgs)[0].AsStructured()
 		Expect(err).NotTo(HaveOccurred())
-		Expect(v).To(BeNumerically("==", 42))
+		obj, ok := v.(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(obj["v"]).To(BeNumerically("==", 42))
+		Expect(obj["w"]).To(BeNumerically("==", 1000))
 	})
 
 	It("missing value: cache.set drops the write, cache stays empty", func() {
@@ -2091,7 +2095,7 @@ return msg;
 		handler, msgs, cancel := buildCacheStream(`
 cache.set("k", { value: "first",  timestamp_ms: 1000 });
 cache.set("k", { value: "second", timestamp_ms: 500 });
-msg.payload = cache.get("k");
+msg.payload = cache.get("k").value;
 return msg;
 `)
 		defer cancel()
@@ -2102,6 +2106,311 @@ return msg;
 		v, err := (*msgs)[0].AsStructured()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(v).To(Equal("first"))
+	})
+
+	It("accepts 'watermark' as the canonical field name", func() {
+		handler, msgs, cancel := buildCacheStream(`
+cache.set("k", { value: "hello", watermark: 42 });
+msg.payload = cache.get("k").value;
+return msg;
+`)
+		defer cancel()
+
+		Expect(handler(context.Background(), newBytesMsg("ignored"))).To(Succeed())
+		Eventually(func() int { return len(*msgs) }).Should(Equal(1))
+
+		v, err := (*msgs)[0].AsStructured()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(v).To(Equal("hello"))
+	})
+
+	It("accepts 'kafka_offset' as the watermark field for relational data", func() {
+		handler, msgs, cancel := buildCacheStream(`
+cache.set("k", { value: "row", kafka_offset: 12345 });
+var got = cache.get("k");
+msg.payload = { v: got.value, w: got.watermark };
+return msg;
+`)
+		defer cancel()
+
+		Expect(handler(context.Background(), newBytesMsg("ignored"))).To(Succeed())
+		Eventually(func() int { return len(*msgs) }).Should(Equal(1))
+
+		v, err := (*msgs)[0].AsStructured()
+		Expect(err).NotTo(HaveOccurred())
+		obj, ok := v.(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(obj["v"]).To(Equal("row"))
+		Expect(obj["w"]).To(BeNumerically("==", 12345))
+	})
+
+	It("rejects msg with multiple watermark fields set", func() {
+		handler, msgs, cancel := buildCacheStream(`
+cache.set("k", { value: "x", timestamp_ms: 100, kafka_offset: 5 });
+msg.payload = cache.exists("k") ? "present" : "absent";
+return msg;
+`)
+		defer cancel()
+
+		Expect(handler(context.Background(), newBytesMsg("ignored"))).To(Succeed())
+		Eventually(func() int { return len(*msgs) }).Should(Equal(1))
+
+		v, err := (*msgs)[0].AsStructured()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(v).To(Equal("absent"))
+	})
+
+	// Read-then-derive: verify the DELTA EMITTED downstream is correct under retry
+	// and out-of-order arrival, not just the cache state. cache.get returns
+	// {value, watermark}; the JS uses prev.watermark as the derivation guard.
+	deltaJS := `
+var prev = cache.exists("last") ? cache.get("last") : null;
+if (prev !== null && msg.payload.timestamp_ms > prev.watermark) {
+  msg.payload.delta = msg.payload.value - prev.value;
+}
+cache.set("last", msg.payload);
+return msg;
+`
+
+	// newTsMsg emits msg.payload = {value: v, timestamp_ms: ts} as JSON so the JS
+	// binding parses it back into a JS object.
+	newTsMsg := func(value float64, ts int64) *service.Message {
+		payload := fmt.Sprintf(`{"value":%v,"timestamp_ms":%d}`, value, ts)
+		return service.NewMessage([]byte(payload))
+	}
+
+	// getDelta returns msg.payload.delta (or NaN when absent).
+	getDelta := func(m *service.Message) float64 {
+		s, err := m.AsStructured()
+		Expect(err).NotTo(HaveOccurred())
+		obj, ok := s.(map[string]any)
+		Expect(ok).To(BeTrue())
+		raw, present := obj["delta"]
+		if !present {
+			return -1 // sentinel for "delta not set"
+		}
+		switch n := raw.(type) {
+		case float64:
+			return n
+		case int64:
+			return float64(n)
+		case int:
+			return float64(n)
+		case json.Number:
+			f, err := n.Float64()
+			Expect(err).NotTo(HaveOccurred())
+			return f
+		default:
+			Fail(fmt.Sprintf("delta is not numeric: %T %v", raw, raw))
+			return 0
+		}
+	}
+
+	It("read-then-derive: replay does not emit delta and does not corrupt cache", func() {
+		handler, msgs, cancel := buildCacheStream(deltaJS)
+		defer cancel()
+
+		ctx := context.Background()
+		Expect(handler(ctx, newTsMsg(10, 100))).To(Succeed())
+		Expect(handler(ctx, newTsMsg(10, 100))).To(Succeed()) // replay: same ts + value
+		Eventually(func() int { return len(*msgs) }).Should(Equal(2))
+
+		// Msg 1: no prior stored, delta absent.
+		Expect(getDelta((*msgs)[0])).To(Equal(float64(-1)))
+		// Msg 2: replay hits the watermark guard, delta absent.
+		Expect(getDelta((*msgs)[1])).To(Equal(float64(-1)))
+	})
+
+	It("read-then-derive: out-of-order older msg emits no delta; monotonic stream emits correct deltas", func() {
+		handler, msgs, cancel := buildCacheStream(deltaJS)
+		defer cancel()
+
+		ctx := context.Background()
+		Expect(handler(ctx, newTsMsg(10, 100))).To(Succeed())
+		Expect(handler(ctx, newTsMsg(15, 200))).To(Succeed())
+		Expect(handler(ctx, newTsMsg(12, 150))).To(Succeed()) // out-of-order
+		Expect(handler(ctx, newTsMsg(20, 300))).To(Succeed())
+		Eventually(func() int { return len(*msgs) }).Should(Equal(4))
+
+		Expect(getDelta((*msgs)[0])).To(Equal(float64(-1))) // no prior
+		Expect(getDelta((*msgs)[1])).To(Equal(float64(5)))  // 15 - 10
+		Expect(getDelta((*msgs)[2])).To(Equal(float64(-1))) // out-of-order, guard blocks
+		Expect(getDelta((*msgs)[3])).To(Equal(float64(5)))  // 20 - 15, cache still on ts=200
+	})
+
+	// Running sum example verbatim from docs.
+	sumJS := `
+var prev = cache.exists("sum") ? cache.get("sum") : null;
+var prevTotal = prev !== null ? prev.value : 0;
+if (prev === null || msg.payload.timestamp_ms > prev.watermark) {
+  var running = prevTotal + msg.payload.value;
+  cache.set("sum", { value: running, timestamp_ms: msg.payload.timestamp_ms });
+  msg.payload.total = running;
+} else {
+  msg.payload.total = prevTotal;
+}
+return msg;
+`
+
+	getField := func(m *service.Message, field string) float64 {
+		s, err := m.AsStructured()
+		Expect(err).NotTo(HaveOccurred())
+		obj, ok := s.(map[string]any)
+		Expect(ok).To(BeTrue())
+		raw, present := obj[field]
+		if !present {
+			return -1
+		}
+		switch n := raw.(type) {
+		case float64:
+			return n
+		case int64:
+			return float64(n)
+		case int:
+			return float64(n)
+		case json.Number:
+			f, err := n.Float64()
+			Expect(err).NotTo(HaveOccurred())
+			return f
+		default:
+			Fail(fmt.Sprintf("field %q is not numeric: %T %v", field, raw, raw))
+			return 0
+		}
+	}
+
+	It("running sum: replay does not double-count; total reflects stored sum", func() {
+		handler, msgs, cancel := buildCacheStream(sumJS)
+		defer cancel()
+
+		ctx := context.Background()
+		Expect(handler(ctx, newTsMsg(10, 100))).To(Succeed())
+		Expect(handler(ctx, newTsMsg(10, 100))).To(Succeed()) // replay
+		Expect(handler(ctx, newTsMsg(5, 200))).To(Succeed())
+		Eventually(func() int { return len(*msgs) }).Should(Equal(3))
+
+		Expect(getField((*msgs)[0], "total")).To(Equal(float64(10)))
+		Expect(getField((*msgs)[1], "total")).To(Equal(float64(10))) // replay: else-branch reflects stored 10
+		Expect(getField((*msgs)[2], "total")).To(Equal(float64(15))) // 10 + 5
+	})
+
+	It("running sum: out-of-order older msg emits stored sum, does not update", func() {
+		handler, msgs, cancel := buildCacheStream(sumJS)
+		defer cancel()
+
+		ctx := context.Background()
+		Expect(handler(ctx, newTsMsg(10, 100))).To(Succeed())
+		Expect(handler(ctx, newTsMsg(5, 200))).To(Succeed())
+		Expect(handler(ctx, newTsMsg(99, 150))).To(Succeed()) // out-of-order
+		Expect(handler(ctx, newTsMsg(3, 300))).To(Succeed())
+		Eventually(func() int { return len(*msgs) }).Should(Equal(4))
+
+		Expect(getField((*msgs)[0], "total")).To(Equal(float64(10)))
+		Expect(getField((*msgs)[1], "total")).To(Equal(float64(15)))
+		Expect(getField((*msgs)[2], "total")).To(Equal(float64(15))) // guard blocks, stored=15
+		Expect(getField((*msgs)[3], "total")).To(Equal(float64(18))) // 15 + 3
+	})
+
+	// Largest value seen so far example verbatim from docs.
+	maxJS := `
+var prev = cache.exists("max") ? cache.get("max") : null;
+var best = prev !== null ? prev.value : Number.NEGATIVE_INFINITY;
+if ((prev === null || msg.payload.timestamp_ms > prev.watermark) && msg.payload.value > best) {
+  cache.set("max", msg.payload);
+  best = msg.payload.value;
+}
+msg.payload.max_so_far = best;
+return msg;
+`
+
+	It("largest value: replay does not corrupt max; out-of-order older msg does not affect stored max", func() {
+		handler, msgs, cancel := buildCacheStream(maxJS)
+		defer cancel()
+
+		ctx := context.Background()
+		Expect(handler(ctx, newTsMsg(10, 100))).To(Succeed())
+		Expect(handler(ctx, newTsMsg(25, 200))).To(Succeed())
+		Expect(handler(ctx, newTsMsg(25, 200))).To(Succeed()) // replay at max ts
+		Expect(handler(ctx, newTsMsg(99, 150))).To(Succeed()) // out-of-order, larger value but older watermark
+		Expect(handler(ctx, newTsMsg(30, 300))).To(Succeed())
+		Eventually(func() int { return len(*msgs) }).Should(Equal(5))
+
+		Expect(getField((*msgs)[0], "max_so_far")).To(Equal(float64(10)))
+		Expect(getField((*msgs)[1], "max_so_far")).To(Equal(float64(25)))
+		Expect(getField((*msgs)[2], "max_so_far")).To(Equal(float64(25))) // replay
+		Expect(getField((*msgs)[3], "max_so_far")).To(Equal(float64(25))) // out-of-order 99 rejected by watermark
+		Expect(getField((*msgs)[4], "max_so_far")).To(Equal(float64(30)))
+	})
+
+	// Alarm latch example verbatim from docs. Payload trigger: value > 100.
+	alarmJS := `
+var prev = cache.exists("alarm") ? cache.get("alarm") : null;
+if (prev === null || msg.payload.timestamp_ms > prev.watermark) {
+  var active = prev !== null ? prev.value : false;
+  if (msg.payload.value > 100 && !active) {
+    cache.set("alarm", { value: true, timestamp_ms: msg.payload.timestamp_ms });
+    msg.meta.alarm = "triggered";
+  } else if (msg.payload.value <= 100 && active) {
+    cache.set("alarm", { value: false, timestamp_ms: msg.payload.timestamp_ms });
+    msg.meta.alarm = "cleared";
+  }
+}
+return msg;
+`
+
+	getMeta := func(m *service.Message, key string) string {
+		v, ok := m.MetaGet(key)
+		if !ok {
+			return ""
+		}
+		return v
+	}
+
+	It("alarm latch: replay does not re-trigger; out-of-order older does not toggle state", func() {
+		handler, msgs, cancel := buildCacheStream(alarmJS)
+		defer cancel()
+
+		ctx := context.Background()
+		Expect(handler(ctx, newTsMsg(50, 100))).To(Succeed())   // below threshold, no trigger
+		Expect(handler(ctx, newTsMsg(150, 200))).To(Succeed())  // triggers
+		Expect(handler(ctx, newTsMsg(150, 200))).To(Succeed())  // replay, must not re-trigger
+		Expect(handler(ctx, newTsMsg(50, 150))).To(Succeed())   // out-of-order clear attempt
+		Expect(handler(ctx, newTsMsg(50, 300))).To(Succeed())   // fresh clear
+		Eventually(func() int { return len(*msgs) }).Should(Equal(5))
+
+		Expect(getMeta((*msgs)[0], "alarm")).To(Equal(""))          // no meta set
+		Expect(getMeta((*msgs)[1], "alarm")).To(Equal("triggered")) // first trigger
+		Expect(getMeta((*msgs)[2], "alarm")).To(Equal(""))          // replay: guard blocks, no meta set
+		Expect(getMeta((*msgs)[3], "alarm")).To(Equal(""))          // out-of-order: guard blocks
+		Expect(getMeta((*msgs)[4], "alarm")).To(Equal("cleared"))   // fresh clear
+	})
+
+	// Cycle time between events example verbatim from docs.
+	cycleJS := `
+var prev = cache.exists("last_event") ? cache.get("last_event") : null;
+if (prev !== null && msg.payload.timestamp_ms > prev.watermark) {
+  msg.payload.cycle_time_ms = msg.payload.timestamp_ms - prev.value;
+}
+cache.set("last_event", { value: msg.payload.timestamp_ms, timestamp_ms: msg.payload.timestamp_ms });
+return msg;
+`
+
+	It("cycle time: replay does not emit cycle_time_ms; out-of-order older does not emit either", func() {
+		handler, msgs, cancel := buildCacheStream(cycleJS)
+		defer cancel()
+
+		ctx := context.Background()
+		Expect(handler(ctx, newTsMsg(1, 100))).To(Succeed())
+		Expect(handler(ctx, newTsMsg(1, 250))).To(Succeed())
+		Expect(handler(ctx, newTsMsg(1, 250))).To(Succeed()) // replay
+		Expect(handler(ctx, newTsMsg(1, 200))).To(Succeed()) // out-of-order
+		Expect(handler(ctx, newTsMsg(1, 400))).To(Succeed())
+		Eventually(func() int { return len(*msgs) }).Should(Equal(5))
+
+		Expect(getField((*msgs)[0], "cycle_time_ms")).To(Equal(float64(-1))) // no prior
+		Expect(getField((*msgs)[1], "cycle_time_ms")).To(Equal(float64(150)))
+		Expect(getField((*msgs)[2], "cycle_time_ms")).To(Equal(float64(-1))) // replay guard blocks
+		Expect(getField((*msgs)[3], "cycle_time_ms")).To(Equal(float64(-1))) // out-of-order guard blocks
+		Expect(getField((*msgs)[4], "cycle_time_ms")).To(Equal(float64(150)))
 	})
 })
 

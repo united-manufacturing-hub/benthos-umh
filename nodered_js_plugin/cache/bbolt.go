@@ -103,8 +103,8 @@ func (b *BboltStore) Set(ctx context.Context, key string, payload Payload) error
 		var existing Item
 		unmarshalErr := json.Unmarshal(raw, &existing)
 		if unmarshalErr == nil && !existing.Expired() {
-			if payload.TimestampMs <= existing.TimestampMs {
-				return ErrOldTimestamp
+			if payload.Watermark <= existing.Watermark {
+				return &StaleWriteError{Key: key, Incoming: payload.Watermark, Stored: existing.Watermark}
 			}
 		}
 	}
@@ -116,9 +116,9 @@ func (b *BboltStore) Set(ctx context.Context, key string, payload Payload) error
 
 	data, err := json.Marshal(
 		Item{
-			Value:       payload.Value,
-			Expiration:  expiration,
-			TimestampMs: payload.TimestampMs,
+			Value:      payload.Value,
+			Expiration: expiration,
+			Watermark:  payload.Watermark,
 		})
 	if err != nil {
 		return fmt.Errorf("cache: encode value: %w", err)
@@ -171,23 +171,23 @@ func (b *BboltStore) readRaw(key string) []byte {
 	return raw
 }
 
-func (b *BboltStore) Get(ctx context.Context, key string) (any, bool) {
+func (b *BboltStore) Get(ctx context.Context, key string) (Payload, bool) {
 	if ctx.Err() != nil {
-		return nil, false
+		return Payload{}, false
 	}
 	raw := b.readRaw(key)
 	if raw == nil {
-		return nil, false
+		return Payload{}, false
 	}
 	var item Item
 	err := json.Unmarshal(raw, &item)
 	if err != nil {
-		return nil, false
+		return Payload{}, false
 	}
 	if item.Expired() {
-		return nil, false
+		return Payload{}, false
 	}
-	return item.Value, true
+	return Payload{Value: item.Value, Watermark: item.Watermark}, true
 }
 
 func (b *BboltStore) Lock() {

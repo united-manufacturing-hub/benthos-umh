@@ -14,26 +14,51 @@
 
 package cache
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strconv"
+)
 
-// ParsePayload validates a JS-shaped {value, timestamp_ms} map and returns a Payload.
+// WatermarkKeys are the field names accepted as the watermark; exactly one must be set.
+var WatermarkKeys = []string{"watermark", "timestamp_ms", "kafka_offset"}
+
+// ParsePayload validates a JS-shaped {value, <watermark>} map and returns a Payload.
 func ParsePayload(m map[string]any) (Payload, error) {
 	value, hasValue := m["value"]
 	if !hasValue {
 		return Payload{}, ErrMissingValue
 	}
-	tsRaw, hasTs := m["timestamp_ms"]
-	if !hasTs {
-		return Payload{}, ErrMissingTimestamp
+
+	var (
+		found   bool
+		raw     any
+		nFields int
+	)
+	for _, k := range WatermarkKeys {
+		v, ok := m[k]
+		if !ok {
+			continue
+		}
+		nFields++
+		if !found {
+			raw = v
+			found = true
+		}
 	}
-	ts, ok := int64FromAny(tsRaw)
+	if nFields > 1 {
+		return Payload{}, ErrMultipleWatermarks
+	}
+	if !found {
+		return Payload{}, ErrMissingWatermark
+	}
+	wm, ok := int64FromAny(raw)
 	if !ok {
-		return Payload{}, ErrTimestampNotNumeric
+		return Payload{}, ErrWatermarkNotNumeric
 	}
-	return Payload{Value: value, TimestampMs: ts}, nil
+	return Payload{Value: value, Watermark: wm}, nil
 }
 
-// int64FromAny bridges goja's mixed int64/float64 and bbolt's json.Number to int64.
+// int64FromAny bridges goja's int64/float64, bbolt's json.Number, and Benthos meta strings to int64.
 func int64FromAny(v any) (int64, bool) {
 	switch n := v.(type) {
 	case int64:
@@ -66,6 +91,16 @@ func int64FromAny(v any) (int64, bool) {
 			return i, true
 		}
 		f, err := n.Float64()
+		if err != nil {
+			return 0, false
+		}
+		return int64(f), true
+	case string:
+		i, err := strconv.ParseInt(n, 10, 64)
+		if err == nil {
+			return i, true
+		}
+		f, err := strconv.ParseFloat(n, 64)
 		if err != nil {
 			return 0, false
 		}

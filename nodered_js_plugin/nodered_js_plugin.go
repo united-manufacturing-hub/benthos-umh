@@ -356,8 +356,12 @@ func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) e
 				return
 			}
 			err = u.cache.Set(ctx, key, payload)
-			if errors.Is(err, cache.ErrOldTimestamp) {
-				u.logger.Warnf("cache.set: dropped stale write for key %q (timestamp_ms=%d not newer than stored)", key, payload.TimestampMs)
+			var stale *cache.StaleWriteError
+			if errors.As(err, &stale) {
+				u.logger.Warnf("cache.set: dropped write for key %q (incoming watermark %d is older/equal to the last stored %d). "+
+					"Incoming messages must arrive in monotonic order — either messages are being replayed or the watermark source "+
+					"(timestamp_ms, kafka_offset) is going backwards. Check the input plugin or upstream data.",
+					stale.Key, stale.Incoming, stale.Stored)
 				return
 			}
 			if err != nil {
@@ -365,12 +369,12 @@ func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) e
 			}
 		},
 		"get": func(key string) any {
-			v, ok := u.cache.Get(ctx, key)
+			p, ok := u.cache.Get(ctx, key)
 			if !ok {
 				u.logger.Errorf("cache.get: key %q not found. Use cache.exists(key) to check before reading.", key)
 				return goja.Undefined()
 			}
-			return v
+			return map[string]any{"value": p.Value, "watermark": p.Watermark}
 		},
 		"exists": func(key string) bool {
 			_, exists := u.cache.Get(ctx, key)
@@ -529,8 +533,9 @@ func (u *NodeREDJSProcessor) cacheBegin(ctx context.Context) error {
 	return nil
 }
 
-// cacheCommit commits the batch tx and releases the mutex.
-func (u *NodeREDJSProcessor) cacheCommit(ctx context.Context) {
+// cacheEnd always commits: per-message JS errors already dropped via RecordDrop,
+// and cache writes for other successful messages in the same batch must not be lost.
+func (u *NodeREDJSProcessor) cacheEnd(ctx context.Context) {
 	err := u.cache.Commit(ctx)
 	if err != nil {
 		u.logger.Errorf("cache commit failed: %v", err)
@@ -543,7 +548,7 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 	if err != nil {
 		return nil, err
 	}
-	defer u.cacheCommit(ctx)
+	defer u.cacheEnd(ctx)
 
 	var resultBatch service.MessageBatch
 	processedCount := 0
