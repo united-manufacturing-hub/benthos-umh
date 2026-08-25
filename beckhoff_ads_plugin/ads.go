@@ -107,8 +107,11 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 	if err != nil {
 		return nil, fmt.Errorf("targetAddress: %w", err)
 	}
-	if err = validateAMSNetID(targetAMS); err != nil {
-		return nil, fmt.Errorf("targetAMS: %w", err)
+	// Empty is legal: go-ads then asks the PLC for its own NetID on connect.
+	if targetAMS != "" {
+		if err = validateAMSNetID(targetAMS); err != nil {
+			return nil, fmt.Errorf("targetAMS: %w", err)
+		}
 	}
 
 	runtimePort, err := conf.FieldInt("runtimePort")
