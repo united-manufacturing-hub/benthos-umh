@@ -394,7 +394,7 @@ ads:
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("rejects config missing required targetAMS", func() {
+		It("accepts config without targetAMS, which the PLC then supplies", func() {
 			builder := service.NewStreamBuilder()
 			err := builder.AddInputYAML(`
 ads:
@@ -402,7 +402,7 @@ ads:
   symbols:
     - "MAIN.var"
 `)
-			Expect(err).To(HaveOccurred())
+			Expect(err).NotTo(HaveOccurred())
 		})
 
 		It("rejects config missing required targetIP", func() {
