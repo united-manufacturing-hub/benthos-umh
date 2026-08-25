@@ -16,6 +16,7 @@ package beckhoff_ads_plugin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -121,7 +122,22 @@ func (c *goADSClient) GetSymbol(ctx context.Context, name string) (SymbolInfo, e
 }
 
 func (c *goADSClient) ReadMultipleSymbols(ctx context.Context, names []string) (map[string]string, error) {
-	return c.session.ReadMultipleSymbols(ctx, names)
+	values, err := c.session.ReadMultipleSymbols(ctx, names)
+	// Since go-ads v2.3.0 a partial batch returns *BatchError with the good
+	// values still in the map; translate it so read.go keeps them.
+	var batchErr *adsLib.BatchError
+	if errors.As(err, &batchErr) {
+		failed := make([]NotifyResult, len(batchErr.Items))
+		for i, item := range batchErr.Items {
+			failed[i] = NotifyResult{
+				SymbolName: item.Symbol,
+				Skipped:    item.Skipped != nil,
+				Code:       uint32(item.Error),
+			}
+		}
+		return values, &BatchReadError{Requested: batchErr.Requested, Failed: failed}
+	}
+	return values, err
 }
 
 func (c *goADSClient) ReadFromSymbol(ctx context.Context, name string) (string, error) {

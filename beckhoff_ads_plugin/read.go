@@ -16,6 +16,7 @@ package beckhoff_ads_plugin
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strconv"
 	"strings"
@@ -65,6 +66,27 @@ func (a *AdsCommInput) newSymbolMessage(sym *PlcSymbol, value string, ts time.Ti
 		msg.MetaSet("timestamp_ms", strconv.FormatInt(ts.UnixMilli(), 10))
 	}
 	return msg
+}
+
+// logBatchFailures names each failed symbol once per session; a misspelled name
+// is permanent, so warning per poll would bury every other line.
+func (a *AdsCommInput) logBatchFailures(e *BatchReadError) {
+	if a.warnedBatchFailures == nil {
+		a.warnedBatchFailures = make(map[string]bool, len(e.Failed))
+	}
+	for _, f := range e.Failed {
+		if a.warnedBatchFailures[f.SymbolName] {
+			continue
+		}
+		a.warnedBatchFailures[f.SymbolName] = true
+		if f.Skipped {
+			a.Log.Warnf("Batch read produced no value for symbol %q; the other %d symbols are unaffected",
+				f.SymbolName, e.Requested-len(e.Failed))
+			continue
+		}
+		a.Log.Warnf("PLC refused symbol %q with ADS error 0x%X (check the symbol name); the other %d symbols are unaffected",
+			f.SymbolName, f.Code, e.Requested-len(e.Failed))
+	}
 }
 
 // makeNotificationMessage resolves the enriched symbol for a notification
@@ -145,6 +167,13 @@ func (a *AdsCommInput) ReadBatchPull(ctx context.Context) (service.MessageBatch,
 	}
 
 	values, err := a.client.ReadMultipleSymbols(ctx, names)
+	// A partial batch is not a failed poll: the map holds every symbol that
+	// worked, so emit those and name the ones that did not.
+	var batchErr *BatchReadError
+	if errors.As(err, &batchErr) {
+		a.logBatchFailures(batchErr)
+		err = nil
+	}
 	if err != nil {
 		if shuttingDown(ctx) {
 			a.Log.Debugf("Batch read aborted during shutdown: %v", err)

@@ -16,6 +16,7 @@ package beckhoff_ads_plugin
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	adsLib "github.com/RuneRoven/go-ads/v2"
@@ -64,4 +65,16 @@ type NotifyResult struct {
 	Registered bool   // Skipped==false && Error==NoErrors
 	Skipped    bool   // symbol not resolvable (bad name)
 	Code       uint32 // raw ADS return code; 0 when Registered
+}
+
+// BatchReadError reports the symbols a batch read produced no value for. The
+// map returned alongside it still holds every symbol that did succeed, so one
+// bad name costs that one tag rather than the whole poll.
+type BatchReadError struct {
+	Requested int
+	Failed    []NotifyResult // same three-state shape: Skipped, else Code
+}
+
+func (e *BatchReadError) Error() string {
+	return fmt.Sprintf("%d of %d symbols failed", len(e.Failed), e.Requested)
 }
