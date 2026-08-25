@@ -93,9 +93,14 @@ func newGoADSClient(ctx context.Context, cfg SessionConfig, log *service.Logger)
 	if err != nil {
 		return nil, err
 	}
-	targetAMS, err := adsLib.NewAMSAddress(cfg.TargetAMS, uint16(cfg.RuntimePort))
-	if err != nil {
-		return nil, fmt.Errorf("targetAMS %q is not a valid AMS NetID: %w", cfg.TargetAMS, err)
+	// A zero NetID tells go-ads to ask the PLC for its own; a configured one is
+	// verified against the device and only warned about on a mismatch.
+	targetAMS := adsLib.AMSAddress{Port: uint16(cfg.RuntimePort)}
+	if cfg.TargetAMS != "" {
+		targetAMS, err = adsLib.NewAMSAddress(cfg.TargetAMS, uint16(cfg.RuntimePort))
+		if err != nil {
+			return nil, fmt.Errorf("targetAMS %q is not a valid AMS NetID: %w", cfg.TargetAMS, err)
+		}
 	}
 	// Background ctx: session lifetime is driven by Close, not the per-call
 	// construction ctx (which would tear the session down on return).
