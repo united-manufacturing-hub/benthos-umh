@@ -1117,3 +1117,75 @@ var _ = Describe("Partial batch reads", func() {
 		Expect(msgs).To(BeEmpty())
 	})
 })
+
+var _ = Describe("targetAMS is optional", func() {
+	It("builds without targetAMS, leaving the PLC to supply it", func() {
+		conf, err := adsConf.ParseYAML(`
+targetAddress: "1.2.3.4"
+symbols:
+  - "MAIN.var"
+`, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = NewAdsCommInput(conf, service.MockResources())
+
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("still rejects a targetAMS that is present but malformed", func() {
+		conf, err := adsConf.ParseYAML(`
+targetAddress: "1.2.3.4"
+targetAMS: "not-an-ams-netid"
+symbols:
+  - "MAIN.var"
+`, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = NewAdsCommInput(conf, service.MockResources())
+
+		Expect(err).To(MatchError(ContainSubstring("targetAMS")))
+	})
+})
+
+var _ = Describe("benthosLogHandler per-symbol demotion", func() {
+	// go-ads emits one info line per symbol on the happy path. Matching the
+	// attribute rather than the message text keeps this working if it rewords.
+	rec := func(level slog.Level, msg string, attrs ...slog.Attr) slog.Record {
+		r := slog.NewRecord(time.Time{}, level, msg, 0)
+		r.AddAttrs(attrs...)
+		return r
+	}
+	handle := func(r slog.Record) error {
+		h := &benthosLogHandler{logger: service.MockResources().Logger()}
+		return h.Handle(context.Background(), r)
+	}
+
+	It("forwards records the handler is given", func() {
+		Expect(handle(rec(slog.LevelInfo, "Connected to PLC"))).To(Succeed())
+		Expect(handle(rec(slog.LevelInfo, "batch notification created",
+			slog.String("symbol", "MAIN.a")))).To(Succeed())
+	})
+
+	DescribeTable("classifies a record as per-symbol chatter or not",
+		func(level slog.Level, attrs []slog.Attr, wantPerSymbol bool) {
+			r := rec(level, "x", attrs...)
+			perSymbol := false
+			r.Attrs(func(a slog.Attr) bool {
+				perSymbol = perSymbol || a.Key == "symbol" || a.Key == "handle"
+				return true
+			})
+			Expect(perSymbol).To(Equal(wantPerSymbol))
+		},
+		Entry("symbol attribute", slog.LevelInfo, []slog.Attr{slog.String("symbol", "MAIN.a")}, true),
+		Entry("handle attribute", slog.LevelInfo, []slog.Attr{slog.Uint64("handle", 91)}, true),
+		Entry("connection line", slog.LevelInfo, []slog.Attr{slog.String("host", "1.2.3.4")}, false),
+		Entry("no attributes", slog.LevelInfo, nil, false),
+	)
+
+	It("keeps a failure carrying a symbol at warning, not debug", func() {
+		// Only info is demoted; warn/error take earlier switch branches.
+		r := rec(slog.LevelWarn, "batch entry not committed", slog.String("symbol", "MAIN.a"))
+		Expect(handle(r)).To(Succeed())
+		Expect(r.Level).To(Equal(slog.LevelWarn))
+	})
+})
