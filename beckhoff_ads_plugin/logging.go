@@ -36,11 +36,14 @@ func (h *benthosLogHandler) Enabled(_ context.Context, level slog.Level) bool {
 
 func (h *benthosLogHandler) Handle(_ context.Context, r slog.Record) error {
 	var kvs []any
+	perSymbol := false
 	for _, a := range h.attrs {
 		kvs = append(kvs, a.Key, a.Value.Any())
+		perSymbol = perSymbol || a.Key == "symbol" || a.Key == "handle"
 	}
 	r.Attrs(func(a slog.Attr) bool {
 		kvs = append(kvs, a.Key, a.Value.Any())
+		perSymbol = perSymbol || a.Key == "symbol" || a.Key == "handle"
 		return true
 	})
 
@@ -54,7 +57,9 @@ func (h *benthosLogHandler) Handle(_ context.Context, r slog.Record) error {
 		l.Errorf("%s", r.Message)
 	case r.Level >= slog.LevelWarn:
 		l.Warnf("%s", r.Message)
-	case r.Level >= slog.LevelInfo:
+	// A per-symbol/per-handle line scales with the config and buries the rest;
+	// failures carry their own Warn, so only the success chatter moves to debug.
+	case r.Level >= slog.LevelInfo && !perSymbol:
 		l.Infof("%s", r.Message)
 	default:
 		l.Debugf("%s", r.Message)
