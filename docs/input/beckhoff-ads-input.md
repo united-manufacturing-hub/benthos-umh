@@ -203,6 +203,42 @@ input:
       - ".myTrigger:maxDelay=0s:cycleTime=10ms"
 ```
 
+## Bridge Connection Check — Do Not Probe Port 48898
+
+When you deploy this plugin as a **Bridge** (protocol converter), UMH Core runs a
+connection check that port-scans the device roughly once per second. Point that check
+at **port 443**, not at the ADS port.
+
+Scanning **48898 kills the ADS session**. The TwinCAT router drops the live connection
+each time it is scanned: measured on a TwinCAT 3 CX, 37 of 37 disconnects landed 33–62 ms
+after a scan started. The symptom is a bridge that connects, registers all its symbols,
+streams for about five seconds, then logs `PLC closed connection, transport down` and
+repeats every ~20 s. In `readType: notification` this loses the subscriptions every cycle;
+in `readType: interval` data still trickles through, which makes it easy to misread as a
+flaky network rather than a self-inflicted wound.
+
+| Connection check port | Result |
+|---|---|
+| `443` | Recommended default. Open on most TwinCAT devices. |
+| `80` | Use if 443 is closed on your device. |
+| `48898` | **Never.** Breaks the ADS session as described above. |
+
+Neither 443 nor 80 is open on every device, so check before you deploy:
+
+```bash
+nc -z -w 3 <plc-ip> 443 && echo "use 443" || { nc -z -w 3 <plc-ip> 80 && echo "use 80"; }
+```
+
+Two caveats worth knowing. The probe port has to be **open**, or the connection check sits
+in `closed` against a desired state of `open` and the bridge never reports healthy. And a
+web server answering on 443 only proves the device is powered — it says nothing about the
+ADS runtime, which can be stopped while the port still answers. Treat a green connection
+check as "the device is reachable", not "ADS works".
+
+If neither port is open, deploy as a **standalone flow** instead of a Bridge. Standalone
+flows run no connection check at all. You then supply `output: uns: {}` yourself, which the
+Bridge would otherwise add for you.
+
 ## Connection to ADS
 
 When connecting to an ADS device you connect to a router which then routes the traffic to the correct device using the AMS net ID.
