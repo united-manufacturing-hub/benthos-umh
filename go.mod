@@ -29,7 +29,7 @@ require (
 require (
 	github.com/RuneRoven/benthosAlarm v1.0.0
 	github.com/RuneRoven/benthosSMTP v0.0.1
-	github.com/RuneRoven/go-ads/v2 v2.2.0
+	github.com/RuneRoven/go-ads/v2 v2.3.0
 	github.com/bufbuild/protocompile v0.14.1
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/danomagnum/gologix v0.35.1-beta

@@ -63,6 +63,9 @@ type AdsCommInput struct {
 	// readiness wait; flushed by the first read so the first value isn't lost.
 	pendingInitial []*Update
 
+	// warnedBatchFailures dedupes per-symbol batch-read warnings for one session.
+	warnedBatchFailures map[string]bool
+
 	LoadSymbols bool // download full symbol+datatype table on connect; required for struct/array symbols
 
 	// Route registration; route registered when both Username and Password are set.
