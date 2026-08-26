@@ -195,6 +195,20 @@ var _ = Describe("chunk interval config", func() {
 		_, err = tsh.NewHistorianForConfig(parsed)
 		Expect(err).To(MatchError(ContainSubstring("attribute_chunk_interval must be at least 1s")))
 	})
+
+	DescribeTable("rejects a duration that is not whole seconds, which the SQL would silently truncate",
+		func(field string, value string) {
+			yaml := "host: h\npassword: p\ndata_contract_name: pump\n" + field + ": " + value + "\n"
+			parsed, err := tsh.HistorianConfig().ParseYAML(yaml, service.NewEnvironment())
+			Expect(err).NotTo(HaveOccurred())
+			_, err = tsh.NewHistorianForConfig(parsed)
+			Expect(err).To(MatchError(ContainSubstring(field + " must be a whole number of seconds")))
+		},
+		Entry("compress_after", "compress_after", "1500ms"),
+		Entry("retention", "retention", "1500ms"),
+		Entry("value_chunk_interval", "value_chunk_interval", "1500ms"),
+		Entry("attribute_chunk_interval", "attribute_chunk_interval", "24h30m0s500ms"),
+	)
 })
 
 var _ = Describe("chunk interval drift warnings", func() {
