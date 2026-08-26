@@ -378,18 +378,23 @@ func (o *historianOutput) probeWritable(ctx context.Context) error {
 }
 
 // readAppliedPolicies reads the compression/retention intervals (in seconds) TimescaleDB currently
-// has applied for this contract, as nil-able pointers (nil = no such policy scheduled). Both
-// hypertables get identical policies, so the value table is representative. It returns an error only
-// if the compression lookup itself fails (an unexpected catalog shape); the retention lookup is
-// best-effort. This is the I/O read half of warnPolicyDrift, split out so the drift check reads as
-// read -> compare (pure policyDriftWarnings) -> log.
+// has applied for this contract, as nil-able pointers (nil = no such policy scheduled). It reads the
+// value table only, which is safe here because bootstrap has just run in the same branch and put
+// back whatever was missing on either table; a policy that differs on umh.attribute_<contract> alone
+// is not reported. A failed lookup is an error rather than a nil interval: nil means "no policy is
+// scheduled", and warnPolicyDrift turns that into "your configured retention is not applied", which
+// is a false statement to make because the read failed. This is the I/O read half of
+// warnPolicyDrift, split out so the drift check reads as read -> compare (pure
+// policyDriftWarnings) -> log.
 func (o *historianOutput) readAppliedPolicies(ctx context.Context) (*int64, *int64, error) {
 	table := "value_" + o.contract
 	var appliedComp, appliedRet *int64
 	if err := o.pool.QueryRow(ctx, policyIntervalSQL("policy_compression", "compress_after"), table).Scan(&appliedComp); err != nil {
 		return nil, nil, err
 	}
-	_ = o.pool.QueryRow(ctx, policyIntervalSQL("policy_retention", "drop_after"), table).Scan(&appliedRet)
+	if err := o.pool.QueryRow(ctx, policyIntervalSQL("policy_retention", "drop_after"), table).Scan(&appliedRet); err != nil {
+		return nil, nil, err
+	}
 	return appliedComp, appliedRet, nil
 }
 
