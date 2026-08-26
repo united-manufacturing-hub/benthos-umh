@@ -380,11 +380,9 @@ type bootstrapConfig struct {
 	attributeChunk time.Duration
 }
 
-// The chunk interval needs no ledger gate: create_hypertable with if_not_exists => TRUE is a no-op
-// once the table is a hypertable, so a changed interval never retro-applies. Consequence: an edit
-// reaches an existing database only via set_chunk_time_interval, and only for new chunks.
-// chunkIntervalSQL reads the chunk width TimescaleDB has applied to a umh hypertable, in seconds,
-// as a scalar subquery so it always yields one row (NULL when the table is not a hypertable here).
+// chunkIntervalSQL reads the chunk width applied to a umh hypertable, in seconds. A scalar subquery,
+// so it always yields exactly one row and a nil scan means "not a hypertable here" rather than
+// ErrNoRows.
 func chunkIntervalSQL() string {
 	return `SELECT (
   SELECT EXTRACT(EPOCH FROM time_interval)::bigint
@@ -407,12 +405,19 @@ func chunkDriftWarnings(valueWant int64, appliedValue *int64, attributeWant int6
 }
 
 func bootstrapSQL(cfg bootstrapConfig) string {
+	// Every slot is a distinct placeholder, so the order they are filled in does not matter. The one
+	// ordering that does is CONTRACT_SLOT: the blocks inserted here carry it, so sub() runs last.
+	slots := map[string]string{
+		"VALUE_CHUNK_SLOT":     intervalSQL(cfg.valueChunk),
+		"ATTRIBUTE_CHUNK_SLOT": intervalSQL(cfg.attributeChunk),
+		"VALUE_POLICY_SLOT":    policyBlock("umh.value_CONTRACT_SLOT", cfg.compressAfter, cfg.retention, cfg.retentionSet),
+		"ATTR_POLICY_SLOT":     policyBlock("umh.attribute_CONTRACT_SLOT", cfg.compressAfter, cfg.retention, cfg.retentionSet),
+		"MIGRATIONS_SLOT":      migrationsBlock(),
+	}
 	s := bootstrapTemplate
-	s = strings.Replace(s, "VALUE_CHUNK_SLOT", intervalSQL(cfg.valueChunk), 1)
-	s = strings.Replace(s, "ATTRIBUTE_CHUNK_SLOT", intervalSQL(cfg.attributeChunk), 1)
-	s = strings.Replace(s, "VALUE_POLICY_SLOT", policyBlock("umh.value_CONTRACT_SLOT", cfg.compressAfter, cfg.retention, cfg.retentionSet), 1)
-	s = strings.Replace(s, "ATTR_POLICY_SLOT", policyBlock("umh.attribute_CONTRACT_SLOT", cfg.compressAfter, cfg.retention, cfg.retentionSet), 1)
-	s = strings.Replace(s, "MIGRATIONS_SLOT", migrationsBlock(), 1)
+	for placeholder, replacement := range slots {
+		s = strings.Replace(s, placeholder, replacement, 1)
+	}
 	return sub(s, cfg.contract)
 }
 
