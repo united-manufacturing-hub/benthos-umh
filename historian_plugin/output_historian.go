@@ -27,6 +27,7 @@ import (
 
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
@@ -305,6 +306,12 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 			return fmt.Errorf("invalid connection settings: %s", o.redact(err)) // DSN echoes the password
 		}
 		cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec // simple protocol (pgbouncer txn pool)
+		// pgx drops server notices unless this is set, and the bootstrap needs them: add_*_policy with
+		// if_not_exists => TRUE reports a policy it declined to change as a notice and returns -1, so
+		// without this the decline reaches no log.
+		cfg.ConnConfig.OnNotice = func(_ *pgconn.PgConn, n *pgconn.Notice) {
+			o.logger.Warnf("TimescaleDB historian: %s: %s", n.Severity, n.Message)
+		}
 		// Each in-flight batch holds a pooled connection for its write tx, so a pool smaller than
 		// max_in_flight silently caps concurrency. pgxpool defaults to max(4, NumCPU), below the
 		// default 8; size it to max_in_flight+1 (+1 for Connect-time checks). A larger DSN
@@ -402,7 +409,9 @@ func (o *historianOutput) readAppliedPolicies(ctx context.Context) (*int64, *int
 // holds chunks. The gate cannot tell a policy an operator removed from one that never existed, so
 // the removal is undone and TimescaleDB resumes dropping chunks. Runs before the bootstrap DDL,
 // because afterwards the applied policy matches config and warnPolicyDrift has nothing to report.
-// Best-effort: introspection errors are swallowed so an unexpected catalog shape never fails Connect.
+// A failed lookup is logged rather than swallowed: this is the only signal standing between a
+// deliberate removal and chunks being dropped, so its own failure has to be visible, and it must not
+// fail Connect.
 func (o *historianOutput) warnRetentionRecreate(ctx context.Context) {
 	if !o.retentionSet {
 		return
@@ -410,19 +419,21 @@ func (o *historianOutput) warnRetentionRecreate(ctx context.Context) {
 	for _, table := range []string{"value_" + o.contract, "attribute_" + o.contract} {
 		var chunks int
 		if err := o.pool.QueryRow(ctx, hypertableChunkCountSQL, table).Scan(&chunks); err != nil {
-			return
+			o.logger.Warnf("TimescaleDB historian: could not read the chunk count of umh.%s (%v), so this start cannot say whether applying the configured retention (%s) will drop existing chunks. Check the retention policy on umh.%s before the retention job next runs.", table, err, o.retention, table)
+			continue
 		}
 		if chunks == 0 {
 			continue
 		}
 		var applied *int64
 		if err := o.pool.QueryRow(ctx, policyIntervalSQL("policy_retention", "drop_after"), table).Scan(&applied); err != nil {
-			return
+			o.logger.Warnf("TimescaleDB historian: could not read the retention policy of umh.%s (%v), so this start cannot say whether it is about to apply the configured retention (%s) to a table that already holds data.", table, err, o.retention)
+			continue
 		}
 		if applied != nil {
 			continue
 		}
-		o.logger.Warnf("TimescaleDB historian: umh.%s already holds data and has no retention policy, so this start applies the configured retention (%s) and TimescaleDB will drop chunks older than that. Clear retention in this output's config to keep the policy removed.", table, o.retention)
+		o.logger.Warnf("TimescaleDB historian: umh.%s already holds data and had no retention policy, so this start has scheduled the configured retention (%s) and TimescaleDB will drop chunks older than that when the retention job next runs. To keep the data, run SELECT remove_retention_policy('umh.%s') before then, and clear retention in this output's config so the next start does not schedule it again.", table, o.retention, table)
 	}
 }
 
@@ -433,6 +444,7 @@ func (o *historianOutput) warnRetentionRecreate(ctx context.Context) {
 func (o *historianOutput) warnPolicyDrift(ctx context.Context) {
 	appliedComp, appliedRet, err := o.readAppliedPolicies(ctx)
 	if err != nil {
+		o.logger.Warnf("TimescaleDB historian: could not read the compression/retention policies applied to umh.value_%s (%v), so this start cannot report whether they match this output's config. Read them with SELECT proc_name, config FROM timescaledb_information.jobs WHERE hypertable_name = 'value_%s'.", o.contract, err, o.contract)
 		return
 	}
 	var retentionWant *int64
