@@ -335,7 +335,7 @@ the same tables. To avoid schema drift, a given contract/database must be writte
 
 ## Changing compression or retention
 
-`compress_after` and `retention` are applied **per contract**, to each of that contract's two
+`compress_after` and `retention` are applied per contract, to each of that contract's two
 hypertables that does not already have such a policy. A contract added to a database that already
 holds other contracts gets its own policies too.
 
@@ -345,19 +345,6 @@ config edit should not rewrite how production history is compressed, or for rete
 When the output starts it logs a warning if the applied policy differs from the config, but it does
 not change the policy. That check reads `umh.value_<contract>`, so a policy that differs on
 `umh.attribute_<contract>` alone is not reported.
-
-**Upgrading from a build that applied policies once per database.** Contracts other than the first
-on a database were left without policies by that build, so their chunks were never compressed and
-never dropped. The first start after upgrading applies the configured values to them, and if
-`retention` is set, TimescaleDB drops everything older than that window once the retention job
-runs. Check `retention` against the policies actually applied before upgrading. The output warns
-for each hypertable it is about to give a retention policy to while it already holds data, and
-names the statement that cancels it.
-
-Compression cannot be switched off from this output: `compress_after` has no empty or off value, so
-a compression policy removed on the database is re-created when the output next starts, and so are
-the compression settings if they were turned off. Only retention can be switched off.
-
 
 To change them on an existing database, update the TimescaleDB policies directly, on **both**
 hypertables for the contract. For a contract named `pump`:
@@ -372,19 +359,31 @@ SELECT remove_compression_policy('umh.value_pump', if_exists => true);
 SELECT add_compression_policy('umh.value_pump', INTERVAL '7 days');
 ```
 
-To stop dropping data entirely, clear `retention` in this output's config **and** remove the policy
-from the database. A deleted policy looks the same as a contract that never had one, so a policy
-removed while a non-empty `retention` stays in the config is re-created the next time the output
-starts. Removing a policy on the database takes effect immediately; a reconnect does not re-create
-it, only a restart does.
+Removing a policy takes effect immediately. Setting the same value in this output's config afterward
+silences the drift warning, and gives the next contract that interval.
 
-Disabling a policy's job rather than removing it (`ALTER JOB ... SET scheduled = false`) also
-survives a restart, because the output looks for the policy, not for whether it is scheduled.
+### Switching a policy off
 
-After changing a policy on the database, set the **same** value in this output's config too. The
-config value is what a contract still without that policy gets, so matching it both silences the
-drift warning and gives the next contract the same interval.
+Only retention can be switched off, and it takes two steps: clear `retention` in this output's
+config, and remove the policy from the database. A deleted policy looks the same as a contract that
+never had one, so a policy removed while a non-empty `retention` stays in the config comes back the
+next time the output starts. A reconnect does not bring it back; only a restart does.
 
+Disabling the policy's job instead (`ALTER JOB ... SET scheduled = false`) survives a restart,
+because the output looks for the policy rather than for whether it is scheduled.
+
+`compress_after` has no empty value, so compression cannot be switched off this way: a compression
+policy removed on the database is re-created when the output next starts, as are the compression
+settings if they were turned off.
+
+### Upgrading from a build that applied policies once per database
+
+Contracts other than the first on a database were left without policies by that build, so their
+chunks were never compressed and old ones never dropped. The first start after upgrading applies
+the configured values to them, and if `retention` is set, TimescaleDB drops everything older than
+that window once the retention job runs. Check `retention` against the applied policies before
+upgrading. The output warns for each hypertable that already holds data, and names the statement
+that cancels the policy.
 
 ## Changing the chunk interval
 
