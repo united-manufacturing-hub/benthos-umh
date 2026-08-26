@@ -373,6 +373,8 @@ when a configured interval differs from the one its table was created with.
 Both intervals default to `168h`, which is 7 days. To change one on an existing database, for a
 contract named `pump`:
 
+Both intervals default to `168h`, which is 7 days, so pick a width that differs from that:
+
 ```sql
 SELECT set_chunk_time_interval('umh.value_pump', INTERVAL '1 day');
 SELECT set_chunk_time_interval('umh.attribute_pump', INTERVAL '30 days');
