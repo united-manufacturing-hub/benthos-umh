@@ -322,12 +322,12 @@ BEGIN
     );
   END IF;
   IF NOT %[4]s THEN
-    PERFORM add_compression_policy('%[1]s', %[2]s);
+    PERFORM add_compression_policy('%[1]s', %[2]s, if_not_exists => TRUE);
   END IF;
 `, qualified, intervalSQL(compressAfter), compressionEnabledSQL(table), policyJobExistsSQL("policy_compression", table))
 	if retentionSet {
 		fmt.Fprintf(&b, `  IF NOT %[2]s THEN
-    PERFORM add_retention_policy('%[1]s', %[3]s);
+    PERFORM add_retention_policy('%[1]s', %[3]s, if_not_exists => TRUE);
   END IF;
 `, qualified, policyJobExistsSQL("policy_retention", table), intervalSQL(retention))
 	}
