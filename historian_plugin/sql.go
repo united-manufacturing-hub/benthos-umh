@@ -358,6 +358,11 @@ func policyIntervalSQL(procName string, configKey string) string {
    LIMIT 1)`, configKey, procName)
 }
 
+// hypertableChunkCountSQL counts the chunks of one umh hypertable, so a policy about to be created
+// can be told apart from one being created on a table that already holds history.
+const hypertableChunkCountSQL = `SELECT count(*) FROM timescaledb_information.chunks
+ WHERE hypertable_schema = 'umh' AND hypertable_name = $1`
+
 // policyDriftWarnings compares configured compression/retention intervals against the ones
 // actually applied in the database (in seconds; nil = no such policy) and returns a warning per
 // divergence. appliedComp == nil means the compression policy could not be read -- either the

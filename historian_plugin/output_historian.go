@@ -340,6 +340,7 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 			return err
 		}
 		defer conn.Release()
+		o.warnRetentionRecreate(bootCtx)
 		if _, err := conn.Exec(bootCtx, o.renderBootstrapDDL()); err != nil {
 			return fmt.Errorf("schema bootstrap failed: %w", err) // guard stays false -> next Connect retries
 		}
@@ -390,6 +391,34 @@ func (o *historianOutput) readAppliedPolicies(ctx context.Context) (*int64, *int
 	}
 	_ = o.pool.QueryRow(ctx, policyIntervalSQL("policy_retention", "drop_after"), table).Scan(&appliedRet)
 	return appliedComp, appliedRet, nil
+}
+
+// warnRetentionRecreate warns before bootstrap adds a retention policy to a hypertable that already
+// holds chunks. The gate cannot tell a policy an operator removed from one that never existed, so
+// the removal is undone and TimescaleDB resumes dropping chunks. Runs before the bootstrap DDL,
+// because afterwards the applied policy matches config and warnPolicyDrift has nothing to report.
+// Best-effort: introspection errors are swallowed so an unexpected catalog shape never fails Connect.
+func (o *historianOutput) warnRetentionRecreate(ctx context.Context) {
+	if !o.retentionSet {
+		return
+	}
+	for _, table := range []string{"value_" + o.contract, "attribute_" + o.contract} {
+		var chunks int
+		if err := o.pool.QueryRow(ctx, hypertableChunkCountSQL, table).Scan(&chunks); err != nil {
+			return
+		}
+		if chunks == 0 {
+			continue
+		}
+		var applied *int64
+		if err := o.pool.QueryRow(ctx, policyIntervalSQL("policy_retention", "drop_after"), table).Scan(&applied); err != nil {
+			return
+		}
+		if applied != nil {
+			continue
+		}
+		o.logger.Warnf("TimescaleDB historian: umh.%s already holds data and has no retention policy, so this start applies the configured retention (%s) and TimescaleDB will drop chunks older than that. Clear retention in this output's config to keep the policy removed.", table, o.retention)
+	}
 }
 
 // warnPolicyDrift warns when the applied compression/retention policy differs from config. An

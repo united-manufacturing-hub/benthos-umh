@@ -231,6 +231,28 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		}
 	})
 
+	It("warns and re-creates a retention policy removed on a hypertable that holds data", func() {
+		h := tsh.NewHistorianTestHandle(sharedDSN, "polwarn")
+		h.SetPolicies(168*time.Hour, 720*time.Hour, true)
+		Expect(h.Connect(ctx)).To(Succeed())
+		defer h.Close(ctx)
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(1.0, 1000, "_polwarn_v1", "acme.line1", "x", nil),
+		})).To(Succeed())
+		Expect(h.ExecSQL(ctx, "SELECT remove_retention_policy('umh.value_polwarn')")).To(Succeed())
+
+		restarted := tsh.NewHistorianTestHandle(sharedDSN, "polwarn")
+		restarted.SetPolicies(168*time.Hour, 720*time.Hour, true)
+		logs := restarted.CaptureLogs()
+		Expect(restarted.Connect(ctx)).To(Succeed())
+		defer restarted.Close(ctx)
+
+		Expect(logs()).To(ContainSubstring("umh.value_polwarn already holds data and has no retention policy"))
+		_, retention := restarted.PolicyIntervals(ctx, "value_polwarn")
+		Expect(retention).NotTo(BeNil())
+		Expect(*retention).To(Equal(int64(720 * 3600)))
+	})
+
 	It("keeps an operator's own retention interval across a restart", func() {
 		h := tsh.NewHistorianTestHandle(sharedDSN, "polkeep")
 		h.SetPolicies(168*time.Hour, 720*time.Hour, true)
