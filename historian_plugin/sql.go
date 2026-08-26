@@ -306,13 +306,9 @@ func sub(sql string, contract string) string {
 // policyBlock builds the compression/retention setup for one hypertable. Each check reads the
 // catalog for this hypertable, not umh.schema_migrations: that ledger holds one row per database
 // while the hypertables are per contract, so gating on it skipped every contract after the first.
-// The checks rely on the advisory lock this template takes at the top spanning them.
-//
-// The ALTER is checked separately because ALTER TABLE ... SET takes AccessExclusiveLock, and it
-// leaves an operator's own compress_segmentby / compress_orderby alone. if_not_exists on the adds
-// covers a check that reads false while the policy exists, which would otherwise abort the whole
-// bootstrap. A deleted policy and one that never existed are the same catalog state, so a removal
-// does not survive a restart.
+// The ALTER is checked separately because ALTER TABLE ... SET takes AccessExclusiveLock. The checks
+// rely on the advisory lock at the top of this template spanning them, and if_not_exists on the
+// adds covers a check that reads false while the policy exists.
 func policyBlock(hypertableName string, compressAfter time.Duration, retention time.Duration, retentionSet bool) string {
 	qualifiedTable := "umh." + hypertableName
 	compressionEnabled := compressionEnabledSQL(hypertableName)
@@ -346,7 +342,7 @@ BEGIN
 // policyJobExistsSQL and compressionEnabledSQL inline the hypertable name because a DO block takes
 // no parameters. procName is an internal constant, and the name reaching them is the CONTRACT_SLOT
 // template placeholder, replaced later by sub() with a contract ValidateContract has already matched
-// against ^[a-z0-9_]+$ -- so neither is a path for user input.
+// against ^[a-z0-9_]+$, so neither is a path for user input.
 func policyJobExistsSQL(procName string, hypertableName string) string {
 	return fmt.Sprintf("EXISTS (SELECT 1 FROM timescaledb_information.jobs WHERE proc_name = '%s' AND hypertable_schema = 'umh' AND hypertable_name = '%s')", procName, hypertableName)
 }

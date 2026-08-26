@@ -347,7 +347,7 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 			return err
 		}
 		defer conn.Release()
-		o.warnRetentionRecreate(bootCtx)
+		o.warnRetentionAboutToDrop(bootCtx)
 		if _, err := conn.Exec(bootCtx, o.renderBootstrapDDL()); err != nil {
 			return fmt.Errorf("schema bootstrap failed: %w", err) // guard stays false -> next Connect retries
 		}
@@ -400,17 +400,17 @@ func (o *historianOutput) readAppliedPolicies(ctx context.Context) (*int64, *int
 	return appliedComp, appliedRet, nil
 }
 
-// warnRetentionRecreate runs before the bootstrap DDL, because afterwards the applied policy matches
+// warnRetentionAboutToDrop runs before the bootstrap DDL, because afterwards the applied policy matches
 // config and warnPolicyDrift has nothing left to report. A failed lookup is logged, not swallowed:
 // this is the only signal before chunks start being dropped.
-func (o *historianOutput) warnRetentionRecreate(ctx context.Context) {
+func (o *historianOutput) warnRetentionAboutToDrop(ctx context.Context) {
 	if !o.retentionSet {
 		return
 	}
 	for _, table := range []string{"value_" + o.contract, "attribute_" + o.contract} {
 		var chunks int
 		if err := o.pool.QueryRow(ctx, hypertableChunkCountSQL, table).Scan(&chunks); err != nil {
-			o.logger.Warnf("historian: cannot read the chunk count of umh.%s, so cannot say whether retention (%s) will drop existing chunks: %v", table, o.retention, err)
+			o.logger.Warnf("historian: cannot read the chunk count of umh.%s, so cannot say whether retention (%s) drops existing chunks: %v", table, o.retention, err)
 			continue
 		}
 		if chunks == 0 {
@@ -424,7 +424,7 @@ func (o *historianOutput) warnRetentionRecreate(ctx context.Context) {
 		if applied != nil {
 			continue
 		}
-		o.logger.Warnf("historian: umh.%s holds data and had no retention policy, so retention (%s) is now scheduled and older chunks will be dropped. To keep them, run remove_retention_policy('umh.%s') and clear retention here.", table, o.retention, table)
+		o.logger.Warnf("historian: retention (%s) is now scheduled on umh.%s, which already holds data, so older chunks will be dropped. To keep them, run remove_retention_policy('umh.%s') and clear retention in the config.", o.retention, table, table)
 	}
 }
 
