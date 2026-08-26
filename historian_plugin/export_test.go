@@ -402,6 +402,31 @@ func (h *HistorianTestHandle) AppliedChunkInterval(ctx context.Context, table st
 
 func (h *HistorianTestHandle) WarnChunkDrift(ctx context.Context) { h.o.warnChunkDrift(ctx) }
 
+func BootstrapSQLWithPoliciesForTest(contract string, compressAfter time.Duration, retention time.Duration) string {
+	return bootstrapSQL(bootstrapConfig{
+		contract:       contract,
+		compressAfter:  compressAfter,
+		retention:      retention,
+		retentionSet:   retention > 0,
+		valueChunk:     168 * time.Hour,
+		attributeChunk: 168 * time.Hour,
+	})
+}
+
+func (h *HistorianTestHandle) SetPolicies(compressAfter time.Duration, retention time.Duration) {
+	h.o.compressAfter = compressAfter
+	h.o.retention = retention
+	h.o.retentionSet = retention > 0
+}
+
+func (h *HistorianTestHandle) PolicyIntervals(ctx context.Context, table string) (*int64, *int64) {
+	ExpectWithOffset(1, h.o.pool).NotTo(BeNil(), "Connect must succeed before PolicyIntervals")
+	var compressAfter, retention *int64
+	ExpectWithOffset(1, h.o.pool.QueryRow(ctx, policyIntervalSQL("policy_compression", "compress_after"), table).Scan(&compressAfter)).To(Succeed())
+	ExpectWithOffset(1, h.o.pool.QueryRow(ctx, policyIntervalSQL("policy_retention", "drop_after"), table).Scan(&retention)).To(Succeed())
+	return compressAfter, retention
+}
+
 func (h *HistorianTestHandle) ExecSQL(ctx context.Context, sql string) error {
 	_, err := h.o.pool.Exec(ctx, sql)
 	return err

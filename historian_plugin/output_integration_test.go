@@ -213,6 +213,64 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(h.SchemaVersion(ctx)).To(Equal(1))
 	})
 
+	It("applies compression and retention to a contract added after the database was bootstrapped", func() {
+		first := tsh.NewHistorianTestHandle(sharedDSN, "polfirst")
+		first.SetPolicies(168*time.Hour, 720*time.Hour)
+		Expect(first.Connect(ctx)).To(Succeed())
+		defer first.Close(ctx)
+		Expect(first.SchemaVersion(ctx)).To(Equal(1))
+
+		second := tsh.NewHistorianTestHandle(sharedDSN, "polsecond")
+		second.SetPolicies(168*time.Hour, 720*time.Hour)
+		Expect(second.Connect(ctx)).To(Succeed())
+		defer second.Close(ctx)
+
+		for _, table := range []string{"value_polsecond", "attribute_polsecond"} {
+			compressAfter, retention := second.PolicyIntervals(ctx, table)
+			Expect(compressAfter).NotTo(BeNil(), table)
+			Expect(*compressAfter).To(Equal(int64(168*3600)), table)
+			Expect(retention).NotTo(BeNil(), table)
+			Expect(*retention).To(Equal(int64(720*3600)), table)
+		}
+	})
+
+	It("keeps an operator's own retention interval across a restart", func() {
+		h := tsh.NewHistorianTestHandle(sharedDSN, "polkeep")
+		h.SetPolicies(168*time.Hour, 720*time.Hour)
+		Expect(h.Connect(ctx)).To(Succeed())
+		defer h.Close(ctx)
+		Expect(h.ExecSQL(ctx, "SELECT remove_retention_policy('umh.value_polkeep')")).To(Succeed())
+		Expect(h.ExecSQL(ctx, "SELECT add_retention_policy('umh.value_polkeep', INTERVAL '90 days')")).To(Succeed())
+
+		restarted := tsh.NewHistorianTestHandle(sharedDSN, "polkeep")
+		restarted.SetPolicies(168*time.Hour, 720*time.Hour)
+		Expect(restarted.Connect(ctx)).To(Succeed())
+		defer restarted.Close(ctx)
+		_, retention := restarted.PolicyIntervals(ctx, "value_polkeep")
+		Expect(retention).NotTo(BeNil())
+		Expect(*retention).To(Equal(int64(90 * 24 * 3600)))
+	})
+
+	It("re-adds a removed compression policy on a hypertable that already has compressed chunks", func() {
+		h := tsh.NewHistorianTestHandle(sharedDSN, "polchunk")
+		h.SetPolicies(time.Hour, 0)
+		Expect(h.Connect(ctx)).To(Succeed())
+		defer h.Close(ctx)
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(1.0, 1000, "_polchunk_v1", "acme.line1", "x", nil),
+		})).To(Succeed())
+		Expect(h.ExecSQL(ctx, "SELECT compress_chunk(c, if_not_compressed => true) FROM show_chunks('umh.value_polchunk') c")).To(Succeed())
+		Expect(h.ExecSQL(ctx, "SELECT remove_compression_policy('umh.value_polchunk')")).To(Succeed())
+
+		restarted := tsh.NewHistorianTestHandle(sharedDSN, "polchunk")
+		restarted.SetPolicies(time.Hour, 0)
+		Expect(restarted.Connect(ctx)).To(Succeed())
+		defer restarted.Close(ctx)
+		compressAfter, _ := restarted.PolicyIntervals(ctx, "value_polchunk")
+		Expect(compressAfter).NotTo(BeNil())
+		Expect(*compressAfter).To(Equal(int64(3600)))
+	})
+
 	It("does not advance the topic sequence when re-resolving an existing topic", func() {
 		h := connected("noburn")
 		defer h.Close(ctx)

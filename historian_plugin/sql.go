@@ -303,28 +303,47 @@ func sub(sql string, contract string) string {
 	return strings.ReplaceAll(sql, "CONTRACT_SLOT", contract)
 }
 
-// policyBlock generates the compression/retention setup for one hypertable, ledger-gated to run
-// once at first bootstrap (empty table, no compressed chunks). Running it every Connect broke two
-// ways: ALTER TABLE SET (compress...) errors once compressed chunks exist, and re-applying
-// retention un-scheduled an operator's manual policy. Consequence: editing compress_after/retention
-// needs a new migration step to re-apply.
+// policyBlock builds the compression/retention setup for one hypertable. Each check reads
+// TimescaleDB's catalog for this hypertable rather than umh.schema_migrations, which holds one row
+// per database while the hypertables are per contract: a ledger check skips every contract after
+// the first. The ALTER needs a check of its own, because re-asserting it once compressed chunks
+// exist errors on older TimescaleDB 2.x. A policy deleted on the database while it stays in config
+// is re-created at the next bootstrap.
 func policyBlock(table string, compressAfter time.Duration, retention time.Duration, retentionSet bool) string {
+	qualified := "umh." + table
 	var b strings.Builder
 	fmt.Fprintf(&b, `DO $pol$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM umh.schema_migrations WHERE version = 1) THEN
+  IF NOT %[3]s THEN
     ALTER TABLE %[1]s SET (
       timescaledb.compress,
       timescaledb.compress_segmentby = 'topic_id',
       timescaledb.compress_orderby   = 'ts DESC'
     );
+  END IF;
+  IF NOT %[4]s THEN
     PERFORM add_compression_policy('%[1]s', %[2]s);
-`, table, intervalSQL(compressAfter))
+  END IF;
+`, qualified, intervalSQL(compressAfter), compressionEnabledSQL(table), policyJobExistsSQL("policy_compression", table))
 	if retentionSet {
-		fmt.Fprintf(&b, "    PERFORM add_retention_policy('%s', %s);\n", table, intervalSQL(retention))
+		fmt.Fprintf(&b, `  IF NOT %[2]s THEN
+    PERFORM add_retention_policy('%[1]s', %[3]s);
+  END IF;
+`, qualified, policyJobExistsSQL("policy_retention", table), intervalSQL(retention))
 	}
-	b.WriteString("  END IF;\nEND $pol$;")
+	b.WriteString("END $pol$;")
 	return b.String()
+}
+
+// policyJobExistsSQL is policyIntervalSQL as a boolean, with the hypertable name inlined because a
+// DO block takes no parameters. procName is an internal constant and table is the validated
+// contract name, not user input.
+func policyJobExistsSQL(procName string, table string) string {
+	return fmt.Sprintf("EXISTS (SELECT 1 FROM timescaledb_information.jobs WHERE proc_name = '%s' AND hypertable_schema = 'umh' AND hypertable_name = '%s')", procName, table)
+}
+
+func compressionEnabledSQL(table string) string {
+	return fmt.Sprintf("EXISTS (SELECT 1 FROM timescaledb_information.hypertables WHERE hypertable_schema = 'umh' AND hypertable_name = '%s' AND compression_enabled)", table)
 }
 
 // policyIntervalSQL returns a query for the interval (in seconds) of a TimescaleDB policy job on
@@ -410,8 +429,8 @@ func bootstrapSQL(cfg bootstrapConfig) string {
 	slots := map[string]string{
 		"VALUE_CHUNK_SLOT":     intervalSQL(cfg.valueChunk),
 		"ATTRIBUTE_CHUNK_SLOT": intervalSQL(cfg.attributeChunk),
-		"VALUE_POLICY_SLOT":    policyBlock("umh.value_CONTRACT_SLOT", cfg.compressAfter, cfg.retention, cfg.retentionSet),
-		"ATTR_POLICY_SLOT":     policyBlock("umh.attribute_CONTRACT_SLOT", cfg.compressAfter, cfg.retention, cfg.retentionSet),
+		"VALUE_POLICY_SLOT":    policyBlock("value_CONTRACT_SLOT", cfg.compressAfter, cfg.retention, cfg.retentionSet),
+		"ATTR_POLICY_SLOT":     policyBlock("attribute_CONTRACT_SLOT", cfg.compressAfter, cfg.retention, cfg.retentionSet),
 		"MIGRATIONS_SLOT":      migrationsBlock(),
 	}
 	s := bootstrapTemplate

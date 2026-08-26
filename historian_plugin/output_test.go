@@ -16,6 +16,7 @@ package historian_plugin_test
 
 import (
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -117,13 +118,20 @@ data_contract_name: pump
 		Expect(got).NotTo(ContainSubstring("MIGRATIONS_SLOT")) // placeholder substituted
 	})
 
-	It("gates compression/retention setup on the ledger so it runs once at first bootstrap", func() {
-		got := tsh.BootstrapSQLForTest("pump")
-		// The policy DO block is wrapped in the version-1 ledger gate, so it never re-runs on
-		// restart: the ALTER can't hit the compressed-chunks error and retention is not stripped.
+	It("gates compression/retention setup per hypertable, not on the schema ledger", func() {
+		got := tsh.BootstrapSQLWithPoliciesForTest("pump", 168*time.Hour, 720*time.Hour)
 		Expect(got).To(ContainSubstring("ALTER TABLE umh.value_pump SET ("))
 		Expect(got).To(ContainSubstring("add_compression_policy('umh.value_pump'"))
-		// Runs only on empty tables, so no remove_* churn on restart.
+		Expect(got).To(ContainSubstring("add_retention_policy('umh.value_pump'"))
+		Expect(got).To(ContainSubstring("add_compression_policy('umh.attribute_pump'"))
+		Expect(got).To(ContainSubstring("add_retention_policy('umh.attribute_pump'"))
+		for _, table := range []string{"value_pump", "attribute_pump"} {
+			Expect(got).To(ContainSubstring("hypertable_name = '" + table + "'"))
+			Expect(got).To(ContainSubstring("hypertable_name = '" + table + "' AND compression_enabled"))
+		}
+		// The version-1 gate belongs to the migration ledger alone: a contract added to an
+		// already-migrated database must still get its own policies.
+		Expect(strings.Count(got, "umh.schema_migrations WHERE version = 1")).To(Equal(1))
 		Expect(got).NotTo(ContainSubstring("remove_retention_policy"))
 		Expect(got).NotTo(ContainSubstring("remove_compression_policy"))
 	})
