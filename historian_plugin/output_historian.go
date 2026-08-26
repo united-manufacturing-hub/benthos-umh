@@ -310,7 +310,13 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 		// if_not_exists => TRUE reports a policy it declined to change as a notice and returns -1, so
 		// without this the decline reaches no log.
 		cfg.ConnConfig.OnNotice = func(_ *pgconn.PgConn, n *pgconn.Notice) {
-			o.logger.Warnf("TimescaleDB historian: %s: %s", n.Severity, n.Message)
+			// WARNING is what add_*_policy raises when if_not_exists makes it decline; NOTICE is
+			// routine bootstrap chatter ("trigger ... does not exist, skipping") on every start.
+			if n.Severity == "WARNING" {
+				o.logger.Warnf("historian: %s", n.Message)
+				return
+			}
+			o.logger.Debugf("historian: %s: %s", n.Severity, n.Message)
 		}
 		// Each in-flight batch holds a pooled connection for its write tx, so a pool smaller than
 		// max_in_flight silently caps concurrency. pgxpool defaults to max(4, NumCPU), below the
