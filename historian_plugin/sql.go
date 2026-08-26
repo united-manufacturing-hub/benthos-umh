@@ -303,21 +303,16 @@ func sub(sql string, contract string) string {
 	return strings.ReplaceAll(sql, "CONTRACT_SLOT", contract)
 }
 
-// policyBlock builds the compression/retention setup for one hypertable. Each check reads
-// TimescaleDB's catalog for this hypertable rather than umh.schema_migrations, which holds one row
-// per database while the hypertables are per contract: a ledger check skips every contract after
-// the first. The checks are only safe together with the advisory lock this template takes at the
-// top, which spans them and the statements they guard.
+// policyBlock builds the compression/retention setup for one hypertable. Each check reads the
+// catalog for this hypertable, not umh.schema_migrations: that ledger holds one row per database
+// while the hypertables are per contract, so gating on it skipped every contract after the first.
+// The checks rely on the advisory lock this template takes at the top spanning them.
 //
-// The ALTER needs a check of its own because ALTER TABLE ... SET takes AccessExclusiveLock, so
-// re-asserting settings that never change would lock the hypertable against reads and writes every
-// time the output starts. It also leaves an operator's own compress_segmentby / compress_orderby
-// alone, which nothing else here checks or reports.
-//
-// if_not_exists on the two adds is the second line of defense: a check that reads false while the
-// policy exists then declines instead of aborting the bootstrap transaction. A policy deleted on
-// the database while it stays in config is re-created the next time the output starts, because a
-// deleted policy and one that never existed are the same catalog state.
+// The ALTER is checked separately because ALTER TABLE ... SET takes AccessExclusiveLock, and it
+// leaves an operator's own compress_segmentby / compress_orderby alone. if_not_exists on the adds
+// covers a check that reads false while the policy exists, which would otherwise abort the whole
+// bootstrap. A deleted policy and one that never existed are the same catalog state, so a removal
+// does not survive a restart.
 func policyBlock(hypertableName string, compressAfter time.Duration, retention time.Duration, retentionSet bool) string {
 	qualifiedTable := "umh." + hypertableName
 	compressionEnabled := compressionEnabledSQL(hypertableName)
@@ -372,8 +367,8 @@ func policyIntervalSQL(procName string, configKey string) string {
    LIMIT 1)`, configKey, procName)
 }
 
-// hypertableChunkCountSQL counts the chunks of one umh hypertable, so a policy about to be created
-// can be told apart from one being created on a table that already holds history.
+// hypertableChunkCountSQL counts the chunks of one umh hypertable: a policy created on an empty
+// table destroys nothing, one created on a table with history does.
 const hypertableChunkCountSQL = `SELECT count(*) FROM timescaledb_information.chunks
  WHERE hypertable_schema = 'umh' AND hypertable_name = $1`
 

@@ -222,7 +222,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		logs := second.CaptureLogs()
 		Expect(second.Connect(ctx)).To(Succeed())
 		defer second.Close(ctx)
-		Expect(logs()).NotTo(ContainSubstring("already holds data"))
+		Expect(logs()).NotTo(ContainSubstring("had no retention policy"))
 
 		for _, table := range []string{"value_polsecond", "attribute_polsecond"} {
 			compressAfter, retention := second.PolicyIntervals(ctx, table)
@@ -279,8 +279,8 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(restarted.Connect(ctx)).To(Succeed())
 		defer restarted.Close(ctx)
 
-		Expect(logs()).To(ContainSubstring("umh.value_polwarn already holds data and had no retention policy"))
-		Expect(logs()).To(ContainSubstring("umh.attribute_polwarn already holds data and had no retention policy"))
+		Expect(logs()).To(ContainSubstring("umh.value_polwarn holds data and had no retention policy"))
+		Expect(logs()).To(ContainSubstring("umh.attribute_polwarn holds data and had no retention policy"))
 		Expect(logs()).To(ContainSubstring("remove_retention_policy('umh.value_polwarn')"))
 		_, retention := restarted.PolicyIntervals(ctx, "value_polwarn")
 		Expect(retention).NotTo(BeNil())
@@ -322,7 +322,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		logs := restarted.CaptureLogs()
 		Expect(restarted.Connect(ctx)).To(Succeed())
 		defer restarted.Close(ctx)
-		Expect(logs()).NotTo(ContainSubstring("already holds data"))
+		Expect(logs()).NotTo(ContainSubstring("had no retention policy"))
 		compressAfter, _ := restarted.PolicyIntervals(ctx, "value_polchunk")
 		Expect(compressAfter).NotTo(BeNil())
 		Expect(*compressAfter).To(Equal(int64(3600)))

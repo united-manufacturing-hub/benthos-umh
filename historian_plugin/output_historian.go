@@ -384,15 +384,10 @@ func (o *historianOutput) probeWritable(ctx context.Context) error {
 	return nil
 }
 
-// readAppliedPolicies reads the compression/retention intervals (in seconds) TimescaleDB currently
-// has applied for this contract, as nil-able pointers (nil = no such policy scheduled). It reads the
-// value table only, which is safe here because bootstrap has just run in the same branch and put
-// back whatever was missing on either table; a policy that differs on umh.attribute_<contract> alone
-// is not reported. A failed lookup is an error rather than a nil interval: nil means "no policy is
-// scheduled", and warnPolicyDrift turns that into "your configured retention is not applied", which
-// is a false statement to make because the read failed. This is the I/O read half of
-// warnPolicyDrift, split out so the drift check reads as read -> compare (pure
-// policyDriftWarnings) -> log.
+// readAppliedPolicies reads the intervals applied to this contract, in seconds; nil means no such
+// policy is scheduled, and a failed read is an error, because warnPolicyDrift would otherwise report
+// a missing policy that it never managed to look for. It reads the value table only, which holds
+// because bootstrap has just put back whatever either table was missing.
 func (o *historianOutput) readAppliedPolicies(ctx context.Context) (*int64, *int64, error) {
 	table := "value_" + o.contract
 	var appliedComp, appliedRet *int64
@@ -405,13 +400,9 @@ func (o *historianOutput) readAppliedPolicies(ctx context.Context) (*int64, *int
 	return appliedComp, appliedRet, nil
 }
 
-// warnRetentionRecreate warns before bootstrap adds a retention policy to a hypertable that already
-// holds chunks. The gate cannot tell a policy an operator removed from one that never existed, so
-// the removal is undone and TimescaleDB resumes dropping chunks. Runs before the bootstrap DDL,
-// because afterwards the applied policy matches config and warnPolicyDrift has nothing to report.
-// A failed lookup is logged rather than swallowed: this is the only signal standing between a
-// deliberate removal and chunks being dropped, so its own failure has to be visible, and it must not
-// fail Connect.
+// warnRetentionRecreate runs before the bootstrap DDL, because afterwards the applied policy matches
+// config and warnPolicyDrift has nothing left to report. A failed lookup is logged, not swallowed:
+// this is the only signal before chunks start being dropped.
 func (o *historianOutput) warnRetentionRecreate(ctx context.Context) {
 	if !o.retentionSet {
 		return
@@ -419,7 +410,7 @@ func (o *historianOutput) warnRetentionRecreate(ctx context.Context) {
 	for _, table := range []string{"value_" + o.contract, "attribute_" + o.contract} {
 		var chunks int
 		if err := o.pool.QueryRow(ctx, hypertableChunkCountSQL, table).Scan(&chunks); err != nil {
-			o.logger.Warnf("TimescaleDB historian: could not read the chunk count of umh.%s (%v), so this start cannot say whether applying the configured retention (%s) will drop existing chunks. Check the retention policy on umh.%s before the retention job next runs.", table, err, o.retention, table)
+			o.logger.Warnf("historian: cannot read the chunk count of umh.%s, so cannot say whether retention (%s) will drop existing chunks: %v", table, o.retention, err)
 			continue
 		}
 		if chunks == 0 {
@@ -427,13 +418,13 @@ func (o *historianOutput) warnRetentionRecreate(ctx context.Context) {
 		}
 		var applied *int64
 		if err := o.pool.QueryRow(ctx, policyIntervalSQL("policy_retention", "drop_after"), table).Scan(&applied); err != nil {
-			o.logger.Warnf("TimescaleDB historian: could not read the retention policy of umh.%s (%v), so this start cannot say whether it is about to apply the configured retention (%s) to a table that already holds data.", table, err, o.retention)
+			o.logger.Warnf("historian: cannot read the retention policy of umh.%s: %v", table, err)
 			continue
 		}
 		if applied != nil {
 			continue
 		}
-		o.logger.Warnf("TimescaleDB historian: umh.%s already holds data and had no retention policy, so this start has scheduled the configured retention (%s) and TimescaleDB will drop chunks older than that when the retention job next runs. To keep the data, run SELECT remove_retention_policy('umh.%s') before then, and clear retention in this output's config so the next start does not schedule it again.", table, o.retention, table)
+		o.logger.Warnf("historian: umh.%s holds data and had no retention policy, so retention (%s) is now scheduled and older chunks will be dropped. To keep them, run remove_retention_policy('umh.%s') and clear retention here.", table, o.retention, table)
 	}
 }
 
@@ -443,7 +434,7 @@ func (o *historianOutput) warnRetentionRecreate(ctx context.Context) {
 func (o *historianOutput) warnPolicyDrift(ctx context.Context) {
 	appliedComp, appliedRet, err := o.readAppliedPolicies(ctx)
 	if err != nil {
-		o.logger.Warnf("TimescaleDB historian: could not read the compression/retention policies applied to umh.value_%s (%v), so this start cannot report whether they match this output's config. Read them with SELECT proc_name, config FROM timescaledb_information.jobs WHERE hypertable_name = 'value_%s'.", o.contract, err, o.contract)
+		o.logger.Warnf("historian: cannot read the policies applied to umh.value_%s, so cannot report drift: %v", o.contract, err)
 		return
 	}
 	var retentionWant *int64
