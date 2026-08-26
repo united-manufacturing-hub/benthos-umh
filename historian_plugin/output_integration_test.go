@@ -181,9 +181,6 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 			mkMsg(1.0, 1000, "_recon_v1", "acme.line1", "x", nil),
 		})).To(Succeed())
 
-		// A second, independent handle (bootstrapped == false) connects to the SAME database --
-		// the real restart path, not the same-handle early return. Bootstrap runs again and must
-		// be idempotent; the ledger-gated policy block is skipped rather than re-applied.
 		h2 := tsh.NewHistorianTestHandle(sharedDSN, "recon")
 		Expect(h2.Connect(ctx)).To(Succeed())
 		defer h2.Close(ctx)
@@ -215,13 +212,13 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 
 	It("applies compression and retention to a contract added after the database was bootstrapped", func() {
 		first := tsh.NewHistorianTestHandle(sharedDSN, "polfirst")
-		first.SetPolicies(168*time.Hour, 720*time.Hour)
+		first.SetPolicies(168*time.Hour, 720*time.Hour, true)
 		Expect(first.Connect(ctx)).To(Succeed())
 		defer first.Close(ctx)
 		Expect(first.SchemaVersion(ctx)).To(Equal(1))
 
 		second := tsh.NewHistorianTestHandle(sharedDSN, "polsecond")
-		second.SetPolicies(168*time.Hour, 720*time.Hour)
+		second.SetPolicies(168*time.Hour, 720*time.Hour, true)
 		Expect(second.Connect(ctx)).To(Succeed())
 		defer second.Close(ctx)
 
@@ -236,14 +233,14 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 
 	It("keeps an operator's own retention interval across a restart", func() {
 		h := tsh.NewHistorianTestHandle(sharedDSN, "polkeep")
-		h.SetPolicies(168*time.Hour, 720*time.Hour)
+		h.SetPolicies(168*time.Hour, 720*time.Hour, true)
 		Expect(h.Connect(ctx)).To(Succeed())
 		defer h.Close(ctx)
 		Expect(h.ExecSQL(ctx, "SELECT remove_retention_policy('umh.value_polkeep')")).To(Succeed())
 		Expect(h.ExecSQL(ctx, "SELECT add_retention_policy('umh.value_polkeep', INTERVAL '90 days')")).To(Succeed())
 
 		restarted := tsh.NewHistorianTestHandle(sharedDSN, "polkeep")
-		restarted.SetPolicies(168*time.Hour, 720*time.Hour)
+		restarted.SetPolicies(168*time.Hour, 720*time.Hour, true)
 		Expect(restarted.Connect(ctx)).To(Succeed())
 		defer restarted.Close(ctx)
 		_, retention := restarted.PolicyIntervals(ctx, "value_polkeep")
@@ -253,7 +250,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 
 	It("re-adds a removed compression policy on a hypertable that already has compressed chunks", func() {
 		h := tsh.NewHistorianTestHandle(sharedDSN, "polchunk")
-		h.SetPolicies(time.Hour, 0)
+		h.SetPolicies(time.Hour, 0, false)
 		Expect(h.Connect(ctx)).To(Succeed())
 		defer h.Close(ctx)
 		Expect(h.WriteBatch(ctx, service.MessageBatch{
@@ -263,7 +260,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(h.ExecSQL(ctx, "SELECT remove_compression_policy('umh.value_polchunk')")).To(Succeed())
 
 		restarted := tsh.NewHistorianTestHandle(sharedDSN, "polchunk")
-		restarted.SetPolicies(time.Hour, 0)
+		restarted.SetPolicies(time.Hour, 0, false)
 		Expect(restarted.Connect(ctx)).To(Succeed())
 		defer restarted.Close(ctx)
 		compressAfter, _ := restarted.PolicyIntervals(ctx, "value_polchunk")

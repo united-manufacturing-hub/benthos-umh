@@ -119,21 +119,28 @@ data_contract_name: pump
 	})
 
 	It("gates compression/retention setup per hypertable, not on the schema ledger", func() {
-		got := tsh.BootstrapSQLWithPoliciesForTest("pump", 168*time.Hour, 720*time.Hour)
+		got := tsh.BootstrapSQLWithPoliciesForTest("pump", 168*time.Hour, 720*time.Hour, true)
 		Expect(got).To(ContainSubstring("ALTER TABLE umh.value_pump SET ("))
 		Expect(got).To(ContainSubstring("add_compression_policy('umh.value_pump'"))
 		Expect(got).To(ContainSubstring("add_retention_policy('umh.value_pump'"))
 		Expect(got).To(ContainSubstring("add_compression_policy('umh.attribute_pump'"))
 		Expect(got).To(ContainSubstring("add_retention_policy('umh.attribute_pump'"))
 		for _, table := range []string{"value_pump", "attribute_pump"} {
-			Expect(got).To(ContainSubstring("hypertable_name = '" + table + "'"))
 			Expect(got).To(ContainSubstring("hypertable_name = '" + table + "' AND compression_enabled"))
+			Expect(got).To(ContainSubstring("proc_name = 'policy_compression' AND hypertable_schema = 'umh' AND hypertable_name = '" + table + "'"))
+			Expect(got).To(ContainSubstring("proc_name = 'policy_retention' AND hypertable_schema = 'umh' AND hypertable_name = '" + table + "'"))
 		}
-		// The version-1 gate belongs to the migration ledger alone: a contract added to an
-		// already-migrated database must still get its own policies.
-		Expect(strings.Count(got, "umh.schema_migrations WHERE version = 1")).To(Equal(1))
+		Expect(strings.Count(got, "umh.schema_migrations WHERE version = 1")).To(Equal(1),
+			"the version-1 gate belongs to the migration ledger alone")
 		Expect(got).NotTo(ContainSubstring("remove_retention_policy"))
 		Expect(got).NotTo(ContainSubstring("remove_compression_policy"))
+	})
+
+	It("renders no retention policy for the shipped default of keep forever", func() {
+		got := tsh.BootstrapSQLForTest("pump")
+		Expect(got).NotTo(ContainSubstring("add_retention_policy"))
+		Expect(got).NotTo(ContainSubstring("policy_retention"))
+		Expect(got).To(ContainSubstring("add_compression_policy('umh.value_pump'"))
 	})
 })
 

@@ -32,12 +32,7 @@ func HistorianConfig() *service.ConfigSpec { return historianConfig() }
 
 // BootstrapSQLForTest renders the bootstrap DDL for a contract (default policies).
 func BootstrapSQLForTest(contract string) string {
-	return bootstrapSQL(bootstrapConfig{
-		contract:       contract,
-		compressAfter:  168 * time.Hour,
-		valueChunk:     168 * time.Hour,
-		attributeChunk: 168 * time.Hour,
-	})
+	return BootstrapSQLWithPoliciesForTest(contract, 168*time.Hour, 0, false)
 }
 
 // SchemaVersionForTest exposes the highest schema-migration version the bootstrap applies
@@ -402,21 +397,22 @@ func (h *HistorianTestHandle) AppliedChunkInterval(ctx context.Context, table st
 
 func (h *HistorianTestHandle) WarnChunkDrift(ctx context.Context) { h.o.warnChunkDrift(ctx) }
 
-func BootstrapSQLWithPoliciesForTest(contract string, compressAfter time.Duration, retention time.Duration) string {
+func BootstrapSQLWithPoliciesForTest(contract string, compressAfter time.Duration, retention time.Duration, retentionSet bool) string {
 	return bootstrapSQL(bootstrapConfig{
 		contract:       contract,
 		compressAfter:  compressAfter,
 		retention:      retention,
-		retentionSet:   retention > 0,
+		retentionSet:   retentionSet,
 		valueChunk:     168 * time.Hour,
 		attributeChunk: 168 * time.Hour,
 	})
 }
 
-func (h *HistorianTestHandle) SetPolicies(compressAfter time.Duration, retention time.Duration) {
+func (h *HistorianTestHandle) SetPolicies(compressAfter time.Duration, retention time.Duration, retentionSet bool) {
+	ExpectWithOffset(1, h.o.pool).To(BeNil(), "SetPolicies must be called before Connect")
 	h.o.compressAfter = compressAfter
 	h.o.retention = retention
-	h.o.retentionSet = retention > 0
+	h.o.retentionSet = retentionSet
 }
 
 func (h *HistorianTestHandle) PolicyIntervals(ctx context.Context, table string) (*int64, *int64) {
