@@ -1,3 +1,0 @@
-kind: fixes
-body: Compression and retention policies now apply to every historian data contract, not just the first one written to a database. A contract whose tables were created without them picks them up the next time its bridge starts (ENG-5757)
-time: 2026-08-26T09:25:38.213572+02:00
