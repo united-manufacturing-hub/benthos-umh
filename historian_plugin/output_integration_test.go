@@ -231,6 +231,35 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		}
 	})
 
+	It("gives a contract left without policies by an older build both of them on the next start", func() {
+		h := tsh.NewHistorianTestHandle(sharedDSN, "pollegacy")
+		h.SetPolicies(168*time.Hour, 720*time.Hour, true)
+		Expect(h.Connect(ctx)).To(Succeed())
+		defer h.Close(ctx)
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(1.0, 1000, "_pollegacy_v1", "acme.line1", "x", nil),
+		})).To(Succeed())
+		for _, table := range []string{"umh.value_pollegacy", "umh.attribute_pollegacy"} {
+			Expect(h.ExecSQL(ctx, "SELECT remove_compression_policy('"+table+"')")).To(Succeed())
+			Expect(h.ExecSQL(ctx, "SELECT remove_retention_policy('"+table+"')")).To(Succeed())
+			Expect(h.ExecSQL(ctx, "ALTER TABLE "+table+" SET (timescaledb.compress = false)")).To(Succeed())
+		}
+
+		restarted := tsh.NewHistorianTestHandle(sharedDSN, "pollegacy")
+		restarted.SetPolicies(168*time.Hour, 720*time.Hour, true)
+		Expect(restarted.Connect(ctx)).To(Succeed())
+		defer restarted.Close(ctx)
+
+		for _, table := range []string{"value_pollegacy", "attribute_pollegacy"} {
+			compressAfter, retention := restarted.PolicyIntervals(ctx, table)
+			Expect(compressAfter).NotTo(BeNil(), table)
+			Expect(*compressAfter).To(Equal(int64(168*3600)), table)
+			Expect(retention).NotTo(BeNil(), table)
+			Expect(*retention).To(Equal(int64(720*3600)), table)
+		}
+		Expect(restarted.CountValueRows(ctx, "pollegacy")).To(Equal(1))
+	})
+
 	It("warns and re-creates a retention policy removed on a hypertable that holds data", func() {
 		h := tsh.NewHistorianTestHandle(sharedDSN, "polwarn")
 		h.SetPolicies(168*time.Hour, 720*time.Hour, true)
