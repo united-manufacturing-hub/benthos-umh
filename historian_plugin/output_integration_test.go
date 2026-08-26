@@ -292,11 +292,13 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 
 		restarted := tsh.NewHistorianTestHandle(sharedDSN, "polkeep")
 		restarted.SetPolicies(168*time.Hour, 720*time.Hour, true)
+		logs := restarted.CaptureLogs()
 		Expect(restarted.Connect(ctx)).To(Succeed())
 		defer restarted.Close(ctx)
 		_, retention := restarted.PolicyIntervals(ctx, "value_polkeep")
 		Expect(retention).NotTo(BeNil())
 		Expect(*retention).To(Equal(int64(90 * 24 * 3600)))
+		Expect(logs()).To(ContainSubstring("does not match the retention policy applied in the database"))
 	})
 
 	It("re-adds a removed compression policy on a hypertable that already has compressed chunks", func() {
