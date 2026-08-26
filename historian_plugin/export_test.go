@@ -378,9 +378,9 @@ func (h *HistorianTestHandle) ReportDropsForTest(total int, summaries map[string
 	h.o.reportDrops(total, m)
 }
 
-// BootstrapStmt renders the bootstrap DDL from the output's own config, so a config-parse test can
+// RenderBootstrapDDL renders the bootstrap DDL from the output's own config, so a config-parse test can
 // assert what the configured values turn into (BootstrapSQLForTest renders fixed defaults instead).
-func (h *HistorianTestHandle) BootstrapStmt() string { return h.o.renderBootstrapDDL() }
+func (h *HistorianTestHandle) RenderBootstrapDDL() string { return h.o.renderBootstrapDDL() }
 
 // ChunkDriftWarningsForTest exposes chunkDriftWarnings to the external test package.
 func ChunkDriftWarningsForTest(valueWant int64, appliedValue *int64, attributeWant int64, appliedAttribute *int64) []string {

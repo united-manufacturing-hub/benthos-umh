@@ -165,7 +165,7 @@ var _ = Describe("chunk interval config", func() {
 		Expect(err).NotTo(HaveOccurred())
 		h, err := tsh.NewHistorianForConfig(parsed)
 		Expect(err).NotTo(HaveOccurred())
-		return h.BootstrapStmt()
+		return h.RenderBootstrapDDL()
 	}
 
 	It("defaults both hypertables to 7-day chunks", func() {
