@@ -377,21 +377,18 @@ func policyIntervalSQL(procName string, configKey string) string {
 const hypertableChunkCountSQL = `SELECT count(*) FROM timescaledb_information.chunks
  WHERE hypertable_schema = 'umh' AND hypertable_name = $1`
 
-// policyDriftWarnings compares configured compression/retention intervals against the ones
-// actually applied in the database (in seconds; nil = no such policy) and returns a warning per
-// divergence. appliedComp == nil means the compression policy could not be read -- either the
-// catalog is unavailable on this server or the database was never bootstrapped -- so it returns
-// nothing rather than risk a false warning. Compression always has a policy after bootstrap, so
-// its presence doubles as the "introspection works" probe for the retention checks.
-// retentionWant is nil when retention is unset in config (keep forever); appliedRet is nil when no
-// retention policy is scheduled in the database. Both compression and retention use the same nil-able
-// representation for "not set".
+// policyDriftWarnings compares configured compression/retention intervals against the ones actually
+// applied in the database and returns a warning per divergence. An applied interval is nil when no
+// such policy is scheduled, and only that: a lookup that failed is an error the caller reports, so
+// this no longer treats a nil compression interval as "introspection is broken" and stays silent on
+// the retention checks because of it. retentionWant is nil when retention is unset in config (keep
+// forever), which is the one nil that means "wanted absent" rather than "is absent".
 func policyDriftWarnings(compressWant int64, appliedComp *int64, retentionWant *int64, appliedRet *int64) []string {
-	if appliedComp == nil {
-		return nil
-	}
 	var warns []string
-	if *appliedComp != compressWant {
+	switch {
+	case appliedComp == nil:
+		warns = append(warns, fmt.Sprintf("configured compress_after (%ds) is not applied in the database", compressWant))
+	case *appliedComp != compressWant:
 		warns = append(warns, fmt.Sprintf("configured compress_after (%ds) does not match the compression policy applied in the database (%ds)", compressWant, *appliedComp))
 	}
 	switch {

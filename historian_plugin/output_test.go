@@ -156,7 +156,8 @@ var _ = Describe("policy drift warnings", func() {
 		func(compressWant int64, appliedComp *int64, retentionWant *int64, appliedRet *int64, wantWarns int) {
 			Expect(tsh.PolicyDriftWarningsForTest(compressWant, appliedComp, retentionWant, appliedRet)).To(HaveLen(wantWarns))
 		},
-		Entry("quiet: compression not readable yet (not bootstrapped)", sevenDays, nil, sec(thirtyDays), nil, 0),
+		Entry("warn: no compression policy applied, and retention configured but not applied", sevenDays, nil, sec(thirtyDays), nil, 2),
+		Entry("warn: no compression policy applied, no retention configured", sevenDays, nil, nil, nil, 1),
 		Entry("quiet: compression matches, no retention configured", sevenDays, sec(sevenDays), nil, nil, 0),
 		Entry("quiet: compression and retention both match", sevenDays, sec(sevenDays), sec(thirtyDays), sec(thirtyDays), 0),
 		Entry("warn: compress_after changed after bootstrap", oneDay, sec(sevenDays), nil, nil, 1),
