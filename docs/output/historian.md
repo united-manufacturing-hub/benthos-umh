@@ -33,8 +33,8 @@ No JavaScript processor or hand-written `sql_raw` is needed.
 | `metadata_keys_all` | no | `true` | Store every metadata key except structural/high-churn keys and any `metadata_keys_exclude` match. |
 | `metadata_keys` | no | `[]` | Allowlist used only when `metadata_keys_all=false`. |
 | `metadata_keys_exclude` | no | `[]` | Blacklist applied only when `metadata_keys_all=true`. Each entry is an exact key name or a trailing-`*` prefix (e.g. `opcua_*`); matches are dropped on top of the built-in exclusions. A bare `*` drops everything. Ignored in allowlist mode. |
-| `compress_after` | no | `168h` | Compress chunks older than this. Applied once at first bootstrap; changing it afterward has no effect (see [Changing compression or retention](#changing-compression-or-retention)). |
-| `retention` | no | `""` | Drop chunks older than this; empty keeps data forever. Applied once at first bootstrap; changing it afterward has no effect (see [Changing compression or retention](#changing-compression-or-retention)). |
+| `compress_after` | no | `168h` | Compress chunks older than this. Applied to each of a contract's hypertables that has no compression policy yet; changing it afterward has no effect (see [Changing compression or retention](#changing-compression-or-retention)). |
+| `retention` | no | `""` | Drop chunks older than this; empty keeps data forever. Applied to each of a contract's hypertables that has no retention policy yet; changing it afterward has no effect (see [Changing compression or retention](#changing-compression-or-retention)). |
 | `value_chunk_interval` | no | `168h` | Chunk width of `umh.value_<contract>`. Applied when the table is created; changing it afterward has no effect (see [Changing the chunk interval](#changing-the-chunk-interval)). |
 | `attribute_chunk_interval` | no | `168h` | Chunk width of `umh.attribute_<contract>`. Attribute rows are written only when a tag's metadata changes, so this table is much sparser than the value table. Applied when the table is created. |
 | `batching` | no | — | benthos batch policy (`count` / `period` / `byte_size`). The whole batch is written in one transaction, so larger batches raise throughput; e.g. `count: 1000`, `period: 1s`. |
@@ -333,12 +333,15 @@ the same tables. To avoid schema drift, a given contract/database must be writte
 
 ## Changing compression or retention
 
-`compress_after` and `retention` are applied **once, at first bootstrap**, and are deliberately
-not re-applied when the output restarts. Editing them in the config therefore has **no
-effect** on a database that already has the tables. This is intentional: a config edit (or a form
-change in the Management Console) should not silently change how production history is compressed
-or — for retention — **deleted**. On restart the output logs a warning if the applied policy
-differs from the config, so drift stays visible, but it does not act on it.
+`compress_after` and `retention` are applied **per contract**, to each of that contract's two
+hypertables that does not already have such a policy. A contract added to a database that already
+holds other contracts gets its own policies too.
+
+An interval that is already applied is never changed. Editing `compress_after` or `retention`
+therefore has **no effect** on tables that already have those policies. This is intentional: a
+config edit should not rewrite how production history is compressed, or for retention **deleted**.
+On restart the output logs a warning if the applied policy differs from the config, but it does not
+change the policy.
 
 To change them on an existing database, update the TimescaleDB policies directly, on **both**
 hypertables for the contract. For a contract named `pump`:
@@ -353,8 +356,10 @@ SELECT remove_compression_policy('umh.value_pump', if_exists => true);
 SELECT add_compression_policy('umh.value_pump', INTERVAL '7 days');
 ```
 
-To stop dropping data entirely (the `retention: ""` default), remove the retention policy and do
-not re-add it. Changing either policy takes effect immediately and never needs a restart.
+To stop dropping data entirely, clear `retention` in this output's config **and** remove the policy
+from the database. A deleted policy looks the same as a contract that never had one, so a policy
+removed while a non-empty `retention` stays in the config is re-created the next time the output
+starts. Removing a policy on the database takes effect immediately.
 
 After changing a policy on the database, set the **same** value in this output's config too. The
 config value is still what a fresh bootstrap of a new database uses, and matching it silences the

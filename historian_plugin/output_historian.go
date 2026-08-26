@@ -392,10 +392,10 @@ func (o *historianOutput) readAppliedPolicies(ctx context.Context) (*int64, *int
 	return appliedComp, appliedRet, nil
 }
 
-// warnPolicyDrift warns when the applied compression/retention policy differs from config. Policies
-// are set once at first bootstrap, so editing compress_after/retention and restarting otherwise has
-// no visible effect. Best-effort: introspection errors are swallowed so an unexpected catalog shape
-// never fails Connect.
+// warnPolicyDrift warns when the applied compression/retention policy differs from config. An
+// interval already applied is never changed by bootstrap, so editing compress_after/retention and
+// restarting otherwise has no visible effect. Best-effort: introspection errors are swallowed so an
+// unexpected catalog shape never fails Connect.
 func (o *historianOutput) warnPolicyDrift(ctx context.Context) {
 	appliedComp, appliedRet, err := o.readAppliedPolicies(ctx)
 	if err != nil {
