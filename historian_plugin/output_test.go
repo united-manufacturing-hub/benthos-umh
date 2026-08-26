@@ -121,10 +121,10 @@ data_contract_name: pump
 	It("gates compression/retention setup per hypertable, not on the schema ledger", func() {
 		got := tsh.BootstrapSQLWithPoliciesForTest("pump", 168*time.Hour, 720*time.Hour, true)
 		Expect(got).To(ContainSubstring("ALTER TABLE umh.value_pump SET ("))
-		Expect(got).To(ContainSubstring("add_compression_policy('umh.value_pump'"))
-		Expect(got).To(ContainSubstring("add_retention_policy('umh.value_pump'"))
-		Expect(got).To(ContainSubstring("add_compression_policy('umh.attribute_pump'"))
-		Expect(got).To(ContainSubstring("add_retention_policy('umh.attribute_pump'"))
+		for _, table := range []string{"umh.value_pump", "umh.attribute_pump"} {
+			Expect(got).To(ContainSubstring("add_compression_policy('" + table + "', INTERVAL '604800 seconds', if_not_exists => TRUE)"))
+			Expect(got).To(ContainSubstring("add_retention_policy('" + table + "', INTERVAL '2592000 seconds', if_not_exists => TRUE)"))
+		}
 		for _, table := range []string{"value_pump", "attribute_pump"} {
 			Expect(got).To(ContainSubstring("hypertable_name = '" + table + "' AND compression_enabled"))
 			Expect(got).To(ContainSubstring("proc_name = 'policy_compression' AND hypertable_schema = 'umh' AND hypertable_name = '" + table + "'"))
