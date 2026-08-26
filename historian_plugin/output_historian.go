@@ -437,10 +437,9 @@ func (o *historianOutput) warnRetentionRecreate(ctx context.Context) {
 	}
 }
 
-// warnPolicyDrift warns when the applied compression/retention policy differs from config. An
-// interval already applied is never changed by bootstrap, so editing compress_after/retention and
-// restarting otherwise has no visible effect. Best-effort: introspection errors are swallowed so an
-// unexpected catalog shape never fails Connect.
+// warnPolicyDrift warns when the applied compression/retention policy differs from config. Called
+// only from the bootstrap branch, so drift an operator introduces while the output is running is
+// not reported until it next starts. Best-effort: a failed read is logged and never fails Connect.
 func (o *historianOutput) warnPolicyDrift(ctx context.Context) {
 	appliedComp, appliedRet, err := o.readAppliedPolicies(ctx)
 	if err != nil {

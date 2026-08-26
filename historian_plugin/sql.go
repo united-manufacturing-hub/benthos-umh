@@ -306,9 +306,18 @@ func sub(sql string, contract string) string {
 // policyBlock builds the compression/retention setup for one hypertable. Each check reads
 // TimescaleDB's catalog for this hypertable rather than umh.schema_migrations, which holds one row
 // per database while the hypertables are per contract: a ledger check skips every contract after
-// the first. The ALTER needs a check of its own, because re-asserting it once compressed chunks
-// exist errors on older TimescaleDB 2.x. A policy deleted on the database while it stays in config
-// is re-created at the next bootstrap.
+// the first. The checks are only safe together with the advisory lock this template takes at the
+// top, which spans them and the statements they guard.
+//
+// The ALTER needs a check of its own because ALTER TABLE ... SET takes AccessExclusiveLock, so
+// re-asserting settings that never change would lock the hypertable against reads and writes every
+// time the output starts. It also leaves an operator's own compress_segmentby / compress_orderby
+// alone, which nothing else here checks or reports.
+//
+// if_not_exists on the two adds is the second line of defense: a check that reads false while the
+// policy exists then declines instead of aborting the bootstrap transaction. A policy deleted on
+// the database while it stays in config is re-created the next time the output starts, because a
+// deleted policy and one that never existed are the same catalog state.
 func policyBlock(hypertableName string, compressAfter time.Duration, retention time.Duration, retentionSet bool) string {
 	qualifiedTable := "umh." + hypertableName
 	compressionEnabled := compressionEnabledSQL(hypertableName)
@@ -339,9 +348,10 @@ BEGIN
 	return b.String()
 }
 
-// policyJobExistsSQL is policyIntervalSQL as a boolean, with the hypertable name inlined because a
-// DO block takes no parameters. procName is an internal constant and table is the validated
-// contract name, not user input.
+// policyJobExistsSQL and compressionEnabledSQL inline the hypertable name because a DO block takes
+// no parameters. procName is an internal constant, and the name reaching them is the CONTRACT_SLOT
+// template placeholder, replaced later by sub() with a contract ValidateContract has already matched
+// against ^[a-z0-9_]+$ -- so neither is a path for user input.
 func policyJobExistsSQL(procName string, hypertableName string) string {
 	return fmt.Sprintf("EXISTS (SELECT 1 FROM timescaledb_information.jobs WHERE proc_name = '%s' AND hypertable_schema = 'umh' AND hypertable_name = '%s')", procName, hypertableName)
 }

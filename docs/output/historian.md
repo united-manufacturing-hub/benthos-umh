@@ -33,8 +33,8 @@ No JavaScript processor or hand-written `sql_raw` is needed.
 | `metadata_keys_all` | no | `true` | Store every metadata key except structural/high-churn keys and any `metadata_keys_exclude` match. |
 | `metadata_keys` | no | `[]` | Allowlist used only when `metadata_keys_all=false`. |
 | `metadata_keys_exclude` | no | `[]` | Blacklist applied only when `metadata_keys_all=true`. Each entry is an exact key name or a trailing-`*` prefix (e.g. `opcua_*`); matches are dropped on top of the built-in exclusions. A bare `*` drops everything. Ignored in allowlist mode. |
-| `compress_after` | no | `168h` | Compress chunks older than this. Applied to each of a contract's hypertables that has no compression policy yet; changing it afterward has no effect (see [Changing compression or retention](#changing-compression-or-retention)). |
-| `retention` | no | `""` | Drop chunks older than this; empty keeps data forever. Applied to each of a contract's hypertables that has no retention policy yet; changing it afterward has no effect (see [Changing compression or retention](#changing-compression-or-retention)). |
+| `compress_after` | no | `168h` | Compress chunks older than this. Applied to each of a contract's hypertables that has no compression policy yet; changing it afterward has no effect, and compression cannot be switched off (see [Changing compression or retention](#changing-compression-or-retention)). |
+| `retention` | no | `""` | Drop chunks older than this; empty keeps data forever. Applied to each of a contract's hypertables that has no retention policy yet; changing it afterward has no effect, and a policy removed on the database returns unless this is cleared too (see [Changing compression or retention](#changing-compression-or-retention)). |
 | `value_chunk_interval` | no | `168h` | Chunk width of `umh.value_<contract>`. Applied when the table is created; changing it afterward has no effect (see [Changing the chunk interval](#changing-the-chunk-interval)). |
 | `attribute_chunk_interval` | no | `168h` | Chunk width of `umh.attribute_<contract>`. Attribute rows are written only when a tag's metadata changes, so this table is much sparser than the value table. Applied when the table is created. |
 | `batching` | no | — | benthos batch policy (`count` / `period` / `byte_size`). The whole batch is written in one transaction, so larger batches raise throughput; e.g. `count: 1000`, `period: 1s`. |
@@ -322,8 +322,10 @@ sources by their path segments, not by punctuation that folds.
 ## Schema and compatibility
 
 The plugin owns the schema: it bootstraps the baseline DDL into the `umh` schema
-idempotently when the output starts and **never alters an already-created
-`umh.value_<contract>` / `umh.attribute_<contract>` table**. A breaking schema change ships
+idempotently when the output starts and **never changes the columns or types of an
+already-created `umh.value_<contract>` / `umh.attribute_<contract>` table**. It does set
+TimescaleDB compression settings on a table that has none yet, which takes a brief exclusive
+lock on that table. A breaking schema change ships
 as a new contract (new tables), never an in-place migration. (`ltree` stays in `public`,
 its conventional shared home.)
 
@@ -340,8 +342,22 @@ holds other contracts gets its own policies too.
 An interval that is already applied is never changed. Editing `compress_after` or `retention`
 therefore has **no effect** on tables that already have those policies. This is intentional: a
 config edit should not rewrite how production history is compressed, or for retention **deleted**.
-On restart the output logs a warning if the applied policy differs from the config, but it does not
-change the policy.
+When the output starts it logs a warning if the applied policy differs from the config, but it does
+not change the policy. That check reads `umh.value_<contract>`, so a policy that differs on
+`umh.attribute_<contract>` alone is not reported.
+
+**Upgrading from a build that applied policies once per database.** Contracts other than the first
+on a database were left without policies by that build, so their chunks were never compressed and
+never dropped. The first start after upgrading applies the configured values to them, and if
+`retention` is set, TimescaleDB drops everything older than that window once the retention job
+runs. Check `retention` against the policies actually applied before upgrading. The output warns
+for each hypertable it is about to give a retention policy to while it already holds data, and
+names the statement that cancels it.
+
+Compression cannot be switched off from this output: `compress_after` has no empty or off value, so
+a compression policy removed on the database is re-created when the output next starts, and so are
+the compression settings if they were turned off. Only retention can be switched off.
+
 
 To change them on an existing database, update the TimescaleDB policies directly, on **both**
 hypertables for the contract. For a contract named `pump`:
@@ -359,11 +375,16 @@ SELECT add_compression_policy('umh.value_pump', INTERVAL '7 days');
 To stop dropping data entirely, clear `retention` in this output's config **and** remove the policy
 from the database. A deleted policy looks the same as a contract that never had one, so a policy
 removed while a non-empty `retention` stays in the config is re-created the next time the output
-starts. Removing a policy on the database takes effect immediately.
+starts. Removing a policy on the database takes effect immediately; a reconnect does not re-create
+it, only a restart does.
+
+Disabling a policy's job rather than removing it (`ALTER JOB ... SET scheduled = false`) also
+survives a restart, because the output looks for the policy, not for whether it is scheduled.
 
 After changing a policy on the database, set the **same** value in this output's config too. The
-config value is still what a fresh bootstrap of a new database uses, and matching it silences the
-drift warning on restart.
+config value is what a contract still without that policy gets, so matching it both silences the
+drift warning and gives the next contract the same interval.
+
 
 ## Changing the chunk interval
 
@@ -371,9 +392,10 @@ A hypertable is stored as chunks, each holding one time range of rows; `value_ch
 `attribute_chunk_interval` set how wide that range is. The width decides how much a time-filtered
 query can skip, and how coarsely compression and retention act, since both work on whole chunks.
 
-The interval reaches the database only when the table is created. The reason is the one the
-policies give: a config edit should not reorganize production history. On restart the output warns
-when a configured interval differs from the one its table was created with.
+The interval reaches the database only when the table is created. The reason is the one the policies
+give: a config edit should not reorganize production history. Unlike the policies, a chunk interval
+is never filled in later, because `create_hypertable` is a no-op once the table exists. On restart
+the output warns if a configured interval differs from the one its table was created with.
 
 Both intervals default to `168h`, which is 7 days. To change one on an existing database, for a
 contract named `pump`:
