@@ -309,27 +309,31 @@ func sub(sql string, contract string) string {
 // the first. The ALTER needs a check of its own, because re-asserting it once compressed chunks
 // exist errors on older TimescaleDB 2.x. A policy deleted on the database while it stays in config
 // is re-created at the next bootstrap.
-func policyBlock(table string, compressAfter time.Duration, retention time.Duration, retentionSet bool) string {
-	qualified := "umh." + table
+func policyBlock(hypertableName string, compressAfter time.Duration, retention time.Duration, retentionSet bool) string {
+	qualifiedTable := "umh." + hypertableName
+	compressionEnabled := compressionEnabledSQL(hypertableName)
+	compressionPolicyExists := policyJobExistsSQL("policy_compression", hypertableName)
+
 	var b strings.Builder
 	fmt.Fprintf(&b, `DO $pol$
 BEGIN
-  IF NOT %[3]s THEN
-    ALTER TABLE %[1]s SET (
+  IF NOT %s THEN
+    ALTER TABLE %s SET (
       timescaledb.compress,
       timescaledb.compress_segmentby = 'topic_id',
       timescaledb.compress_orderby   = 'ts DESC'
     );
   END IF;
-  IF NOT %[4]s THEN
-    PERFORM add_compression_policy('%[1]s', %[2]s, if_not_exists => TRUE);
+  IF NOT %s THEN
+    PERFORM add_compression_policy('%s', %s, if_not_exists => TRUE);
   END IF;
-`, qualified, intervalSQL(compressAfter), compressionEnabledSQL(table), policyJobExistsSQL("policy_compression", table))
+`, compressionEnabled, qualifiedTable, compressionPolicyExists, qualifiedTable, intervalSQL(compressAfter))
 	if retentionSet {
-		fmt.Fprintf(&b, `  IF NOT %[2]s THEN
-    PERFORM add_retention_policy('%[1]s', %[3]s, if_not_exists => TRUE);
+		retentionPolicyExists := policyJobExistsSQL("policy_retention", hypertableName)
+		fmt.Fprintf(&b, `  IF NOT %s THEN
+    PERFORM add_retention_policy('%s', %s, if_not_exists => TRUE);
   END IF;
-`, qualified, policyJobExistsSQL("policy_retention", table), intervalSQL(retention))
+`, retentionPolicyExists, qualifiedTable, intervalSQL(retention))
 	}
 	b.WriteString("END $pol$;")
 	return b.String()
@@ -338,12 +342,12 @@ BEGIN
 // policyJobExistsSQL is policyIntervalSQL as a boolean, with the hypertable name inlined because a
 // DO block takes no parameters. procName is an internal constant and table is the validated
 // contract name, not user input.
-func policyJobExistsSQL(procName string, table string) string {
-	return fmt.Sprintf("EXISTS (SELECT 1 FROM timescaledb_information.jobs WHERE proc_name = '%s' AND hypertable_schema = 'umh' AND hypertable_name = '%s')", procName, table)
+func policyJobExistsSQL(procName string, hypertableName string) string {
+	return fmt.Sprintf("EXISTS (SELECT 1 FROM timescaledb_information.jobs WHERE proc_name = '%s' AND hypertable_schema = 'umh' AND hypertable_name = '%s')", procName, hypertableName)
 }
 
-func compressionEnabledSQL(table string) string {
-	return fmt.Sprintf("EXISTS (SELECT 1 FROM timescaledb_information.hypertables WHERE hypertable_schema = 'umh' AND hypertable_name = '%s' AND compression_enabled)", table)
+func compressionEnabledSQL(hypertableName string) string {
+	return fmt.Sprintf("EXISTS (SELECT 1 FROM timescaledb_information.hypertables WHERE hypertable_schema = 'umh' AND hypertable_name = '%s' AND compression_enabled)", hypertableName)
 }
 
 // policyIntervalSQL returns a query for the interval (in seconds) of a TimescaleDB policy job on
