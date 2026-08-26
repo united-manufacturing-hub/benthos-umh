@@ -2370,11 +2370,11 @@ return msg;
 		defer cancel()
 
 		ctx := context.Background()
-		Expect(handler(ctx, newTsMsg(50, 100))).To(Succeed())   // below threshold, no trigger
-		Expect(handler(ctx, newTsMsg(150, 200))).To(Succeed())  // triggers
-		Expect(handler(ctx, newTsMsg(150, 200))).To(Succeed())  // replay, must not re-trigger
-		Expect(handler(ctx, newTsMsg(50, 150))).To(Succeed())   // out-of-order clear attempt
-		Expect(handler(ctx, newTsMsg(50, 300))).To(Succeed())   // fresh clear
+		Expect(handler(ctx, newTsMsg(50, 100))).To(Succeed())  // below threshold, no trigger
+		Expect(handler(ctx, newTsMsg(150, 200))).To(Succeed()) // triggers
+		Expect(handler(ctx, newTsMsg(150, 200))).To(Succeed()) // replay, must not re-trigger
+		Expect(handler(ctx, newTsMsg(50, 150))).To(Succeed())  // out-of-order clear attempt
+		Expect(handler(ctx, newTsMsg(50, 300))).To(Succeed())  // fresh clear
 		Eventually(func() int { return len(*msgs) }).Should(Equal(5))
 
 		Expect(getMeta((*msgs)[0], "alarm")).To(Equal(""))          // no meta set
