@@ -322,7 +322,7 @@ sources by their path segments, not by punctuation that folds.
 ## Schema and compatibility
 
 The plugin owns the schema: it bootstraps the baseline DDL into the `umh` schema
-idempotently on first connect and **never alters an already-created
+idempotently when the output starts and **never alters an already-created
 `umh.value_<contract>` / `umh.attribute_<contract>` table**. A breaking schema change ships
 as a new contract (new tables), never an in-place migration. (`ltree` stays in `public`,
 its conventional shared home.)
