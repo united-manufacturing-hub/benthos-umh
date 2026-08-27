@@ -353,11 +353,11 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 			return err
 		}
 		defer conn.Release()
-		o.warnRetentionAboutToDrop(bootCtx)
 		if _, err := conn.Exec(bootCtx, o.renderBootstrapDDL()); err != nil {
 			return fmt.Errorf("schema bootstrap failed: %w", err) // guard stays false -> next Connect retries
 		}
-		o.warnPolicyDrift(bootCtx)
+		retentionNotApplied := o.warnRetentionNotApplied(bootCtx)
+		o.warnPolicyDrift(bootCtx, retentionNotApplied)
 		o.warnChunkDrift(bootCtx)
 		o.bootstrapped = true
 	}
@@ -403,17 +403,18 @@ func (o *historianOutput) readAppliedPolicies(ctx context.Context, hypertableNam
 	return appliedComp, appliedRet, nil
 }
 
-// warnRetentionAboutToDrop runs before the bootstrap DDL: afterwards the applied policy matches
-// config and warnPolicyDrift has nothing left to report. Its own lookup failures are logged, since
-// this is the only signal before chunks start being dropped.
-func (o *historianOutput) warnRetentionAboutToDrop(ctx context.Context) {
+// warnRetentionNotApplied names the hypertables the bootstrap left without the configured retention
+// policy because they already hold chunks. It returns them so warnPolicyDrift does not report the
+// same absence a second time as drift.
+func (o *historianOutput) warnRetentionNotApplied(ctx context.Context) map[string]struct{} {
+	notApplied := map[string]struct{}{}
 	if !o.retentionSet {
-		return
+		return notApplied
 	}
 	for _, table := range []string{"value_" + o.contract, "attribute_" + o.contract} {
 		var chunks int
 		if err := o.pool.QueryRow(ctx, hypertableChunkCountSQL, table).Scan(&chunks); err != nil {
-			o.logger.Warnf("historian: cannot read the chunk count of umh.%s, so cannot say whether retention (%s) drops existing chunks: %v", table, o.retention, err)
+			o.logger.Warnf("historian: cannot read the chunk count of umh.%s, so cannot say whether retention (%s) was applied to it: %v", table, o.retention, err)
 			continue
 		}
 		if chunks == 0 {
@@ -427,14 +428,16 @@ func (o *historianOutput) warnRetentionAboutToDrop(ctx context.Context) {
 		if applied != nil {
 			continue
 		}
-		o.logger.Warnf("historian: retention (%s) is now scheduled on umh.%s, which already holds data, so older chunks will be dropped. To keep them, run remove_retention_policy('umh.%s') and clear retention in the config.", o.retention, table, table)
+		notApplied[table] = struct{}{}
+		o.logger.Warnf("historian: umh.%s already holds data, so the configured retention (%s) was not applied to it. Applying it drops every chunk older than that. To apply it, run add_retention_policy('umh.%s', %s); to stop this warning, clear retention in the config.", table, o.retention, table, intervalSQL(o.retention))
 	}
+	return notApplied
 }
 
 // warnPolicyDrift warns when the applied compression/retention policy differs from config. Called
 // only from the bootstrap branch, so drift an operator introduces while the output is running is
 // not reported until it next starts. Best-effort: a failed read is logged and never fails Connect.
-func (o *historianOutput) warnPolicyDrift(ctx context.Context) {
+func (o *historianOutput) warnPolicyDrift(ctx context.Context, retentionNotApplied map[string]struct{}) {
 	var retentionWant *int64
 	if o.retentionSet {
 		v := int64(o.retention.Seconds())
@@ -446,7 +449,11 @@ func (o *historianOutput) warnPolicyDrift(ctx context.Context) {
 			o.logger.Warnf("historian: cannot read the policies applied to umh.%s, so cannot report drift: %v", table, err)
 			continue
 		}
-		for _, w := range policyDriftWarnings(int64(o.compressAfter.Seconds()), appliedComp, retentionWant, appliedRet) {
+		want := retentionWant
+		if _, reported := retentionNotApplied[table]; reported {
+			want = nil
+		}
+		for _, w := range policyDriftWarnings(int64(o.compressAfter.Seconds()), appliedComp, want, appliedRet) {
 			o.logger.Warnf("historian: umh.%s: %s. The applied value stays in force.", table, w)
 		}
 	}

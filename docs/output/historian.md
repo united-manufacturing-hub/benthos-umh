@@ -34,7 +34,7 @@ No JavaScript processor or hand-written `sql_raw` is needed.
 | `metadata_keys` | no | `[]` | Allowlist used only when `metadata_keys_all=false`. |
 | `metadata_keys_exclude` | no | `[]` | Blacklist applied only when `metadata_keys_all=true`. Each entry is an exact key name or a trailing-`*` prefix (e.g. `opcua_*`); matches are dropped on top of the built-in exclusions. A bare `*` drops everything. Ignored in allowlist mode. |
 | `compress_after` | no | `168h` | Compress chunks older than this. Applied to each of a contract's hypertables that has no compression policy yet; changing it afterward has no effect, and compression cannot be switched off (see [Changing compression or retention](#changing-compression-or-retention)). |
-| `retention` | no | `""` | Drop chunks older than this; empty keeps data forever. Applied to each of a contract's hypertables that has no retention policy yet; changing it afterward has no effect, and a policy removed on the database returns unless this is cleared too (see [Changing compression or retention](#changing-compression-or-retention)). |
+| `retention` | no | `""` | Drop chunks older than this; empty keeps data forever. Applied only to a hypertable that has no retention policy yet **and holds no data**; changing it afterward has no effect (see [Changing compression or retention](#changing-compression-or-retention)). |
 | `value_chunk_interval` | no | `168h` | Chunk width of `umh.value_<contract>`. Applied when the table is created; changing it afterward has no effect (see [Changing the chunk interval](#changing-the-chunk-interval)). |
 | `attribute_chunk_interval` | no | `168h` | Chunk width of `umh.attribute_<contract>`. Attribute rows are written only when a tag's metadata changes, so this table is much sparser than the value table. Applied when the table is created. |
 | `batching` | no | — | benthos batch policy (`count` / `period` / `byte_size`). The whole batch is written in one transaction, so larger batches raise throughput; e.g. `count: 1000`, `period: 1s`. |
@@ -336,10 +336,18 @@ the same tables. To avoid schema drift, a given contract/database must be writte
 ## Changing compression or retention
 
 `compress_after` and `retention` are applied per contract, to each of a contract's two hypertables
-that has no such policy yet, including a table that already holds history. For retention that means
-TimescaleDB drops everything older than the window once its job next runs, so check `retention`
-before pointing an output at tables it did not create. Before scheduling retention on a table that
-holds data, the output warns and names the statement that cancels it.
+that has no such policy yet. Compression is applied whether or not the table already holds history,
+since compressing a chunk destroys nothing. **Retention is applied only to a hypertable that holds
+no data**, because it drops every chunk older than the window: a restart must not delete history
+that a config value written months ago now covers. On a hypertable that already holds data the
+output warns instead, and names the statement that applies the policy by hand:
+
+```
+historian: umh.value_pump already holds data, so the configured retention (720h0m0s) was not applied
+to it. Applying it drops every chunk older than that. To apply it, run
+add_retention_policy('umh.value_pump', INTERVAL '2592000 seconds'); to stop this warning, clear
+retention in the config.
+```
 
 An interval that is already applied is never changed, so editing `compress_after` or `retention` has
 **no effect** on a table that already has that policy: a config edit should not rewrite how
@@ -364,17 +372,15 @@ silences the drift warning, and gives the next contract that interval.
 
 ### Switching a policy off
 
-Only retention can be switched off, and it takes two steps: clear `retention` in this output's
-config, and remove the policy from the database. A deleted policy looks the same as a contract that
-never had one, so a policy removed while a non-empty `retention` stays in the config comes back the
-next time the output starts. A reconnect does not bring it back; only a restart does.
+Removing a retention policy from a hypertable that holds data is enough: it is not re-created, even
+with `retention` still set in the config, and the output warns on each start until the config is
+cleared too. On an empty hypertable a removed policy does come back on the next start, so clear
+`retention` first there.
 
-Disabling the policy's job instead (`ALTER JOB ... SET scheduled = false`) survives a restart,
-because the output looks for the policy rather than for whether it is scheduled.
-
-`compress_after` has no empty value, so compression cannot be switched off this way: a compression
-policy removed on the database is re-created when the output next starts, as are the compression
-settings if they were turned off.
+`compress_after` has no empty value, so compression cannot be switched off: a compression policy
+removed on the database is re-created when the output next starts, as are the compression settings if
+they were turned off. Disabling the job instead (`ALTER JOB ... SET scheduled = false`) does survive
+a restart, because the output looks for the policy rather than for whether it is scheduled.
 
 ## Changing the chunk interval
 

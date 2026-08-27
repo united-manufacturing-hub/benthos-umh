@@ -129,11 +129,24 @@ data_contract_name: pump
 			Expect(got).To(ContainSubstring("hypertable_name = '" + table + "' AND compression_enabled"))
 			Expect(got).To(ContainSubstring("proc_name = 'policy_compression' AND hypertable_schema = 'umh' AND hypertable_name = '" + table + "'"))
 			Expect(got).To(ContainSubstring("proc_name = 'policy_retention' AND hypertable_schema = 'umh' AND hypertable_name = '" + table + "'"))
+			Expect(got).To(ContainSubstring("FROM timescaledb_information.chunks WHERE hypertable_schema = 'umh' AND hypertable_name = '" + table + "'"))
 		}
 		Expect(strings.Count(got, "umh.schema_migrations WHERE version = 1")).To(Equal(1),
 			"the version-1 gate belongs to the migration ledger alone")
 		Expect(got).NotTo(ContainSubstring("remove_retention_policy"))
 		Expect(got).NotTo(ContainSubstring("remove_compression_policy"))
+	})
+
+	It("guards each retention add on the table being empty, and only retention", func() {
+		got := tsh.BootstrapSQLWithPoliciesForTest("pump", 168*time.Hour, 720*time.Hour, true)
+		for _, table := range []string{"value_pump", "attribute_pump"} {
+			retentionGuard := "IF NOT EXISTS (SELECT 1 FROM timescaledb_information.jobs WHERE proc_name = 'policy_retention' AND hypertable_schema = 'umh' AND hypertable_name = '" + table + "') AND NOT EXISTS (SELECT 1 FROM timescaledb_information.chunks WHERE hypertable_schema = 'umh' AND hypertable_name = '" + table + "') THEN"
+			Expect(got).To(ContainSubstring(retentionGuard), table)
+			compressionGuard := "IF NOT EXISTS (SELECT 1 FROM timescaledb_information.jobs WHERE proc_name = 'policy_compression' AND hypertable_schema = 'umh' AND hypertable_name = '" + table + "') THEN"
+			Expect(got).To(ContainSubstring(compressionGuard), table)
+		}
+		Expect(strings.Count(got, "timescaledb_information.chunks")).To(Equal(2),
+			"compression is not destructive, so only the retention adds consult the chunk list")
 	})
 
 	It("renders no retention policy for the shipped default of keep forever", func() {

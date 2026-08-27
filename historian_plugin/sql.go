@@ -326,10 +326,11 @@ BEGIN
 `, compressionEnabled, qualifiedTable, compressionPolicyExists, qualifiedTable, intervalSQL(compressAfter))
 	if retentionSet {
 		retentionPolicyExists := policyJobExistsSQL("policy_retention", hypertableName)
-		fmt.Fprintf(&b, `  IF NOT %s THEN
+		holdsData := hypertableHasChunksSQL(hypertableName)
+		fmt.Fprintf(&b, `  IF NOT %s AND NOT %s THEN
     PERFORM add_retention_policy('%s', %s, if_not_exists => TRUE);
   END IF;
-`, retentionPolicyExists, qualifiedTable, intervalSQL(retention))
+`, retentionPolicyExists, holdsData, qualifiedTable, intervalSQL(retention))
 	}
 	b.WriteString("END $pol$;")
 	return b.String()
@@ -341,6 +342,10 @@ BEGIN
 // against ^[a-z0-9_]+$, so neither is a path for user input.
 func policyJobExistsSQL(procName string, hypertableName string) string {
 	return fmt.Sprintf("EXISTS (SELECT 1 FROM timescaledb_information.jobs WHERE proc_name = '%s' AND hypertable_schema = 'umh' AND hypertable_name = '%s')", procName, hypertableName)
+}
+
+func hypertableHasChunksSQL(hypertableName string) string {
+	return fmt.Sprintf("EXISTS (SELECT 1 FROM timescaledb_information.chunks WHERE hypertable_schema = 'umh' AND hypertable_name = '%s')", hypertableName)
 }
 
 func compressionEnabledSQL(hypertableName string) string {
