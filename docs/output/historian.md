@@ -339,6 +339,12 @@ the same tables. To avoid schema drift, a given contract/database must be writte
 hypertables that does not already have such a policy. A contract added to a database that already
 holds other contracts gets its own policies too.
 
+A hypertable with no such policy gets one when the output starts, whether the table is new or
+already holds history. For retention that means TimescaleDB drops everything older than the window
+once the retention job next runs, so check `retention` against the policies already applied before
+pointing an output at tables it did not create. The output warns for each hypertable that already
+holds data, and names the statement that cancels the policy.
+
 An interval that is already applied is never changed. Editing `compress_after` or `retention`
 therefore has **no effect** on tables that already have those policies. This is intentional: a
 config edit should not rewrite how production history is compressed, or for retention **deleted**.
@@ -375,15 +381,6 @@ because the output looks for the policy rather than for whether it is scheduled.
 `compress_after` has no empty value, so compression cannot be switched off this way: a compression
 policy removed on the database is re-created when the output next starts, as are the compression
 settings if they were turned off.
-
-### Upgrading from a build that applied policies once per database
-
-Contracts other than the first on a database were left without policies by that build, so their
-chunks were never compressed and old ones never dropped. The first start after upgrading applies
-the configured values to them, and if `retention` is set, TimescaleDB drops everything older than
-that window once the retention job runs. Check `retention` against the applied policies before
-upgrading. The output warns for each hypertable that already holds data, and names the statement
-that cancels the policy.
 
 ## Changing the chunk interval
 
