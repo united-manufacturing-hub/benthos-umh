@@ -335,22 +335,16 @@ the same tables. To avoid schema drift, a given contract/database must be writte
 
 ## Changing compression or retention
 
-`compress_after` and `retention` are applied per contract, to each of that contract's two
-hypertables that does not already have such a policy. A contract added to a database that already
-holds other contracts gets its own policies too.
+`compress_after` and `retention` are applied per contract, to each of a contract's two hypertables
+that has no such policy yet, including a table that already holds history. For retention that means
+TimescaleDB drops everything older than the window once its job next runs, so check `retention`
+before pointing an output at tables it did not create. Before scheduling retention on a table that
+holds data, the output warns and names the statement that cancels it.
 
-A hypertable with no such policy gets one when the output starts, whether the table is new or
-already holds history. For retention that means TimescaleDB drops everything older than the window
-once the retention job next runs, so check `retention` against the policies already applied before
-pointing an output at tables it did not create. The output warns for each hypertable that already
-holds data, and names the statement that cancels the policy.
-
-An interval that is already applied is never changed. Editing `compress_after` or `retention`
-therefore has **no effect** on tables that already have those policies. This is intentional: a
-config edit should not rewrite how production history is compressed, or for retention **deleted**.
-When the output starts it logs a warning if the applied policy differs from the config, but it does
-not change the policy. The check covers both of a contract's hypertables, so a policy that differs
-on one of them alone is reported.
+An interval that is already applied is never changed, so editing `compress_after` or `retention` has
+**no effect** on a table that already has that policy: a config edit should not rewrite how
+production history is compressed, or for retention **deleted**. On start the output warns about a
+divergence on either hypertable instead, and leaves the policy alone.
 
 To change them on an existing database, update the TimescaleDB policies directly, on **both**
 hypertables for the contract. For a contract named `pump`:
