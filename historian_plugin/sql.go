@@ -303,12 +303,8 @@ func sub(sql string, contract string) string {
 	return strings.ReplaceAll(sql, "CONTRACT_SLOT", contract)
 }
 
-// policyBlock builds the compression/retention setup for one hypertable. Each check reads the
-// catalog for this hypertable, not umh.schema_migrations: that ledger holds one row per database
-// while the hypertables are per contract, so gating on it skips every contract after the first.
-// The ALTER is checked separately because ALTER TABLE ... SET takes AccessExclusiveLock. The checks
-// rely on the advisory lock at the top of this template spanning them, and if_not_exists on the
-// adds covers a check that reads false while the policy exists.
+// policyBlock builds the compression/retention setup for one hypertable. Its checks and the
+// statements they guard have to stay inside the advisory lock this template takes at the top.
 func policyBlock(hypertableName string, compressAfter time.Duration, retention time.Duration, retentionSet bool) string {
 	qualifiedTable := "umh." + hypertableName
 	compressionEnabled := compressionEnabledSQL(hypertableName)
@@ -368,12 +364,9 @@ func policyIntervalSQL(procName string, configKey string) string {
 const hypertableChunkCountSQL = `SELECT count(*) FROM timescaledb_information.chunks
  WHERE hypertable_schema = 'umh' AND hypertable_name = $1`
 
-// policyDriftWarnings compares configured compression/retention intervals against the ones actually
-// applied in the database and returns a warning per divergence. An applied interval is nil when no
-// such policy is scheduled, and only that: a lookup that failed is an error the caller reports, so
-// this no longer treats a nil compression interval as "introspection is broken" and stays silent on
-// the retention checks because of it. retentionWant is nil when retention is unset in config (keep
-// forever), which is the one nil that means "wanted absent" rather than "is absent".
+// policyDriftWarnings returns one warning per divergence between the configured and the applied
+// intervals. An applied interval is nil when no such policy is scheduled. retentionWant is nil when
+// retention is unset in config, the one nil here that means "wanted absent" rather than "is absent".
 func policyDriftWarnings(compressWant int64, appliedComp *int64, retentionWant *int64, appliedRet *int64) []string {
 	var warns []string
 	switch {
