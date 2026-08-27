@@ -423,19 +423,22 @@ func (o *historianOutput) readChunkInterval(ctx context.Context, table string) (
 	return applied, nil
 }
 
+// readChunkIntervalOrWarn reports a failed read and yields nil, which chunkDriftWarnings treats as
+// nothing to compare, so one unreadable table does not silence the check on the other.
+func (o *historianOutput) readChunkIntervalOrWarn(ctx context.Context, table string) *int64 {
+	applied, err := o.readChunkInterval(ctx, table)
+	if err != nil {
+		o.logger.Warnf("historian: cannot read the chunk interval of umh.%s: %v", table, err)
+		return nil
+	}
+	return applied
+}
+
 // warnChunkDrift warns when a table's chunk interval differs from config. create_hypertable is a
 // no-op once the table exists, so editing an interval and restarting otherwise has no visible effect.
 func (o *historianOutput) warnChunkDrift(ctx context.Context) {
-	appliedValue, err := o.readChunkInterval(ctx, "value_"+o.contract)
-	if err != nil {
-		o.logger.Warnf("historian: cannot read the chunk interval of umh.value_%s: %v", o.contract, err)
-		return
-	}
-	appliedAttribute, err := o.readChunkInterval(ctx, "attribute_"+o.contract)
-	if err != nil {
-		o.logger.Warnf("historian: cannot read the chunk interval of umh.attribute_%s: %v", o.contract, err)
-		return
-	}
+	appliedValue := o.readChunkIntervalOrWarn(ctx, "value_"+o.contract)
+	appliedAttribute := o.readChunkIntervalOrWarn(ctx, "attribute_"+o.contract)
 	for _, w := range chunkDriftWarnings(int64(o.valueChunk.Seconds()), appliedValue, int64(o.attributeChunk.Seconds()), appliedAttribute) {
 		o.logger.Warnf("historian: %s. The applied width stays in force, and existing chunks keep theirs.", w)
 	}
