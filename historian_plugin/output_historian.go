@@ -407,7 +407,7 @@ func (o *historianOutput) warnPolicyDrift(ctx context.Context) {
 		retentionWant = &v
 	}
 	for _, w := range policyDriftWarnings(int64(o.compressAfter.Seconds()), appliedComp, retentionWant, appliedRet) {
-		o.logger.Warnf("historian: %s. Change it with add_/remove_compression_policy or add_/remove_retention_policy on the database, then set the same value here.", w)
+		o.logger.Warnf("historian: %s. The applied value stays in force.", w)
 	}
 }
 
@@ -437,7 +437,7 @@ func (o *historianOutput) warnChunkDrift(ctx context.Context) {
 		return
 	}
 	for _, w := range chunkDriftWarnings(int64(o.valueChunk.Seconds()), appliedValue, int64(o.attributeChunk.Seconds()), appliedAttribute) {
-		o.logger.Warnf("historian: %s. Change it with set_chunk_time_interval on the database, then set the same value here.", w)
+		o.logger.Warnf("historian: %s. The applied width stays in force, and existing chunks keep theirs.", w)
 	}
 }
 

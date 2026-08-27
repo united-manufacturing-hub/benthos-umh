@@ -110,8 +110,6 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(first.Connect(ctx)).To(Succeed())
 		first.Close(ctx)
 
-		// create_hypertable is a no-op on the existing table, so the edited interval never applies:
-		// the warning is the only signal the operator gets.
 		restarted := tsh.NewHistorianTestHandle(sharedDSN, "chunkdrift")
 		restarted.SetChunkIntervals(24*time.Hour, 168*time.Hour)
 		logs := restarted.CaptureLogs()
@@ -119,7 +117,8 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		defer restarted.Close(ctx)
 
 		Expect(logs()).To(ContainSubstring("configured value_chunk_interval (86400s)"))
-		Expect(logs()).To(ContainSubstring("set_chunk_time_interval"))
+		Expect(logs()).To(ContainSubstring("created with (604800s)"))
+		Expect(logs()).To(ContainSubstring("stays in force"))
 		Expect(logs()).NotTo(ContainSubstring("attribute_chunk_interval"))
 		Expect(restarted.AppliedChunkInterval(ctx, "value_chunkdrift")).To(HaveValue(Equal(int64(604800))))
 	})
