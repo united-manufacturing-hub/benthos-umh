@@ -132,6 +132,20 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(restarted.AppliedChunkInterval(ctx, "value_chunkdrift")).To(HaveValue(Equal(seconds(createdChunk))))
 	})
 
+	It("names the table when the applied chunk interval cannot be read", func() {
+		h := connected("chunkunread")
+		defer h.Close(ctx)
+
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+
+		logs := h.CaptureLogs()
+		h.WarnChunkDrift(cancelled)
+
+		Expect(logs()).To(ContainSubstring("cannot read the chunk interval of umh.value_chunkunread"))
+		Expect(logs()).NotTo(ContainSubstring("stays in force"))
+	})
+
 	It("bootstraps idempotently (Connect twice)", func() {
 		h := connected("pump")
 		defer h.Close(ctx)

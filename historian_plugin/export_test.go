@@ -399,3 +399,5 @@ func (h *HistorianTestHandle) AppliedChunkInterval(ctx context.Context, table st
 	ExpectWithOffset(1, err).NotTo(HaveOccurred())
 	return applied
 }
+
+func (h *HistorianTestHandle) WarnChunkDrift(ctx context.Context) { h.o.warnChunkDrift(ctx) }
