@@ -388,10 +388,12 @@ A hypertable is stored as chunks, each holding one time range of rows; `value_ch
 `attribute_chunk_interval` set how wide that range is. The width decides how much a time-filtered
 query can skip, and how coarsely compression and retention act, since both work on whole chunks.
 
-The interval reaches the database only when the table is created. The reason is the one the policies
-give: a config edit should not reorganize production history. Unlike the policies, a chunk interval
-is never filled in later, because `create_hypertable` is a no-op once the table exists. On restart
-the output warns if a configured interval differs from the one its table was created with.
+The interval reaches the database only when the table is created. The reason is the one the
+policies give: a config edit should not reorganize production history. On restart the output warns
+when a configured interval differs from the one its table was created with.
+
+Unlike the policies, a chunk interval is never filled in later: `create_hypertable` is a no-op once
+the table exists.
 
 Both intervals default to `168h`, which is 7 days. To change one on an existing database, for a
 contract named `pump`:
