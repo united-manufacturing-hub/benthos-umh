@@ -401,3 +401,8 @@ func (h *HistorianTestHandle) AppliedChunkInterval(ctx context.Context, table st
 }
 
 func (h *HistorianTestHandle) WarnChunkDrift(ctx context.Context) { h.o.warnChunkDrift(ctx) }
+
+func (h *HistorianTestHandle) ExecSQL(ctx context.Context, sql string) error {
+	_, err := h.o.pool.Exec(ctx, sql)
+	return err
+}

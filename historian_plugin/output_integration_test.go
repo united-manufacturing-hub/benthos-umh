@@ -146,6 +146,26 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(logs()).NotTo(ContainSubstring("stays in force"))
 	})
 
+	It("warns on restart when the applied compression policy no longer matches config", func() {
+		appliedCompress := 24 * time.Hour
+		handleDefaultCompress := 168 * time.Hour
+
+		first := connected("poldrift")
+		Expect(first.ExecSQL(ctx, "ALTER TABLE umh.value_poldrift SET (timescaledb.compress, timescaledb.compress_segmentby = 'topic_id', timescaledb.compress_orderby = 'ts DESC')")).To(Succeed())
+		Expect(first.ExecSQL(ctx, "SELECT remove_compression_policy('umh.value_poldrift', if_exists => TRUE)")).To(Succeed())
+		Expect(first.ExecSQL(ctx, fmt.Sprintf("SELECT add_compression_policy('umh.value_poldrift', INTERVAL '%d seconds')", seconds(appliedCompress)))).To(Succeed())
+		first.Close(ctx)
+
+		restarted := tsh.NewHistorianTestHandle(sharedDSN, "poldrift")
+		logs := restarted.CaptureLogs()
+		Expect(restarted.Connect(ctx)).To(Succeed())
+		defer restarted.Close(ctx)
+
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("configured compress_after (%ds)", seconds(handleDefaultCompress))))
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("applied in the database (%ds)", seconds(appliedCompress))))
+		Expect(logs()).To(ContainSubstring("stays in force"))
+	})
+
 	It("bootstraps idempotently (Connect twice)", func() {
 		h := connected("pump")
 		defer h.Close(ctx)
