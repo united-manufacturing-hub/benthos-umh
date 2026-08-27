@@ -390,16 +390,14 @@ func (o *historianOutput) probeWritable(ctx context.Context) error {
 	return nil
 }
 
-// readAppliedPolicies reads the intervals applied to this contract, in seconds. A nil interval means
-// no such policy is scheduled; a failed read is an error. It reads the value table only, which holds
-// because bootstrap has just put back whatever either table was missing.
-func (o *historianOutput) readAppliedPolicies(ctx context.Context) (*int64, *int64, error) {
-	table := "value_" + o.contract
+// readAppliedPolicies reads the intervals applied to one hypertable, in seconds. A nil interval
+// means no such policy is scheduled; a failed read is an error.
+func (o *historianOutput) readAppliedPolicies(ctx context.Context, hypertableName string) (*int64, *int64, error) {
 	var appliedComp, appliedRet *int64
-	if err := o.pool.QueryRow(ctx, policyIntervalSQL("policy_compression", "compress_after"), table).Scan(&appliedComp); err != nil {
+	if err := o.pool.QueryRow(ctx, policyIntervalSQL("policy_compression", "compress_after"), hypertableName).Scan(&appliedComp); err != nil {
 		return nil, nil, err
 	}
-	if err := o.pool.QueryRow(ctx, policyIntervalSQL("policy_retention", "drop_after"), table).Scan(&appliedRet); err != nil {
+	if err := o.pool.QueryRow(ctx, policyIntervalSQL("policy_retention", "drop_after"), hypertableName).Scan(&appliedRet); err != nil {
 		return nil, nil, err
 	}
 	return appliedComp, appliedRet, nil
@@ -437,18 +435,20 @@ func (o *historianOutput) warnRetentionAboutToDrop(ctx context.Context) {
 // only from the bootstrap branch, so drift an operator introduces while the output is running is
 // not reported until it next starts. Best-effort: a failed read is logged and never fails Connect.
 func (o *historianOutput) warnPolicyDrift(ctx context.Context) {
-	appliedComp, appliedRet, err := o.readAppliedPolicies(ctx)
-	if err != nil {
-		o.logger.Warnf("historian: cannot read the policies applied to umh.value_%s, so cannot report drift: %v", o.contract, err)
-		return
-	}
 	var retentionWant *int64
 	if o.retentionSet {
 		v := int64(o.retention.Seconds())
 		retentionWant = &v
 	}
-	for _, w := range policyDriftWarnings(int64(o.compressAfter.Seconds()), appliedComp, retentionWant, appliedRet) {
-		o.logger.Warnf("historian: %s. The applied value stays in force.", w)
+	for _, table := range []string{"value_" + o.contract, "attribute_" + o.contract} {
+		appliedComp, appliedRet, err := o.readAppliedPolicies(ctx, table)
+		if err != nil {
+			o.logger.Warnf("historian: cannot read the policies applied to umh.%s, so cannot report drift: %v", table, err)
+			continue
+		}
+		for _, w := range policyDriftWarnings(int64(o.compressAfter.Seconds()), appliedComp, retentionWant, appliedRet) {
+			o.logger.Warnf("historian: umh.%s: %s. The applied value stays in force.", table, w)
+		}
 	}
 }
 

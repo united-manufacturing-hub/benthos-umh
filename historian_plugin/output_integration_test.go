@@ -162,8 +162,8 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(restarted.Connect(ctx)).To(Succeed())
 		defer restarted.Close(ctx)
 
-		Expect(logs()).To(ContainSubstring(fmt.Sprintf("configured compress_after (%ds)", seconds(handleDefaultCompress))))
-		Expect(logs()).To(ContainSubstring(fmt.Sprintf("applied in the database (%ds)", seconds(appliedCompress))))
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("umh.value_poldrift: configured compress_after (%ds)", seconds(handleDefaultCompress))))
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("applied compression policy (%ds)", seconds(appliedCompress))))
 		Expect(logs()).To(ContainSubstring("stays in force"))
 	})
 
@@ -231,6 +231,24 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 			Expect(retention).NotTo(BeNil(), table)
 			Expect(*retention).To(Equal(int64(720*3600)), table)
 		}
+	})
+
+	It("reports drift on the attribute hypertable alone", func() {
+		h := tsh.NewHistorianTestHandle(sharedDSN, "polattr")
+		h.SetPolicies(168*time.Hour, 720*time.Hour, true)
+		Expect(h.Connect(ctx)).To(Succeed())
+		defer h.Close(ctx)
+		Expect(h.ExecSQL(ctx, "SELECT remove_retention_policy('umh.attribute_polattr')")).To(Succeed())
+		Expect(h.ExecSQL(ctx, "SELECT add_retention_policy('umh.attribute_polattr', INTERVAL '90 days')")).To(Succeed())
+
+		restarted := tsh.NewHistorianTestHandle(sharedDSN, "polattr")
+		restarted.SetPolicies(168*time.Hour, 720*time.Hour, true)
+		logs := restarted.CaptureLogs()
+		Expect(restarted.Connect(ctx)).To(Succeed())
+		defer restarted.Close(ctx)
+
+		Expect(logs()).To(ContainSubstring("umh.attribute_polattr: configured retention (2592000s) does not match the applied retention policy (7776000s)"))
+		Expect(logs()).NotTo(ContainSubstring("umh.value_polattr: configured retention"))
 	})
 
 	It("gives a contract left without policies by an older build both of them on the next start", func() {
@@ -303,7 +321,8 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		_, retention := restarted.PolicyIntervals(ctx, "value_polkeep")
 		Expect(retention).NotTo(BeNil())
 		Expect(*retention).To(Equal(int64(90 * 24 * 3600)))
-		Expect(logs()).To(ContainSubstring("does not match the retention policy applied in the database"))
+		Expect(logs()).To(ContainSubstring("umh.value_polkeep: configured retention (2592000s) does not match the applied retention policy (7776000s)"))
+		Expect(logs()).NotTo(ContainSubstring("umh.attribute_polkeep: configured retention"))
 	})
 
 	It("re-adds a removed compression policy on a hypertable that already has compressed chunks", func() {

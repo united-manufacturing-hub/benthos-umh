@@ -305,7 +305,7 @@ func sub(sql string, contract string) string {
 
 // policyBlock builds the compression/retention setup for one hypertable. Each check reads the
 // catalog for this hypertable, not umh.schema_migrations: that ledger holds one row per database
-// while the hypertables are per contract, so gating on it skipped every contract after the first.
+// while the hypertables are per contract, so gating on it skips every contract after the first.
 // The ALTER is checked separately because ALTER TABLE ... SET takes AccessExclusiveLock. The checks
 // rely on the advisory lock at the top of this template spanning them, and if_not_exists on the
 // adds covers a check that reads false while the policy exists.
@@ -378,17 +378,17 @@ func policyDriftWarnings(compressWant int64, appliedComp *int64, retentionWant *
 	var warns []string
 	switch {
 	case appliedComp == nil:
-		warns = append(warns, fmt.Sprintf("configured compress_after (%ds) is not applied in the database", compressWant))
+		warns = append(warns, fmt.Sprintf("configured compress_after (%ds) is not applied", compressWant))
 	case *appliedComp != compressWant:
-		warns = append(warns, fmt.Sprintf("configured compress_after (%ds) does not match the compression policy applied in the database (%ds)", compressWant, *appliedComp))
+		warns = append(warns, fmt.Sprintf("configured compress_after (%ds) does not match the applied compression policy (%ds)", compressWant, *appliedComp))
 	}
 	switch {
 	case retentionWant != nil && appliedRet == nil:
-		warns = append(warns, fmt.Sprintf("configured retention (%ds) is not applied in the database", *retentionWant))
+		warns = append(warns, fmt.Sprintf("configured retention (%ds) is not applied", *retentionWant))
 	case retentionWant != nil && *appliedRet != *retentionWant:
-		warns = append(warns, fmt.Sprintf("configured retention (%ds) does not match the retention policy applied in the database (%ds)", *retentionWant, *appliedRet))
+		warns = append(warns, fmt.Sprintf("configured retention (%ds) does not match the applied retention policy (%ds)", *retentionWant, *appliedRet))
 	case retentionWant == nil && appliedRet != nil:
-		warns = append(warns, fmt.Sprintf("retention is unset in config but a retention policy (%ds) is applied in the database", *appliedRet))
+		warns = append(warns, fmt.Sprintf("retention is unset in config but a retention policy (%ds) is applied", *appliedRet))
 	}
 	return warns
 }

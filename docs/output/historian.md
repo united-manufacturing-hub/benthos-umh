@@ -343,8 +343,8 @@ An interval that is already applied is never changed. Editing `compress_after` o
 therefore has **no effect** on tables that already have those policies. This is intentional: a
 config edit should not rewrite how production history is compressed, or for retention **deleted**.
 When the output starts it logs a warning if the applied policy differs from the config, but it does
-not change the policy. That check reads `umh.value_<contract>`, so a policy that differs on
-`umh.attribute_<contract>` alone is not reported.
+not change the policy. The check covers both of a contract's hypertables, so a policy that differs
+on one of them alone is reported.
 
 To change them on an existing database, update the TimescaleDB policies directly, on **both**
 hypertables for the contract. For a contract named `pump`:
