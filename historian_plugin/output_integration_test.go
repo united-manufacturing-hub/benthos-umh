@@ -94,33 +94,42 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		return h
 	}
 
+	seconds := func(d time.Duration) int64 { return int64(d.Seconds()) }
+
 	It("creates each hypertable with its own configured chunk interval", func() {
+		valueChunk := 24 * time.Hour
+		attributeChunk := 720 * time.Hour
+
 		h := tsh.NewHistorianTestHandle(sharedDSN, "chunky")
-		h.SetChunkIntervals(24*time.Hour, 720*time.Hour)
+		h.SetChunkIntervals(valueChunk, attributeChunk)
 		Expect(h.Connect(ctx)).To(Succeed())
 		defer h.Close(ctx)
 
-		Expect(h.AppliedChunkInterval(ctx, "value_chunky")).To(HaveValue(Equal(int64(86400))))
-		Expect(h.AppliedChunkInterval(ctx, "attribute_chunky")).To(HaveValue(Equal(int64(2592000))))
+		Expect(h.AppliedChunkInterval(ctx, "value_chunky")).To(HaveValue(Equal(seconds(valueChunk))))
+		Expect(h.AppliedChunkInterval(ctx, "attribute_chunky")).To(HaveValue(Equal(seconds(attributeChunk))))
 	})
 
 	It("warns on restart when the configured chunk interval no longer matches the table", func() {
+		createdChunk := 168 * time.Hour
+		reconfiguredChunk := 24 * time.Hour
+		unchangedAttributeChunk := 168 * time.Hour
+
 		first := tsh.NewHistorianTestHandle(sharedDSN, "chunkdrift")
-		first.SetChunkIntervals(168*time.Hour, 168*time.Hour)
+		first.SetChunkIntervals(createdChunk, unchangedAttributeChunk)
 		Expect(first.Connect(ctx)).To(Succeed())
 		first.Close(ctx)
 
 		restarted := tsh.NewHistorianTestHandle(sharedDSN, "chunkdrift")
-		restarted.SetChunkIntervals(24*time.Hour, 168*time.Hour)
+		restarted.SetChunkIntervals(reconfiguredChunk, unchangedAttributeChunk)
 		logs := restarted.CaptureLogs()
 		Expect(restarted.Connect(ctx)).To(Succeed())
 		defer restarted.Close(ctx)
 
-		Expect(logs()).To(ContainSubstring("configured value_chunk_interval (86400s)"))
-		Expect(logs()).To(ContainSubstring("created with (604800s)"))
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("configured value_chunk_interval (%ds)", seconds(reconfiguredChunk))))
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("created with (%ds)", seconds(createdChunk))))
 		Expect(logs()).To(ContainSubstring("stays in force"))
 		Expect(logs()).NotTo(ContainSubstring("attribute_chunk_interval"))
-		Expect(restarted.AppliedChunkInterval(ctx, "value_chunkdrift")).To(HaveValue(Equal(int64(604800))))
+		Expect(restarted.AppliedChunkInterval(ctx, "value_chunkdrift")).To(HaveValue(Equal(seconds(createdChunk))))
 	})
 
 	It("bootstraps idempotently (Connect twice)", func() {
