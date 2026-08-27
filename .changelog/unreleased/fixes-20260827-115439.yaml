@@ -1,0 +1,3 @@
+kind: fixes
+body: The historian no longer stores timestamp_ms as a tag attribute, which previously wrote one attribute row per data point (ENG-5768)
+time: 2026-08-27T11:54:39.894259+02:00

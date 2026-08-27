@@ -70,6 +70,11 @@ var _ = Describe("metadata", func() {
 		// this being {"k":"v"}, never [["k","v"]].
 		Expect(tsh.Fingerprint(map[string]string{"serialNumber": "abc"})).To(Equal(`{"serialNumber":"abc"}`))
 	})
+	It("all-mode excludes timestamp_ms, which changes on every message", func() {
+		m := map[string]string{"timestamp_ms": "1730986400000", "serialNumber": "abc"}
+		Expect(tsh.SelectMetaKeys(m, true, nil, nil)).To(ConsistOf("serialNumber"))
+	})
+
 	It("flags high-churn keys present in the built map", func() {
 		md := map[string]string{"opcua_source_timestamp": "x", "serialNumber": "abc"}
 		Expect(tsh.HighChurnKeys(md)).To(ConsistOf("opcua_source_timestamp"))
