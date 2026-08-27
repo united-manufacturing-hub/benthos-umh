@@ -390,9 +390,8 @@ func (o *historianOutput) probeWritable(ctx context.Context) error {
 	return nil
 }
 
-// readAppliedPolicies reads the intervals applied to this contract, in seconds; nil means no such
-// policy is scheduled, and a failed read is an error, because warnPolicyDrift would otherwise report
-// a missing policy that it never managed to look for. It reads the value table only, which holds
+// readAppliedPolicies reads the intervals applied to this contract, in seconds. A nil interval means
+// no such policy is scheduled; a failed read is an error. It reads the value table only, which holds
 // because bootstrap has just put back whatever either table was missing.
 func (o *historianOutput) readAppliedPolicies(ctx context.Context) (*int64, *int64, error) {
 	table := "value_" + o.contract
@@ -406,8 +405,8 @@ func (o *historianOutput) readAppliedPolicies(ctx context.Context) (*int64, *int
 	return appliedComp, appliedRet, nil
 }
 
-// warnRetentionAboutToDrop runs before the bootstrap DDL, because afterwards the applied policy matches
-// config and warnPolicyDrift has nothing left to report. A failed lookup is logged, not swallowed:
+// warnRetentionAboutToDrop runs before the bootstrap DDL: afterwards the applied policy matches
+// config and warnPolicyDrift has nothing left to report. Its own lookup failures are logged, since
 // this is the only signal before chunks start being dropped.
 func (o *historianOutput) warnRetentionAboutToDrop(ctx context.Context) {
 	if !o.retentionSet {
