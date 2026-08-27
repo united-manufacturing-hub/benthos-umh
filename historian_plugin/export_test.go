@@ -397,6 +397,12 @@ func (h *HistorianTestHandle) AppliedChunkInterval(ctx context.Context, table st
 
 func (h *HistorianTestHandle) WarnChunkDrift(ctx context.Context) { h.o.warnChunkDrift(ctx) }
 
+func (h *HistorianTestHandle) WarnPolicyDrift(ctx context.Context) { h.o.warnPolicyDrift(ctx) }
+
+func (h *HistorianTestHandle) WarnRetentionAboutToDrop(ctx context.Context) {
+	h.o.warnRetentionAboutToDrop(ctx)
+}
+
 func BootstrapSQLWithPoliciesForTest(contract string, compressAfter time.Duration, retention time.Duration, retentionSet bool) string {
 	return bootstrapSQL(bootstrapConfig{
 		contract:       contract,

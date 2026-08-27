@@ -347,6 +347,38 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(*compressAfter).To(Equal(int64(3600)))
 	})
 
+	It("names both tables when the applied policies cannot be read", func() {
+		h := connected("polunread")
+		defer h.Close(ctx)
+
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+
+		logs := h.CaptureLogs()
+		h.WarnPolicyDrift(cancelled)
+
+		Expect(logs()).To(ContainSubstring("cannot read the policies applied to umh.value_polunread"))
+		Expect(logs()).To(ContainSubstring("cannot read the policies applied to umh.attribute_polunread"))
+		Expect(logs()).NotTo(ContainSubstring("stays in force"))
+	})
+
+	It("names both tables when the retention pre-check cannot read the chunk count", func() {
+		h := tsh.NewHistorianTestHandle(sharedDSN, "retunread")
+		h.SetPolicies(168*time.Hour, 24*time.Hour, true)
+		Expect(h.Connect(ctx)).To(Succeed())
+		defer h.Close(ctx)
+
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+
+		logs := h.CaptureLogs()
+		h.WarnRetentionAboutToDrop(cancelled)
+
+		Expect(logs()).To(ContainSubstring("cannot read the chunk count of umh.value_retunread"))
+		Expect(logs()).To(ContainSubstring("cannot read the chunk count of umh.attribute_retunread"))
+		Expect(logs()).NotTo(ContainSubstring("older chunks will be dropped"))
+	})
+
 	It("does not advance the topic sequence when re-resolving an existing topic", func() {
 		h := connected("noburn")
 		defer h.Close(ctx)
