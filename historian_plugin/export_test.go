@@ -423,9 +423,8 @@ func (h *HistorianTestHandle) SetPolicies(compressAfter time.Duration, retention
 
 func (h *HistorianTestHandle) PolicyIntervals(ctx context.Context, table string) (*int64, *int64) {
 	ExpectWithOffset(1, h.o.pool).NotTo(BeNil(), "Connect must succeed before PolicyIntervals")
-	var compressAfter, retention *int64
-	ExpectWithOffset(1, h.o.pool.QueryRow(ctx, policyIntervalSQL("policy_compression", "compress_after"), table).Scan(&compressAfter)).To(Succeed())
-	ExpectWithOffset(1, h.o.pool.QueryRow(ctx, policyIntervalSQL("policy_retention", "drop_after"), table).Scan(&retention)).To(Succeed())
+	compressAfter, retention, err := h.o.readAppliedPolicies(ctx, table)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
 	return compressAfter, retention
 }
 
