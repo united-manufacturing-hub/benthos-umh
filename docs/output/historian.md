@@ -322,10 +322,8 @@ sources by their path segments, not by punctuation that folds.
 ## Schema and compatibility
 
 The plugin owns the schema: it bootstraps the baseline DDL into the `umh` schema
-idempotently when the output starts and **never changes the columns or types of an
-already-created `umh.value_<contract>` / `umh.attribute_<contract>` table**. It does set
-TimescaleDB compression settings on a table that has none yet, which takes a brief exclusive
-lock on that table. A breaking schema change ships
+idempotently when the output starts and **never changes the columns or types of an already-created
+`umh.value_<contract>` / `umh.attribute_<contract>` table**. A breaking schema change ships
 as a new contract (new tables), never an in-place migration. (`ltree` stays in `public`,
 its conventional shared home.)
 
@@ -337,7 +335,8 @@ the same tables. To avoid schema drift, a given contract/database must be writte
 
 `compress_after` and `retention` are applied per contract, to each of a contract's two hypertables
 that has no such policy yet. Compression is applied whether or not the table already holds history,
-since compressing a chunk destroys nothing. **Retention is applied only to a hypertable that holds
+since compressing a chunk destroys nothing; enabling it on a table that has no compression settings
+takes a brief exclusive lock on that table. **Retention is applied only to a hypertable that holds
 no data**, because it drops every chunk older than the window: a restart must not delete history
 that a config value written months ago now covers. On a hypertable that already holds data the
 output warns instead, and names the statement that applies the policy by hand:
