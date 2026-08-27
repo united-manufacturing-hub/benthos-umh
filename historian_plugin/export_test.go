@@ -393,16 +393,9 @@ func (h *HistorianTestHandle) SetChunkIntervals(value time.Duration, attribute t
 	h.o.attributeChunk = attribute
 }
 
-// AppliedChunkInterval reads the chunk width TimescaleDB has applied to one umh hypertable, in
-// seconds (nil when the table is not a hypertable here). It queries the catalog itself rather than
-// going through the output's own reader, so a test asserting the created width has an independent
-// oracle.
 func (h *HistorianTestHandle) AppliedChunkInterval(ctx context.Context, table string) *int64 {
 	ExpectWithOffset(1, h.o.pool).NotTo(BeNil(), "Connect must succeed before AppliedChunkInterval")
-	var applied *int64
-	err := h.o.pool.QueryRow(ctx,
-		"SELECT EXTRACT(EPOCH FROM time_interval)::bigint FROM timescaledb_information.dimensions WHERE hypertable_schema = 'umh' AND hypertable_name = $1 AND column_name = 'ts'",
-		table).Scan(&applied)
+	applied, err := h.o.readChunkInterval(ctx, table)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred())
 	return applied
 }
