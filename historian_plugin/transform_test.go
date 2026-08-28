@@ -50,6 +50,8 @@ var _ = Describe("contract helpers", func() {
 		Entry("leading underscore rejected", "_pump", false),
 		Entry("version suffix rejected", "pump_v1", false),
 		Entry("empty rejected", "", false),
+		Entry("53 characters accepted, the longest that keeps umh.attribute_<name> under 64 bytes", strings.Repeat("p", 53), true),
+		Entry("54 characters rejected, since the server would truncate the attribute table", strings.Repeat("p", 54), false),
 	)
 })
 
