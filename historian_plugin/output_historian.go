@@ -307,16 +307,20 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 		}
 		cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec // simple protocol (pgbouncer txn pool)
 		// pgx drops server notices unless this is set, and the bootstrap needs them: add_*_policy with
-		// if_not_exists => TRUE reports a policy it declined to change as a notice and returns -1, so
-		// without this the decline reaches no log.
+		// if_not_exists => TRUE reports a policy it declined to change as a WARNING notice and returns
+		// -1, so without this the decline reaches no log.
+		// SeverityUnlocalized is the protocol's V field, which is never translated. Severity carries
+		// the server's lc_messages translation, so it cannot be compared against an English literal.
+		// https://www.postgresql.org/docs/current/protocol-error-fields.html
 		cfg.ConnConfig.OnNotice = func(_ *pgconn.PgConn, n *pgconn.Notice) {
-			// WARNING is what add_*_policy raises when if_not_exists makes it decline; NOTICE is
-			// routine bootstrap chatter ("trigger ... does not exist, skipping") on every start.
-			if n.Severity == "WARNING" {
-				o.logger.Warnf("historian: %s", n.Message)
-				return
+			switch n.SeverityUnlocalized {
+			case "PANIC", "FATAL", "ERROR":
+				o.logger.Errorf("historian: %s: %s", n.SeverityUnlocalized, n.Message)
+			case "WARNING":
+				o.logger.Warnf("historian: %s: %s", n.SeverityUnlocalized, n.Message)
+			default:
+				o.logger.Debugf("historian: %s: %s", n.SeverityUnlocalized, n.Message)
 			}
-			o.logger.Debugf("historian: %s: %s", n.Severity, n.Message)
 		}
 		// Each in-flight batch holds a pooled connection for its write tx, so a pool smaller than
 		// max_in_flight silently caps concurrency. pgxpool defaults to max(4, NumCPU), below the

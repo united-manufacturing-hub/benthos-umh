@@ -391,6 +391,17 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(logs()).NotTo(ContainSubstring("was not applied to it"))
 	})
 
+	It("logs a server warning at warning level and a routine notice at debug", func() {
+		h := connected("noticesev")
+		defer h.Close(ctx)
+
+		logs := h.CaptureLogs()
+		Expect(h.ExecSQL(ctx, "DO $$ BEGIN RAISE WARNING 'declined something'; RAISE NOTICE 'skipping something'; END $$;")).To(Succeed())
+
+		Expect(logs()).To(ContainSubstring("level=warning msg=historian: WARNING: declined something"))
+		Expect(logs()).To(ContainSubstring("level=debug msg=historian: NOTICE: skipping something"))
+	})
+
 	It("does not advance the topic sequence when re-resolving an existing topic", func() {
 		h := connected("noburn")
 		defer h.Close(ctx)
