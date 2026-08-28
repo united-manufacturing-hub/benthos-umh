@@ -96,6 +96,12 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 
 	seconds := func(d time.Duration) int64 { return int64(d.Seconds()) }
 
+	const (
+		configuredCompress  = 168 * time.Hour
+		configuredRetention = 720 * time.Hour
+		operatorRetention   = 90 * 24 * time.Hour
+	)
+
 	It("creates each hypertable with its own configured chunk interval", func() {
 		valueChunk := 24 * time.Hour
 		attributeChunk := 720 * time.Hour
@@ -212,13 +218,13 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 
 	It("applies compression and retention to a contract added after the database was bootstrapped", func() {
 		first := tsh.NewHistorianTestHandle(sharedDSN, "polfirst")
-		first.SetPolicies(168*time.Hour, 720*time.Hour, true)
+		first.SetPolicies(configuredCompress, configuredRetention, true)
 		Expect(first.Connect(ctx)).To(Succeed())
 		Expect(first.SchemaVersion(ctx)).To(Equal(1))
 		first.Close(ctx)
 
 		second := tsh.NewHistorianTestHandle(sharedDSN, "polsecond")
-		second.SetPolicies(168*time.Hour, 720*time.Hour, true)
+		second.SetPolicies(configuredCompress, configuredRetention, true)
 		logs := second.CaptureLogs()
 		Expect(second.Connect(ctx)).To(Succeed())
 		defer second.Close(ctx)
@@ -227,34 +233,34 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		for _, table := range []string{"value_polsecond", "attribute_polsecond"} {
 			compressAfter, retention := second.PolicyIntervals(ctx, table)
 			Expect(compressAfter).NotTo(BeNil(), table)
-			Expect(*compressAfter).To(Equal(int64(168*3600)), table)
+			Expect(*compressAfter).To(Equal(seconds(configuredCompress)), table)
 			Expect(retention).NotTo(BeNil(), table)
-			Expect(*retention).To(Equal(int64(720*3600)), table)
+			Expect(*retention).To(Equal(seconds(configuredRetention)), table)
 		}
 	})
 
 	It("reports drift on the attribute hypertable alone", func() {
 		h := tsh.NewHistorianTestHandle(sharedDSN, "polattr")
-		h.SetPolicies(168*time.Hour, 720*time.Hour, true)
+		h.SetPolicies(configuredCompress, configuredRetention, true)
 		Expect(h.Connect(ctx)).To(Succeed())
 		Expect(h.ExecSQL(ctx, "SELECT remove_retention_policy('umh.attribute_polattr')")).To(Succeed())
-		Expect(h.ExecSQL(ctx, "SELECT add_retention_policy('umh.attribute_polattr', INTERVAL '90 days')")).To(Succeed())
+		Expect(h.ExecSQL(ctx, fmt.Sprintf("SELECT add_retention_policy('umh.attribute_polattr', INTERVAL '%d seconds')", seconds(operatorRetention)))).To(Succeed())
 
 		h.Close(ctx)
 
 		restarted := tsh.NewHistorianTestHandle(sharedDSN, "polattr")
-		restarted.SetPolicies(168*time.Hour, 720*time.Hour, true)
+		restarted.SetPolicies(configuredCompress, configuredRetention, true)
 		logs := restarted.CaptureLogs()
 		Expect(restarted.Connect(ctx)).To(Succeed())
 		defer restarted.Close(ctx)
 
-		Expect(logs()).To(ContainSubstring("umh.attribute_polattr: configured retention (2592000s) does not match the applied retention policy (7776000s)"))
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("umh.attribute_polattr: configured retention (%ds) does not match the applied retention policy (%ds)", seconds(configuredRetention), seconds(operatorRetention))))
 		Expect(logs()).NotTo(ContainSubstring("umh.value_polattr: configured retention"))
 	})
 
 	It("gives a contract left without policies by an older build compression back, and retention only where nothing would be dropped", func() {
 		h := tsh.NewHistorianTestHandle(sharedDSN, "pollegacy")
-		h.SetPolicies(168*time.Hour, 720*time.Hour, true)
+		h.SetPolicies(configuredCompress, configuredRetention, true)
 		Expect(h.Connect(ctx)).To(Succeed())
 		Expect(h.WriteBatch(ctx, service.MessageBatch{
 			mkMsg(1.0, float64(time.Now().UnixMilli()), "_pollegacy_v1", "acme.line1", "x", nil),
@@ -268,7 +274,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		h.Close(ctx)
 
 		restarted := tsh.NewHistorianTestHandle(sharedDSN, "pollegacy")
-		restarted.SetPolicies(168*time.Hour, 720*time.Hour, true)
+		restarted.SetPolicies(configuredCompress, configuredRetention, true)
 		logs := restarted.CaptureLogs()
 		Expect(restarted.Connect(ctx)).To(Succeed())
 		defer restarted.Close(ctx)
@@ -276,7 +282,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		for _, table := range []string{"value_pollegacy", "attribute_pollegacy"} {
 			compressAfter, _ := restarted.PolicyIntervals(ctx, table)
 			Expect(compressAfter).NotTo(BeNil(), table)
-			Expect(*compressAfter).To(Equal(int64(168*3600)), table)
+			Expect(*compressAfter).To(Equal(seconds(configuredCompress)), table)
 		}
 
 		Expect(restarted.CountValueRows(ctx, "pollegacy")).To(Equal(1))
@@ -284,18 +290,18 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 
 		_, valueRetention := restarted.PolicyIntervals(ctx, "value_pollegacy")
 		Expect(valueRetention).To(BeNil())
-		Expect(logs()).To(ContainSubstring("umh.value_pollegacy already holds data, so the configured retention (720h0m0s) was not applied to it"))
-		Expect(logs()).To(ContainSubstring("add_retention_policy('umh.value_pollegacy', INTERVAL '2592000 seconds')"))
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("umh.value_pollegacy already holds data, so the configured retention (%s) was not applied to it", configuredRetention)))
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("add_retention_policy('umh.value_pollegacy', INTERVAL '%d seconds')", seconds(configuredRetention))))
 
 		_, attributeRetention := restarted.PolicyIntervals(ctx, "attribute_pollegacy")
 		Expect(attributeRetention).NotTo(BeNil())
-		Expect(*attributeRetention).To(Equal(int64(720 * 3600)))
+		Expect(*attributeRetention).To(Equal(seconds(configuredRetention)))
 		Expect(logs()).NotTo(ContainSubstring("umh.attribute_pollegacy already holds data"))
 	})
 
 	It("leaves a retention policy removed on a hypertable that holds data, and says why", func() {
 		h := tsh.NewHistorianTestHandle(sharedDSN, "polwarn")
-		h.SetPolicies(168*time.Hour, 720*time.Hour, true)
+		h.SetPolicies(configuredCompress, configuredRetention, true)
 		Expect(h.Connect(ctx)).To(Succeed())
 		Expect(h.WriteBatch(ctx, service.MessageBatch{
 			mkMsg(1.0, float64(time.Now().UnixMilli()), "_polwarn_v1", "acme.line1", "x", map[string]string{"serialNumber": "sn-1"}),
@@ -306,14 +312,14 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		h.Close(ctx)
 
 		restarted := tsh.NewHistorianTestHandle(sharedDSN, "polwarn")
-		restarted.SetPolicies(168*time.Hour, 720*time.Hour, true)
+		restarted.SetPolicies(configuredCompress, configuredRetention, true)
 		logs := restarted.CaptureLogs()
 		Expect(restarted.Connect(ctx)).To(Succeed())
 		defer restarted.Close(ctx)
 
-		Expect(logs()).To(ContainSubstring("umh.value_polwarn already holds data, so the configured retention (720h0m0s) was not applied to it"))
-		Expect(logs()).To(ContainSubstring("umh.attribute_polwarn already holds data, so the configured retention (720h0m0s) was not applied to it"))
-		Expect(logs()).NotTo(ContainSubstring("configured retention (2592000s) is not applied"))
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("umh.value_polwarn already holds data, so the configured retention (%s) was not applied to it", configuredRetention)))
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("umh.attribute_polwarn already holds data, so the configured retention (%s) was not applied to it", configuredRetention)))
+		Expect(logs()).NotTo(ContainSubstring(fmt.Sprintf("configured retention (%ds) is not applied", seconds(configuredRetention))))
 		for _, table := range []string{"value_polwarn", "attribute_polwarn"} {
 			_, retention := restarted.PolicyIntervals(ctx, table)
 			Expect(retention).To(BeNil(), table)
@@ -322,22 +328,22 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 
 	It("keeps an operator's own retention interval across a restart", func() {
 		h := tsh.NewHistorianTestHandle(sharedDSN, "polkeep")
-		h.SetPolicies(168*time.Hour, 720*time.Hour, true)
+		h.SetPolicies(configuredCompress, configuredRetention, true)
 		Expect(h.Connect(ctx)).To(Succeed())
 		Expect(h.ExecSQL(ctx, "SELECT remove_retention_policy('umh.value_polkeep')")).To(Succeed())
-		Expect(h.ExecSQL(ctx, "SELECT add_retention_policy('umh.value_polkeep', INTERVAL '90 days')")).To(Succeed())
+		Expect(h.ExecSQL(ctx, fmt.Sprintf("SELECT add_retention_policy('umh.value_polkeep', INTERVAL '%d seconds')", seconds(operatorRetention)))).To(Succeed())
 
 		h.Close(ctx)
 
 		restarted := tsh.NewHistorianTestHandle(sharedDSN, "polkeep")
-		restarted.SetPolicies(168*time.Hour, 720*time.Hour, true)
+		restarted.SetPolicies(configuredCompress, configuredRetention, true)
 		logs := restarted.CaptureLogs()
 		Expect(restarted.Connect(ctx)).To(Succeed())
 		defer restarted.Close(ctx)
 		_, retention := restarted.PolicyIntervals(ctx, "value_polkeep")
 		Expect(retention).NotTo(BeNil())
-		Expect(*retention).To(Equal(int64(90 * 24 * 3600)))
-		Expect(logs()).To(ContainSubstring("umh.value_polkeep: configured retention (2592000s) does not match the applied retention policy (7776000s)"))
+		Expect(*retention).To(Equal(seconds(operatorRetention)))
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("umh.value_polkeep: configured retention (%ds) does not match the applied retention policy (%ds)", seconds(configuredRetention), seconds(operatorRetention))))
 		Expect(logs()).NotTo(ContainSubstring("umh.attribute_polkeep: configured retention"))
 	})
 
@@ -381,7 +387,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 
 	It("names both tables when the retention check cannot read the catalog", func() {
 		h := tsh.NewHistorianTestHandle(sharedDSN, "retunread")
-		h.SetPolicies(168*time.Hour, 24*time.Hour, true)
+		h.SetPolicies(configuredCompress, configuredRetention, true)
 		Expect(h.Connect(ctx)).To(Succeed())
 		defer h.Close(ctx)
 
