@@ -29,7 +29,7 @@ No JavaScript processor or hand-written `sql_raw` is needed.
 | `sslmode` | no | `require` | `require` \| `disable` \| `verify-full`. |
 | `sslrootcert` / `sslcert` / `sslkey` | no | `""` | TLS cert paths inside the container. |
 | `allow_datatype_changes` | no | `false` | Let a tag change datatype (numeric ↔ text) instead of dropping the offending rows as poison. The tag then holds both, and `umh.tag.value_type` keeps the first type seen — read it with `coalesce(value_num::text, value_text)`. Applies to every contract, versioned or not. |
-| `data_contract_name` | yes | — | Bare lowercase contract name, e.g. `pump`; no leading `_`, no `_vN` suffix, 53 characters or fewer so that `umh.attribute_<contract>` stays inside PostgreSQL's 63-byte identifier limit. Stored in `umh.tag.data_contract_name` in its UNS form with a leading underscore (`_pump`), matching the topic's data-contract segment. |
+| `data_contract_name` | yes | — | Bare lowercase contract name, e.g. `pump`; no leading `_`, no `_vN` suffix, 53 characters or fewer. Stored in `umh.tag.data_contract_name` in its UNS form with a leading underscore (`_pump`), matching the topic's data-contract segment. |
 | `metadata_keys_all` | no | `true` | Store every metadata key except structural/high-churn keys and any `metadata_keys_exclude` match. |
 | `metadata_keys` | no | `[]` | Allowlist used only when `metadata_keys_all=false`. |
 | `metadata_keys_exclude` | no | `[]` | Blacklist applied only when `metadata_keys_all=true`. Each entry is an exact key name or a trailing-`*` prefix (e.g. `opcua_*`); matches are dropped on top of the built-in exclusions. A bare `*` drops everything. Ignored in allowlist mode. |
