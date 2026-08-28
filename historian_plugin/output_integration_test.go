@@ -374,7 +374,7 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		Expect(logs()).NotTo(ContainSubstring("stays in force"))
 	})
 
-	It("names both tables when the retention check cannot read the chunk count", func() {
+	It("names both tables when the retention check cannot read the catalog", func() {
 		h := tsh.NewHistorianTestHandle(sharedDSN, "retunread")
 		h.SetPolicies(168*time.Hour, 24*time.Hour, true)
 		Expect(h.Connect(ctx)).To(Succeed())
@@ -386,8 +386,8 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		logs := h.CaptureLogs()
 		h.WarnRetentionNotApplied(cancelled)
 
-		Expect(logs()).To(ContainSubstring("cannot read the chunk count of umh.value_retunread"))
-		Expect(logs()).To(ContainSubstring("cannot read the chunk count of umh.attribute_retunread"))
+		Expect(logs()).To(ContainSubstring("cannot read the chunk count and retention policy of umh.value_retunread"))
+		Expect(logs()).To(ContainSubstring("cannot read the chunk count and retention policy of umh.attribute_retunread"))
 		Expect(logs()).NotTo(ContainSubstring("was not applied to it"))
 	})
 

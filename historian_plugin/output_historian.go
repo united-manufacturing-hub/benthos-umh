@@ -380,8 +380,8 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 // only as an endless WriteBatch NACK and the output stalls instead of failing visibly.
 // Read-only catalog lookup, so it is safe on every Connect and under concurrency.
 func (o *historianOutput) probeWritable(ctx context.Context) error {
-	valueTbl := "umh.value_" + o.contract
-	attrTbl := "umh.attribute_" + o.contract
+	valueTbl := "umh." + o.valueTable()
+	attrTbl := "umh." + o.attributeTable()
 	var ok bool
 	if err := o.pool.QueryRow(ctx,
 		"SELECT has_table_privilege($1, 'INSERT') AND has_table_privilege($2, 'INSERT')",
@@ -407,6 +407,17 @@ func (o *historianOutput) readAppliedPolicies(ctx context.Context, hypertableNam
 	return appliedComp, appliedRet, nil
 }
 
+// valueTable, attributeTable and hypertables name the two tables this output's contract owns. The
+// bootstrap DDL builds the same names from CONTRACT_SLOT, so a change to either side has to be made
+// on both.
+func (o *historianOutput) valueTable() string     { return "value_" + o.contract }
+func (o *historianOutput) attributeTable() string { return "attribute_" + o.contract }
+
+// hypertables lists them in the order every per-table check walks them.
+func (o *historianOutput) hypertables() []string {
+	return []string{o.valueTable(), o.attributeTable()}
+}
+
 // warnRetentionNotApplied names the hypertables the bootstrap left without the configured retention
 // policy because they already hold chunks. It returns them so warnPolicyDrift does not report the
 // same absence a second time as drift.
@@ -415,18 +426,14 @@ func (o *historianOutput) warnRetentionNotApplied(ctx context.Context) map[strin
 	if !o.retentionSet {
 		return notApplied
 	}
-	for _, table := range []string{"value_" + o.contract, "attribute_" + o.contract} {
+	for _, table := range o.hypertables() {
 		var chunks int
-		if err := o.pool.QueryRow(ctx, hypertableChunkCountSQL, table).Scan(&chunks); err != nil {
-			o.logger.Warnf("historian: cannot read the chunk count of umh.%s, so cannot say whether retention (%s) was applied to it: %v", table, o.retention, err)
+		var applied *int64
+		if err := o.pool.QueryRow(ctx, retentionSkipSQL(), table).Scan(&chunks, &applied); err != nil {
+			o.logger.Warnf("historian: cannot read the chunk count and retention policy of umh.%s, so cannot say whether retention (%s) was applied to it: %v", table, o.retention, err)
 			continue
 		}
 		if chunks == 0 {
-			continue
-		}
-		var applied *int64
-		if err := o.pool.QueryRow(ctx, policyIntervalSQL("policy_retention", "drop_after"), table).Scan(&applied); err != nil {
-			o.logger.Warnf("historian: cannot read the retention policy of umh.%s: %v", table, err)
 			continue
 		}
 		if applied != nil {
@@ -447,7 +454,7 @@ func (o *historianOutput) warnPolicyDrift(ctx context.Context, retentionNotAppli
 		v := int64(o.retention.Seconds())
 		retentionWant = &v
 	}
-	for _, table := range []string{"value_" + o.contract, "attribute_" + o.contract} {
+	for _, table := range o.hypertables() {
 		appliedComp, appliedRet, err := o.readAppliedPolicies(ctx, table)
 		if err != nil {
 			o.logger.Warnf("historian: cannot read the policies applied to umh.%s, so cannot report drift: %v", table, err)
@@ -489,8 +496,8 @@ func (o *historianOutput) readChunkIntervalOrWarn(ctx context.Context, table str
 // warnChunkDrift warns when a table's chunk interval differs from config. create_hypertable is a
 // no-op once the table exists, so editing an interval and restarting otherwise has no visible effect.
 func (o *historianOutput) warnChunkDrift(ctx context.Context) {
-	appliedValue := o.readChunkIntervalOrWarn(ctx, "value_"+o.contract)
-	appliedAttribute := o.readChunkIntervalOrWarn(ctx, "attribute_"+o.contract)
+	appliedValue := o.readChunkIntervalOrWarn(ctx, o.valueTable())
+	appliedAttribute := o.readChunkIntervalOrWarn(ctx, o.attributeTable())
 	for _, w := range chunkDriftWarnings(int64(o.valueChunk.Seconds()), appliedValue, int64(o.attributeChunk.Seconds()), appliedAttribute) {
 		o.logger.Warnf("historian: %s. The applied width stays in force, and existing chunks keep theirs.", w)
 	}

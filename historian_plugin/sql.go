@@ -357,7 +357,13 @@ func compressionEnabledSQL(hypertableName string) string {
 // one row (never ErrNoRows), so a nil scan means "no policy / catalog unavailable". procName and
 // configKey are internal constants, not user input.
 func policyIntervalSQL(procName string, configKey string) string {
-	return fmt.Sprintf(`SELECT (
+	return "SELECT " + policyIntervalSubquery(procName, configKey)
+}
+
+// policyIntervalSubquery is the same read as one scalar subquery, so a caller can select it beside
+// another one in a single statement.
+func policyIntervalSubquery(procName string, configKey string) string {
+	return fmt.Sprintf(`(
   SELECT EXTRACT(EPOCH FROM (config->>'%s')::interval)::bigint
     FROM timescaledb_information.jobs
    WHERE proc_name = '%s' AND hypertable_schema = 'umh' AND hypertable_name = $1
@@ -402,6 +408,13 @@ type bootstrapConfig struct {
 	retentionSet   bool
 	valueChunk     time.Duration
 	attributeChunk time.Duration
+}
+
+// retentionSkipSQL reads both facts the retention decision needs, in one round trip: how many chunks
+// the hypertable holds, and the interval of its retention policy (NULL when it has none). One
+// statement means one failure path, so a read that fails cannot leave half the decision made.
+func retentionSkipSQL() string {
+	return fmt.Sprintf("SELECT (%s), %s", hypertableChunkCountSQL, policyIntervalSubquery("policy_retention", "drop_after"))
 }
 
 // chunkIntervalSQL reads the chunk width applied to a umh hypertable, in seconds. A scalar subquery,
