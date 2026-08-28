@@ -214,8 +214,8 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		first := tsh.NewHistorianTestHandle(sharedDSN, "polfirst")
 		first.SetPolicies(168*time.Hour, 720*time.Hour, true)
 		Expect(first.Connect(ctx)).To(Succeed())
-		defer first.Close(ctx)
 		Expect(first.SchemaVersion(ctx)).To(Equal(1))
+		first.Close(ctx)
 
 		second := tsh.NewHistorianTestHandle(sharedDSN, "polsecond")
 		second.SetPolicies(168*time.Hour, 720*time.Hour, true)
@@ -237,9 +237,10 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		h := tsh.NewHistorianTestHandle(sharedDSN, "polattr")
 		h.SetPolicies(168*time.Hour, 720*time.Hour, true)
 		Expect(h.Connect(ctx)).To(Succeed())
-		defer h.Close(ctx)
 		Expect(h.ExecSQL(ctx, "SELECT remove_retention_policy('umh.attribute_polattr')")).To(Succeed())
 		Expect(h.ExecSQL(ctx, "SELECT add_retention_policy('umh.attribute_polattr', INTERVAL '90 days')")).To(Succeed())
+
+		h.Close(ctx)
 
 		restarted := tsh.NewHistorianTestHandle(sharedDSN, "polattr")
 		restarted.SetPolicies(168*time.Hour, 720*time.Hour, true)
@@ -255,7 +256,6 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		h := tsh.NewHistorianTestHandle(sharedDSN, "pollegacy")
 		h.SetPolicies(168*time.Hour, 720*time.Hour, true)
 		Expect(h.Connect(ctx)).To(Succeed())
-		defer h.Close(ctx)
 		Expect(h.WriteBatch(ctx, service.MessageBatch{
 			mkMsg(1.0, float64(time.Now().UnixMilli()), "_pollegacy_v1", "acme.line1", "x", nil),
 		})).To(Succeed())
@@ -264,6 +264,8 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 			Expect(h.ExecSQL(ctx, "SELECT remove_retention_policy('"+table+"')")).To(Succeed())
 			Expect(h.ExecSQL(ctx, "ALTER TABLE "+table+" SET (timescaledb.compress = false)")).To(Succeed())
 		}
+
+		h.Close(ctx)
 
 		restarted := tsh.NewHistorianTestHandle(sharedDSN, "pollegacy")
 		restarted.SetPolicies(168*time.Hour, 720*time.Hour, true)
@@ -295,12 +297,13 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		h := tsh.NewHistorianTestHandle(sharedDSN, "polwarn")
 		h.SetPolicies(168*time.Hour, 720*time.Hour, true)
 		Expect(h.Connect(ctx)).To(Succeed())
-		defer h.Close(ctx)
 		Expect(h.WriteBatch(ctx, service.MessageBatch{
 			mkMsg(1.0, float64(time.Now().UnixMilli()), "_polwarn_v1", "acme.line1", "x", map[string]string{"serialNumber": "sn-1"}),
 		})).To(Succeed())
 		Expect(h.ExecSQL(ctx, "SELECT remove_retention_policy('umh.value_polwarn')")).To(Succeed())
 		Expect(h.ExecSQL(ctx, "SELECT remove_retention_policy('umh.attribute_polwarn')")).To(Succeed())
+
+		h.Close(ctx)
 
 		restarted := tsh.NewHistorianTestHandle(sharedDSN, "polwarn")
 		restarted.SetPolicies(168*time.Hour, 720*time.Hour, true)
@@ -321,9 +324,10 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		h := tsh.NewHistorianTestHandle(sharedDSN, "polkeep")
 		h.SetPolicies(168*time.Hour, 720*time.Hour, true)
 		Expect(h.Connect(ctx)).To(Succeed())
-		defer h.Close(ctx)
 		Expect(h.ExecSQL(ctx, "SELECT remove_retention_policy('umh.value_polkeep')")).To(Succeed())
 		Expect(h.ExecSQL(ctx, "SELECT add_retention_policy('umh.value_polkeep', INTERVAL '90 days')")).To(Succeed())
+
+		h.Close(ctx)
 
 		restarted := tsh.NewHistorianTestHandle(sharedDSN, "polkeep")
 		restarted.SetPolicies(168*time.Hour, 720*time.Hour, true)
@@ -341,12 +345,13 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		h := tsh.NewHistorianTestHandle(sharedDSN, "polchunk")
 		h.SetPolicies(time.Hour, 0, false)
 		Expect(h.Connect(ctx)).To(Succeed())
-		defer h.Close(ctx)
 		Expect(h.WriteBatch(ctx, service.MessageBatch{
 			mkMsg(1.0, 1000, "_polchunk_v1", "acme.line1", "x", nil),
 		})).To(Succeed())
 		Expect(h.ExecSQL(ctx, "SELECT compress_chunk(c, if_not_compressed => true) FROM show_chunks('umh.value_polchunk') c")).To(Succeed())
 		Expect(h.ExecSQL(ctx, "SELECT remove_compression_policy('umh.value_polchunk')")).To(Succeed())
+
+		h.Close(ctx)
 
 		restarted := tsh.NewHistorianTestHandle(sharedDSN, "polchunk")
 		restarted.SetPolicies(time.Hour, 0, false)
