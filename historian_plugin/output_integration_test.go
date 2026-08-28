@@ -182,10 +182,10 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 	It("a fresh handle connects to an already-bootstrapped database and reads/writes (restart path)", func() {
 		// First handle bootstraps the schema and writes one point.
 		h1 := connected("recon")
-		defer h1.Close(ctx)
 		Expect(h1.WriteBatch(ctx, service.MessageBatch{
 			mkMsg(1.0, 1000, "_recon_v1", "acme.line1", "x", nil),
 		})).To(Succeed())
+		h1.Close(ctx)
 
 		h2 := tsh.NewHistorianTestHandle(sharedDSN, "recon")
 		Expect(h2.Connect(ctx)).To(Succeed())
@@ -474,12 +474,12 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 
 	It("re-warms after restart (fresh handle) without bumping the sequence", func() {
 		h1 := connected("restart2")
-		defer h1.Close(ctx)
 		Expect(h1.WriteBatch(ctx, service.MessageBatch{
 			mkMsg(1.0, 1000, "_restart2_v1", "acme.line1", "a", nil),
 			mkMsg(2.0, 1000, "_restart2_v1", "acme.line1", "b", nil),
 		})).To(Succeed())
 		seq := h1.TopicSeqValue(ctx)
+		h1.Close(ctx)
 
 		// A fresh handle == the restart path (no in-process state). Writing the SAME, existing
 		// topics resolves them via lookup with no sequence bump.
