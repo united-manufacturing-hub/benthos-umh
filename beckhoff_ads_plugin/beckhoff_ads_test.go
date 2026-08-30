@@ -16,6 +16,7 @@ package beckhoff_ads_plugin_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -338,6 +339,13 @@ func extractSymbolValue(batch service.MessageBatch, symbolName string) (string, 
 			b, err := msg.AsBytes()
 			if err != nil {
 				return "", false
+			}
+			// String-typed values ship JSON-quoted so a numeric-looking string is
+			// not reparsed as a number; compare against the PLC's value, not its
+			// wire form. Numbers and bools are unquoted and fall through.
+			var unquoted string
+			if err := json.Unmarshal(b, &unquoted); err == nil {
+				return unquoted, true
 			}
 			return string(b), true
 		}
@@ -992,6 +1000,14 @@ ads:
 			// connection-tracking state has a moment to recover between fresh
 			// sessions. Without this the Nth fresh Connect arrives while the PLC
 			// is still cleaning up from the (N-1)th, increasing flap rate.
+			// One ADS client per NetID: a fresh session must not race the shared
+			// interval one, which readSharedBatch may have just revived.
+			stopSharedSession := func() {
+				if sharedInput != nil {
+					_ = sharedInput.Close(context.Background())
+				}
+			}
+
 			AfterEach(func() {
 				time.Sleep(2 * time.Second)
 			})
@@ -1006,6 +1022,7 @@ ads:
 			// collectNotifications subscribes to symbols via notification mode and collects
 			// values for the given duration. Returns map[sanitizedName][]string (values in order).
 			collectNotifications := func(symbols []ads.PlcSymbol, duration time.Duration) map[string][]string {
+				stopSharedSession()
 				input := createTestInputWithCustomSymbols(cfg, "notification", symbols)
 				defer input.Close(ctx)
 
@@ -1041,6 +1058,7 @@ ads:
 					{Name: syms.DiagNInt, CycleTime: 100 * time.Millisecond, MaxDelay: 100 * time.Millisecond},
 					{Name: syms.DiagFReal, CycleTime: 100 * time.Millisecond, MaxDelay: 100 * time.Millisecond},
 				}
+				stopSharedSession()
 				input := createTestInputWithCustomSymbols(cfg, "notification", symbols)
 				defer input.Close(ctx)
 
@@ -1069,6 +1087,7 @@ ads:
 					{Name: syms.MasterCycleCounter, CycleTime: 100 * time.Millisecond, MaxDelay: 100 * time.Millisecond},
 					{Name: "GVL_ProcessData.DOES_NOT_EXIST_SYMBOL", CycleTime: 100 * time.Millisecond, MaxDelay: 100 * time.Millisecond},
 				}
+				stopSharedSession()
 				input := createTestInputWithCustomSymbols(cfg, "notification", symbols)
 				defer input.Close(ctx)
 
@@ -1287,6 +1306,7 @@ ads:
 					symbols := []ads.PlcSymbol{
 						{Name: syms.DiagNFastDint, MaxDelay: 0, CycleTime: tc.cycleTime},
 					}
+					stopSharedSession()
 					input := createTestInputWithCustomSymbols(cfg, "notification", symbols)
 
 					err := input.Connect(ctx)
