@@ -18,12 +18,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
+	adsLib "github.com/RuneRoven/go-ads/v2"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -37,18 +40,22 @@ type fakeClient struct {
 	multiErr            error
 	readFromSymbolValue map[string]string
 	readFromSymbolErr   error
+	connectErr          error
+	loadSymbolsErr      error
+	notifyErr           error
+	notifyResults       []NotifyResult
 	closed              bool
 	getSymbolCalls      int
 	readFromSymbolCalls int
 	callOrder           []string
 }
 
-func (f *fakeClient) Connect(_ context.Context) error { return nil }
+func (f *fakeClient) Connect(_ context.Context) error { return f.connectErr }
 func (f *fakeClient) Close() error                    { f.closed = true; return nil }
 func (f *fakeClient) IsClosed() bool                  { return f.closed }
 func (f *fakeClient) LoadSymbols(_ context.Context) error {
 	f.callOrder = append(f.callOrder, "LoadSymbols")
-	return nil
+	return f.loadSymbolsErr
 }
 
 func (f *fakeClient) GetSymbol(_ context.Context, name string) (SymbolInfo, error) {
@@ -61,6 +68,12 @@ func (f *fakeClient) GetSymbol(_ context.Context, name string) (SymbolInfo, erro
 }
 
 func (f *fakeClient) AddNotifications(_ context.Context, cfgs []NotifyConfig, _ chan *Update) ([]NotifyResult, error) {
+	if f.notifyErr != nil {
+		return nil, f.notifyErr
+	}
+	if f.notifyResults != nil {
+		return f.notifyResults, nil
+	}
 	out := make([]NotifyResult, len(cfgs))
 	for i, c := range cfgs {
 		out[i] = NotifyResult{SymbolName: c.SymbolName, Registered: true}
@@ -922,6 +935,25 @@ var _ = Describe("connectHint", func() {
 	It("treats a non-net error as an AMS-layer rejection", func() {
 		Expect(connectHint(errors.New("boom"))).To(ContainSubstring("targetAMS"))
 	})
+
+	It("blames the route when the PLC served no frame at all", func() {
+		err := fmt.Errorf("connect: %w", adsLib.ErrRouteNotServed)
+		hint := connectHint(err)
+		Expect(connectDropKind(err)).To(Equal(dropRouteNotServed))
+		Expect(hint).To(ContainSubstring("hostIP"))
+		Expect(hint).NotTo(ContainSubstring("runtimePort"))
+	})
+
+	It("blames the network when an established connection was dropped", func() {
+		err := fmt.Errorf("connect: %w", adsLib.ErrEstablishedDropped)
+		hint := connectHint(err)
+		Expect(connectDropKind(err)).To(Equal(dropEstablished))
+		Expect(hint).To(ContainSubstring("not a configuration error"))
+	})
+
+	It("leaves an unrelated error unclassified", func() {
+		Expect(connectDropKind(errors.New("boom"))).To(Equal(dropUnknown))
+	})
 })
 
 var _ = Describe("Shutdown quiets expected failures", func() {
@@ -1018,6 +1050,232 @@ var _ = Describe("benthosLogHandler.WithAttrs", func() {
 		Expect(right.attrs[1].Value.String()).To(Equal("right"))
 		Expect(parent.attrs).To(HaveLen(1))
 	})
+})
+
+// capturedLog is one record the plugin logged, flattened for assertions.
+type capturedLog struct {
+	Level slog.Level
+	Msg   string
+	Attrs map[string]string
+}
+
+// captureHandler collects records so a test can assert the level the plugin
+// chose, which is the whole behavior of logConnectFailure.
+type captureHandler struct {
+	mu    *sync.Mutex
+	recs  *[]capturedLog
+	attrs []slog.Attr
+}
+
+func (h captureHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h captureHandler) Handle(_ context.Context, r slog.Record) error {
+	rec := capturedLog{Level: r.Level, Msg: r.Message, Attrs: map[string]string{}}
+	for _, a := range h.attrs {
+		rec.Attrs[a.Key] = a.Value.String()
+	}
+	r.Attrs(func(a slog.Attr) bool {
+		rec.Attrs[a.Key] = a.Value.String()
+		return true
+	})
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	*h.recs = append(*h.recs, rec)
+	return nil
+}
+
+func (h captureHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	merged := make([]slog.Attr, 0, len(h.attrs)+len(attrs))
+	return captureHandler{mu: h.mu, recs: h.recs, attrs: append(append(merged, h.attrs...), attrs...)}
+}
+
+func (h captureHandler) WithGroup(string) slog.Handler { return h }
+
+// capturingLogger returns a benthos logger and the slice its records land in.
+func capturingLogger() (*service.Logger, *[]capturedLog) {
+	recs := &[]capturedLog{}
+	h := captureHandler{mu: &sync.Mutex{}, recs: recs}
+	return service.NewLoggerFromSlog(slog.New(h)), recs
+}
+
+func levelsOf(recs *[]capturedLog, floor slog.Level) []slog.Level {
+	var out []slog.Level
+	for _, r := range *recs {
+		if r.Level >= floor {
+			out = append(out, r.Level)
+		}
+	}
+	return out
+}
+
+var _ = Describe("logConnectFailure", func() {
+	newInput := func() (*AdsCommInput, *[]capturedLog) {
+		log, recs := capturingLogger()
+		return &AdsCommInput{Log: log, TargetIP: "1.2.3.4", TargetPort: 48898, RuntimePort: 851}, recs
+	}
+
+	It("warns and promises a retry when the PLC dropped the transport", func() {
+		a, recs := newInput()
+		err := fmt.Errorf("DownloadDataTypes failed: %w", adsLib.ErrTransportClosed)
+
+		Expect(a.logConnectFailure(context.Background(), "Loading the table failed", err)).To(MatchError(err))
+
+		Expect(*recs).To(HaveLen(1))
+		Expect((*recs)[0].Level).To(Equal(slog.LevelWarn))
+		Expect((*recs)[0].Msg).To(ContainSubstring("retries"))
+		// The hint describes a rejected session, so it must not appear here.
+		Expect((*recs)[0].Attrs).NotTo(HaveKey("hint"))
+	})
+
+	It("errors with a hint when the PLC rejected the session", func() {
+		a, recs := newInput()
+		err := errors.New("ADS error 0x706")
+
+		Expect(a.logConnectFailure(context.Background(), "Connecting to PLC failed", err)).To(MatchError(err))
+
+		Expect(*recs).To(HaveLen(1))
+		Expect((*recs)[0].Level).To(Equal(slog.LevelError))
+		Expect((*recs)[0].Attrs).To(HaveKeyWithValue("hint", ContainSubstring("targetAMS")))
+	})
+
+	It("keeps a route the PLC will not serve an error, since it needs a person", func() {
+		a, recs := newInput()
+		err := fmt.Errorf("connect: %w", adsLib.ErrRouteNotServed)
+
+		a.logConnectFailure(context.Background(), "Connecting to PLC failed", err)
+
+		Expect((*recs)[0].Level).To(Equal(slog.LevelError))
+		Expect((*recs)[0].Attrs).To(HaveKeyWithValue("hint", ContainSubstring("hostIP")))
+	})
+
+	It("drops to debug during shutdown, like every other aborted operation", func() {
+		a, recs := newInput()
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		a.logConnectFailure(ctx, "Connecting to PLC failed", adsLib.ErrTransportClosed)
+
+		Expect(*recs).To(HaveLen(1))
+		Expect((*recs)[0].Level).To(Equal(slog.LevelDebug))
+	})
+})
+
+var _ = Describe("isTransportGone", func() {
+	DescribeTable("separates a transport that went away from a session that was refused",
+		func(err error, want bool) {
+			Expect(isTransportGone(err)).To(Equal(want))
+		},
+		Entry("transport closed, wrapped", fmt.Errorf("upload: %w", adsLib.ErrTransportClosed), true),
+		Entry("disconnected", adsLib.ErrDisconnected, true),
+		Entry("established connection dropped", fmt.Errorf("connect: %w", adsLib.ErrEstablishedDropped), true),
+		// Excluded on purpose: this one usually needs credentials or an address fixed.
+		Entry("route never served", fmt.Errorf("connect: %w", adsLib.ErrRouteNotServed), false),
+		Entry("an ADS return code", errors.New("ADS error 0x706"), false),
+		Entry("no error", nil, false),
+	)
+})
+
+var _ = Describe("sessionConfig", func() {
+	It("carries every tuning field through to the adapter", func() {
+		a := &AdsCommInput{
+			TargetIP: "1.2.3.4", TargetPort: 48898, RuntimePort: 851,
+			TargetAMS: "1.2.3.4.1.1", HostAMS: "auto", HostIP: "5.6.7.8", HostPort: 0,
+			Username: "Administrator", Password: "secret",
+			RequestTimeout:             5 * time.Second,
+			MaxReconnectInterval:       7 * time.Second,
+			RouteActivationTimeout:     20 * time.Second,
+			NotificationSilenceTimeout: 15 * time.Second,
+			HeartbeatRecovery:          heartbeatRecoveryRebuild,
+			Log:                        service.MockResources().Logger(),
+		}
+
+		cfg := a.sessionConfig()
+
+		Expect(cfg.MaxReconnectInterval).To(Equal(7 * time.Second))
+		Expect(cfg.RouteActivationTimeout).To(Equal(20 * time.Second))
+		Expect(cfg.NotificationSilenceTimeout).To(Equal(15 * time.Second))
+		Expect(cfg.HeartbeatRecovery).To(Equal(heartbeatRecoveryRebuild))
+		Expect(cfg.RequestTimeout).To(Equal(5 * time.Second))
+	})
+
+	It("wires OnSessionEvent to the flag the read path consumes", func() {
+		a := &AdsCommInput{Log: service.MockResources().Logger()}
+
+		cfg := a.sessionConfig()
+		Expect(cfg.OnSessionEvent).NotTo(BeNil())
+		cfg.OnSessionEvent(SessionEventSubscriptionsDead, "heartbeat-silent")
+
+		reason := a.degradedReason.Load()
+		Expect(reason).NotTo(BeNil())
+		Expect(*reason).To(Equal("heartbeat-silent"))
+	})
+})
+
+var _ = Describe("setupNotifications", func() {
+	newInput := func(client *fakeClient) *AdsCommInput {
+		return &AdsCommInput{
+			Log:              service.MockResources().Logger(),
+			client:           client,
+			ReadType:         "notification",
+			NotificationChan: make(chan *Update, 4),
+			Symbols:          []PlcSymbol{{Name: "MAIN.a"}, {Name: "MAIN.b"}},
+		}
+	}
+
+	It("names the symbol count when the whole registration fails", func() {
+		a := newInput(&fakeClient{notifyErr: errors.New("transport down")})
+
+		err := a.setupNotifications(context.Background())
+
+		Expect(err).To(MatchError(ContainSubstring("2 symbols")))
+		Expect(err).To(MatchError(ContainSubstring("transport down")))
+	})
+
+	It("fails when the PLC resolved none of the symbols", func() {
+		// go-ads reports this per symbol rather than as an error, so an
+		// all-skipped batch would otherwise look like a successful connect.
+		a := newInput(&fakeClient{notifyResults: []NotifyResult{
+			{SymbolName: "MAIN.a", Skipped: true},
+			{SymbolName: "MAIN.b", Skipped: true},
+		}})
+
+		Expect(a.setupNotifications(context.Background())).To(MatchError(ContainSubstring("no symbols registered")))
+	})
+})
+
+var _ = Describe("finishConnect failure branches", func() {
+	newInput := func(client *fakeClient, readType string) (*AdsCommInput, *[]capturedLog) {
+		log, recs := capturingLogger()
+		return &AdsCommInput{
+			Log: log, client: client, ReadType: readType,
+			LoadSymbols:      true,
+			NotificationChan: make(chan *Update, 4),
+			Symbols:          []PlcSymbol{{Name: "MAIN.a"}},
+		}, recs
+	}
+
+	DescribeTable("reports each failed step exactly once",
+		func(client *fakeClient, readType string, wantErr string) {
+			a, recs := newInput(client, readType)
+
+			err := a.finishConnect(context.Background())
+
+			Expect(err).To(MatchError(ContainSubstring(wantErr)))
+			// One line per failure: the step used to log the error it then returned.
+			Expect(levelsOf(recs, slog.LevelWarn)).To(HaveLen(1))
+		},
+		Entry("connect refused",
+			&fakeClient{connectErr: errors.New("ADS error 0x706")}, "interval", "0x706"),
+		Entry("symbol table upload interrupted",
+			&fakeClient{loadSymbolsErr: fmt.Errorf("upload: %w", adsLib.ErrTransportClosed)}, "interval", "transport closed"),
+		// Symbol metadata has to resolve, or initSymbolIndex adds a warning of
+		// its own and the count stops being about the failure under test.
+		Entry("notification registration failed",
+			&fakeClient{
+				notifyErr: errors.New("sum command failed"),
+				symbols:   map[string]SymbolInfo{"MAIN.a": {DataType: "DINT", BaseType: "DINT", Length: 4}},
+			}, "notification", "sum command failed"),
+	)
 })
 
 var _ = Describe("finishConnect ordering", func() {
@@ -1118,6 +1376,234 @@ var _ = Describe("Partial batch reads", func() {
 	})
 })
 
+var _ = Describe("reconnect and notification-health tuning fields", func() {
+	minimalYAML := `
+targetAddress: "1.2.3.4"
+symbols:
+  - "MAIN.var"
+`
+
+	It("defaults to go-ads' own values, stated explicitly", func() {
+		conf, err := adsConf.ParseYAML(minimalYAML, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(durationField(conf, "maxReconnectInterval")).To(Equal(30 * time.Second))
+		Expect(durationField(conf, "routeActivationTimeout")).To(Equal(10 * time.Second))
+		Expect(durationField(conf, "notificationSilenceTimeout")).To(Equal(10 * time.Second))
+		Expect(conf.FieldString("heartbeatRecovery")).To(Equal("immediate"))
+	})
+
+	It("accepts 0 as 'keep the library default'", func() {
+		conf, err := adsConf.ParseYAML(minimalYAML+"maxReconnectInterval: 0s\n", nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(durationField(conf, "maxReconnectInterval")).To(BeZero())
+	})
+
+	DescribeTable("rejects a negative duration rather than silently ignoring it",
+		func(field string) {
+			conf, err := adsConf.ParseYAML(minimalYAML+field+": -5s\n", nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = NewAdsCommInput(conf, service.MockResources())
+
+			Expect(err).To(MatchError(ContainSubstring(field)))
+			Expect(err).To(MatchError(ContainSubstring("must not be negative")))
+		},
+		Entry("maxReconnectInterval", "maxReconnectInterval"),
+		Entry("routeActivationTimeout", "routeActivationTimeout"),
+		Entry("notificationSilenceTimeout", "notificationSilenceTimeout"),
+	)
+
+	DescribeTable("rejects a heartbeatRecovery mode it cannot honor",
+		// Outside `benthos lint` the enum is not enforced: ParseYAML and
+		// FieldString accept anything, so unchecked values reach the adapter.
+		func(mode string) {
+			conf, err := adsConf.ParseYAML(minimalYAML+"heartbeatRecovery: "+mode+"\n", nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = NewAdsCommInput(conf, service.MockResources())
+
+			Expect(err).To(MatchError(ContainSubstring("heartbeatRecovery")))
+		},
+		// observe never re-subscribes: a dead subscription, no data, no error.
+		Entry("observe, which needs a callback the plugin does not register", "observe"),
+		Entry("a typo", "confrim"),
+	)
+
+	DescribeTable("accepts the two modes it does honor",
+		func(mode string) {
+			conf, err := adsConf.ParseYAML(minimalYAML+"heartbeatRecovery: "+mode+"\n", nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = NewAdsCommInput(conf, service.MockResources())
+
+			Expect(err).NotTo(HaveOccurred())
+		},
+		Entry("immediate", heartbeatRecoveryImmediate),
+		Entry("confirm", heartbeatRecoveryConfirm),
+		Entry("rebuild", heartbeatRecoveryRebuild),
+	)
+
+	Describe("rebuild mode needs a callback to hand the decision to", func() {
+		base := SessionConfig{TargetIP: "1.2.3.4", TargetPort: 48898, RuntimePort: 851}
+
+		optionCount := func(cfg SessionConfig) int {
+			opts, err := buildSessionOptions(context.Background(), cfg, service.MockResources().Logger())
+			Expect(err).NotTo(HaveOccurred())
+			return len(opts)
+		}
+
+		It("adds both the recovery mode and the callback when one is set", func() {
+			withCB := base
+			withCB.HeartbeatRecovery = heartbeatRecoveryRebuild
+			withCB.OnSessionEvent = func(SessionEvent, string) {}
+
+			Expect(optionCount(withCB)).To(Equal(optionCount(base) + 2))
+		})
+
+		It("does not switch go-ads out of recovering when there is no callback", func() {
+			// Observe with no callback stops delivering and says nothing.
+			noCB := base
+			noCB.HeartbeatRecovery = heartbeatRecoveryRebuild
+
+			Expect(optionCount(noCB)).To(Equal(optionCount(base)))
+		})
+	})
+
+	Describe("sessionEventFor", func() {
+		DescribeTable("classifies the reasons the plugin must act on",
+			func(reason adsLib.Reason, want SessionEvent) {
+				Expect(sessionEventFor(reason)).To(Equal(want))
+			},
+			Entry("heartbeat silent", adsLib.ReasonHeartbeatSilent, SessionEventSubscriptionsDead),
+			Entry("reload cap exhausted", adsLib.ReasonReloadCapExhausted, SessionEventSymbolReloadGaveUp),
+			// go-ads drives its own reload for these; escalating would undo it.
+			Entry("symbol version invalid", adsLib.ReasonSymbolVersionInvalid, SessionEventOther),
+			Entry("notify handle invalid", adsLib.ReasonNotifyHandleInvalid, SessionEventOther),
+			Entry("a reason added in a later version", adsLib.Reason("something-new"), SessionEventOther),
+		)
+	})
+})
+
+var _ = Describe("session rebuild on a degraded session", func() {
+	newDegradableInput := func(client Client) *AdsCommInput {
+		return &AdsCommInput{
+			ReadType: "notification",
+			Log:      service.MockResources().Logger(),
+			client:   client,
+			Symbols:  []PlcSymbol{{Name: "MAIN.var"}},
+		}
+	}
+
+	DescribeTable("reports itself disconnected so the pipeline reconnects",
+		func(ev SessionEvent) {
+			a := newDegradableInput(&fakeClient{})
+			a.onSessionEvent(ev, "some-reason")
+
+			_, _, err := a.ReadBatch(context.Background())
+
+			Expect(err).To(MatchError(service.ErrNotConnected))
+			// closeHandler drops the client so Connect builds a new session.
+			Expect(a.client).To(BeNil())
+		},
+		Entry("subscriptions dead", SessionEventSubscriptionsDead),
+		Entry("symbol reload gave up", SessionEventSymbolReloadGaveUp),
+	)
+
+	It("leaves a healthy session alone for an event go-ads handles itself", func() {
+		a := newDegradableInput(&fakeClient{})
+		a.onSessionEvent(SessionEventOther, "symbol-version-invalid")
+
+		Expect(a.rebuildIfDegraded()).To(Succeed())
+		Expect(a.client).NotTo(BeNil())
+	})
+
+	It("consumes the flag, so one event costs one rebuild", func() {
+		a := newDegradableInput(&fakeClient{})
+		a.onSessionEvent(SessionEventSubscriptionsDead, "heartbeat-silent")
+
+		Expect(a.rebuildIfDegraded()).To(MatchError(service.ErrNotConnected))
+		Expect(a.rebuildIfDegraded()).To(Succeed())
+	})
+
+	It("keeps the first reason when a second event arrives before the read", func() {
+		a := newDegradableInput(&fakeClient{})
+		a.onSessionEvent(SessionEventSubscriptionsDead, "heartbeat-silent")
+		a.onSessionEvent(SessionEventSymbolReloadGaveUp, "reload-cap-exhausted")
+
+		reason := a.degradedReason.Load()
+		Expect(reason).NotTo(BeNil())
+		Expect(*reason).To(Equal("heartbeat-silent"))
+	})
+
+	Describe("cappedBackoff", func() {
+		DescribeTable("keeps the tiers valid for any cap go-ads would otherwise reject",
+			func(limit time.Duration) {
+				bc := cappedBackoff(limit)
+
+				// Guards the case where WithBackoff warns, keeps the default, and
+				// the requested cap applies to nothing.
+				Expect(bc.Validate()).To(Succeed())
+				Expect(bc.MaxInterval).To(Equal(limit))
+				Expect(bc.SlowInterval).To(BeNumerically("<=", limit))
+				Expect(bc.MidInterval).To(BeNumerically("<=", bc.SlowInterval))
+				Expect(bc.InitialInterval).To(BeNumerically("<=", bc.MidInterval))
+			},
+			Entry("below every tier", 500*time.Millisecond),
+			Entry("between the initial and mid tiers", 2*time.Second),
+			Entry("between the mid and slow tiers", 10*time.Second),
+			Entry("the default cap", 30*time.Second),
+			Entry("above the default cap", 2*time.Minute),
+		)
+
+		It("leaves the lower tiers alone when the cap is above them", func() {
+			bc := cappedBackoff(2 * time.Minute)
+			def := adsLib.DefaultBackoffConfig()
+
+			Expect(bc.InitialInterval).To(Equal(def.InitialInterval))
+			Expect(bc.MidInterval).To(Equal(def.MidInterval))
+			Expect(bc.SlowInterval).To(Equal(def.SlowInterval))
+		})
+	})
+
+	Describe("buildSessionOptions", func() {
+		// No username/password, so no route resolution and no network access.
+		base := SessionConfig{TargetIP: "1.2.3.4", TargetPort: 48898, RuntimePort: 851}
+
+		optionCount := func(cfg SessionConfig) int {
+			opts, err := buildSessionOptions(context.Background(), cfg, service.MockResources().Logger())
+			Expect(err).NotTo(HaveOccurred())
+			return len(opts)
+		}
+
+		It("adds one option per knob that is set", func() {
+			tuned := base
+			tuned.MaxReconnectInterval = 5 * time.Second
+			tuned.RouteActivationTimeout = 30 * time.Second
+			tuned.NotificationSilenceTimeout = 20 * time.Second
+			tuned.HeartbeatRecovery = "confirm"
+
+			Expect(optionCount(tuned)).To(Equal(optionCount(base) + 4))
+		})
+
+		It("adds nothing for the immediate recovery mode, which is already the default", func() {
+			immediate := base
+			immediate.HeartbeatRecovery = "immediate"
+
+			Expect(optionCount(immediate)).To(Equal(optionCount(base)))
+		})
+
+		It("adds nothing for a zero duration", func() {
+			zeroed := base
+			zeroed.MaxReconnectInterval = 0
+			zeroed.RouteActivationTimeout = 0
+			zeroed.NotificationSilenceTimeout = 0
+
+			Expect(optionCount(zeroed)).To(Equal(optionCount(base)))
+		})
+	})
+})
+
 var _ = Describe("targetAMS is optional", func() {
 	It("builds without targetAMS, leaving the PLC to supply it", func() {
 		conf, err := adsConf.ParseYAML(`
@@ -1147,9 +1633,8 @@ symbols:
 	})
 })
 
-var _ = Describe("benthosLogHandler per-symbol demotion", func() {
-	// go-ads emits one info line per symbol on the happy path. Matching the
-	// attribute rather than the message text keeps this working if it rewords.
+var _ = Describe("benthosLogHandler level mapping", func() {
+	// go-ads owns the level; the bridge only maps slog levels onto benthos ones.
 	rec := func(level slog.Level, msg string, attrs ...slog.Attr) slog.Record {
 		r := slog.NewRecord(time.Time{}, level, msg, 0)
 		r.AddAttrs(attrs...)
@@ -1160,32 +1645,22 @@ var _ = Describe("benthosLogHandler per-symbol demotion", func() {
 		return h.Handle(context.Background(), r)
 	}
 
-	It("forwards records the handler is given", func() {
-		Expect(handle(rec(slog.LevelInfo, "Connected to PLC"))).To(Succeed())
-		Expect(handle(rec(slog.LevelInfo, "batch notification created",
-			slog.String("symbol", "MAIN.a")))).To(Succeed())
-	})
-
-	DescribeTable("classifies a record as per-symbol chatter or not",
-		func(level slog.Level, attrs []slog.Attr, wantPerSymbol bool) {
+	DescribeTable("forwards a record at the level go-ads set, attributes and all",
+		func(level slog.Level, attrs []slog.Attr) {
 			r := rec(level, "x", attrs...)
-			perSymbol := false
-			r.Attrs(func(a slog.Attr) bool {
-				perSymbol = perSymbol || a.Key == "symbol" || a.Key == "handle"
-				return true
-			})
-			Expect(perSymbol).To(Equal(wantPerSymbol))
+			Expect(handle(r)).To(Succeed())
+			Expect(r.Level).To(Equal(level))
 		},
-		Entry("symbol attribute", slog.LevelInfo, []slog.Attr{slog.String("symbol", "MAIN.a")}, true),
-		Entry("handle attribute", slog.LevelInfo, []slog.Attr{slog.Uint64("handle", 91)}, true),
-		Entry("connection line", slog.LevelInfo, []slog.Attr{slog.String("host", "1.2.3.4")}, false),
-		Entry("no attributes", slog.LevelInfo, nil, false),
+		Entry("connection line", slog.LevelInfo, nil),
+		Entry("per-symbol bookkeeping arrives as debug", slog.LevelDebug, []slog.Attr{slog.String("symbol", "MAIN.a")}),
+		Entry("per-handle bookkeeping arrives as debug", slog.LevelDebug, []slog.Attr{slog.Uint64("handle", 91)}),
+		Entry("a failure carrying a symbol stays a warning", slog.LevelWarn, []slog.Attr{slog.String("symbol", "MAIN.a")}),
+		Entry("error", slog.LevelError, []slog.Attr{slog.String("symbol", "MAIN.a")}),
 	)
 
-	It("keeps a failure carrying a symbol at warning, not debug", func() {
-		// Only info is demoted; warn/error take earlier switch branches.
-		r := rec(slog.LevelWarn, "batch entry not committed", slog.String("symbol", "MAIN.a"))
-		Expect(handle(r)).To(Succeed())
-		Expect(r.Level).To(Equal(slog.LevelWarn))
+	It("suppresses trace records below debug", func() {
+		h := &benthosLogHandler{logger: service.MockResources().Logger()}
+		Expect(h.Enabled(context.Background(), slog.Level(-8))).To(BeFalse())
+		Expect(h.Enabled(context.Background(), slog.LevelDebug)).To(BeTrue())
 	})
 })
