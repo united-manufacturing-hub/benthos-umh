@@ -94,6 +94,79 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		return h
 	}
 
+	seconds := func(d time.Duration) int64 { return int64(d.Seconds()) }
+
+	It("creates each hypertable with its own configured chunk interval", func() {
+		valueChunk := 24 * time.Hour
+		attributeChunk := 720 * time.Hour
+
+		h := tsh.NewHistorianTestHandle(sharedDSN, "chunky")
+		h.SetChunkIntervals(valueChunk, attributeChunk)
+		Expect(h.Connect(ctx)).To(Succeed())
+		defer h.Close(ctx)
+
+		Expect(h.AppliedChunkInterval(ctx, "value_chunky")).To(HaveValue(Equal(seconds(valueChunk))))
+		Expect(h.AppliedChunkInterval(ctx, "attribute_chunky")).To(HaveValue(Equal(seconds(attributeChunk))))
+	})
+
+	It("warns on restart when the configured chunk interval no longer matches the table", func() {
+		createdChunk := 168 * time.Hour
+		reconfiguredChunk := 24 * time.Hour
+		unchangedAttributeChunk := 168 * time.Hour
+
+		first := tsh.NewHistorianTestHandle(sharedDSN, "chunkdrift")
+		first.SetChunkIntervals(createdChunk, unchangedAttributeChunk)
+		Expect(first.Connect(ctx)).To(Succeed())
+		first.Close(ctx)
+
+		restarted := tsh.NewHistorianTestHandle(sharedDSN, "chunkdrift")
+		restarted.SetChunkIntervals(reconfiguredChunk, unchangedAttributeChunk)
+		logs := restarted.CaptureLogs()
+		Expect(restarted.Connect(ctx)).To(Succeed())
+		defer restarted.Close(ctx)
+
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("configured value_chunk_interval (%ds)", seconds(reconfiguredChunk))))
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("created with (%ds)", seconds(createdChunk))))
+		Expect(logs()).To(ContainSubstring("stays in force"))
+		Expect(logs()).NotTo(ContainSubstring("attribute_chunk_interval"))
+		Expect(restarted.AppliedChunkInterval(ctx, "value_chunkdrift")).To(HaveValue(Equal(seconds(createdChunk))))
+	})
+
+	It("names both tables when the applied chunk interval cannot be read", func() {
+		h := connected("chunkunread")
+		defer h.Close(ctx)
+
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+
+		logs := h.CaptureLogs()
+		h.WarnChunkDrift(cancelled)
+
+		Expect(logs()).To(ContainSubstring("cannot read the chunk interval of umh.value_chunkunread"))
+		Expect(logs()).To(ContainSubstring("cannot read the chunk interval of umh.attribute_chunkunread"))
+		Expect(logs()).NotTo(ContainSubstring("stays in force"))
+	})
+
+	It("warns on restart when the applied compression policy no longer matches config", func() {
+		appliedCompress := 24 * time.Hour
+		handleDefaultCompress := 168 * time.Hour
+
+		first := connected("poldrift")
+		Expect(first.ExecSQL(ctx, "ALTER TABLE umh.value_poldrift SET (timescaledb.compress, timescaledb.compress_segmentby = 'topic_id', timescaledb.compress_orderby = 'ts DESC')")).To(Succeed())
+		Expect(first.ExecSQL(ctx, "SELECT remove_compression_policy('umh.value_poldrift', if_exists => TRUE)")).To(Succeed())
+		Expect(first.ExecSQL(ctx, fmt.Sprintf("SELECT add_compression_policy('umh.value_poldrift', INTERVAL '%d seconds')", seconds(appliedCompress)))).To(Succeed())
+		first.Close(ctx)
+
+		restarted := tsh.NewHistorianTestHandle(sharedDSN, "poldrift")
+		logs := restarted.CaptureLogs()
+		Expect(restarted.Connect(ctx)).To(Succeed())
+		defer restarted.Close(ctx)
+
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("configured compress_after (%ds)", seconds(handleDefaultCompress))))
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("applied in the database (%ds)", seconds(appliedCompress))))
+		Expect(logs()).To(ContainSubstring("stays in force"))
+	})
+
 	It("bootstraps idempotently (Connect twice)", func() {
 		h := connected("pump")
 		defer h.Close(ctx)

@@ -150,3 +150,83 @@ var _ = Describe("policy drift warnings", func() {
 		Entry("warn: retention removed from config but still applied", sevenDays, sec(sevenDays), nil, sec(thirtyDays), 1),
 	)
 })
+
+var _ = Describe("chunk interval config", func() {
+	const (
+		oneDay      = "INTERVAL '86400 seconds'"
+		sevenDays   = "INTERVAL '604800 seconds'"
+		thirtyDays  = "INTERVAL '2592000 seconds'"
+		valueTable  = "create_hypertable('umh.value_pump', 'ts', chunk_time_interval => "
+		attribTable = "create_hypertable('umh.attribute_pump', 'ts', chunk_time_interval => "
+	)
+
+	bootstrapFor := func(yaml string) string {
+		parsed, err := tsh.HistorianConfig().ParseYAML(yaml, service.NewEnvironment())
+		Expect(err).NotTo(HaveOccurred())
+		h, err := tsh.NewHistorianForConfig(parsed)
+		Expect(err).NotTo(HaveOccurred())
+		return h.RenderBootstrapDDL()
+	}
+
+	It("defaults both hypertables to 7-day chunks", func() {
+		got := bootstrapFor("host: h\npassword: p\ndata_contract_name: pump\n")
+		Expect(got).To(ContainSubstring(valueTable + sevenDays))
+		Expect(got).To(ContainSubstring(attribTable + sevenDays))
+	})
+
+	It("renders each configured interval into its own hypertable", func() {
+		got := bootstrapFor("host: h\npassword: p\ndata_contract_name: pump\nvalue_chunk_interval: 24h\nattribute_chunk_interval: 720h\n")
+		Expect(got).To(ContainSubstring(valueTable + oneDay))
+		Expect(got).To(ContainSubstring(attribTable + thirtyDays))
+	})
+
+	It("rejects a sub-second value_chunk_interval (would render INTERVAL '0 seconds')", func() {
+		yaml := "host: h\npassword: p\ndata_contract_name: pump\nvalue_chunk_interval: 100ms\n"
+		parsed, err := tsh.HistorianConfig().ParseYAML(yaml, service.NewEnvironment())
+		Expect(err).NotTo(HaveOccurred())
+		_, err = tsh.NewHistorianForConfig(parsed)
+		Expect(err).To(MatchError(ContainSubstring("value_chunk_interval must be at least 1s")))
+	})
+
+	It("rejects a sub-second attribute_chunk_interval", func() {
+		yaml := "host: h\npassword: p\ndata_contract_name: pump\nattribute_chunk_interval: 0s\n"
+		parsed, err := tsh.HistorianConfig().ParseYAML(yaml, service.NewEnvironment())
+		Expect(err).NotTo(HaveOccurred())
+		_, err = tsh.NewHistorianForConfig(parsed)
+		Expect(err).To(MatchError(ContainSubstring("attribute_chunk_interval must be at least 1s")))
+	})
+
+	DescribeTable("rejects a duration that is not whole seconds, which the SQL would silently truncate",
+		func(field string, value string) {
+			yaml := "host: h\npassword: p\ndata_contract_name: pump\n" + field + ": " + value + "\n"
+			parsed, err := tsh.HistorianConfig().ParseYAML(yaml, service.NewEnvironment())
+			Expect(err).NotTo(HaveOccurred())
+			_, err = tsh.NewHistorianForConfig(parsed)
+			Expect(err).To(MatchError(ContainSubstring(field + " must be a whole number of seconds")))
+		},
+		Entry("compress_after", "compress_after", "1500ms"),
+		Entry("retention", "retention", "1500ms"),
+		Entry("value_chunk_interval", "value_chunk_interval", "1500ms"),
+		Entry("attribute_chunk_interval", "attribute_chunk_interval", "24h30m0s500ms"),
+	)
+})
+
+var _ = Describe("chunk interval drift warnings", func() {
+	const (
+		sevenDays = int64(7 * 24 * 60 * 60)
+		oneDay    = int64(24 * 60 * 60)
+	)
+	sec := func(v int64) *int64 { return &v } // nil = the applied interval could not be read
+
+	DescribeTable("flags drift between the configured and the applied chunk intervals",
+		func(valueWant int64, appliedValue *int64, attributeWant int64, appliedAttribute *int64, wantWarns int) {
+			Expect(tsh.ChunkDriftWarningsForTest(valueWant, appliedValue, attributeWant, appliedAttribute)).To(HaveLen(wantWarns))
+		},
+		Entry("quiet: neither interval is readable (not bootstrapped)", sevenDays, nil, sevenDays, nil, 0),
+		Entry("quiet: both intervals match", sevenDays, sec(sevenDays), sevenDays, sec(sevenDays), 0),
+		Entry("quiet: value matches and the attribute table is unreadable", sevenDays, sec(sevenDays), sevenDays, nil, 0),
+		Entry("warn: value_chunk_interval changed after the table was created", oneDay, sec(sevenDays), sevenDays, sec(sevenDays), 1),
+		Entry("warn: attribute_chunk_interval changed after the table was created", sevenDays, sec(sevenDays), oneDay, sec(sevenDays), 1),
+		Entry("warn: both changed", oneDay, sec(sevenDays), oneDay, sec(sevenDays), 2),
+	)
+})

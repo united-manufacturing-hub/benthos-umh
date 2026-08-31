@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS umh.value_CONTRACT_SLOT (
   CONSTRAINT ck_value_text_max_size
     CHECK (octet_length(value_text) <= 65536)
 );
-SELECT create_hypertable('umh.value_CONTRACT_SLOT', 'ts', chunk_time_interval => INTERVAL '7 days', if_not_exists => TRUE);
+SELECT create_hypertable('umh.value_CONTRACT_SLOT', 'ts', chunk_time_interval => VALUE_CHUNK_SLOT, if_not_exists => TRUE);
 VALUE_POLICY_SLOT
 CREATE TABLE IF NOT EXISTS umh.attribute_CONTRACT_SLOT (
   topic_id  BIGINT      NOT NULL,
@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS umh.attribute_CONTRACT_SLOT (
   attribute JSONB       NOT NULL,
   PRIMARY KEY (topic_id, ts)
 );
-SELECT create_hypertable('umh.attribute_CONTRACT_SLOT', 'ts', if_not_exists => TRUE);
+SELECT create_hypertable('umh.attribute_CONTRACT_SLOT', 'ts', chunk_time_interval => ATTRIBUTE_CHUNK_SLOT, if_not_exists => TRUE);
 ATTR_POLICY_SLOT
 CREATE OR REPLACE FUNCTION umh.to_ltree_path(p_location_path text)
 RETURNS ltree
@@ -318,10 +318,10 @@ BEGIN
       timescaledb.compress_segmentby = 'topic_id',
       timescaledb.compress_orderby   = 'ts DESC'
     );
-    PERFORM add_compression_policy('%[1]s', INTERVAL '%[2]d seconds');
-`, table, int64(compressAfter.Seconds()))
+    PERFORM add_compression_policy('%[1]s', %[2]s);
+`, table, intervalSQL(compressAfter))
 	if retentionSet {
-		fmt.Fprintf(&b, "    PERFORM add_retention_policy('%s', INTERVAL '%d seconds');\n", table, int64(retention.Seconds()))
+		fmt.Fprintf(&b, "    PERFORM add_retention_policy('%s', %s);\n", table, intervalSQL(retention))
 	}
 	b.WriteString("  END IF;\nEND $pol$;")
 	return b.String()
@@ -367,12 +367,58 @@ func policyDriftWarnings(compressWant int64, appliedComp *int64, retentionWant *
 	return warns
 }
 
-func bootstrapSQL(contract string, compressAfter time.Duration, retention time.Duration, retentionSet bool) string {
+func intervalSQL(d time.Duration) string {
+	return fmt.Sprintf("INTERVAL '%d seconds'", int64(d.Seconds()))
+}
+
+type bootstrapConfig struct {
+	contract       string
+	compressAfter  time.Duration
+	retention      time.Duration
+	retentionSet   bool
+	valueChunk     time.Duration
+	attributeChunk time.Duration
+}
+
+// chunkIntervalSQL reads the chunk width applied to a umh hypertable, in seconds. A scalar subquery,
+// so it always yields exactly one row and a nil scan means "not a hypertable here" rather than
+// ErrNoRows.
+func chunkIntervalSQL() string {
+	return `SELECT (
+  SELECT EXTRACT(EPOCH FROM time_interval)::bigint
+    FROM timescaledb_information.dimensions
+   WHERE hypertable_schema = 'umh' AND hypertable_name = $1 AND column_name = 'ts'
+   LIMIT 1)`
+}
+
+// chunkDriftWarnings compares the configured chunk intervals against the ones the tables were
+// actually created with (in seconds; nil = unreadable, so no warning rather than a false one).
+func chunkDriftWarnings(valueWant int64, appliedValue *int64, attributeWant int64, appliedAttribute *int64) []string {
+	var warns []string
+	if appliedValue != nil && *appliedValue != valueWant {
+		warns = append(warns, fmt.Sprintf("configured value_chunk_interval (%ds) does not match the chunk interval the value hypertable was created with (%ds)", valueWant, *appliedValue))
+	}
+	if appliedAttribute != nil && *appliedAttribute != attributeWant {
+		warns = append(warns, fmt.Sprintf("configured attribute_chunk_interval (%ds) does not match the chunk interval the attribute hypertable was created with (%ds)", attributeWant, *appliedAttribute))
+	}
+	return warns
+}
+
+func bootstrapSQL(cfg bootstrapConfig) string {
+	// Every slot is a distinct placeholder, so the order they are filled in does not matter. The one
+	// ordering that does is CONTRACT_SLOT: the blocks inserted here carry it, so sub() runs last.
+	slots := map[string]string{
+		"VALUE_CHUNK_SLOT":     intervalSQL(cfg.valueChunk),
+		"ATTRIBUTE_CHUNK_SLOT": intervalSQL(cfg.attributeChunk),
+		"VALUE_POLICY_SLOT":    policyBlock("umh.value_CONTRACT_SLOT", cfg.compressAfter, cfg.retention, cfg.retentionSet),
+		"ATTR_POLICY_SLOT":     policyBlock("umh.attribute_CONTRACT_SLOT", cfg.compressAfter, cfg.retention, cfg.retentionSet),
+		"MIGRATIONS_SLOT":      migrationsBlock(),
+	}
 	s := bootstrapTemplate
-	s = strings.Replace(s, "VALUE_POLICY_SLOT", policyBlock("umh.value_CONTRACT_SLOT", compressAfter, retention, retentionSet), 1)
-	s = strings.Replace(s, "ATTR_POLICY_SLOT", policyBlock("umh.attribute_CONTRACT_SLOT", compressAfter, retention, retentionSet), 1)
-	s = strings.Replace(s, "MIGRATIONS_SLOT", migrationsBlock(), 1)
-	return sub(s, contract)
+	for placeholder, replacement := range slots {
+		s = strings.Replace(s, placeholder, replacement, 1)
+	}
+	return sub(s, cfg.contract)
 }
 
 func valueQueryFor(contract string) string     { return sub(valueInsert, contract) }

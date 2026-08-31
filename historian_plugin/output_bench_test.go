@@ -107,7 +107,12 @@ func benchSetup(ctx context.Context, tb testing.TB, pool *pgxpool.Pool, contract
 		tb.Fatal(err)
 	}
 	defer conn.Release()
-	if _, err := conn.Exec(ctx, bootstrapSQL(contract, 168*time.Hour, 0, false)); err != nil {
+	if _, err := conn.Exec(ctx, bootstrapSQL(bootstrapConfig{
+		contract:       contract,
+		compressAfter:  168 * time.Hour,
+		valueChunk:     168 * time.Hour,
+		attributeChunk: 168 * time.Hour,
+	})); err != nil {
 		tb.Fatal(err)
 	}
 	ids := make([]int64, topics)

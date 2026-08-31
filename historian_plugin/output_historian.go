@@ -50,8 +50,10 @@ func historianConfig() *service.ConfigSpec {
 		Field(service.NewBoolField("metadata_keys_all").Description("Store all metadata keys except blacklists.").Default(true).Examples(true, false).Advanced()).
 		Field(service.NewStringListField("metadata_keys").Description("Allowlist when metadata_keys_all=false.").Default([]any{}).Advanced()).
 		Field(service.NewStringListField("metadata_keys_exclude").Description("Blacklist applied only when metadata_keys_all=true: drop these metadata keys on top of the built-in structural/high-churn exclusions. Each entry is an exact key name or a trailing-* prefix (e.g. \"opcua_*\"). Ignored in allowlist mode.").Default([]any{}).Examples([]any{"serialNumber"}, []any{"opcua_*", "spb_*"}).Advanced()).
-		Field(service.NewStringField("compress_after").Description("Compress chunks older than this, as a Go duration; use hours (e.g. \"168h\") -- days are not a valid unit. Applied once at first database bootstrap. Per contract.").Default("168h").Advanced()).
-		Field(service.NewStringField("retention").Description("Drop chunks older than this, as a Go duration; use hours (e.g. \"720h\") -- days are not a valid unit. Empty = keep forever. Applied once at first database bootstrap.").Default("").Advanced()).
+		Field(service.NewStringField("compress_after").Description("Compress chunks older than this, written in hours, minutes or seconds, like \"168h\". Days are not a unit.").Default("168h").Advanced()).
+		Field(service.NewStringField("retention").Description("Drop chunks older than this, written in hours, minutes or seconds, like \"720h\". Days are not a unit. Empty keeps every chunk.").Default("").Advanced()).
+		Field(service.NewStringField("value_chunk_interval").Description("How wide a chunk of the value hypertable is, like \"168h\". Set when the table is created; changing it later needs set_chunk_time_interval on the database and affects only new chunks.").Default("168h").Advanced()).
+		Field(service.NewStringField("attribute_chunk_interval").Description("How wide a chunk of the attribute hypertable is, like \"168h\". Attribute rows are written only when a tag's metadata changes, so this table is much sparser than the value table. Set when the table is created.").Default("168h").Advanced()).
 		Field(service.NewBatchPolicyField("batching").Advanced()).
 		Field(service.NewIntField("max_in_flight").Description("Max parallel batches in flight.").Default(8).Advanced()).
 		Field(service.NewStringField("write_timeout").Description("Per-batch write timeout as a Go duration (e.g. \"30s\"). Empty or \"0s\" = no timeout (a write that hangs on a lock or half-open connection blocks until the context is cancelled). When set, a timed-out batch is held for retry (NACK), never dropped. Set it above the largest expected batch commit time.").Default("").Advanced())
@@ -68,6 +70,7 @@ type historianOutput struct {
 	metadataExclude                       *MetaExcluder
 	compressAfter, retention              time.Duration
 	retentionSet                          bool
+	valueChunk, attributeChunk            time.Duration
 	maxInFlight                           int
 	writeTimeout                          time.Duration // 0 => unbounded (per-batch write deadline)
 	dsnOverride                           string        // set by tests; empty => build from fields
@@ -159,28 +162,22 @@ func newHistorianOutput(conf *service.ParsedConfig, mgr *service.Resources) (*hi
 	if !o.metadataKeysAll && len(excludePatterns) > 0 {
 		o.logger.Warnf("metadata_keys_exclude is set but ignored: it only applies when metadata_keys_all=true (allowlist mode is already explicit)")
 	}
-	caStr, err := conf.FieldString("compress_after")
-	if err != nil {
+	if o.compressAfter, err = parseWholeSeconds(conf, "compress_after"); err != nil {
 		return nil, err
 	}
-	if o.compressAfter, err = time.ParseDuration(caStr); err != nil {
-		return nil, fmt.Errorf("compress_after: %w", err)
+	if o.valueChunk, err = parseWholeSeconds(conf, "value_chunk_interval"); err != nil {
+		return nil, err
 	}
-	// Sub-second durations render as INTERVAL '0 seconds' (whole-second SQL) and make an
-	// invalid policy; reject here for a clear error instead of a bootstrap failure.
-	if o.compressAfter < time.Second {
-		return nil, fmt.Errorf("compress_after must be at least 1s, got %q", caStr)
+	if o.attributeChunk, err = parseWholeSeconds(conf, "attribute_chunk_interval"); err != nil {
+		return nil, err
 	}
 	retStr, err := conf.FieldString("retention")
 	if err != nil {
 		return nil, err
 	}
 	if retStr != "" {
-		if o.retention, err = time.ParseDuration(retStr); err != nil {
-			return nil, fmt.Errorf("retention: %w", err)
-		}
-		if o.retention < time.Second {
-			return nil, fmt.Errorf("retention must be at least 1s when set, got %q", retStr)
+		if o.retention, err = parseWholeSeconds(conf, "retention"); err != nil {
+			return nil, err
 		}
 		o.retentionSet = true
 	}
@@ -246,8 +243,36 @@ func (o *historianOutput) dsn() string {
 	return o.buildDSN()
 }
 
-func (o *historianOutput) bootstrapStmt() string {
-	return bootstrapSQL(o.contract, o.compressAfter, o.retention, o.retentionSet)
+// parseWholeSeconds rejects what the SQL cannot express: every interval this output renders is
+// whole seconds, so 500ms and 1500ms would reach the database as 0 and 1 second, and the drift
+// check would compare the truncated value and stay quiet about it.
+func parseWholeSeconds(conf *service.ParsedConfig, field string) (time.Duration, error) {
+	raw, err := conf.FieldString(field)
+	if err != nil {
+		return 0, err
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", field, err)
+	}
+	if parsed < time.Second {
+		return 0, fmt.Errorf("%s must be at least 1s, got %q", field, raw)
+	}
+	if parsed%time.Second != 0 {
+		return 0, fmt.Errorf("%s must be a whole number of seconds, got %q", field, raw)
+	}
+	return parsed, nil
+}
+
+func (o *historianOutput) renderBootstrapDDL() string {
+	return bootstrapSQL(bootstrapConfig{
+		contract:       o.contract,
+		compressAfter:  o.compressAfter,
+		retention:      o.retention,
+		retentionSet:   o.retentionSet,
+		valueChunk:     o.valueChunk,
+		attributeChunk: o.attributeChunk,
+	})
 }
 
 // Connect opens the pool (once), verifies the server version, bootstraps the schema idempotently on
@@ -315,10 +340,11 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 			return err
 		}
 		defer conn.Release()
-		if _, err := conn.Exec(bootCtx, o.bootstrapStmt()); err != nil {
+		if _, err := conn.Exec(bootCtx, o.renderBootstrapDDL()); err != nil {
 			return fmt.Errorf("schema bootstrap failed: %w", err) // guard stays false -> next Connect retries
 		}
 		o.warnPolicyDrift(bootCtx)
+		o.warnChunkDrift(bootCtx)
 		o.bootstrapped = true
 	}
 	// Verify write permission on every Connect (a grant can be revoked between reconnects), so a
@@ -381,7 +407,40 @@ func (o *historianOutput) warnPolicyDrift(ctx context.Context) {
 		retentionWant = &v
 	}
 	for _, w := range policyDriftWarnings(int64(o.compressAfter.Seconds()), appliedComp, retentionWant, appliedRet) {
-		o.logger.Warnf("TimescaleDB historian: %s. Policies are applied once at first bootstrap and not re-applied on restart, so a config change alone does not update them. Change them on the database directly with the TimescaleDB policy functions (remove_/add_compression_policy, remove_/add_retention_policy) on umh.value_%s and umh.attribute_%s, then set the same value in this output's config to silence this warning.", w, o.contract, o.contract)
+		o.logger.Warnf("historian: %s. The applied value stays in force.", w)
+	}
+}
+
+// readChunkInterval reads the chunk width applied to one hypertable, in seconds. A nil result means
+// the table is not a hypertable here, which chunkDriftWarnings treats as nothing to compare. A read
+// failure is a different thing and is returned as one, so the caller can say so rather than report
+// "no drift" for a check that never ran.
+func (o *historianOutput) readChunkInterval(ctx context.Context, table string) (*int64, error) {
+	var applied *int64
+	if err := o.pool.QueryRow(ctx, chunkIntervalSQL(), table).Scan(&applied); err != nil {
+		return nil, err
+	}
+	return applied, nil
+}
+
+// readChunkIntervalOrWarn reports a failed read and yields nil, which chunkDriftWarnings treats as
+// nothing to compare, so one unreadable table does not silence the check on the other.
+func (o *historianOutput) readChunkIntervalOrWarn(ctx context.Context, table string) *int64 {
+	applied, err := o.readChunkInterval(ctx, table)
+	if err != nil {
+		o.logger.Warnf("historian: cannot read the chunk interval of umh.%s: %v", table, err)
+		return nil
+	}
+	return applied
+}
+
+// warnChunkDrift warns when a table's chunk interval differs from config. create_hypertable is a
+// no-op once the table exists, so editing an interval and restarting otherwise has no visible effect.
+func (o *historianOutput) warnChunkDrift(ctx context.Context) {
+	appliedValue := o.readChunkIntervalOrWarn(ctx, "value_"+o.contract)
+	appliedAttribute := o.readChunkIntervalOrWarn(ctx, "attribute_"+o.contract)
+	for _, w := range chunkDriftWarnings(int64(o.valueChunk.Seconds()), appliedValue, int64(o.attributeChunk.Seconds()), appliedAttribute) {
+		o.logger.Warnf("historian: %s. The applied width stays in force, and existing chunks keep theirs.", w)
 	}
 }
 
