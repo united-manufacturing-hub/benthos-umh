@@ -38,12 +38,36 @@ type Client interface {
 	ReadFromSymbol(ctx context.Context, name string) (string, error) // fallback: PLCs without sum-read
 }
 
-// SessionConfig is the library-agnostic connection spec.
+// SessionEvent is a condition the ADS library reports through its callback,
+// translated by the adapter so the plugin never sees library types.
+type SessionEvent int
+
+const (
+	// SessionEventOther is handled inside the library. Informational.
+	SessionEventOther SessionEvent = iota
+	// SessionEventSubscriptionsDead: delivery stopped and the library is not
+	// re-subscribing (heartbeatRecovery: rebuild). Nothing arrives until a rebuild.
+	SessionEventSubscriptionsDead
+	// SessionEventSymbolReloadGaveUp: reload cap hit after a PLC online change, so
+	// handles may address symbols that have moved and it will not retry.
+	SessionEventSymbolReloadGaveUp
+)
+
+// SessionConfig is the library-agnostic connection spec. A zero tuning value
+// means "keep the library default", so the adapter skips the option.
 type SessionConfig struct {
 	TargetIP, TargetAMS, HostIP, HostAMS string
 	TargetPort, RuntimePort, HostPort    int
 	Username, Password                   string
 	RequestTimeout                       time.Duration
+
+	MaxReconnectInterval       time.Duration // caps the backoff and the flap cooldown
+	RouteActivationTimeout     time.Duration // wait for a registered route to be served
+	NotificationSilenceTimeout time.Duration // silence tolerated before subscriptions are dead
+	HeartbeatRecovery          string        // "immediate", "confirm" or "rebuild"
+
+	// OnSessionEvent runs on a library goroutine: must not block.
+	OnSessionEvent func(ev SessionEvent, reason string)
 }
 
 type NotifyConfig struct {

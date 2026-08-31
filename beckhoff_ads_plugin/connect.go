@@ -53,8 +53,8 @@ func (a *AdsCommInput) initSymbolIndex(ctx context.Context) {
 // required for struct/array symbols.
 func (a *AdsCommInput) loadSymbolTable(ctx context.Context) error {
 	a.Log.Debugf("Loading symbol and datatype table from PLC")
+	// finishConnect logs the failure; it knows whether a retry is coming.
 	if err := a.client.LoadSymbols(ctx); err != nil {
-		a.Log.Errorf("Loading symbol and datatype table from PLC failed: %v", err)
 		return err
 	}
 	a.Log.Debugf("Loading symbol and datatype table from PLC succeeded")
@@ -79,8 +79,7 @@ func (a *AdsCommInput) setupNotifications(ctx context.Context) error {
 	a.Log.Debugf("Registering notifications for %d symbols", len(cfgs))
 	results, err := a.client.AddNotifications(ctx, cfgs, a.NotificationChan)
 	if err != nil {
-		a.Log.Errorf("Registering notifications for %d symbols failed: %v", len(cfgs), err)
-		return err
+		return fmt.Errorf("registering notifications for %d symbols: %w", len(cfgs), err)
 	}
 
 	// AddNotifications returns nil errors even when all symbols fail to

@@ -83,7 +83,61 @@ func buildSessionOptions(ctx context.Context, cfg SessionConfig, log *service.Lo
 	if cfg.RequestTimeout > 0 {
 		opts = append(opts, adsLib.WithRequestTimeout(cfg.RequestTimeout))
 	}
+	if cfg.MaxReconnectInterval > 0 {
+		opts = append(opts, adsLib.WithBackoff(cappedBackoff(cfg.MaxReconnectInterval)))
+	}
+	if cfg.RouteActivationTimeout > 0 {
+		opts = append(opts, adsLib.WithRouteActivationTimeout(cfg.RouteActivationTimeout))
+	}
+	if cfg.NotificationSilenceTimeout > 0 {
+		opts = append(opts, adsLib.WithNotificationSilenceTimeout(cfg.NotificationSilenceTimeout))
+	}
+	// "immediate" is go-ads' default. Observe stops it recovering, so "rebuild"
+	// needs a callback to hand the decision to or subscriptions stay dead.
+	switch {
+	case cfg.HeartbeatRecovery == heartbeatRecoveryConfirm:
+		opts = append(opts, adsLib.WithHeartbeatRecovery(adsLib.HeartbeatRecoveryConfirm))
+	case cfg.HeartbeatRecovery == heartbeatRecoveryRebuild && cfg.OnSessionEvent != nil:
+		opts = append(opts, adsLib.WithHeartbeatRecovery(adsLib.HeartbeatRecoveryObserve))
+	}
+	if cfg.OnSessionEvent != nil {
+		// One callback serves every reason, so the adapter classifies them.
+		onEvent := cfg.OnSessionEvent
+		opts = append(opts, adsLib.WithOnSymbolVersionChanged(func(reason adsLib.Reason) {
+			onEvent(sessionEventFor(reason), string(reason))
+		}))
+	}
 	return opts, nil
+}
+
+// sessionEventFor classifies a go-ads Reason. An unrecognized one must not
+// escalate: a reason the library handles internally would restart the input.
+func sessionEventFor(reason adsLib.Reason) SessionEvent {
+	switch reason {
+	case adsLib.ReasonHeartbeatSilent:
+		return SessionEventSubscriptionsDead
+	case adsLib.ReasonReloadCapExhausted:
+		return SessionEventSymbolReloadGaveUp
+	default:
+		return SessionEventOther
+	}
+}
+
+// cappedBackoff returns the default backoff with every tier at or below limit.
+// WithBackoff only warns at non-monotonic tiers, so a low cap alone applies to nothing.
+func cappedBackoff(limit time.Duration) adsLib.BackoffConfig {
+	bc := adsLib.DefaultBackoffConfig()
+	bc.MaxInterval = limit
+	if bc.SlowInterval > limit {
+		bc.SlowInterval = limit
+	}
+	if bc.MidInterval > limit {
+		bc.MidInterval = limit
+	}
+	if bc.InitialInterval > limit {
+		bc.InitialInterval = limit
+	}
+	return bc
 }
 
 // newGoADSClient builds session options and the go-ads session from
@@ -188,6 +242,39 @@ func (c *goADSClient) AddNotifications(ctx context.Context, cfgs []NotifyConfig,
 		}
 	}
 	return out, nil
+}
+
+// dropKind classifies a transport drop during Connect; the two verdicts want
+// opposite remedies, so the distinction crosses the seam as a plugin value.
+type dropKind int
+
+const (
+	dropUnknown dropKind = iota
+	// dropRouteNotServed: accepted, then closed without serving an AMS frame.
+	dropRouteNotServed
+	// dropEstablished: a connection that had carried AMS frames was dropped.
+	dropEstablished
+)
+
+// connectDropKind maps a Connect error onto a dropKind. The sentinels are on
+// Connect's error only; a running session's drop never reaches the caller.
+func connectDropKind(err error) dropKind {
+	switch {
+	case errors.Is(err, adsLib.ErrRouteNotServed):
+		return dropRouteNotServed
+	case errors.Is(err, adsLib.ErrEstablishedDropped):
+		return dropEstablished
+	default:
+		return dropUnknown
+	}
+}
+
+// isTransportGone reports whether the ADS transport went away mid-operation.
+// ErrRouteNotServed is excluded: it usually needs credentials or an address fixed.
+func isTransportGone(err error) bool {
+	return errors.Is(err, adsLib.ErrTransportClosed) ||
+		errors.Is(err, adsLib.ErrDisconnected) ||
+		errors.Is(err, adsLib.ErrEstablishedDropped)
 }
 
 // Channel accessors — the one deliberate *adsLib.Update leak. go-ads Update.Value

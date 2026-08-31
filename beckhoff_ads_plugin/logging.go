@@ -21,8 +21,8 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
-// benthosLogHandler is a slog.Handler bridging go-ads v2 log records to a
-// Benthos service.Logger; trace records are suppressed, verbosity follows the benthos log level.
+// benthosLogHandler bridges go-ads slog records to a Benthos service.Logger.
+// Levels are taken as go-ads sets them; a second level policy here would drift.
 type benthosLogHandler struct {
 	logger *service.Logger
 	attrs  []slog.Attr
@@ -36,14 +36,11 @@ func (h *benthosLogHandler) Enabled(_ context.Context, level slog.Level) bool {
 
 func (h *benthosLogHandler) Handle(_ context.Context, r slog.Record) error {
 	var kvs []any
-	perSymbol := false
 	for _, a := range h.attrs {
 		kvs = append(kvs, a.Key, a.Value.Any())
-		perSymbol = perSymbol || a.Key == "symbol" || a.Key == "handle"
 	}
 	r.Attrs(func(a slog.Attr) bool {
 		kvs = append(kvs, a.Key, a.Value.Any())
-		perSymbol = perSymbol || a.Key == "symbol" || a.Key == "handle"
 		return true
 	})
 
@@ -57,9 +54,7 @@ func (h *benthosLogHandler) Handle(_ context.Context, r slog.Record) error {
 		l.Errorf("%s", r.Message)
 	case r.Level >= slog.LevelWarn:
 		l.Warnf("%s", r.Message)
-	// A per-symbol/per-handle line scales with the config and buries the rest;
-	// failures carry their own Warn, so only the success chatter moves to debug.
-	case r.Level >= slog.LevelInfo && !perSymbol:
+	case r.Level >= slog.LevelInfo:
 		l.Infof("%s", r.Message)
 	default:
 		l.Debugf("%s", r.Message)
