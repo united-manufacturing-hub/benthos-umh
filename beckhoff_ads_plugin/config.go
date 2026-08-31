@@ -43,6 +43,10 @@ var adsConf = service.NewConfigSpec().
 	Field(service.NewDurationField("maxDelay").Description("Maximum time the PLC batches notifications before sending. All changes are delivered; this controls delivery latency vs network efficiency.").Default("100ms").Advanced().Examples("100ms", "0s", "500ms")).
 	Field(service.NewDurationField("intervalTime").Description("Poll interval for readType interval.").Default("1s").Advanced().Examples("1s", "500ms")).
 	Field(service.NewDurationField("requestTimeout").Description("Timeout for individual ADS requests.").Default("5s").Advanced().Examples("5s", "10s")).
+	Field(service.NewDurationField("maxReconnectInterval").Description("Upper bound on the reconnect backoff, and on the cooldown applied to a connection that keeps flapping. The default protects the PLC's socket table, since every reconnect costs it an accepted socket; lower it for a device that resets on a timer anyway and where the samples matter more than the sockets. 0 keeps the library default.").Default("30s").Advanced().Examples("30s", "5s")).
+	Field(service.NewDurationField("routeActivationTimeout").Description("How long to wait, after registering a route, for the PLC's AMS router to actually start serving it. The router acknowledges the registration before the entry is necessarily live, and until it is, requests are dropped with no reply. Raise it for a PLC or router under heavy load. 0 keeps the library default.").Default("10s").Advanced().Examples("10s", "30s")).
+	Field(service.NewDurationField("notificationSilenceTimeout").Description("How long the PLC may deliver no notification at all before the subscriptions are treated as dead and re-registered. A runtime restart or CONFIG toggle stops delivery without dropping the connection, so silence is the only signal. 0 keeps the library default.").Default("10s").Advanced().Examples("10s", "30s")).
+	Field(service.NewStringEnumField("heartbeatRecovery", "immediate", "confirm", "rebuild").Description("What to do when notification delivery goes silent. immediate re-subscribes at once. confirm waits for a second consecutive silent window first, which doubles the time to notice a genuinely dead subscription but avoids deleting and re-adding every handle over one late beat — worth it on a PLC that stalls under load. rebuild does not re-subscribe at all: it drops the session and reconnects from scratch, which is cheaper than a per-handle churn against a PLC that ignores both the delete and the add.").Default("immediate").Advanced().Examples("immediate", "confirm", "rebuild")).
 	Field(service.NewBoolField("loadSymbols").Description("Download the full symbol and datatype table from the PLC on connect. Required for struct and array symbols. May cause brief real-time jitter on the PLC during initial connection; use with care on large programs.").Default(false).Advanced().Examples(true, false)).
 	Field(service.NewStringListField("unifiedAddress").Description("Symbols to read, in unified address form. Format: 'name', 'name:maxDelayMs:cycleTimeMs', or 'name:maxDelay=100ms:cycleTime=100ms'. " +
 		"TwinCAT 3 qualifies globals with the Global Variable List name and program variables with the POU name: " +
@@ -50,6 +54,19 @@ var adsConf = service.NewConfigSpec().
 		"TwinCAT 2 has one flat global namespace reached by a leading dot, while program variables keep the POU name: " +
 		"'.globalVar:maxDelay=0s:cycleTime=50ms', 'MAIN.myVar'.").Default([]string{})).
 	Field(service.NewStringListField("symbols").Description("Symbols to read by PLC symbol name; same parsing as `unifiedAddress`. Alternative to unifiedAddress — at least one of the two must be non-empty.").Default([]string{}).Advanced())
+
+// durationField rejects a negative duration. go-ads reads <= 0 as "keep the
+// default", so a negative would be accepted and then do nothing.
+func durationField(conf *service.ParsedConfig, name string) (time.Duration, error) {
+	d, err := conf.FieldDuration(name)
+	if err != nil {
+		return 0, err
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("%s must not be negative (got %s); use 0 to keep the default", name, d)
+	}
+	return d, nil
+}
 
 // validateIP checks that s is a valid IPv4 address. Is4 also rejects the
 // IPv4-mapped IPv6 form (::ffff:192.168.1.1), which the PLC cannot route.

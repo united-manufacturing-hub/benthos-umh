@@ -48,4 +48,10 @@ const (
 
 	// TwinCAT's default ADS gateway (route) port; used when targetAddress omits a port.
 	defaultTargetPort = 48898
+
+	// heartbeatRecovery values, checked in NewAdsCommInput: outside `benthos
+	// lint` a string enum is not enforced, so a typo would read as deliberate.
+	heartbeatRecoveryImmediate = "immediate"
+	heartbeatRecoveryConfirm   = "confirm"
+	heartbeatRecoveryRebuild   = "rebuild"
 )
