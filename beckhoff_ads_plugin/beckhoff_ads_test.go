@@ -195,18 +195,9 @@ func symbolsFromConfig(yamlConfig string) plcTestSymbols {
 	}
 }
 
-// sanitizeSymbolName applies the same sanitization as the plugin (non-alnum → underscore).
-func sanitizeSymbolName(s string) string {
-	var b strings.Builder
-	for _, c := range s {
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' {
-			b.WriteRune(c)
-		} else {
-			b.WriteRune('_')
-		}
-	}
-	return b.String()
-}
+// sanitizeSymbolName is the plugin's own sanitizer, so these expectations cannot
+// drift from the tag names it actually emits.
+var sanitizeSymbolName = ads.SanitizeSymbolName
 
 // adsHardwareTestConfig holds connection parameters for a Beckhoff PLC.
 type adsHardwareTestConfig struct {
