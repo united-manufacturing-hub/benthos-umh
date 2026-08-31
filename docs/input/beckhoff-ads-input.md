@@ -364,6 +364,10 @@ input:
 | **transmissionMode** | No | `serverOnChange` | Notification transmission mode. Only applies when `readType` is `notification`. Accepted values: `serverOnChange`, `serverCycle`, `serverOnChange2`, `serverCycle2` (see [Transmission Modes](#transmission-modes)) |
 | **username** | No | `""` | Username for automatic UDP route registration on the PLC. Both `username` and `password` must be set to activate registration. Requires UDP port 48899 to be reachable (see [Route Registration](#route-registration)) |
 | **password** | No | `""` | Password for automatic UDP route registration on the PLC |
+| **maxReconnectInterval** | No | `30s` | Upper bound on the reconnect backoff, and on the cooldown applied to a connection that keeps flapping. Every reconnect costs the PLC an accepted socket, which the default protects; lower it for a device that resets on a timer anyway and where samples matter more than sockets (see [Reconnection](#reconnection)). `0s` keeps the library default |
+| **routeActivationTimeout** | No | `10s` | How long to wait, after registering a route, for the PLC's AMS router to start serving it. The router acknowledges the registration before the entry is necessarily live, and until it is, requests are dropped with no reply. Raise it for a PLC or router under heavy load. `0s` keeps the library default |
+| **notificationSilenceTimeout** | No | `10s` | How long the PLC may deliver no notification at all before the subscriptions are treated as dead and re-registered. A runtime restart or CONFIG toggle stops delivery without dropping the connection, so silence is the only signal. Only applies when `readType` is `notification`. `0s` keeps the library default |
+| **heartbeatRecovery** | No | `immediate` | What to do when notification delivery goes silent — see [Silent notification delivery](#silent-notification-delivery). Accepted values: `immediate`, `confirm`, `rebuild` |
 | **hostIP** | No | `""` | IP address the PLC associates with the route. Required in Docker bridge networking on TwinCAT 2, where replies are routed via this address (set to Docker host's IP); optional on TwinCAT 3. When `hostAMS` is `auto`, the AMS NetID is also derived from this. Auto-detected from outbound connection if empty (only correct with `host_network` or macvlan) |
 
 \* At least one of `unifiedAddress` or `symbols` must be non-empty; the config is rejected otherwise.
@@ -551,6 +555,50 @@ The plugin automatically reconnects when the TCP connection is lost (e.g. networ
 3. Re-subscribes all notification handles
 
 No manual intervention is needed.
+
+### Tuning the reconnect for a device that drops on a timer
+
+Reconnect delays ramp `1s → 5s → 15s → 30s` and stay at the cap. A connection that drops
+repeatedly is treated as flapping and gets that cap as a cooldown, so a PLC that resets an
+established connection every ~10 s ends up connected for roughly a quarter of the time — the
+default deliberately favours the PLC's socket table over stream continuity, since every
+reconnect costs it an accepted socket.
+
+Where the samples matter more than the sockets, lower the cap:
+
+```yaml
+maxReconnectInterval: 5s
+```
+
+The lower tiers are pulled down with it so the ramp stays valid. Check the drop verdict below
+first: if the drops are the route not being served, a faster reconnect makes it worse.
+
+### Silent notification delivery
+
+A PLC runtime restart or a CONFIG toggle stops notification delivery **without dropping the TCP
+connection**, so there is no error and no reconnect — silence is the only signal. After
+`notificationSilenceTimeout` the subscriptions are treated as dead, and `heartbeatRecovery`
+decides what happens next:
+
+| Value | Behaviour | Use when |
+|-------|-----------|----------|
+| `immediate` (default) | Re-subscribes at once: one delete plus one add per symbol, in a burst | The PLC answers reliably; fastest recovery from a genuine subscription death |
+| `confirm` | Waits for a second consecutive silent window, then re-subscribes | The PLC stalls under load. Twice as slow to notice a real death, but one late beat no longer churns every handle |
+| `rebuild` | Drops the session and reconnects from scratch, re-registering every subscription as part of a fresh connect | The PLC ignores the churn. A device that is not answering will time out on both the delete and the add — 42 symbols means two 5 s timeouts and no recovery, where a reconnect takes about a second |
+
+Bridges that stay in `active` while delivering nothing are the failure this protects against: with
+`rebuild` the reconnect is visible in the logs, and the plugin reports itself disconnected so the
+pipeline restarts the input rather than sitting on dead handles.
+
+### Which kind of drop happened
+
+A failed connect logs a `hint` field naming the likely cause, and the PLC closing the connection is reported as one of two different cases:
+
+| Log says | Meaning | Where to look |
+|----------|---------|---------------|
+| the PLC did not accept a TCP connection | Nothing answered on the ADS port | `targetAddress`, PLC powered, firewall |
+| closed it without serving a single AMS frame | TCP accepted, but the route does not authorise this client | `username`/`password`, `hostIP` (set it explicitly behind NAT or a VPN), another client holding the route from the same host |
+| dropped a connection that was already carrying AMS frames | Transport or device-side reset, not a configuration error | Network path (VPN or subnet-router flaps), and whether another client is evicting this one — a Beckhoff AMS router serves one TCP connection per host and closes the older |
 
 ## Output
 
