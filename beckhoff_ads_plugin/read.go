@@ -25,9 +25,30 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
+var (
+	// TC2 addresses GVL globals as ".varName"; the dot is a namespace marker,
+	// not part of the name.
+	symbolGlobalPrefix = regexp.MustCompile(`^\.`)
+	// An array index is structure, so it keeps its own separator instead of
+	// becoming the two underscores that "[0]." would otherwise produce.
+	symbolArrayIndex = regexp.MustCompile(`\[(-?\d+)\]`)
+	symbolInvalid    = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+	symbolUnderscore = regexp.MustCompile(`_{2,}`)
+)
+
+// sanitize turns a PLC symbol name into a UMH topic segment: dots separate
+// topic levels, so nothing but [a-zA-Z0-9_-] can survive here.
 func sanitize(s string) string {
-	re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
-	return re.ReplaceAllString(s, "_")
+	out := symbolGlobalPrefix.ReplaceAllString(s, "")
+	out = symbolArrayIndex.ReplaceAllString(out, "_$1")
+	out = symbolInvalid.ReplaceAllString(out, "_")
+	out = symbolUnderscore.ReplaceAllString(out, "_")
+	// Only the tail: a leading underscore may be the PLC's own naming.
+	if trimmed := strings.TrimRight(out, "_"); trimmed != "" {
+		return trimmed
+	}
+	// Nothing legal survived; an empty segment would make the topic invalid.
+	return "_"
 }
 
 // closeHandler async-closes a dead client session; nil-safe and non-blocking
@@ -53,6 +74,7 @@ func (a *AdsCommInput) newSymbolMessage(sym *PlcSymbol, value string, ts time.Ti
 	// timestamp_ms stays unprefixed as the UMH-wide payload timestamp.
 	msg.MetaSet("ads_tag_type", tagType)
 	msg.MetaSet("ads_symbol_name", sanitize(sym.Name))
+	msg.MetaSet("ads_symbol_name_original", sym.Name)
 	if sym.DataType != "" {
 		msg.MetaSet("ads_datatype", sym.DataType)
 	}
