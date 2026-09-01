@@ -293,7 +293,7 @@ func GetUnderlyingEIPInputForTest(bi service.BatchInput) *EIPInput {
 	// Use reflection to try to get a field called "Input"
 	v := reflect.ValueOf(bi)
 	// If the wrapper is a pointer, get the element
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		v = v.Elem()
 	}
 	// the wrapped input sits in an unexported field, hence the unsafe read

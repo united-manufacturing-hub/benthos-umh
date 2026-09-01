@@ -2,9 +2,6 @@ module github.com/united-manufacturing-hub/benthos-umh
 
 go 1.27.0
 
-// to compile it on go 1.23
-replace github.com/parquet-go/parquet-go => github.com/parquet-go/parquet-go v0.32.0
-
 // Set the GODEBUG environment variable to allow parsing of certificates with negative serial numbers.
 // This is necessary for backwards compatibility with some OPC UA servers (e.g., Kepware) that may issue
 // certificates containing negative serial numbers.
