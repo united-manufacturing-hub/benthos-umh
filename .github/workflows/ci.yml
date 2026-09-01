@@ -169,8 +169,8 @@ jobs:
           path: |
             ~/.cache/golangci-lint
             .tools/
-          key: golangci-lint-${{ runner.os }}-${{ hashFiles('.golangci.yaml', 'go.sum') }}
-          restore-keys: golangci-lint-${{ runner.os }}-
+          key: golangci-lint-${{ runner.os }}-${{ hashFiles('Makefile.Common', 'go.mod') }}-${{ hashFiles('.golangci.yaml', 'go.sum') }}
+          restore-keys: golangci-lint-${{ runner.os }}-${{ hashFiles('Makefile.Common', 'go.mod') }}-
       - name: Lint
         run: make lint
 
