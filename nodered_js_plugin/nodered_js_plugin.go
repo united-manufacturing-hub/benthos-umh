@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dop251/goja"
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -33,6 +34,9 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin/cache"
 	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin/protobuf"
 )
+
+// cacheStatsInterval controls how often the cache metrics are sampled.
+const cacheStatsInterval = 30 * time.Second
 
 // NodeREDJSProcessor defines the processor that wraps the JavaScript processor.
 type NodeREDJSProcessor struct {
@@ -45,6 +49,10 @@ type NodeREDJSProcessor struct {
 	messagesDropped   *service.MetricCounter
 	vmPoolHits        *service.MetricCounter
 	vmPoolMisses      *service.MetricCounter
+	cacheKeys         *service.MetricGauge
+	cacheDiskBytes    *service.MetricGauge
+	metricsCancel     context.CancelFunc
+	metricsWG         sync.WaitGroup
 }
 
 // NewNodeREDJSProcessor creates a new NodeREDJSProcessor instance.
@@ -65,7 +73,14 @@ func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service
 		messagesDropped:   metrics.NewCounter("messages_dropped", "reason"),
 		vmPoolHits:        metrics.NewCounter("vm_pool_hits"),
 		vmPoolMisses:      metrics.NewCounter("vm_pool_misses"),
+		cacheKeys:         metrics.NewGauge("cache_keys"),
+		cacheDiskBytes:    metrics.NewGauge("cache_disk_bytes"),
 	}
+
+	metricsCtx, cancel := context.WithCancel(context.Background())
+	processor.metricsCancel = cancel
+	processor.metricsWG.Add(1)
+	go processor.getCacheMetrics(metricsCtx)
 
 	return processor, nil
 }
@@ -331,21 +346,35 @@ func (u *NodeREDJSProcessor) setupConsole(vm *goja.Runtime) error {
 	return vm.Set("console", console)
 }
 
+// setupCache binds the store to the JS runtime; validation + timestamp gating live in the cache pkg.
 func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) error {
 	cacheObj := map[string]any{
-		"set": func(key string, value any) {
-			err := u.cache.Set(ctx, key, value)
+		"set": func(key string, msg map[string]any) {
+			payload, err := cache.ParsePayload(msg)
+			if err != nil {
+				u.logger.Errorf("cache.set: %v (got %v)", err, msg)
+				return
+			}
+			err = u.cache.Set(ctx, key, payload)
+			var stale *cache.StaleWriteError
+			if errors.As(err, &stale) {
+				u.logger.Warnf("cache.set: dropped write for key %q (incoming watermark %d is older/equal to the last stored %d). "+
+					"Incoming messages must arrive in monotonic order — either messages are being replayed or the watermark source "+
+					"(timestamp_ms, kafka_offset) is going backwards. Check the input plugin or upstream data.",
+					stale.Key, stale.Incoming, stale.Stored)
+				return
+			}
 			if err != nil {
 				u.logger.Errorf("cache.set failed: %v", err)
 			}
 		},
 		"get": func(key string) any {
-			v, ok := u.cache.Get(ctx, key)
+			p, ok := u.cache.Get(ctx, key)
 			if !ok {
 				u.logger.Errorf("cache.get: key %q not found. Use cache.exists(key) to check before reading.", key)
 				return goja.Undefined()
 			}
-			return v
+			return map[string]any{"value": p.Value, "watermark": p.Watermark}
 		},
 		"exists": func(key string) bool {
 			_, exists := u.cache.Get(ctx, key)
@@ -493,9 +522,34 @@ func RecordDrop(counter *service.MetricCounter, logger *service.Logger, reason s
 	logger.Warnf("%s: dropped message (reason=%s, umh_topic=%s, stage=%s) %v", plugin, reason, topic, stage, err)
 }
 
-// ProcessBatch applies JS to each message. Per-message errors drop via RecordDrop;
-// deliberate drops (null/undefined/empty/all-nil array) bump messages_dropped{reason=deliberate}.
+// cacheBegin acquires the cache mutex and opens the batch tx; pair with defer cacheCommit.
+func (u *NodeREDJSProcessor) cacheBegin(ctx context.Context) error {
+	u.cache.Lock()
+	err := u.cache.Begin(ctx)
+	if err != nil {
+		u.cache.Unlock()
+		return err
+	}
+	return nil
+}
+
+// cacheEnd always commits: per-message JS errors already dropped via RecordDrop,
+// and cache writes for other successful messages in the same batch must not be lost.
+func (u *NodeREDJSProcessor) cacheEnd(ctx context.Context) {
+	err := u.cache.Commit(ctx)
+	if err != nil {
+		u.logger.Errorf("cache commit failed: %v", err)
+	}
+	u.cache.Unlock()
+}
+
 func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
+	err := u.cacheBegin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer u.cacheEnd(ctx)
+
 	var resultBatch service.MessageBatch
 	processedCount := 0
 
@@ -503,6 +557,7 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 		if msg == nil {
 			continue
 		}
+
 		processedMsgs, dropped, reason, err := u.processSingleMessage(ctx, msg)
 		if err != nil {
 			// Drop-loudly: the poisoned message is absent from the output
@@ -612,7 +667,37 @@ Message content: %v`,
 
 // Close gracefully shuts down the processor.
 func (u *NodeREDJSProcessor) Close(_ context.Context) error {
+	if u.metricsCancel != nil {
+		u.metricsCancel()
+	}
+	u.metricsWG.Wait()
 	return u.cache.Close()
+}
+
+// getCacheMetrics periodically samples the cache and updates the gauges. It
+// exits when ctx is canceled by Close.
+func (u *NodeREDJSProcessor) getCacheMetrics(ctx context.Context) {
+	defer u.metricsWG.Done()
+
+	ticker := time.NewTicker(cacheStatsInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			stats, err := u.cache.Stats(ctx)
+			if err != nil {
+				if ctx.Err() == nil {
+					u.logger.Warnf("cache.stats failed: %v", err)
+				}
+				continue
+			}
+			u.cacheKeys.Set(stats.Keys)
+			u.cacheDiskBytes.Set(stats.DiskBytes)
+		}
+	}
 }
 
 // NodeREDJSConfigSpec defines the configuration options for the nodered_js processor.
@@ -667,10 +752,54 @@ if (msg.payload.value <= 100 && alarmed) {
   msg.meta.alarm = "cleared";
   return msg;
 }
-return msg;`))
+return msg;`)).
+	Field(service.NewObjectField(
+		"cache",
+		service.NewStringField("backend").
+			Description("Cache backend. 'memory' is in-process and lost on restart. 'persistent' writes to a file on disk and survives restarts.").
+			Default("memory").
+			Examples("memory", "persistent"),
+		service.NewStringField("name").
+			Description("Sharing identifier. Processors with the same backend and name share one cache instance in this benthos process — keys written by one are visible to the others. The default 'shared' means two nodered_js processors with no explicit cache config will already share state; set a different value to isolate groups, or use unique names if you want per-processor caches.").
+			Default("shared"),
+		service.NewStringField("path").
+			Description("File path for the 'persistent' backend. Used by the first processor that opens the cache under a given name; later processors attaching by name may omit it. Relative paths resolve against the directory where the benthos process was started (under UMH Core: the S6 service directory). Use an absolute path to avoid ambiguity. Leading '~' expands to the home directory.").
+			Default("./cache.db"),
+		service.NewDurationField("ttl").
+			Description("Time-to-live for cached entries. 0 (default) keeps entries until explicit delete or restart. Set a positive duration (e.g. '1h') to auto-expire entries N after the last write.").
+			Default("0s"),
+	).
+		Description("Cache configuration for state across messages.").
+		Default(map[string]any{}).
+		Advanced())
 
 func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchProcessor, error) {
 	code, err := conf.FieldString("code")
+	if err != nil {
+		return nil, err
+	}
+
+	backend, err := conf.FieldString("cache", "backend")
+	if err != nil {
+		return nil, fmt.Errorf("parse cache.backend: %w", err)
+	}
+
+	cacheName, err := conf.FieldString("cache", "name")
+	if err != nil {
+		return nil, fmt.Errorf("parse cache.name: %w", err)
+	}
+
+	path, err := conf.FieldString("cache", "path")
+	if err != nil {
+		return nil, fmt.Errorf("parse cache.path: %w", err)
+	}
+
+	ttl, err := conf.FieldDuration("cache", "ttl")
+	if err != nil {
+		return nil, fmt.Errorf("parse cache.ttl: %w", err)
+	}
+
+	store, err := cache.New(backend, cacheName, path, ttl)
 	if err != nil {
 		return nil, err
 	}
@@ -682,7 +811,12 @@ func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (
 		})()
 	`, code)
 
-	return NewNodeREDJSProcessor(wrappedCode, mgr.Logger(), mgr.Metrics(), cache.NewMemoryStore(0))
+	processor, err := NewNodeREDJSProcessor(wrappedCode, mgr.Logger(), mgr.Metrics(), store)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	return processor, nil
 }
 
 func init() {
@@ -691,7 +825,8 @@ func init() {
 		NodeREDJSConfigSpec,
 		func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchProcessor, error) {
 			return newNodeREDJSProcessor(conf, mgr)
-		})
+		},
+	)
 	if err != nil {
 		panic(err)
 	}

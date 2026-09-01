@@ -41,6 +41,14 @@ type TagProcessorConfig struct {
 	Defaults           string            `json:"defaults" yaml:"defaults"`
 	Conditions         []ConditionConfig `json:"conditions" yaml:"conditions"`
 	AdvancedProcessing string            `json:"advancedProcessing" yaml:"advancedProcessing"`
+	Cache              CacheConfig       `json:"cache" yaml:"cache"`
+}
+
+type CacheConfig struct {
+	Backend string        `json:"backend" yaml:"backend"`
+	Name    string        `json:"name" yaml:"name"`
+	Path    string        `json:"path" yaml:"path"`
+	TTL     time.Duration `json:"ttl" yaml:"ttl"`
 }
 
 type ConditionConfig struct {
@@ -79,7 +87,25 @@ Empty or undefined fields will be omitted from the topic.`).
 		Field(service.NewStringField("advancedProcessing").
 			Description("Optional JavaScript code for advanced message processing").
 			Default("").
-			Optional())
+			Optional()).
+		Field(service.NewObjectField("cache",
+			service.NewStringField("backend").
+				Description("Cache backend. 'memory' is in-process and lost on restart. 'persistent' writes to a file on disk and survives restarts.").
+				Default("memory").
+				Examples("memory", "persistent"),
+			service.NewStringField("name").
+				Description("Sharing identifier. Processors with the same backend and name share one cache instance in this benthos process. Default 'shared' means two tag_processor processors with no explicit cache config already share state; set a different value to isolate groups.").
+				Default("shared"),
+			service.NewStringField("path").
+				Description("File path for the 'persistent' backend. Used by the first processor that opens the cache under a given name; later processors attaching by name may omit it. Relative paths resolve against the benthos start directory. Leading '~' expands to the home directory.").
+				Default("./cache.db"),
+			service.NewDurationField("ttl").
+				Description("Time-to-live for cached entries. 0 (default) keeps entries until explicit delete or restart. Set a positive duration (e.g. '1h') to auto-expire.").
+				Default("0s"),
+		).
+			Description("Cache configuration for state across messages.").
+			Default(map[string]any{}).
+			Advanced())
 
 	err := service.RegisterBatchProcessor(
 		"tag_processor",
@@ -90,20 +116,25 @@ Empty or undefined fields will be omitted from the topic.`).
 				return nil, err
 			}
 
-			var conditions []ConditionConfig
+			var (
+				conditions      []ConditionConfig
+				conditionsArray []*service.ParsedConfig
+				ifExpr          string
+				thenCode        string
+			)
 			if conf.Contains("conditions") {
-				conditionsArray, err := conf.FieldObjectList("conditions")
+				conditionsArray, err = conf.FieldObjectList("conditions")
 				if err != nil {
 					return nil, err
 				}
 
 				for _, condObj := range conditionsArray {
-					ifExpr, err := condObj.FieldString("if")
+					ifExpr, err = condObj.FieldString("if")
 					if err != nil {
 						return nil, err
 					}
 
-					thenCode, err := condObj.FieldString("then")
+					thenCode, err = condObj.FieldString("then")
 					if err != nil {
 						return nil, err
 					}
@@ -117,10 +148,33 @@ Empty or undefined fields will be omitted from the topic.`).
 
 			advancedProcessing, _ := conf.FieldString("advancedProcessing")
 
+			backend, err := conf.FieldString("cache", "backend")
+			if err != nil {
+				return nil, fmt.Errorf("parse cache.backend: %w", err)
+			}
+			cacheName, err := conf.FieldString("cache", "name")
+			if err != nil {
+				return nil, fmt.Errorf("parse cache.name: %w", err)
+			}
+			cachePath, err := conf.FieldString("cache", "path")
+			if err != nil {
+				return nil, fmt.Errorf("parse cache.path: %w", err)
+			}
+			cacheTTL, err := conf.FieldDuration("cache", "ttl")
+			if err != nil {
+				return nil, fmt.Errorf("parse cache.ttl: %w", err)
+			}
+
 			config := TagProcessorConfig{
 				Defaults:           defaults,
 				Conditions:         conditions,
 				AdvancedProcessing: advancedProcessing,
+				Cache: CacheConfig{
+					Backend: backend,
+					Name:    cacheName,
+					Path:    cachePath,
+					TTL:     cacheTTL,
+				},
 			}
 
 			return newTagProcessor(config, mgr.Logger(), mgr.Metrics())
@@ -157,13 +211,19 @@ type TagProcessor struct {
 
 	// Keep for JS environment setup helper methods
 	jsProcessor *nodered_js_plugin.NodeREDJSProcessor
+
+	// Same instance the jsProcessor uses; held here to open the batch scope directly.
+	cache cache.Cache
 }
 
 func newTagProcessor(config TagProcessorConfig, logger *service.Logger, metrics *service.Metrics) (*TagProcessor, error) {
-	// TagProcessor only uses the JS processor for SetupJSEnvironment, not for caching.
-	// In-memory with no expiration is sufficient here.
-	jsProcessor, err := nodered_js_plugin.NewNodeREDJSProcessor("", logger, metrics, cache.NewMemoryStore(0))
+	sharedCache, err := cache.New(config.Cache.Backend, config.Cache.Name, config.Cache.Path, config.Cache.TTL)
 	if err != nil {
+		return nil, fmt.Errorf("failed to open cache: %w", err)
+	}
+	jsProcessor, err := nodered_js_plugin.NewNodeREDJSProcessor("", logger, metrics, sharedCache)
+	if err != nil {
+		_ = sharedCache.Close()
 		return nil, fmt.Errorf("failed to create JS processor: %w", err)
 	}
 
@@ -188,6 +248,7 @@ func newTagProcessor(config TagProcessorConfig, logger *service.Logger, metrics 
 		messagesDropped:   metrics.NewCounter("messages_dropped", "reason"),
 
 		jsProcessor: jsProcessor,
+		cache:       sharedCache,
 	}
 
 	// Phase 2: Compile all JavaScript once at startup to catch errors early and optimize runtime
@@ -262,9 +323,38 @@ func (p *TagProcessor) setupMessageForVM(ctx context.Context, vm *goja.Runtime, 
 	return nil
 }
 
+// beginBatch acquires the cache mutex and opens the batch tx; pair with defer endBatch.
+func (p *TagProcessor) beginBatch(ctx context.Context) error {
+	p.cache.Lock()
+	err := p.cache.Begin(ctx)
+	if err != nil {
+		p.cache.Unlock()
+		return err
+	}
+	return nil
+}
+
+// endBatch always commits: per-message JS errors already dropped via RecordDrop,
+// and cache writes for other successful messages in the same batch must not be lost.
+func (p *TagProcessor) endBatch(ctx context.Context) {
+	err := p.cache.Commit(ctx)
+	if err != nil {
+		p.logger.Errorf("cache commit failed: %v", err)
+	}
+	p.cache.Unlock()
+}
+
 // TODO: Each time there is any execution error, output the code where the error happened as well as the message that caused it (see nodered_js_plugin). Double-check that it is not being outputted twice.
 func (p *TagProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
-	// Store incoming metadata: capture current meta as JSON in _initialMetadata, keys in _incomingKeys.
+	err := p.beginBatch(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer p.endBatch(ctx)
+
+	// ───────────────── Store incoming metadata ────────────────────────────────
+	// For each message, capture its current meta fields and store them as JSON
+	// in msg.meta._initialMetadata. Also, record the original keys in _incomingKeys.
 	for _, msg := range batch {
 		if msg == nil {
 			continue
@@ -700,8 +790,11 @@ func (p *TagProcessor) normalizeVirtualPathMetadata(msg *service.Message) (strin
 	return sanitized, true
 }
 
-func (p *TagProcessor) Close(_ context.Context) error {
-	return nil
+func (p *TagProcessor) Close(ctx context.Context) error {
+	if p.jsProcessor == nil {
+		return nil
+	}
+	return p.jsProcessor.Close(ctx)
 }
 
 // compilePrograms compiles all JavaScript code once at startup for optimal runtime performance
@@ -922,7 +1015,7 @@ func (p *TagProcessor) processConditionForMessageWithProgram(ctx context.Context
 			ctx,
 			service.MessageBatch{msg},
 			p.conditionThenPrograms[conditionIndex],
-			"condition-then",
+			fmt.Sprintf("condition-%d-then", conditionIndex),
 		)
 		// Return all messages produced by the condition action (could be 0, 1, or multiple)
 		return conditionBatch, "", "", nil
