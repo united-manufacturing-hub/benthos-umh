@@ -67,8 +67,10 @@ func buildSessionOptions(ctx context.Context, cfg SessionConfig, log *service.Lo
 			return nil, err
 		}
 		routeName := fmt.Sprintf("benthosADS-%s", hostAddr)
+		// Not "registering": go-ads probes first and registers only when the PLC
+		// has no usable route, then logs which of the two it did.
 		log.With("routeName", routeName, "clientIP", hostAddr, "targetIP", cfg.TargetIP).
-			Info("Registering route on PLC")
+			Debug("Route registration is configured for this session")
 		opts = append(opts, adsLib.WithRoute(routeName, cfg.Username, cfg.Password), adsLib.WithHostIP(hostAddr))
 	}
 
