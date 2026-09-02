@@ -1147,6 +1147,18 @@ var _ = Describe("logConnectFailure", func() {
 		Expect((*recs)[0].Attrs).To(HaveKeyWithValue("hint", ContainSubstring("targetAMS")))
 	})
 
+	It("errors on the activation failure, which wraps a dropped transport", func() {
+		// The wrapping made this read as a blip that would retry itself; only a
+		// person can fix a route the PLC will not serve.
+		a, recs := newInput()
+		err := errors.New(`route registration during connect: route "benthosADS-1.2.3.4" was registered but the PLC did not serve it within 10s (3 redials): ads: client transport closed`)
+
+		a.logConnectFailure(context.Background(), "Connecting to PLC failed", err)
+
+		Expect((*recs)[0].Level).To(Equal(slog.LevelError))
+		Expect((*recs)[0].Attrs).To(HaveKeyWithValue("hint", ContainSubstring("hostIP")))
+	})
+
 	It("keeps a route the PLC will not serve an error, since it needs a person", func() {
 		a, recs := newInput()
 		err := fmt.Errorf("connect: %w", adsLib.ErrRouteNotServed)
@@ -1166,6 +1178,115 @@ var _ = Describe("logConnectFailure", func() {
 
 		Expect(*recs).To(HaveLen(1))
 		Expect((*recs)[0].Level).To(Equal(slog.LevelDebug))
+	})
+})
+
+var _ = Describe("connect retry gate", func() {
+	routeErr := fmt.Errorf("connect: %w", adsLib.ErrRouteNotServed)
+	activationErr := errors.New(`route "benthosADS-1.2.3.4" was registered but the PLC did not serve it within 10s (3 redials): timeout`)
+
+	newInput := func() (*AdsCommInput, *[]capturedLog) {
+		log, recs := capturingLogger()
+		return &AdsCommInput{Log: log, TargetIP: "1.2.3.4", TargetPort: 48898, RuntimePort: 851}, recs
+	}
+
+	DescribeTable("classifies what a retry cannot fix",
+		func(err error, want bool) {
+			Expect(isRouteFault(err)).To(Equal(want))
+		},
+		Entry("the drop verdict", routeErr, true),
+		Entry("activation gave up", activationErr, true),
+		Entry("registration wrapped", errors.New("route registration during connect: boom"), true),
+		Entry("a refused session is not a route fault", errors.New("ADS error 0x706"), false),
+		Entry("a dropped transport is not a route fault", adsLib.ErrTransportClosed, false),
+	)
+
+	It("ramps an ordinary failure from 1s to a 1m ceiling", func() {
+		a, _ := newInput()
+		var delays []time.Duration
+		for i := 0; i < 8; i++ {
+			a.noteConnectFailure(errors.New("dial refused"))
+			delays = append(delays, time.Until(a.nextAttempt).Round(time.Second))
+		}
+		Expect(delays[0]).To(BeNumerically("~", time.Second, time.Second))
+		Expect(delays[7]).To(Equal(connectRetryMax))
+		// A rebooting PLC has to be picked up promptly, so the ceiling stays low.
+		Expect(delays[7]).To(BeNumerically("<=", time.Minute))
+	})
+
+	It("puts a route fault on the long ramp immediately", func() {
+		a, _ := newInput()
+
+		a.noteConnectFailure(routeErr)
+
+		Expect(time.Until(a.nextAttempt)).To(BeNumerically(">=", routeFaultRetryFirst-time.Second))
+	})
+
+	It("stops asking for registration after three route faults", func() {
+		a, recs := newInput()
+
+		for i := 0; i < routeSkipAfter; i++ {
+			Expect(a.sessionConfig().SkipRouteRegistration).To(BeFalse())
+			a.noteConnectFailure(routeErr)
+		}
+
+		Expect(a.sessionConfig().SkipRouteRegistration).To(BeTrue())
+		warn := (*recs)[len(*recs)-1]
+		Expect(warn.Level).To(Equal(slog.LevelWarn))
+		Expect(warn.Msg).To(ContainSubstring("hostIP"))
+	})
+
+	It("counts only consecutive route faults toward the breaker", func() {
+		a, _ := newInput()
+		a.noteConnectFailure(routeErr)
+		a.noteConnectFailure(routeErr)
+		a.noteConnectFailure(errors.New("dial refused")) // resets the run
+		a.noteConnectFailure(routeErr)
+
+		Expect(a.sessionConfig().SkipRouteRegistration).To(BeFalse())
+	})
+
+	It("reopens everything on a successful connect", func() {
+		a, _ := newInput()
+		for i := 0; i < 5; i++ {
+			a.noteConnectFailure(routeErr)
+		}
+		Expect(a.sessionConfig().SkipRouteRegistration).To(BeTrue())
+
+		a.noteConnectSuccess()
+
+		Expect(a.connectFailures).To(BeZero())
+		Expect(a.routeFaults).To(BeZero())
+		Expect(a.nextAttempt.IsZero()).To(BeTrue())
+		Expect(a.sessionConfig().SkipRouteRegistration).To(BeFalse())
+	})
+
+	It("waits out the gate instead of returning early, so Benthos cannot spin", func() {
+		a, recs := newInput()
+		a.nextAttempt = time.Now().Add(80 * time.Millisecond)
+
+		start := time.Now()
+		Expect(a.awaitRetryWindow(context.Background())).To(Succeed())
+
+		Expect(time.Since(start)).To(BeNumerically(">=", 70*time.Millisecond))
+		Expect(levelsOf(recs, slog.LevelInfo)).To(HaveLen(1))
+	})
+
+	It("abandons the wait when the pipeline shuts down", func() {
+		a, _ := newInput()
+		a.nextAttempt = time.Now().Add(time.Hour)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		Expect(a.awaitRetryWindow(ctx)).To(MatchError(context.Canceled))
+	})
+
+	It("does not gate the first attempt", func() {
+		a, recs := newInput()
+
+		Expect(a.awaitRetryWindow(context.Background())).To(Succeed())
+
+		Expect(*recs).To(BeEmpty())
 	})
 })
 
