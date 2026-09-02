@@ -66,6 +66,10 @@ type SessionConfig struct {
 	NotificationSilenceTimeout time.Duration // silence tolerated before subscriptions are dead
 	HeartbeatRecovery          string        // "immediate", "confirm" or "rebuild"
 
+	// SkipRouteRegistration stops the session asking the PLC to register a route.
+	// Set by the connect gate after repeated route faults; also skips the probe.
+	SkipRouteRegistration bool
+
 	// OnSessionEvent runs on a library goroutine: must not block.
 	OnSessionEvent func(ev SessionEvent, reason string)
 }

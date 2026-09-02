@@ -49,6 +49,28 @@ const (
 	// TwinCAT's default ADS gateway (route) port; used when targetAddress omits a port.
 	defaultTargetPort = 48898
 
+	// Connect retry gate. Benthos re-calls Connect the moment it returns, and
+	// each call is a fresh go-ads session, so the library's per-session cap on
+	// route registrations does not bound what a retry loop asks of the PLC.
+	connectRetryFirst = 1 * time.Second
+	connectRetryMax   = 1 * time.Minute
+
+	// A route the PLC will not serve needs a person, so it backs off much
+	// further: measured 172 registrations and 232 dials in 5 minutes against one
+	// PLC with a wrong hostIP, which is how a route table gets wedged.
+	routeFaultRetryFirst = 30 * time.Second
+	routeFaultRetryMax   = 5 * time.Minute
+
+	// After this many consecutive route faults, stop asking the PLC to register
+	// at all for routeSkipWindow; registration is the operation that writes to
+	// its table.
+	routeSkipAfter  = 3
+	routeSkipWindow = 5 * time.Minute
+
+	// routeFaultHint is the one remedy for a route the PLC will not serve, and it
+	// is the same sentence the registration breaker logs.
+	routeFaultHint = "the PLC accepted the connection but will not serve this route - set hostIP to the address the PLC sees; behind a NATing VPN gateway or subnet router that is the gateway's own LAN address, not this client's"
+
 	// heartbeatRecovery values, checked in NewAdsCommInput: outside `benthos
 	// lint` a string enum is not enforced, so a typo would read as deliberate.
 	heartbeatRecoveryImmediate = "immediate"
