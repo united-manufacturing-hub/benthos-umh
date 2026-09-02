@@ -1169,6 +1169,77 @@ var _ = Describe("logConnectFailure", func() {
 	})
 })
 
+var _ = Describe("logReadFailure", func() {
+	newInput := func(client Client) (*AdsCommInput, *[]capturedLog) {
+		log, recs := capturingLogger()
+		return &AdsCommInput{
+			Log: log, client: client, RequestTimeout: 5 * time.Second,
+			Symbols: []PlcSymbol{{Name: "MAIN.a"}, {Name: "MAIN.b"}},
+		}, recs
+	}
+
+	It("warns and names requestTimeout when the PLC did not answer in time", func() {
+		a, recs := newInput(&fakeClient{})
+		err := fmt.Errorf("batch read failed: SumRead failed: %w", context.DeadlineExceeded)
+
+		a.logReadFailure(context.Background(), 2, err)
+
+		Expect(*recs).To(HaveLen(1))
+		Expect((*recs)[0].Level).To(Equal(slog.LevelWarn))
+		Expect((*recs)[0].Msg).To(ContainSubstring("requestTimeout"))
+		Expect((*recs)[0].Attrs).To(HaveKeyWithValue("requestTimeout", "5s"))
+		Expect((*recs)[0].Attrs).To(HaveKeyWithValue("symbols", "2"))
+	})
+
+	It("warns that it is reconnecting when the session is gone", func() {
+		a, recs := newInput(&fakeClient{closed: true})
+
+		a.logReadFailure(context.Background(), 2, errors.New("read failed"))
+
+		Expect((*recs)[0].Level).To(Equal(slog.LevelWarn))
+		Expect((*recs)[0].Msg).To(ContainSubstring("reconnecting"))
+	})
+
+	It("warns on a dropped transport", func() {
+		a, recs := newInput(&fakeClient{})
+
+		a.logReadFailure(context.Background(), 2, fmt.Errorf("read: %w", adsLib.ErrTransportClosed))
+
+		Expect((*recs)[0].Level).To(Equal(slog.LevelWarn))
+		Expect((*recs)[0].Msg).To(ContainSubstring("dropped"))
+	})
+
+	It("keeps an unrecognized failure at error", func() {
+		a, recs := newInput(&fakeClient{})
+
+		a.logReadFailure(context.Background(), 2, errors.New("ADS error 0x706"))
+
+		Expect((*recs)[0].Level).To(Equal(slog.LevelError))
+	})
+
+	It("drops to debug during shutdown", func() {
+		a, recs := newInput(&fakeClient{})
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		a.logReadFailure(ctx, 2, context.DeadlineExceeded)
+
+		Expect((*recs)[0].Level).To(Equal(slog.LevelDebug))
+	})
+
+	It("reports a failed poll exactly once, and keeps polling", func() {
+		// The field report was one ERROR plus one WARN for the same timeout.
+		client := &fakeClient{multiErr: fmt.Errorf("batch read failed: SumRead failed: %w", context.DeadlineExceeded)}
+		a, recs := newInput(client)
+
+		msgs, _, err := a.ReadBatchPull(context.Background())
+
+		Expect(err).NotTo(HaveOccurred()) // transient: empty batch, next poll retries
+		Expect(msgs).To(BeEmpty())
+		Expect(levelsOf(recs, slog.LevelWarn)).To(HaveLen(1))
+	})
+})
+
 var _ = Describe("isTransportGone", func() {
 	DescribeTable("separates a transport that went away from a session that was refused",
 		func(err error, want bool) {
