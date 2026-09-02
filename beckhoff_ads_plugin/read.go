@@ -63,6 +63,27 @@ func (a *AdsCommInput) closeHandler() {
 
 // newSymbolMessage is the single message-build site: payload is typed via parse.go
 // (base type preferred, data type fallback); metadata carries symbol/type/size/timestamp.
+// logReadFailure logs a failed poll once, at the severity that matches what has
+// to happen next. Mirrors logConnectFailure: a PLC that did not answer in time
+// is retried on the next poll, anything unrecognized keeps ERROR.
+func (a *AdsCommInput) logReadFailure(ctx context.Context, symbols int, err error) {
+	log := a.Log.With("symbols", symbols, "requestTimeout", a.RequestTimeout.String())
+	switch {
+	case shuttingDown(ctx):
+		a.Log.Debugf("Read aborted during shutdown: %v", err)
+	case a.client != nil && a.client.IsClosed():
+		log.Warnf("Read failed because the session is gone; reconnecting: %v", err)
+	case errors.Is(err, context.DeadlineExceeded):
+		// The PLC was reachable but did not reply within requestTimeout, so the
+		// poll is lost and the next one is due immediately.
+		log.Warnf("The PLC did not answer this read within requestTimeout; retrying on the next poll: %v", err)
+	case isTransportGone(err):
+		log.Warnf("Read failed because the connection dropped; retrying on the next poll: %v", err)
+	default:
+		log.Errorf("Read failed: %v", err)
+	}
+}
+
 func (a *AdsCommInput) newSymbolMessage(sym *PlcSymbol, value string, ts time.Time) *service.Message {
 	typeName := sym.BaseType
 	if typeName == "" {
@@ -197,19 +218,19 @@ func (a *AdsCommInput) ReadBatchPull(ctx context.Context) (service.MessageBatch,
 		err = nil
 	}
 	if err != nil {
-		if shuttingDown(ctx) {
-			a.Log.Debugf("Batch read aborted during shutdown: %v", err)
-			return nil, nil, ctx.Err()
-		}
-		a.Log.Errorf("Batch read failed: %v", err)
 		if a.client.IsClosed() {
 			// Session permanently dead — async close to avoid blocking.
+			a.logReadFailure(ctx, len(names), err)
 			a.closeHandler()
 			return nil, nil, service.ErrNotConnected
 		}
+		if shuttingDown(ctx) {
+			a.Log.Debugf("Read aborted during shutdown: %v", err)
+			return nil, nil, ctx.Err()
+		}
 		// Transient: reconnecting or PLC not ready. Return empty batch immediately so
 		// the caller controls the retry rate; small sleep avoids spinning in production.
-		a.Log.Warnf("Batch read failed (will retry): %v", err)
+		a.logReadFailure(ctx, len(names), err)
 		select {
 		case <-ctx.Done():
 			return nil, nil, ctx.Err()
