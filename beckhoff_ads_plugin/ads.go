@@ -78,6 +78,13 @@ type AdsCommInput struct {
 	// goroutine, which consumes it and rebuilds. nil means healthy.
 	degradedReason atomic.Pointer[string]
 
+	// Connect gate. Benthos drives Connect and ReadBatch from one goroutine, so
+	// these need no locking. Any successful connect clears all three.
+	connectFailures int
+	routeFaults     int
+	nextAttempt     time.Time
+	skipRouteUntil  time.Time
+
 	LoadSymbols bool // download full symbol+datatype table on connect; required for struct/array symbols
 
 	// Route registration; route registered when both Username and Password are set.
@@ -323,6 +330,7 @@ func (a *AdsCommInput) sessionConfig() SessionConfig {
 		RouteActivationTimeout:     a.RouteActivationTimeout,
 		NotificationSilenceTimeout: a.NotificationSilenceTimeout,
 		HeartbeatRecovery:          a.HeartbeatRecovery,
+		SkipRouteRegistration:      time.Now().Before(a.skipRouteUntil),
 		OnSessionEvent:             a.onSessionEvent,
 	}
 }
@@ -407,6 +415,9 @@ func (a *AdsCommInput) Connect(ctx context.Context) error {
 	if a.client != nil {
 		return nil
 	}
+	if err := a.awaitRetryWindow(ctx); err != nil {
+		return err
+	}
 
 	c, err := newGoADSClient(ctx, a.sessionConfig(), a.Log)
 	if err != nil {
@@ -419,9 +430,67 @@ func (a *AdsCommInput) Connect(ctx context.Context) error {
 	if err = a.finishConnect(ctx); err != nil {
 		a.client.Close()
 		a.client = nil
+		a.noteConnectFailure(err)
 		return err
 	}
+	a.noteConnectSuccess()
 	return nil
+}
+
+// awaitRetryWindow blocks until the gate set by the previous failure expires.
+// It sleeps rather than returning early because Benthos calls Connect again as
+// soon as it returns, so a fast return would spin instead of backing off.
+func (a *AdsCommInput) awaitRetryWindow(ctx context.Context) error {
+	wait := time.Until(a.nextAttempt)
+	if wait <= 0 {
+		return nil
+	}
+	a.connLogger().With("wait", wait.Round(time.Second).String(), "failures", a.connectFailures).
+		Info("Waiting before the next connect attempt")
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(wait):
+		return nil
+	}
+}
+
+// noteConnectFailure schedules the next attempt. A route the PLC will not serve
+// backs off on its own, much longer ramp: retrying cannot fix it, and every
+// attempt costs the PLC a route registration and a socket.
+func (a *AdsCommInput) noteConnectFailure(err error) {
+	a.connectFailures++
+	first, ceiling := connectRetryFirst, connectRetryMax
+	if isRouteFault(err) {
+		a.routeFaults++
+		first, ceiling = routeFaultRetryFirst, routeFaultRetryMax
+		if a.routeFaults >= routeSkipAfter && a.skipRouteUntil.Before(time.Now()) {
+			a.skipRouteUntil = time.Now().Add(routeSkipWindow)
+			a.connLogger().With("routeFaults", a.routeFaults, "for", routeSkipWindow.String()).
+				Warn("Not asking the PLC to register a route on the next attempts; set hostIP to the address the PLC sees (behind a NATing VPN gateway that is the gateway's own LAN address)")
+		}
+	} else {
+		a.routeFaults = 0
+	}
+	a.nextAttempt = time.Now().Add(backoffFor(first, ceiling, a.connectFailures))
+}
+
+// noteConnectSuccess reopens the gate: a working connect is indistinguishable
+// from a fixed network, so nothing is carried over.
+func (a *AdsCommInput) noteConnectSuccess() {
+	a.connectFailures = 0
+	a.routeFaults = 0
+	a.nextAttempt = time.Time{}
+	a.skipRouteUntil = time.Time{}
+}
+
+// backoffFor doubles first up to ceiling for the nth consecutive failure.
+func backoffFor(first time.Duration, ceiling time.Duration, n int) time.Duration {
+	d := first
+	for i := 1; i < n && d < ceiling; i++ {
+		d *= 2
+	}
+	return min(d, ceiling)
 }
 
 // finishConnect drives connect → symbol resolution → (optional) symbol table
@@ -454,6 +523,10 @@ func (a *AdsCommInput) logConnectFailure(ctx context.Context, what string, err e
 	switch {
 	case shuttingDown(ctx):
 		a.Log.Debugf("%s during shutdown: %v", what, err)
+	case isRouteFault(err):
+		// Before isTransportGone: activation wraps the probe's ErrTransportClosed,
+		// so a route the PLC will not serve would otherwise read as a blip.
+		a.connLogger().With("hint", routeFaultHint).Errorf("%s: %v", what, err)
 	case isTransportGone(err):
 		// No hint: connectHint's fallback diagnoses a rejected session.
 		a.connLogger().Warnf("%s because the PLC dropped the connection; the next connect attempt retries: %v", what, err)

@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	adsLib "github.com/RuneRoven/go-ads/v2"
@@ -101,6 +102,9 @@ func buildSessionOptions(ctx context.Context, cfg SessionConfig, log *service.Lo
 		opts = append(opts, adsLib.WithHeartbeatRecovery(adsLib.HeartbeatRecoveryConfirm))
 	case cfg.HeartbeatRecovery == heartbeatRecoveryRebuild && cfg.OnSessionEvent != nil:
 		opts = append(opts, adsLib.WithHeartbeatRecovery(adsLib.HeartbeatRecoveryObserve))
+	}
+	if cfg.SkipRouteRegistration {
+		opts = append(opts, adsLib.WithSkipRouteRegistration())
 	}
 	if cfg.OnSessionEvent != nil {
 		// One callback serves every reason, so the adapter classifies them.
@@ -269,6 +273,20 @@ func connectDropKind(err error) dropKind {
 	default:
 		return dropUnknown
 	}
+}
+
+// isRouteFault reports whether a connect failed because the PLC would not serve
+// our route — a configuration fault that a retry cannot fix.
+//
+// Only the drop verdict has a sentinel. Route activation wraps the probe error
+// instead (session.go "was registered but the PLC did not serve it"), so that
+// one is matched on text until go-ads exports a sentinel for it.
+func isRouteFault(err error) bool {
+	if errors.Is(err, adsLib.ErrRouteNotServed) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "did not serve it") || strings.Contains(msg, "route registration")
 }
 
 // isTransportGone reports whether the ADS transport went away mid-operation.
