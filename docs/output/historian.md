@@ -2,14 +2,14 @@
 
 Saves one UNS data contract into TimescaleDB using the UMH Historian schema. The
 plugin owns the schema bootstrap, the value/attribute writes, metadata de-duplication,
-and the datatype/conflict guards, so a bridge write flow is just an input and this output.
+and the datatype/conflict guards, so writing history is just an input and this output.
 No JavaScript processor or hand-written `sql_raw` is needed.
 
 ## Prerequisites
 
 - PostgreSQL 16+ with the TimescaleDB and `ltree` extensions available (16+ so `ltree` labels accept hyphens).
-- A non-superuser owner role, created once before the bridge starts (the bridge logs in
-  as this role and cannot create it itself). It creates and owns the dedicated `umh` schema
+- A non-superuser owner role, created once before this output starts (it logs in as this
+  role and cannot create it itself). It creates and owns the dedicated `umh` schema
   via the database-level grant, so no privilege on `public` is needed:
 
   ```sql
@@ -29,12 +29,14 @@ No JavaScript processor or hand-written `sql_raw` is needed.
 | `sslmode` | no | `require` | `require` \| `disable` \| `verify-full`. |
 | `sslrootcert` / `sslcert` / `sslkey` | no | `""` | TLS cert paths inside the container. |
 | `allow_datatype_changes` | no | `false` | Let a tag change datatype (numeric ↔ text) instead of dropping the offending rows as poison. The tag then holds both, and `umh.tag.value_type` keeps the first type seen — read it with `coalesce(value_num::text, value_text)`. Applies to every contract, versioned or not. |
-| `data_contract_name` | yes | — | Bare lowercase contract name, e.g. `pump`; no leading `_`, no `_vN` suffix. Stored in `umh.tag.data_contract_name` in its UNS form with a leading underscore (`_pump`), matching the topic's data-contract segment. |
+| `data_contract_name` | yes | — | Bare lowercase contract name, e.g. `pump`; no leading `_`, no `_vN` suffix, 53 characters or fewer. Stored in `umh.tag.data_contract_name` in its UNS form with a leading underscore (`_pump`), matching the topic's data-contract segment. |
 | `metadata_keys_all` | no | `true` | Store every metadata key except structural/high-churn keys and any `metadata_keys_exclude` match. |
 | `metadata_keys` | no | `[]` | Allowlist used only when `metadata_keys_all=false`. |
 | `metadata_keys_exclude` | no | `[]` | Blacklist applied only when `metadata_keys_all=true`. Each entry is an exact key name or a trailing-`*` prefix (e.g. `opcua_*`); matches are dropped on top of the built-in exclusions. A bare `*` drops everything. Ignored in allowlist mode. |
-| `compress_after` | no | `168h` | Compress chunks older than this. **Applied once at first bootstrap** — changing it in the bridge afterward has no effect (see [Changing compression or retention](#changing-compression-or-retention)). |
-| `retention` | no | `""` | Drop chunks older than this; empty keeps data forever. **Applied once at first bootstrap** — changing it in the bridge afterward has no effect (see [Changing compression or retention](#changing-compression-or-retention)). |
+| `compress_after` | no | `168h` | Compress chunks older than this. Applied to each of a contract's hypertables that has no compression policy yet; changing it afterward has no effect, and compression cannot be switched off (see [Changing compression or retention](#changing-compression-or-retention)). |
+| `retention` | no | `""` | Drop chunks older than this; empty keeps data forever. Applied only to a hypertable that has no retention policy yet **and holds no data**; changing it afterward has no effect (see [Changing compression or retention](#changing-compression-or-retention)). |
+| `value_chunk_interval` | no | `168h` | Chunk width of `umh.value_<contract>`. Applied when the table is created; changing it afterward has no effect (see [Changing the chunk interval](#changing-the-chunk-interval)). |
+| `attribute_chunk_interval` | no | `168h` | Chunk width of `umh.attribute_<contract>`. Attribute rows are written only when a tag's metadata changes, so this table is much sparser than the value table. Applied when the table is created. |
 | `batching` | no | — | benthos batch policy (`count` / `period` / `byte_size`). The whole batch is written in one transaction, so larger batches raise throughput; e.g. `count: 1000`, `period: 1s`. |
 | `max_in_flight` | no | `8` | Batches written to the database concurrently. Throughput scales with this and with batch size (see Throughput below). |
 | `write_timeout` | no | `""` | Per-batch write timeout as a Go duration (e.g. `30s`). Empty/`0s` means no timeout (a write hung on a lock or half-open connection blocks until the context is cancelled). When set, a timed-out batch is held for retry (NACK), never dropped; set it above the largest expected batch commit time. |
@@ -139,7 +141,7 @@ ORDER  BY v.ts DESC;
 ## Behavior
 
 - **Startup check.** `Connect()` verifies the server version and bootstraps the schema, so
-  an unreachable, too-old, or misconfigured database fails the bridge at startup rather than
+  an unreachable, too-old, or misconfigured database fails at startup rather than
   writing to a misconfigured database unnoticed.
 - **Idempotent replays.** An identical value at the same `(tag, ts)` is absorbed.
 - **Topic resolution is read-first.** A topic already in the database is resolved with a lookup that assigns no new id, so the internal surrogate ids advance only when a genuinely new topic is created — not per message, and restarts do not bump them.
@@ -199,7 +201,7 @@ A write failure is handled by *what caused it*, so a single bad tag never stalls
   rows are absorbed.
 - **Standing fault** (missing table privilege, disk full, an unrecognized error) — retried
   too (good data is never dropped over a fixable problem), but logged at error level. The
-  bridge does not progress until an operator fixes the cause, then resumes losslessly.
+  the output does not progress until an operator fixes the cause, then resumes losslessly.
 - **Poison** (a value that can never be written: an append-only conflict, a datatype flip, a
   constraint violation) — the offending row is dropped and counted on
   `historian_rows_poisoned` (labelled by `sqlstate` and `phase`), with an error log naming
@@ -212,7 +214,7 @@ Only poison rows are ever dropped on a write error. Oversized text is a separate
 
 `Connect` also verifies the login role can `INSERT` into the contract's tables (a
 `has_table_privilege` check). A role that reaches the database but cannot write to it fails the
-bridge at startup with a named error, instead of connecting and then stalling on every write.
+at startup with a named error, instead of connecting and then stalling on every write.
 
 ## Runbook: poisoned tags
 
@@ -256,7 +258,7 @@ DELETE FROM umh.value_historian WHERE topic_id = (SELECT id FROM tid);
 ```
 
 **Append-only conflict.** The source emitted two different values at the same millisecond
-timestamp. On bridges the downsampler collapses duplicate timestamps per series before the
+timestamp. Upstream, the downsampler collapses duplicate timestamps per series before the
 historian sees them; if you hit this, the source is producing faster than 1 kHz on one tag —
 not representable by the millisecond UNS timestamp and unsuitable for this contract.
 
@@ -284,7 +286,7 @@ independently:
   the shared dimension rows, so throughput scales with this.
 
 The defaults (`max_in_flight: 8` and a `count: 1000` / `period: 1s` batch policy) comfortably
-exceed a typical per-bridge load. Raise `max_in_flight` (and the connection pool with it) or the
+exceed the load of a single data flow. Raise `max_in_flight` (and the connection pool with it) or the
 batch size for higher-throughput streams.
 
 ## Metrics
@@ -320,7 +322,7 @@ sources by their path segments, not by punctuation that folds.
 ## Schema and compatibility
 
 The plugin owns the schema: it bootstraps the baseline DDL into the `umh` schema
-idempotently on first connect and **never alters an already-created
+idempotently when the output starts and **never changes the columns or types of an already-created
 `umh.value_<contract>` / `umh.attribute_<contract>` table**. A breaking schema change ships
 as a new contract (new tables), never an in-place migration. (`ltree` stays in `public`,
 its conventional shared home.)
@@ -331,12 +333,25 @@ the same tables. To avoid schema drift, a given contract/database must be writte
 
 ## Changing compression or retention
 
-`compress_after` and `retention` are applied **once, at first bootstrap**, and are deliberately
-not re-applied when the bridge restarts. Editing them in the bridge config therefore has **no
-effect** on a database that already has the tables. This is intentional: a config edit (or a form
-change in the Management Console) should not silently change how production history is compressed
-or — for retention — **deleted**. On restart the bridge logs a warning if the applied policy
-differs from the config, so drift stays visible, but it does not act on it.
+`compress_after` and `retention` are applied per contract, to each of a contract's two hypertables
+that has no such policy yet. Compression is applied whether or not the table already holds history,
+since compressing a chunk destroys nothing; enabling it on a table that has no compression settings
+takes a brief exclusive lock on that table. **Retention is applied only to a hypertable that holds
+no data**, because it drops every chunk older than the window: a restart must not delete history
+that a config value written months ago now covers. On a hypertable that already holds data the
+output warns instead, and names the statement that applies the policy by hand:
+
+```
+historian: umh.value_pump already holds data, so the configured retention (720h0m0s) was not applied
+to it. Applying it drops every chunk older than that. To apply it, run
+add_retention_policy('umh.value_pump', INTERVAL '2592000 seconds'); to stop this warning, clear
+retention in the config.
+```
+
+An interval that is already applied is never changed, so editing `compress_after` or `retention` has
+**no effect** on a table that already has that policy: a config edit should not rewrite how
+production history is compressed, or for retention **deleted**. On start the output warns about a
+divergence on either hypertable instead, and leaves the policy alone.
 
 To change them on an existing database, update the TimescaleDB policies directly, on **both**
 hypertables for the contract. For a contract named `pump`:
@@ -351,12 +366,45 @@ SELECT remove_compression_policy('umh.value_pump', if_exists => true);
 SELECT add_compression_policy('umh.value_pump', INTERVAL '7 days');
 ```
 
-To stop dropping data entirely (the `retention: ""` default), remove the retention policy and do
-not re-add it. Changing either policy takes effect immediately and never needs a bridge restart.
+Removing a policy takes effect immediately. Setting the same value in this output's config afterward
+silences the drift warning, and gives the next contract that interval.
 
-After changing a policy on the database, set the **same** value in the bridge config too. The
-config value is still what a fresh bootstrap of a new database uses, and matching it silences the
-drift warning on restart.
+### Switching a policy off
+
+Removing a retention policy from a hypertable that holds data is enough: it is not re-created, even
+with `retention` still set in the config, and the output warns on each start until the config is
+cleared too. On an empty hypertable a removed policy does come back on the next start, so clear
+`retention` first there.
+
+`compress_after` has no empty value, so compression cannot be switched off: a compression policy
+removed on the database is re-created when the output next starts, as are the compression settings if
+they were turned off. Disabling the job instead (`ALTER JOB ... SET scheduled = false`) does survive
+a restart, because the output looks for the policy rather than for whether it is scheduled.
+
+## Changing the chunk interval
+
+A hypertable is stored as chunks, each holding one time range of rows; `value_chunk_interval` and
+`attribute_chunk_interval` set how wide that range is. The width decides how much a time-filtered
+query can skip, and how coarsely compression and retention act, since both work on whole chunks.
+
+The interval reaches the database only when the table is created. The reason is the one the
+policies give: a config edit should not reorganize production history. On restart the output warns
+when a configured interval differs from the one its table was created with.
+
+Unlike the policies, a chunk interval is never filled in later: `create_hypertable` is a no-op once
+the table exists.
+
+Both intervals default to `168h`, which is 7 days. To change one on an existing database, for a
+contract named `pump`:
+
+```sql
+SELECT set_chunk_time_interval('umh.value_pump', INTERVAL '1 day');
+SELECT set_chunk_time_interval('umh.attribute_pump', INTERVAL '30 days');
+```
+
+Only chunks created after the call use the new width; existing chunks keep the one they were created
+with. Set the same value in this output's config afterward, as with the policies. That value is what
+a fresh bootstrap of a new database uses, and matching it silences the drift warning on restart.
 
 ## Quick example
 

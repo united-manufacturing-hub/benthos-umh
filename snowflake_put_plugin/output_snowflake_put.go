@@ -951,7 +951,7 @@ func (s *snowflakeWriter) WriteBatch(ctx context.Context, batch service.MessageB
 		filePath := path.Join(f.stagePath, fileName+"."+f.fileExtension)
 
 		_, err := s.db.ExecContext(gosnowflake.WithFileStream(
-			gosnowflake.WithFileTransferOptions(ctx, &gosnowflake.SnowflakeFileTransferOptions{RaisePutGetError: true}),
+			gosnowflake.WithFileTransferOptions(ctx, &gosnowflake.SnowflakeFileTransferOptions{RaisePutGetError: true}), //nolint:staticcheck // deprecated but still required on v1, see above
 			bytes.NewReader(fBytes),
 		), fmt.Sprintf(s.putQueryFormat, filePath, path.Join(f.stage, f.stagePath)))
 		if err != nil {

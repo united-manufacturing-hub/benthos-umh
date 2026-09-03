@@ -71,6 +71,13 @@ func NormalizeContract(metaContract string) string {
 
 // ValidateContract checks that data_contract_name is a bare lowercase name (letters, digits,
 // underscores) with no leading underscore and no _vN version suffix.
+// maxContractLen keeps "attribute_" + the contract name inside PostgreSQL's 63-byte identifier
+// limit. Past it the server truncates the table name it creates, and two contracts that differ only
+// in the truncated tail share one pair of hypertables, so one contract's rows, policies and drift
+// warnings become the other's.
+// https://www.postgresql.org/docs/current/limits.html
+const maxContractLen = 63 - len("attribute_")
+
 func ValidateContract(c string) error {
 	if !reContract.MatchString(c) {
 		return fmt.Errorf("data_contract_name %q invalid: use a bare lowercase name (letters, digits, underscores), e.g. \"pump\"", c)
@@ -80,6 +87,9 @@ func ValidateContract(c string) error {
 	}
 	if reVersionSuffix.MatchString(c) {
 		return fmt.Errorf("data_contract_name %q must not carry a version suffix (\"pump\", not \"pump_v1\")", c)
+	}
+	if len(c) > maxContractLen {
+		return fmt.Errorf("data_contract_name %q is %d characters; use %d or fewer, because PostgreSQL truncates the table name at 63 bytes and two contracts sharing the first %d characters would then write to the same tables", c, len(c), maxContractLen, maxContractLen)
 	}
 	return nil
 }

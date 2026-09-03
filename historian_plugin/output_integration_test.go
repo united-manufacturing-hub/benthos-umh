@@ -94,6 +94,85 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		return h
 	}
 
+	seconds := func(d time.Duration) int64 { return int64(d.Seconds()) }
+
+	const (
+		configuredCompress  = 168 * time.Hour
+		configuredRetention = 720 * time.Hour
+		operatorRetention   = 90 * 24 * time.Hour
+	)
+
+	It("creates each hypertable with its own configured chunk interval", func() {
+		valueChunk := 24 * time.Hour
+		attributeChunk := 720 * time.Hour
+
+		h := tsh.NewHistorianTestHandle(sharedDSN, "chunky")
+		h.SetChunkIntervals(valueChunk, attributeChunk)
+		Expect(h.Connect(ctx)).To(Succeed())
+		defer h.Close(ctx)
+
+		Expect(h.AppliedChunkInterval(ctx, "value_chunky")).To(HaveValue(Equal(seconds(valueChunk))))
+		Expect(h.AppliedChunkInterval(ctx, "attribute_chunky")).To(HaveValue(Equal(seconds(attributeChunk))))
+	})
+
+	It("warns on restart when the configured chunk interval no longer matches the table", func() {
+		createdChunk := 168 * time.Hour
+		reconfiguredChunk := 24 * time.Hour
+		unchangedAttributeChunk := 168 * time.Hour
+
+		first := tsh.NewHistorianTestHandle(sharedDSN, "chunkdrift")
+		first.SetChunkIntervals(createdChunk, unchangedAttributeChunk)
+		Expect(first.Connect(ctx)).To(Succeed())
+		first.Close(ctx)
+
+		restarted := tsh.NewHistorianTestHandle(sharedDSN, "chunkdrift")
+		restarted.SetChunkIntervals(reconfiguredChunk, unchangedAttributeChunk)
+		logs := restarted.CaptureLogs()
+		Expect(restarted.Connect(ctx)).To(Succeed())
+		defer restarted.Close(ctx)
+
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("configured value_chunk_interval (%ds)", seconds(reconfiguredChunk))))
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("created with (%ds)", seconds(createdChunk))))
+		Expect(logs()).To(ContainSubstring("stays in force"))
+		Expect(logs()).NotTo(ContainSubstring("attribute_chunk_interval"))
+		Expect(restarted.AppliedChunkInterval(ctx, "value_chunkdrift")).To(HaveValue(Equal(seconds(createdChunk))))
+	})
+
+	It("names both tables when the applied chunk interval cannot be read", func() {
+		h := connected("chunkunread")
+		defer h.Close(ctx)
+
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+
+		logs := h.CaptureLogs()
+		h.WarnChunkDrift(cancelled)
+
+		Expect(logs()).To(ContainSubstring("cannot read the chunk interval of umh.value_chunkunread"))
+		Expect(logs()).To(ContainSubstring("cannot read the chunk interval of umh.attribute_chunkunread"))
+		Expect(logs()).NotTo(ContainSubstring("stays in force"))
+	})
+
+	It("warns on restart when the applied compression policy no longer matches config", func() {
+		appliedCompress := 24 * time.Hour
+		handleDefaultCompress := 168 * time.Hour
+
+		first := connected("poldrift")
+		Expect(first.ExecSQL(ctx, "ALTER TABLE umh.value_poldrift SET (timescaledb.compress, timescaledb.compress_segmentby = 'topic_id', timescaledb.compress_orderby = 'ts DESC')")).To(Succeed())
+		Expect(first.ExecSQL(ctx, "SELECT remove_compression_policy('umh.value_poldrift', if_exists => TRUE)")).To(Succeed())
+		Expect(first.ExecSQL(ctx, fmt.Sprintf("SELECT add_compression_policy('umh.value_poldrift', INTERVAL '%d seconds')", seconds(appliedCompress)))).To(Succeed())
+		first.Close(ctx)
+
+		restarted := tsh.NewHistorianTestHandle(sharedDSN, "poldrift")
+		logs := restarted.CaptureLogs()
+		Expect(restarted.Connect(ctx)).To(Succeed())
+		defer restarted.Close(ctx)
+
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("umh.value_poldrift: configured compress_after (%ds)", seconds(handleDefaultCompress))))
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("applied compression policy (%ds)", seconds(appliedCompress))))
+		Expect(logs()).To(ContainSubstring("stays in force"))
+	})
+
 	It("bootstraps idempotently (Connect twice)", func() {
 		h := connected("pump")
 		defer h.Close(ctx)
@@ -103,14 +182,11 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 	It("a fresh handle connects to an already-bootstrapped database and reads/writes (restart path)", func() {
 		// First handle bootstraps the schema and writes one point.
 		h1 := connected("recon")
-		defer h1.Close(ctx)
 		Expect(h1.WriteBatch(ctx, service.MessageBatch{
 			mkMsg(1.0, 1000, "_recon_v1", "acme.line1", "x", nil),
 		})).To(Succeed())
+		h1.Close(ctx)
 
-		// A second, independent handle (bootstrapped == false) connects to the SAME database --
-		// the real restart path, not the same-handle early return. Bootstrap runs again and must
-		// be idempotent; the ledger-gated policy block is skipped rather than re-applied.
 		h2 := tsh.NewHistorianTestHandle(sharedDSN, "recon")
 		Expect(h2.Connect(ctx)).To(Succeed())
 		defer h2.Close(ctx)
@@ -138,6 +214,203 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 		// Re-bootstrapping does not re-apply or duplicate the recorded version.
 		Expect(h.Connect(ctx)).To(Succeed())
 		Expect(h.SchemaVersion(ctx)).To(Equal(1))
+	})
+
+	It("applies compression and retention to a contract added after the database was bootstrapped", func() {
+		first := tsh.NewHistorianTestHandle(sharedDSN, "polfirst")
+		first.SetPolicies(configuredCompress, configuredRetention, true)
+		Expect(first.Connect(ctx)).To(Succeed())
+		Expect(first.SchemaVersion(ctx)).To(Equal(1))
+		first.Close(ctx)
+
+		second := tsh.NewHistorianTestHandle(sharedDSN, "polsecond")
+		second.SetPolicies(configuredCompress, configuredRetention, true)
+		logs := second.CaptureLogs()
+		Expect(second.Connect(ctx)).To(Succeed())
+		defer second.Close(ctx)
+		Expect(logs()).NotTo(ContainSubstring("was not applied to it"))
+
+		for _, table := range []string{"value_polsecond", "attribute_polsecond"} {
+			compressAfter, retention := second.PolicyIntervals(ctx, table)
+			Expect(compressAfter).NotTo(BeNil(), table)
+			Expect(*compressAfter).To(Equal(seconds(configuredCompress)), table)
+			Expect(retention).NotTo(BeNil(), table)
+			Expect(*retention).To(Equal(seconds(configuredRetention)), table)
+		}
+	})
+
+	It("reports drift on the attribute hypertable alone", func() {
+		h := tsh.NewHistorianTestHandle(sharedDSN, "polattr")
+		h.SetPolicies(configuredCompress, configuredRetention, true)
+		Expect(h.Connect(ctx)).To(Succeed())
+		Expect(h.ExecSQL(ctx, "SELECT remove_retention_policy('umh.attribute_polattr')")).To(Succeed())
+		Expect(h.ExecSQL(ctx, fmt.Sprintf("SELECT add_retention_policy('umh.attribute_polattr', INTERVAL '%d seconds')", seconds(operatorRetention)))).To(Succeed())
+
+		h.Close(ctx)
+
+		restarted := tsh.NewHistorianTestHandle(sharedDSN, "polattr")
+		restarted.SetPolicies(configuredCompress, configuredRetention, true)
+		logs := restarted.CaptureLogs()
+		Expect(restarted.Connect(ctx)).To(Succeed())
+		defer restarted.Close(ctx)
+
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("umh.attribute_polattr: configured retention (%ds) does not match the applied retention policy (%ds)", seconds(configuredRetention), seconds(operatorRetention))))
+		Expect(logs()).NotTo(ContainSubstring("umh.value_polattr: configured retention"))
+	})
+
+	It("gives a contract left without policies by an older build compression back, and retention only where nothing would be dropped", func() {
+		h := tsh.NewHistorianTestHandle(sharedDSN, "pollegacy")
+		h.SetPolicies(configuredCompress, configuredRetention, true)
+		Expect(h.Connect(ctx)).To(Succeed())
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(1.0, float64(time.Now().UnixMilli()), "_pollegacy_v1", "acme.line1", "x", nil),
+		})).To(Succeed())
+		for _, table := range []string{"umh.value_pollegacy", "umh.attribute_pollegacy"} {
+			Expect(h.ExecSQL(ctx, "SELECT remove_compression_policy('"+table+"')")).To(Succeed())
+			Expect(h.ExecSQL(ctx, "SELECT remove_retention_policy('"+table+"')")).To(Succeed())
+			Expect(h.ExecSQL(ctx, "ALTER TABLE "+table+" SET (timescaledb.compress = false)")).To(Succeed())
+		}
+
+		h.Close(ctx)
+
+		restarted := tsh.NewHistorianTestHandle(sharedDSN, "pollegacy")
+		restarted.SetPolicies(configuredCompress, configuredRetention, true)
+		logs := restarted.CaptureLogs()
+		Expect(restarted.Connect(ctx)).To(Succeed())
+		defer restarted.Close(ctx)
+
+		for _, table := range []string{"value_pollegacy", "attribute_pollegacy"} {
+			compressAfter, _ := restarted.PolicyIntervals(ctx, table)
+			Expect(compressAfter).NotTo(BeNil(), table)
+			Expect(*compressAfter).To(Equal(seconds(configuredCompress)), table)
+		}
+
+		Expect(restarted.CountValueRows(ctx, "pollegacy")).To(Equal(1))
+		Expect(restarted.CountAttributeRows(ctx, "pollegacy")).To(Equal(0))
+
+		_, valueRetention := restarted.PolicyIntervals(ctx, "value_pollegacy")
+		Expect(valueRetention).To(BeNil())
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("umh.value_pollegacy already holds data, so the configured retention (%s) was not applied to it", configuredRetention)))
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("add_retention_policy('umh.value_pollegacy', INTERVAL '%d seconds')", seconds(configuredRetention))))
+
+		_, attributeRetention := restarted.PolicyIntervals(ctx, "attribute_pollegacy")
+		Expect(attributeRetention).NotTo(BeNil())
+		Expect(*attributeRetention).To(Equal(seconds(configuredRetention)))
+		Expect(logs()).NotTo(ContainSubstring("umh.attribute_pollegacy already holds data"))
+	})
+
+	It("leaves a retention policy removed on a hypertable that holds data, and says why", func() {
+		h := tsh.NewHistorianTestHandle(sharedDSN, "polwarn")
+		h.SetPolicies(configuredCompress, configuredRetention, true)
+		Expect(h.Connect(ctx)).To(Succeed())
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(1.0, float64(time.Now().UnixMilli()), "_polwarn_v1", "acme.line1", "x", map[string]string{"serialNumber": "sn-1"}),
+		})).To(Succeed())
+		Expect(h.ExecSQL(ctx, "SELECT remove_retention_policy('umh.value_polwarn')")).To(Succeed())
+		Expect(h.ExecSQL(ctx, "SELECT remove_retention_policy('umh.attribute_polwarn')")).To(Succeed())
+
+		h.Close(ctx)
+
+		restarted := tsh.NewHistorianTestHandle(sharedDSN, "polwarn")
+		restarted.SetPolicies(configuredCompress, configuredRetention, true)
+		logs := restarted.CaptureLogs()
+		Expect(restarted.Connect(ctx)).To(Succeed())
+		defer restarted.Close(ctx)
+
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("umh.value_polwarn already holds data, so the configured retention (%s) was not applied to it", configuredRetention)))
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("umh.attribute_polwarn already holds data, so the configured retention (%s) was not applied to it", configuredRetention)))
+		Expect(logs()).NotTo(ContainSubstring(fmt.Sprintf("configured retention (%ds) is not applied", seconds(configuredRetention))))
+		for _, table := range []string{"value_polwarn", "attribute_polwarn"} {
+			_, retention := restarted.PolicyIntervals(ctx, table)
+			Expect(retention).To(BeNil(), table)
+		}
+	})
+
+	It("keeps an operator's own retention interval across a restart", func() {
+		h := tsh.NewHistorianTestHandle(sharedDSN, "polkeep")
+		h.SetPolicies(configuredCompress, configuredRetention, true)
+		Expect(h.Connect(ctx)).To(Succeed())
+		Expect(h.ExecSQL(ctx, "SELECT remove_retention_policy('umh.value_polkeep')")).To(Succeed())
+		Expect(h.ExecSQL(ctx, fmt.Sprintf("SELECT add_retention_policy('umh.value_polkeep', INTERVAL '%d seconds')", seconds(operatorRetention)))).To(Succeed())
+
+		h.Close(ctx)
+
+		restarted := tsh.NewHistorianTestHandle(sharedDSN, "polkeep")
+		restarted.SetPolicies(configuredCompress, configuredRetention, true)
+		logs := restarted.CaptureLogs()
+		Expect(restarted.Connect(ctx)).To(Succeed())
+		defer restarted.Close(ctx)
+		_, retention := restarted.PolicyIntervals(ctx, "value_polkeep")
+		Expect(retention).NotTo(BeNil())
+		Expect(*retention).To(Equal(seconds(operatorRetention)))
+		Expect(logs()).To(ContainSubstring(fmt.Sprintf("umh.value_polkeep: configured retention (%ds) does not match the applied retention policy (%ds)", seconds(configuredRetention), seconds(operatorRetention))))
+		Expect(logs()).NotTo(ContainSubstring("umh.attribute_polkeep: configured retention"))
+	})
+
+	It("re-adds a removed compression policy on a hypertable that already has compressed chunks", func() {
+		h := tsh.NewHistorianTestHandle(sharedDSN, "polchunk")
+		h.SetPolicies(time.Hour, 0, false)
+		Expect(h.Connect(ctx)).To(Succeed())
+		Expect(h.WriteBatch(ctx, service.MessageBatch{
+			mkMsg(1.0, 1000, "_polchunk_v1", "acme.line1", "x", nil),
+		})).To(Succeed())
+		Expect(h.ExecSQL(ctx, "SELECT compress_chunk(c, if_not_compressed => true) FROM show_chunks('umh.value_polchunk') c")).To(Succeed())
+		Expect(h.ExecSQL(ctx, "SELECT remove_compression_policy('umh.value_polchunk')")).To(Succeed())
+
+		h.Close(ctx)
+
+		restarted := tsh.NewHistorianTestHandle(sharedDSN, "polchunk")
+		restarted.SetPolicies(time.Hour, 0, false)
+		logs := restarted.CaptureLogs()
+		Expect(restarted.Connect(ctx)).To(Succeed())
+		defer restarted.Close(ctx)
+		Expect(logs()).NotTo(ContainSubstring("was not applied to it"))
+		compressAfter, _ := restarted.PolicyIntervals(ctx, "value_polchunk")
+		Expect(compressAfter).NotTo(BeNil())
+		Expect(*compressAfter).To(Equal(int64(3600)))
+	})
+
+	It("names both tables when the applied policies cannot be read", func() {
+		h := connected("polunread")
+		defer h.Close(ctx)
+
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+
+		logs := h.CaptureLogs()
+		h.WarnPolicyDrift(cancelled)
+
+		Expect(logs()).To(ContainSubstring("cannot read the policies applied to umh.value_polunread"))
+		Expect(logs()).To(ContainSubstring("cannot read the policies applied to umh.attribute_polunread"))
+		Expect(logs()).NotTo(ContainSubstring("stays in force"))
+	})
+
+	It("names both tables when the retention check cannot read the catalog", func() {
+		h := tsh.NewHistorianTestHandle(sharedDSN, "retunread")
+		h.SetPolicies(configuredCompress, configuredRetention, true)
+		Expect(h.Connect(ctx)).To(Succeed())
+		defer h.Close(ctx)
+
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+
+		logs := h.CaptureLogs()
+		h.WarnRetentionNotApplied(cancelled)
+
+		Expect(logs()).To(ContainSubstring("cannot read the chunk count and retention policy of umh.value_retunread"))
+		Expect(logs()).To(ContainSubstring("cannot read the chunk count and retention policy of umh.attribute_retunread"))
+		Expect(logs()).NotTo(ContainSubstring("was not applied to it"))
+	})
+
+	It("logs a server warning at warning level and a routine notice at debug", func() {
+		h := connected("noticesev")
+		defer h.Close(ctx)
+
+		logs := h.CaptureLogs()
+		Expect(h.ExecSQL(ctx, "DO $$ BEGIN RAISE WARNING 'declined something'; RAISE NOTICE 'skipping something'; END $$;")).To(Succeed())
+
+		Expect(logs()).To(ContainSubstring("level=warning msg=historian: WARNING: declined something"))
+		Expect(logs()).To(ContainSubstring("level=debug msg=historian: NOTICE: skipping something"))
 	})
 
 	It("does not advance the topic sequence when re-resolving an existing topic", func() {
@@ -201,12 +474,12 @@ var _ = Describe("TimescaleDB integration", Ordered, Label("postgres"), func() {
 
 	It("re-warms after restart (fresh handle) without bumping the sequence", func() {
 		h1 := connected("restart2")
-		defer h1.Close(ctx)
 		Expect(h1.WriteBatch(ctx, service.MessageBatch{
 			mkMsg(1.0, 1000, "_restart2_v1", "acme.line1", "a", nil),
 			mkMsg(2.0, 1000, "_restart2_v1", "acme.line1", "b", nil),
 		})).To(Succeed())
 		seq := h1.TopicSeqValue(ctx)
+		h1.Close(ctx)
 
 		// A fresh handle == the restart path (no in-process state). Writing the SAME, existing
 		// topics resolves them via lookup with no sequence bump.

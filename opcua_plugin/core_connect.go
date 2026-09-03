@@ -17,6 +17,7 @@ package opcua_plugin
 import (
 	"context"
 	"crypto/rsa"
+	"crypto/sha3"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -29,7 +30,6 @@ import (
 
 	"github.com/gopcua/opcua"
 	"github.com/gopcua/opcua/ua"
-	"golang.org/x/crypto/sha3"
 )
 
 // parseBase64PEMBundle takes a base64-encoded string of a PEM bundle (containing both

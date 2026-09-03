@@ -32,7 +32,7 @@ func HistorianConfig() *service.ConfigSpec { return historianConfig() }
 
 // BootstrapSQLForTest renders the bootstrap DDL for a contract (default policies).
 func BootstrapSQLForTest(contract string) string {
-	return bootstrapSQL(contract, 168*time.Hour, 0, false)
+	return BootstrapSQLWithPoliciesForTest(contract, 168*time.Hour, 0, false)
 }
 
 // SchemaVersionForTest exposes the highest schema-migration version the bootstrap applies
@@ -146,6 +146,8 @@ func NewHistorianTestHandle(dsn string, contract string) *HistorianTestHandle {
 		contract:        contract,
 		metadataKeysAll: true,
 		compressAfter:   168 * time.Hour,
+		valueChunk:      168 * time.Hour,
+		attributeChunk:  168 * time.Hour,
 		maxInFlight:     8,
 		logger:          mgr.Logger(),
 		dropped:         mgr.Metrics().NewCounter("messages_dropped", "reason"),
@@ -369,4 +371,64 @@ func (h *HistorianTestHandle) ReportDropsForTest(total int, summaries map[string
 		m[DropReason(reason)] = dropSummary{count: s.Count, example: s.Example}
 	}
 	h.o.reportDrops(total, m)
+}
+
+// RenderBootstrapDDL renders the bootstrap DDL from the output's own config, so a config-parse test can
+// assert what the configured values turn into (BootstrapSQLForTest renders fixed defaults instead).
+func (h *HistorianTestHandle) RenderBootstrapDDL() string { return h.o.renderBootstrapDDL() }
+
+// ChunkDriftWarningsForTest exposes chunkDriftWarnings to the external test package.
+func ChunkDriftWarningsForTest(valueWant int64, appliedValue *int64, attributeWant int64, appliedAttribute *int64) []string {
+	return chunkDriftWarnings(valueWant, appliedValue, attributeWant, appliedAttribute)
+}
+
+// SetChunkIntervals overrides the chunk widths the bootstrap renders (integration tests).
+func (h *HistorianTestHandle) SetChunkIntervals(value time.Duration, attribute time.Duration) {
+	h.o.valueChunk = value
+	h.o.attributeChunk = attribute
+}
+
+func (h *HistorianTestHandle) AppliedChunkInterval(ctx context.Context, table string) *int64 {
+	ExpectWithOffset(1, h.o.pool).NotTo(BeNil(), "Connect must succeed before AppliedChunkInterval")
+	applied, err := h.o.readChunkInterval(ctx, table)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	return applied
+}
+
+func (h *HistorianTestHandle) WarnChunkDrift(ctx context.Context) { h.o.warnChunkDrift(ctx) }
+
+func (h *HistorianTestHandle) WarnPolicyDrift(ctx context.Context) { h.o.warnPolicyDrift(ctx, nil) }
+
+func (h *HistorianTestHandle) WarnRetentionNotApplied(ctx context.Context) {
+	h.o.warnRetentionNotApplied(ctx)
+}
+
+func BootstrapSQLWithPoliciesForTest(contract string, compressAfter time.Duration, retention time.Duration, retentionSet bool) string {
+	return bootstrapSQL(bootstrapConfig{
+		contract:       contract,
+		compressAfter:  compressAfter,
+		retention:      retention,
+		retentionSet:   retentionSet,
+		valueChunk:     168 * time.Hour,
+		attributeChunk: 168 * time.Hour,
+	})
+}
+
+func (h *HistorianTestHandle) SetPolicies(compressAfter time.Duration, retention time.Duration, retentionSet bool) {
+	ExpectWithOffset(1, h.o.pool).To(BeNil(), "SetPolicies must be called before Connect")
+	h.o.compressAfter = compressAfter
+	h.o.retention = retention
+	h.o.retentionSet = retentionSet
+}
+
+func (h *HistorianTestHandle) PolicyIntervals(ctx context.Context, table string) (*int64, *int64) {
+	ExpectWithOffset(1, h.o.pool).NotTo(BeNil(), "Connect must succeed before PolicyIntervals")
+	compressAfter, retention, err := h.o.readAppliedPolicies(ctx, table)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	return compressAfter, retention
+}
+
+func (h *HistorianTestHandle) ExecSQL(ctx context.Context, sql string) error {
+	_, err := h.o.pool.Exec(ctx, sql)
+	return err
 }

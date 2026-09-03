@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS umh.value_CONTRACT_SLOT (
   CONSTRAINT ck_value_text_max_size
     CHECK (octet_length(value_text) <= 65536)
 );
-SELECT create_hypertable('umh.value_CONTRACT_SLOT', 'ts', chunk_time_interval => INTERVAL '7 days', if_not_exists => TRUE);
+SELECT create_hypertable('umh.value_CONTRACT_SLOT', 'ts', chunk_time_interval => VALUE_CHUNK_SLOT, if_not_exists => TRUE);
 VALUE_POLICY_SLOT
 CREATE TABLE IF NOT EXISTS umh.attribute_CONTRACT_SLOT (
   topic_id  BIGINT      NOT NULL,
@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS umh.attribute_CONTRACT_SLOT (
   attribute JSONB       NOT NULL,
   PRIMARY KEY (topic_id, ts)
 );
-SELECT create_hypertable('umh.attribute_CONTRACT_SLOT', 'ts', if_not_exists => TRUE);
+SELECT create_hypertable('umh.attribute_CONTRACT_SLOT', 'ts', chunk_time_interval => ATTRIBUTE_CHUNK_SLOT, if_not_exists => TRUE);
 ATTR_POLICY_SLOT
 CREATE OR REPLACE FUNCTION umh.to_ltree_path(p_location_path text)
 RETURNS ltree
@@ -303,28 +303,53 @@ func sub(sql string, contract string) string {
 	return strings.ReplaceAll(sql, "CONTRACT_SLOT", contract)
 }
 
-// policyBlock generates the compression/retention setup for one hypertable, ledger-gated to run
-// once at first bootstrap (empty table, no compressed chunks). Running it every Connect broke two
-// ways: ALTER TABLE SET (compress...) errors once compressed chunks exist, and re-applying
-// retention un-scheduled an operator's manual policy. Consequence: editing compress_after/retention
-// needs a new migration step to re-apply.
-func policyBlock(table string, compressAfter time.Duration, retention time.Duration, retentionSet bool) string {
+// policyBlock builds the compression/retention setup for one hypertable. Its checks and the
+// statements they guard have to stay inside the advisory lock this template takes at the top.
+func policyBlock(hypertableName string, compressAfter time.Duration, retention time.Duration, retentionSet bool) string {
+	qualifiedTable := "umh." + hypertableName
+	compressionEnabled := compressionEnabledSQL(hypertableName)
+	compressionPolicyExists := policyJobExistsSQL("policy_compression", hypertableName)
+
 	var b strings.Builder
 	fmt.Fprintf(&b, `DO $pol$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM umh.schema_migrations WHERE version = 1) THEN
-    ALTER TABLE %[1]s SET (
+  IF NOT %s THEN
+    ALTER TABLE %s SET (
       timescaledb.compress,
       timescaledb.compress_segmentby = 'topic_id',
       timescaledb.compress_orderby   = 'ts DESC'
     );
-    PERFORM add_compression_policy('%[1]s', INTERVAL '%[2]d seconds');
-`, table, int64(compressAfter.Seconds()))
+  END IF;
+  IF NOT %s THEN
+    PERFORM add_compression_policy('%s', %s, if_not_exists => TRUE);
+  END IF;
+`, compressionEnabled, qualifiedTable, compressionPolicyExists, qualifiedTable, intervalSQL(compressAfter))
 	if retentionSet {
-		fmt.Fprintf(&b, "    PERFORM add_retention_policy('%s', INTERVAL '%d seconds');\n", table, int64(retention.Seconds()))
+		retentionPolicyExists := policyJobExistsSQL("policy_retention", hypertableName)
+		holdsData := hypertableHasChunksSQL(hypertableName)
+		fmt.Fprintf(&b, `  IF NOT %s AND NOT %s THEN
+    PERFORM add_retention_policy('%s', %s, if_not_exists => TRUE);
+  END IF;
+`, retentionPolicyExists, holdsData, qualifiedTable, intervalSQL(retention))
 	}
-	b.WriteString("  END IF;\nEND $pol$;")
+	b.WriteString("END $pol$;")
 	return b.String()
+}
+
+// policyJobExistsSQL and compressionEnabledSQL inline the hypertable name because a DO block takes
+// no parameters. procName is an internal constant, and the name reaching them is the CONTRACT_SLOT
+// template placeholder, replaced later by sub() with a contract ValidateContract has already matched
+// against ^[a-z0-9_]+$, so neither is a path for user input.
+func policyJobExistsSQL(procName string, hypertableName string) string {
+	return fmt.Sprintf("EXISTS (SELECT 1 FROM timescaledb_information.jobs WHERE proc_name = '%s' AND hypertable_schema = 'umh' AND hypertable_name = '%s')", procName, hypertableName)
+}
+
+func hypertableHasChunksSQL(hypertableName string) string {
+	return fmt.Sprintf("EXISTS (SELECT 1 FROM timescaledb_information.chunks WHERE hypertable_schema = 'umh' AND hypertable_name = '%s')", hypertableName)
+}
+
+func compressionEnabledSQL(hypertableName string) string {
+	return fmt.Sprintf("EXISTS (SELECT 1 FROM timescaledb_information.hypertables WHERE hypertable_schema = 'umh' AND hypertable_name = '%s' AND compression_enabled)", hypertableName)
 }
 
 // policyIntervalSQL returns a query for the interval (in seconds) of a TimescaleDB policy job on
@@ -332,47 +357,105 @@ BEGIN
 // one row (never ErrNoRows), so a nil scan means "no policy / catalog unavailable". procName and
 // configKey are internal constants, not user input.
 func policyIntervalSQL(procName string, configKey string) string {
-	return fmt.Sprintf(`SELECT (
+	return "SELECT " + policyIntervalSubquery(procName, configKey)
+}
+
+// policyIntervalSubquery is the same read as one scalar subquery, so a caller can select it beside
+// another one in a single statement.
+func policyIntervalSubquery(procName string, configKey string) string {
+	return fmt.Sprintf(`(
   SELECT EXTRACT(EPOCH FROM (config->>'%s')::interval)::bigint
     FROM timescaledb_information.jobs
    WHERE proc_name = '%s' AND hypertable_schema = 'umh' AND hypertable_name = $1
    LIMIT 1)`, configKey, procName)
 }
 
-// policyDriftWarnings compares configured compression/retention intervals against the ones
-// actually applied in the database (in seconds; nil = no such policy) and returns a warning per
-// divergence. appliedComp == nil means the compression policy could not be read -- either the
-// catalog is unavailable on this server or the database was never bootstrapped -- so it returns
-// nothing rather than risk a false warning. Compression always has a policy after bootstrap, so
-// its presence doubles as the "introspection works" probe for the retention checks.
-// retentionWant is nil when retention is unset in config (keep forever); appliedRet is nil when no
-// retention policy is scheduled in the database. Both compression and retention use the same nil-able
-// representation for "not set".
+// hypertableChunkCountSQL counts the chunks of one umh hypertable: a policy created on an empty
+// table destroys nothing, one created on a table with history does.
+const hypertableChunkCountSQL = `SELECT count(*) FROM timescaledb_information.chunks
+ WHERE hypertable_schema = 'umh' AND hypertable_name = $1`
+
+// policyDriftWarnings returns one warning per divergence between the configured and the applied
+// intervals. An applied interval is nil when no such policy is scheduled. retentionWant is nil when
+// retention is unset in config, the one nil here that means "wanted absent" rather than "is absent".
 func policyDriftWarnings(compressWant int64, appliedComp *int64, retentionWant *int64, appliedRet *int64) []string {
-	if appliedComp == nil {
-		return nil
-	}
 	var warns []string
-	if *appliedComp != compressWant {
-		warns = append(warns, fmt.Sprintf("configured compress_after (%ds) does not match the compression policy applied in the database (%ds)", compressWant, *appliedComp))
+	switch {
+	case appliedComp == nil:
+		warns = append(warns, fmt.Sprintf("configured compress_after (%ds) is not applied", compressWant))
+	case *appliedComp != compressWant:
+		warns = append(warns, fmt.Sprintf("configured compress_after (%ds) does not match the applied compression policy (%ds)", compressWant, *appliedComp))
 	}
 	switch {
 	case retentionWant != nil && appliedRet == nil:
-		warns = append(warns, fmt.Sprintf("configured retention (%ds) is not applied in the database", *retentionWant))
+		warns = append(warns, fmt.Sprintf("configured retention (%ds) is not applied", *retentionWant))
 	case retentionWant != nil && *appliedRet != *retentionWant:
-		warns = append(warns, fmt.Sprintf("configured retention (%ds) does not match the retention policy applied in the database (%ds)", *retentionWant, *appliedRet))
+		warns = append(warns, fmt.Sprintf("configured retention (%ds) does not match the applied retention policy (%ds)", *retentionWant, *appliedRet))
 	case retentionWant == nil && appliedRet != nil:
-		warns = append(warns, fmt.Sprintf("retention is unset in config but a retention policy (%ds) is applied in the database", *appliedRet))
+		warns = append(warns, fmt.Sprintf("retention is unset in config but a retention policy (%ds) is applied", *appliedRet))
 	}
 	return warns
 }
 
-func bootstrapSQL(contract string, compressAfter time.Duration, retention time.Duration, retentionSet bool) string {
+func intervalSQL(d time.Duration) string {
+	return fmt.Sprintf("INTERVAL '%d seconds'", int64(d.Seconds()))
+}
+
+type bootstrapConfig struct {
+	contract       string
+	compressAfter  time.Duration
+	retention      time.Duration
+	retentionSet   bool
+	valueChunk     time.Duration
+	attributeChunk time.Duration
+}
+
+// retentionSkipSQL reads both facts the retention decision needs, in one round trip: how many chunks
+// the hypertable holds, and the interval of its retention policy (NULL when it has none). One
+// statement means one failure path, so a read that fails cannot leave half the decision made.
+func retentionSkipSQL() string {
+	return fmt.Sprintf("SELECT (%s), %s", hypertableChunkCountSQL, policyIntervalSubquery("policy_retention", "drop_after"))
+}
+
+// chunkIntervalSQL reads the chunk width applied to a umh hypertable, in seconds. A scalar subquery,
+// so it always yields exactly one row and a nil scan means "not a hypertable here" rather than
+// ErrNoRows.
+func chunkIntervalSQL() string {
+	return `SELECT (
+  SELECT EXTRACT(EPOCH FROM time_interval)::bigint
+    FROM timescaledb_information.dimensions
+   WHERE hypertable_schema = 'umh' AND hypertable_name = $1 AND column_name = 'ts'
+   LIMIT 1)`
+}
+
+// chunkDriftWarnings compares the configured chunk intervals against the ones the tables were
+// actually created with (in seconds; nil = unreadable, so no warning rather than a false one).
+func chunkDriftWarnings(valueWant int64, appliedValue *int64, attributeWant int64, appliedAttribute *int64) []string {
+	var warns []string
+	if appliedValue != nil && *appliedValue != valueWant {
+		warns = append(warns, fmt.Sprintf("configured value_chunk_interval (%ds) does not match the chunk interval the value hypertable was created with (%ds)", valueWant, *appliedValue))
+	}
+	if appliedAttribute != nil && *appliedAttribute != attributeWant {
+		warns = append(warns, fmt.Sprintf("configured attribute_chunk_interval (%ds) does not match the chunk interval the attribute hypertable was created with (%ds)", attributeWant, *appliedAttribute))
+	}
+	return warns
+}
+
+func bootstrapSQL(cfg bootstrapConfig) string {
+	// Every slot is a distinct placeholder, so the order they are filled in does not matter. The one
+	// ordering that does is CONTRACT_SLOT: the blocks inserted here carry it, so sub() runs last.
+	slots := map[string]string{
+		"VALUE_CHUNK_SLOT":     intervalSQL(cfg.valueChunk),
+		"ATTRIBUTE_CHUNK_SLOT": intervalSQL(cfg.attributeChunk),
+		"VALUE_POLICY_SLOT":    policyBlock("value_CONTRACT_SLOT", cfg.compressAfter, cfg.retention, cfg.retentionSet),
+		"ATTR_POLICY_SLOT":     policyBlock("attribute_CONTRACT_SLOT", cfg.compressAfter, cfg.retention, cfg.retentionSet),
+		"MIGRATIONS_SLOT":      migrationsBlock(),
+	}
 	s := bootstrapTemplate
-	s = strings.Replace(s, "VALUE_POLICY_SLOT", policyBlock("umh.value_CONTRACT_SLOT", compressAfter, retention, retentionSet), 1)
-	s = strings.Replace(s, "ATTR_POLICY_SLOT", policyBlock("umh.attribute_CONTRACT_SLOT", compressAfter, retention, retentionSet), 1)
-	s = strings.Replace(s, "MIGRATIONS_SLOT", migrationsBlock(), 1)
-	return sub(s, contract)
+	for placeholder, replacement := range slots {
+		s = strings.Replace(s, placeholder, replacement, 1)
+	}
+	return sub(s, cfg.contract)
 }
 
 func valueQueryFor(contract string) string     { return sub(valueInsert, contract) }

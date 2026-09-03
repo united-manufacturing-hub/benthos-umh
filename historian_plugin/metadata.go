@@ -35,7 +35,7 @@ var skipStructural = toSet(
 
 // High-churn keys change on nearly every message and defeat metadata dedup.
 var highChurn = toSet(
-	"kafka_timestamp_ms",
+	"timestamp_ms", "kafka_timestamp_ms",
 	"opcua_source_timestamp", "opcua_server_timestamp", "opcua_attr_statuscode",
 	"opcua_heartbeat_message",
 	"spb_sequence", "spb_bdseq", "spb_timestamp", "spb_metric_index",
