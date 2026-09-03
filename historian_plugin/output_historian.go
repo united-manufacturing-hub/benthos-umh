@@ -27,6 +27,7 @@ import (
 
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
@@ -305,6 +306,22 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 			return fmt.Errorf("invalid connection settings: %s", o.redact(err)) // DSN echoes the password
 		}
 		cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec // simple protocol (pgbouncer txn pool)
+		// pgx drops server notices unless this is set, and the bootstrap needs them: add_*_policy with
+		// if_not_exists => TRUE reports a policy it declined to change as a WARNING notice and returns
+		// -1, so without this the decline reaches no log.
+		// SeverityUnlocalized is the protocol's V field, which is never translated. Severity carries
+		// the server's lc_messages translation, so it cannot be compared against an English literal.
+		// https://www.postgresql.org/docs/current/protocol-error-fields.html
+		cfg.ConnConfig.OnNotice = func(_ *pgconn.PgConn, n *pgconn.Notice) {
+			switch n.SeverityUnlocalized {
+			case "PANIC", "FATAL", "ERROR":
+				o.logger.Errorf("historian: %s: %s", n.SeverityUnlocalized, n.Message)
+			case "WARNING":
+				o.logger.Warnf("historian: %s: %s", n.SeverityUnlocalized, n.Message)
+			default:
+				o.logger.Debugf("historian: %s: %s", n.SeverityUnlocalized, n.Message)
+			}
+		}
 		// Each in-flight batch holds a pooled connection for its write tx, so a pool smaller than
 		// max_in_flight silently caps concurrency. pgxpool defaults to max(4, NumCPU), below the
 		// default 8; size it to max_in_flight+1 (+1 for Connect-time checks). A larger DSN
@@ -343,7 +360,8 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 		if _, err := conn.Exec(bootCtx, o.renderBootstrapDDL()); err != nil {
 			return fmt.Errorf("schema bootstrap failed: %w", err) // guard stays false -> next Connect retries
 		}
-		o.warnPolicyDrift(bootCtx)
+		retentionNotApplied := o.warnRetentionNotApplied(bootCtx)
+		o.warnPolicyDrift(bootCtx, retentionNotApplied)
 		o.warnChunkDrift(bootCtx)
 		o.bootstrapped = true
 	}
@@ -362,8 +380,8 @@ func (o *historianOutput) Connect(ctx context.Context) error {
 // only as an endless WriteBatch NACK and the output stalls instead of failing visibly.
 // Read-only catalog lookup, so it is safe on every Connect and under concurrency.
 func (o *historianOutput) probeWritable(ctx context.Context) error {
-	valueTbl := "umh.value_" + o.contract
-	attrTbl := "umh.attribute_" + o.contract
+	valueTbl := "umh." + o.valueTable()
+	attrTbl := "umh." + o.attributeTable()
 	var ok bool
 	if err := o.pool.QueryRow(ctx,
 		"SELECT has_table_privilege($1, 'INSERT') AND has_table_privilege($2, 'INSERT')",
@@ -376,38 +394,79 @@ func (o *historianOutput) probeWritable(ctx context.Context) error {
 	return nil
 }
 
-// readAppliedPolicies reads the compression/retention intervals (in seconds) TimescaleDB currently
-// has applied for this contract, as nil-able pointers (nil = no such policy scheduled). Both
-// hypertables get identical policies, so the value table is representative. It returns an error only
-// if the compression lookup itself fails (an unexpected catalog shape); the retention lookup is
-// best-effort. This is the I/O read half of warnPolicyDrift, split out so the drift check reads as
-// read -> compare (pure policyDriftWarnings) -> log.
-func (o *historianOutput) readAppliedPolicies(ctx context.Context) (*int64, *int64, error) {
-	table := "value_" + o.contract
+// readAppliedPolicies reads the intervals applied to one hypertable, in seconds. A nil interval
+// means no such policy is scheduled; a failed read is an error.
+func (o *historianOutput) readAppliedPolicies(ctx context.Context, hypertableName string) (*int64, *int64, error) {
 	var appliedComp, appliedRet *int64
-	if err := o.pool.QueryRow(ctx, policyIntervalSQL("policy_compression", "compress_after"), table).Scan(&appliedComp); err != nil {
+	if err := o.pool.QueryRow(ctx, policyIntervalSQL("policy_compression", "compress_after"), hypertableName).Scan(&appliedComp); err != nil {
 		return nil, nil, err
 	}
-	_ = o.pool.QueryRow(ctx, policyIntervalSQL("policy_retention", "drop_after"), table).Scan(&appliedRet)
+	if err := o.pool.QueryRow(ctx, policyIntervalSQL("policy_retention", "drop_after"), hypertableName).Scan(&appliedRet); err != nil {
+		return nil, nil, err
+	}
 	return appliedComp, appliedRet, nil
 }
 
-// warnPolicyDrift warns when the applied compression/retention policy differs from config. Policies
-// are set once at first bootstrap, so editing compress_after/retention and restarting otherwise has
-// no visible effect. Best-effort: introspection errors are swallowed so an unexpected catalog shape
-// never fails Connect.
-func (o *historianOutput) warnPolicyDrift(ctx context.Context) {
-	appliedComp, appliedRet, err := o.readAppliedPolicies(ctx)
-	if err != nil {
-		return
+// valueTable, attributeTable and hypertables name the two tables this output's contract owns. The
+// bootstrap DDL builds the same names from CONTRACT_SLOT, so a change to either side has to be made
+// on both.
+func (o *historianOutput) valueTable() string     { return "value_" + o.contract }
+func (o *historianOutput) attributeTable() string { return "attribute_" + o.contract }
+
+// hypertables lists them in the order every per-table check walks them.
+func (o *historianOutput) hypertables() []string {
+	return []string{o.valueTable(), o.attributeTable()}
+}
+
+// warnRetentionNotApplied names the hypertables the bootstrap left without the configured retention
+// policy because they already hold chunks. It returns them so warnPolicyDrift does not report the
+// same absence a second time as drift.
+func (o *historianOutput) warnRetentionNotApplied(ctx context.Context) map[string]struct{} {
+	notApplied := map[string]struct{}{}
+	if !o.retentionSet {
+		return notApplied
 	}
+	for _, table := range o.hypertables() {
+		var chunks int
+		var applied *int64
+		if err := o.pool.QueryRow(ctx, retentionSkipSQL(), table).Scan(&chunks, &applied); err != nil {
+			o.logger.Warnf("historian: cannot read the chunk count and retention policy of umh.%s, so cannot say whether retention (%s) was applied to it: %v", table, o.retention, err)
+			continue
+		}
+		if chunks == 0 {
+			continue
+		}
+		if applied != nil {
+			continue
+		}
+		notApplied[table] = struct{}{}
+		o.logger.Warnf("historian: umh.%s already holds data, so the configured retention (%s) was not applied to it. Applying it drops every chunk older than that. To apply it, run add_retention_policy('umh.%s', %s); to stop this warning, clear retention in the config.", table, o.retention, table, intervalSQL(o.retention))
+	}
+	return notApplied
+}
+
+// warnPolicyDrift warns when the applied compression/retention policy differs from config. Called
+// only from the bootstrap branch, so drift an operator introduces while the output is running is
+// not reported until it next starts. Best-effort: a failed read is logged and never fails Connect.
+func (o *historianOutput) warnPolicyDrift(ctx context.Context, retentionNotApplied map[string]struct{}) {
 	var retentionWant *int64
 	if o.retentionSet {
 		v := int64(o.retention.Seconds())
 		retentionWant = &v
 	}
-	for _, w := range policyDriftWarnings(int64(o.compressAfter.Seconds()), appliedComp, retentionWant, appliedRet) {
-		o.logger.Warnf("historian: %s. The applied value stays in force.", w)
+	for _, table := range o.hypertables() {
+		appliedComp, appliedRet, err := o.readAppliedPolicies(ctx, table)
+		if err != nil {
+			o.logger.Warnf("historian: cannot read the policies applied to umh.%s, so cannot report drift: %v", table, err)
+			continue
+		}
+		want := retentionWant
+		if _, reported := retentionNotApplied[table]; reported {
+			want = nil
+		}
+		for _, w := range policyDriftWarnings(int64(o.compressAfter.Seconds()), appliedComp, want, appliedRet) {
+			o.logger.Warnf("historian: umh.%s: %s. The applied value stays in force.", table, w)
+		}
 	}
 }
 
@@ -437,8 +496,8 @@ func (o *historianOutput) readChunkIntervalOrWarn(ctx context.Context, table str
 // warnChunkDrift warns when a table's chunk interval differs from config. create_hypertable is a
 // no-op once the table exists, so editing an interval and restarting otherwise has no visible effect.
 func (o *historianOutput) warnChunkDrift(ctx context.Context) {
-	appliedValue := o.readChunkIntervalOrWarn(ctx, "value_"+o.contract)
-	appliedAttribute := o.readChunkIntervalOrWarn(ctx, "attribute_"+o.contract)
+	appliedValue := o.readChunkIntervalOrWarn(ctx, o.valueTable())
+	appliedAttribute := o.readChunkIntervalOrWarn(ctx, o.attributeTable())
 	for _, w := range chunkDriftWarnings(int64(o.valueChunk.Seconds()), appliedValue, int64(o.attributeChunk.Seconds()), appliedAttribute) {
 		o.logger.Warnf("historian: %s. The applied width stays in force, and existing chunks keep theirs.", w)
 	}
