@@ -12,7 +12,7 @@ This section covers Benthos input plugins for collecting data from various indus
 
 - **[ifm IO-Link Master / SensorConnect](ifm-io-link-master-sensorconnect.md)** - Integrates with ifm electronic's IO-Link Master devices (AL1350, AL1352) and EIO404 Bluetooth mesh stations. Processes sensor data using IODD files for human-readable output.
 
-- **[Beckhoff ADS (Community)](beckhoff-ads-community.md)** - Community-supported plugin for Beckhoff's ADS protocol. Supports batch reading, notifications, and symbol-based communication with Beckhoff PLCs.
+- **[Beckhoff ADS](beckhoff-ads/README.md)** - Reads Beckhoff PLCs over ADS with change notifications or interval polling, addressing variables by symbol name. Covers TwinCAT 2 and TwinCAT 3, with automatic route registration.
 
 - **[Siemens S7](siemens-s7.md)** - Connects to Siemens S7 PLCs via the native S7 protocol, enabling cyclic or on-demand reads of data blocks, inputs/outputs, and markers with configurable polling interval.
 
