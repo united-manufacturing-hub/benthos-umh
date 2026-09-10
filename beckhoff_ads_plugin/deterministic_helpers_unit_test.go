@@ -1835,7 +1835,8 @@ symbols:
 })
 
 var _ = Describe("benthosLogHandler level mapping", func() {
-	// go-ads owns the level; the bridge only maps slog levels onto benthos ones.
+	// go-ads owns the level; the bridge only maps slog levels onto benthos ones,
+	// apart from the base-type warning covered in its own block below.
 	rec := func(level slog.Level, msg string, attrs ...slog.Attr) slog.Record {
 		r := slog.NewRecord(time.Time{}, level, msg, 0)
 		r.AddAttrs(attrs...)
@@ -1863,5 +1864,63 @@ var _ = Describe("benthosLogHandler level mapping", func() {
 		h := &benthosLogHandler{logger: service.MockResources().Logger()}
 		Expect(h.Enabled(context.Background(), slog.Level(-8))).To(BeFalse())
 		Expect(h.Enabled(context.Background(), slog.LevelDebug)).To(BeTrue())
+	})
+})
+
+var _ = Describe("stringBaseType", func() {
+	DescribeTable("recovers the base type go-ads leaves empty for a string member",
+		func(dataType, want string) {
+			Expect(stringBaseType(dataType)).To(Equal(want))
+		},
+		// go-ads reports the normalized name, but the length-carrying form
+		// reaches us from the direct-symbol path, so both have to resolve.
+		Entry("normalized", "STRING", "STRING"),
+		Entry("with length", "STRING(80)", "STRING"),
+		Entry("wide", "WSTRING", "WSTRING"),
+		Entry("wide with length", "WSTRING(20)", "WSTRING"),
+		Entry("lower case", "string(80)", "STRING"),
+		// Guessing a numeric width is the library's job: DINT and REAL share it.
+		Entry("numeric", "LREAL", ""),
+		Entry("user-defined", "ST_MachineStatus", ""),
+		Entry("enum", "E_MachineState", ""),
+		Entry("empty", "", ""),
+	)
+})
+
+var _ = Describe("benthosLogHandler and the unresolved base type warning", func() {
+	warn := func(dataType string) slog.Record {
+		r := slog.NewRecord(time.Time{}, slog.LevelWarn,
+			"cannot resolve the base type of a user-defined type; no datatype table is loaded", 0)
+		r.AddAttrs(slog.String("symbol", "GVL.stStatus.sName"), slog.String("dataType", dataType))
+		return r
+	}
+	handled := func(r slog.Record) []capturedLog {
+		logger, recs := capturingLogger()
+		h := &benthosLogHandler{logger: logger}
+		Expect(h.Handle(context.Background(), r)).To(Succeed())
+		return *recs
+	}
+
+	It("drops to debug for a string, whose base type the adapter supplies", func() {
+		recs := handled(warn("STRING"))
+		Expect(recs).To(HaveLen(1))
+		Expect(recs[0].Level).To(Equal(slog.LevelDebug))
+	})
+
+	It("keeps warning for a type nothing can resolve", func() {
+		// LREAL and DINT share a width, so the operator has to know.
+		for _, dataType := range []string{"LREAL", "DINT", "ST_MachineStatus"} {
+			recs := handled(warn(dataType))
+			Expect(recs).To(HaveLen(1))
+			Expect(recs[0].Level).To(Equal(slog.LevelWarn), "dataType=%s", dataType)
+		}
+	})
+
+	It("keeps warning when a string carries an unrelated message", func() {
+		r := slog.NewRecord(time.Time{}, slog.LevelWarn, "route registration failed", 0)
+		r.AddAttrs(slog.String("dataType", "STRING"))
+		recs := handled(r)
+		Expect(recs).To(HaveLen(1))
+		Expect(recs[0].Level).To(Equal(slog.LevelWarn))
 	})
 })
