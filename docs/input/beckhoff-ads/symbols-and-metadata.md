@@ -65,6 +65,26 @@ to the PLC. Two symbols can in principle collapse to the same tag name (`.a[0]` 
 actually named `a_0`), so if a program relies on that distinction, use
 `ads_symbol_name_original` in the `tag_processor` instead.
 
+## Structs and arrays
+
+A named member reads like any other symbol:
+
+```yaml
+unifiedAddress:
+  - "GVL_ProcessData.stMachineStatus.stMotor1.fSpeed"
+  - "GVL_ProcessData.anCounters[0]"
+```
+
+Naming the struct itself returns the whole thing as one message, with the members as nested JSON:
+
+```json
+{"SMACHINENAME":"TestMachine_Line1","STMOTOR1":{"BENABLED":false,"FSPEED":291,"FTORQUE":29.1}}
+```
+
+That form needs `loadSymbols: true`, because the layout comes from the PLC's datatype table. Without
+it the read fails for the struct and the log says `Batch read produced no value for symbol`. Reading
+a member by name needs no table either way.
+
 ## Metadata outputs
 
 Each symbol produces one message whose payload is the value read from the PLC, so
@@ -75,7 +95,7 @@ Each symbol produces one message whose payload is the value read from the PLC, s
 | `ads_symbol_name` | PLC symbol name as one topic segment; see [Symbol names in topics](#symbol-names-in-topics) |
 | `ads_symbol_name_original` | The symbol exactly as the PLC names it, dots and brackets intact (e.g. `PRG_Diagnostics.astSensorHistory[0].fValue`) |
 | `ads_datatype` | PLC data type string as reported by the symbol table (e.g. `DINT`, `E_MachineState`, `REAL`). Set after first successful symbol resolution, may be absent on the very first batch after connect. |
-| `ads_base_type` | Resolved IEC 61131-3 primitive underlying the symbol (e.g. `DINT` for an INT-aliased enum). Only set when the type resolves to a known primitive. |
+| `ads_base_type` | Resolved IEC 61131-3 primitive underlying the symbol (e.g. `DINT` for an INT-aliased enum). Absent when the type does not resolve to a primitive, and absent for the numeric members of a struct while `loadSymbols` is on |
 | `ads_data_size` | Byte length of the symbol as reported by the PLC (e.g. `4` for DINT, `82` for STRING). |
 | `ads_tag_type` | Value shape of the payload: `number`, `bool`, or `string`. Set for every message so downstream processors can branch on payload type without inspecting `ads_datatype`/`ads_base_type`. |
 | `timestamp_ms` | Unix milliseconds for when the value was captured. For `readType: notification`, this is the PLC's sample time for that update; for `readType: interval`, this is the time the plugin performed the read. |
