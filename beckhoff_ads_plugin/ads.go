@@ -347,6 +347,11 @@ func (a *AdsCommInput) onSessionEvent(ev SessionEvent, reason string) {
 		// Handled inside the library — a symbol-version reload it is already
 		// driving. Worth a line for correlation, not a restart.
 		a.Log.With("reason", reason).Debug("ADS session reported a condition the library handles itself")
+	default:
+		// A SessionEvent added to client.go without a case here. Logged rather
+		// than degraded: an unknown severity is not grounds for a rebuild.
+		a.Log.With("event", int(ev), "reason", reason).
+			Warn("ADS session reported an event this input does not handle; treating it as informational")
 	}
 }
 
