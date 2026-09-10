@@ -1410,6 +1410,20 @@ var _ = Describe("sessionConfig", func() {
 		Expect(reason).NotTo(BeNil())
 		Expect(*reason).To(Equal("heartbeat-silent"))
 	})
+
+	It("reports an event it does not handle without degrading the session", func() {
+		// Stands in for a SessionEvent added to client.go without a case in
+		// onSessionEvent: it has to be visible, and it must not force a rebuild.
+		logger, recs := capturingLogger()
+		a := &AdsCommInput{Log: logger}
+
+		a.onSessionEvent(SessionEvent(99), "something-new")
+
+		Expect(levelsOf(recs, slog.LevelWarn)).To(Equal([]slog.Level{slog.LevelWarn}))
+		Expect((*recs)[0].Attrs).To(HaveKeyWithValue("event", "99"))
+		Expect((*recs)[0].Attrs).To(HaveKeyWithValue("reason", "something-new"))
+		Expect(a.degradedReason.Load()).To(BeNil())
+	})
 })
 
 var _ = Describe("setupNotifications", func() {
