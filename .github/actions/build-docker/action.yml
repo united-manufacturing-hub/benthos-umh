@@ -69,22 +69,20 @@ runs:
           type=ref,event=pr
           type=sha
 
-    # wretry passes the wrapped action's inputs as one string, so every value has
-    # to survive on a single line. Tags never contain a comma and depot splits on
-    # one; label values do contain commas, so they are indented to stay a block.
-    - name: Flatten the build inputs for the retry wrapper
-      id: flat
+    # wretry parses the wrapped action's inputs as YAML, so a value spanning
+    # lines breaks the document. JSON-encode both: valid YAML, one line, and the
+    # newlines depot splits tags and labels on survive as escapes.
+    - name: Encode the build inputs for the retry wrapper
+      id: enc
       shell: bash
       env:
-        TAGS_JSON: ${{ steps.meta.outputs.json }}
+        META_JSON: ${{ steps.meta.outputs.json }}
         LABELS: ${{ steps.meta.outputs.labels }}
       run: |
         set -euo pipefail
-        echo "tags=$(jq -r '.tags | join(",")' <<<"$TAGS_JSON")" >> "$GITHUB_OUTPUT"
         {
-          echo 'labels<<__EOF__'
-          printf '%s\n' "$LABELS" | sed 's/^/          /'
-          echo '__EOF__'
+          echo "tags=$(jq -r '.tags | join("\n")' <<<"$META_JSON" | jq -Rs .)"
+          echo "labels=$(jq -Rs . <<<"$LABELS")"
         } >> "$GITHUB_OUTPUT"
 
     # Depot occasionally drops the build stream mid-`go build` ("keepalive ping
@@ -100,9 +98,8 @@ runs:
           token: ${{ inputs.depot-token }}
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.flat.outputs.tags }}
-          labels: |
-            ${{ steps.flat.outputs.labels }}
+          tags: ${{ steps.enc.outputs.tags }}
+          labels: ${{ steps.enc.outputs.labels }}
           build-args: APP_VERSION=${{ steps.meta.outputs.version }}
           provenance: false
           file: ./Dockerfile
