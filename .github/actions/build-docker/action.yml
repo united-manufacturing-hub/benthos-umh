@@ -78,14 +78,14 @@ runs:
       with:
         action: depot/build-push-action@9785b135c3c76c33db102e45be96a25ab55cd507 # v1
         attempt_limit: 3
-        attempt_delay_ms: 5000
+        attempt_delay: 5000
         with: |
           project: ${{ inputs.depot-project-id }}
           token: ${{ inputs.depot-token }}
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ toJSON(steps.meta.outputs.tags) }}
+          labels: ${{ toJSON(steps.meta.outputs.labels) }}
           build-args: |
             APP_VERSION=${{ steps.meta.outputs.version }}
           provenance: false
