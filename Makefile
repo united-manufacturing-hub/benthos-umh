@@ -168,6 +168,12 @@ test-classic-to-core:
 	@TEST_CLASSIC_TO_CORE=1 \
 		$(GINKGO_CMD) $(GINKGO_FLAGS) ./classic_to_core_plugin/...
 
+# The hardware specs skip themselves unless TEST_ADS_TC2_/TC3_TARGET_IP name a
+# reachable PLC, so this runs the unit specs alone by default.
+.PHONY: test-ads
+test-ads:
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./beckhoff_ads_plugin/...
+
 .PHONY: test-downsampler
 test-downsampler:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./downsampler_plugin/...
