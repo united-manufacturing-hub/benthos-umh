@@ -44,6 +44,10 @@ source the PLC sees. See
 
 ## Reconnection
 
+A session that is down is logged at error level: nothing is read while it lasts, and with
+`readType: notification` the samples in the gap are gone. Under UMH Core that also holds the bridge
+out of active until it recovers.
+
 The plugin automatically reconnects when the TCP connection is lost (e.g. network cable unplugged, PLC restart). TCP keepalive is set to probe after 3 s idle, then every 2 s, five times, so a dead connection is
 declared after about 13 s. On reconnect, the plugin:
 1. Re-establishes the TCP connection, retrying indefinitely on the backoff ramp below
