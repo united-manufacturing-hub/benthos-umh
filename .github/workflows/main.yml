@@ -32,21 +32,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
-      # Depot occasionally drops the build stream mid-`go build`
-      # ("keepalive ping failed to receive ACK"), which fails the job even though
-      # nothing is wrong with the tree. One automatic retry keeps a PR's image
-      # available for umh-core testing without a manual re-run.
       - name: Build and Push Docker Image
-        id: build
-        continue-on-error: true
-        uses: ./.github/actions/build-docker
-        with:
-          image-name: ${{ github.repository }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          depot-project-id: ${{ secrets.DEPOT_PROJECT_ID }}
-          depot-token: ${{ secrets.DEPOT_TOKEN }}
-      - name: Build and Push Docker Image (retry)
-        if: steps.build.outcome == 'failure'
         uses: ./.github/actions/build-docker
         with:
           image-name: ${{ github.repository }}

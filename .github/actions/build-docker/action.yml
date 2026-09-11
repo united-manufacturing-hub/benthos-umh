@@ -69,16 +69,40 @@ runs:
           type=ref,event=pr
           type=sha
 
+    # wretry passes the wrapped action's inputs as one string, so every value has
+    # to survive on a single line. Tags never contain a comma and depot splits on
+    # one; label values do contain commas, so they are indented to stay a block.
+    - name: Flatten the build inputs for the retry wrapper
+      id: flat
+      shell: bash
+      env:
+        TAGS_JSON: ${{ steps.meta.outputs.json }}
+        LABELS: ${{ steps.meta.outputs.labels }}
+      run: |
+        set -euo pipefail
+        echo "tags=$(jq -r '.tags | join(",")' <<<"$TAGS_JSON")" >> "$GITHUB_OUTPUT"
+        {
+          echo 'labels<<__EOF__'
+          printf '%s\n' "$LABELS" | sed 's/^/          /'
+          echo '__EOF__'
+        } >> "$GITHUB_OUTPUT"
+
+    # Depot occasionally drops the build stream mid-`go build` ("keepalive ping
+    # failed to receive ACK"), failing the job with nothing wrong in the tree.
     - name: Build and Push Docker Image
-      uses: depot/build-push-action@9785b135c3c76c33db102e45be96a25ab55cd507 # v1
+      uses: Wandalen/wretry.action@e68c23e6309f2871ca8ae4763e7629b9c258e1ea # v3.8.0
       with:
-        project: ${{ inputs.depot-project-id }}
-        token: ${{ inputs.depot-token }}
-        push: true
-        platforms: linux/amd64,linux/arm64
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-        build-args: |
-          APP_VERSION=${{ steps.meta.outputs.version }}
-        provenance: false
-        file: ./Dockerfile
+        action: depot/build-push-action@9785b135c3c76c33db102e45be96a25ab55cd507 # v1
+        attempt_limit: 2
+        attempt_delay: 15000
+        with: |
+          project: ${{ inputs.depot-project-id }}
+          token: ${{ inputs.depot-token }}
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.flat.outputs.tags }}
+          labels: |
+            ${{ steps.flat.outputs.labels }}
+          build-args: APP_VERSION=${{ steps.meta.outputs.version }}
+          provenance: false
+          file: ./Dockerfile
