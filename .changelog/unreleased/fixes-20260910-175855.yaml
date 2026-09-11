@@ -1,3 +1,0 @@
-kind: fixes
-body: Beckhoff ADS reports ads_base_type for string members of a struct when loadSymbols is enabled, and no longer warns that the base type is unresolved for them (ENG-4538)
-time: 2026-09-10T17:58:55+02:00

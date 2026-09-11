@@ -183,28 +183,7 @@ func (c *goADSClient) GetSymbol(ctx context.Context, name string) (SymbolInfo, e
 	if err != nil {
 		return SymbolInfo{}, err
 	}
-	base := v.BaseTypeName()
-	if base == "" {
-		base = stringBaseType(v.DataType)
-	}
-	return SymbolInfo{DataType: v.DataType, BaseType: base, Length: v.Length}, nil
-}
-
-// stringBaseType recovers the base type of a STRING member that go-ads resolved
-// through the datatype table, where it reports the type name but no type ID.
-//
-// Only the string types need this: go-ads rewrites `STRING(80)` to `STRING`
-// after keying its datatype table by the original name, so the table lookup
-// that resolves every other primitive misses. Remove this once the library
-// resolves the name itself.
-func stringBaseType(dataType string) string {
-	switch {
-	case strings.HasPrefix(strings.ToUpper(dataType), "WSTRING"):
-		return "WSTRING"
-	case strings.HasPrefix(strings.ToUpper(dataType), "STRING"):
-		return "STRING"
-	}
-	return ""
+	return SymbolInfo{DataType: v.DataType, BaseType: v.BaseTypeName(), Length: v.Length}, nil
 }
 
 func (c *goADSClient) ReadMultipleSymbols(ctx context.Context, names []string) (map[string]string, error) {
