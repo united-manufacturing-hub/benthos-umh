@@ -69,16 +69,24 @@ runs:
           type=ref,event=pr
           type=sha
 
+    # Depot occasionally drops the build stream mid-`go build`
+    # ("keepalive ping failed to receive ACK"), which fails the job even though
+    # nothing is wrong with the tree. Retry via wretry.action so bumping the
+    # retry count later is a one-line change instead of a duplicated step.
     - name: Build and Push Docker Image
-      uses: depot/build-push-action@9785b135c3c76c33db102e45be96a25ab55cd507 # v1
+      uses: Wandalen/wretry.action@e68c23e6309f2871ca8ae4763e7629b9c258e1ea # v3
       with:
-        project: ${{ inputs.depot-project-id }}
-        token: ${{ inputs.depot-token }}
-        push: true
-        platforms: linux/amd64,linux/arm64
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-        build-args: |
-          APP_VERSION=${{ steps.meta.outputs.version }}
-        provenance: false
-        file: ./Dockerfile
+        action: depot/build-push-action@9785b135c3c76c33db102e45be96a25ab55cd507 # v1
+        attempt_limit: 3
+        attempt_delay: 5000
+        with: |
+          project: ${{ inputs.depot-project-id }}
+          token: ${{ inputs.depot-token }}
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ toJSON(steps.meta.outputs.tags) }}
+          labels: ${{ toJSON(steps.meta.outputs.labels) }}
+          build-args: |
+            APP_VERSION=${{ steps.meta.outputs.version }}
+          provenance: false
+          file: ./Dockerfile
