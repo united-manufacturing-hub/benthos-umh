@@ -1,0 +1,3 @@
+kind: fixes
+body: Beckhoff ADS reports the declared type of a struct member or array element, so a BOOL member is no longer described as SINT or BYTE and no longer arrives with ads_tag_type number, and a session that is not serving data is logged at error rather than warning (ENG-4538)
+time: 2026-09-11T15:20:25+02:00
