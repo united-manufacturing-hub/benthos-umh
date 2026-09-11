@@ -72,7 +72,11 @@ func (h *benthosLogHandler) Handle(_ context.Context, r slog.Record) error {
 	case level >= slog.LevelError:
 		l.Errorf("%s", r.Message)
 	case level >= slog.LevelWarn:
-		l.Warnf("%s", r.Message)
+		if strings.Contains(r.Message, "reconnect dial") {
+			l.Errorf("%s", r.Message)
+		} else {
+			l.Warnf("%s", r.Message)
+		}
 	case level >= slog.LevelInfo:
 		l.Infof("%s", r.Message)
 	default:
