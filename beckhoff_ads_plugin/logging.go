@@ -17,13 +17,12 @@ package beckhoff_ads_plugin
 import (
 	"context"
 	"log/slog"
-	"strings"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 // benthosLogHandler bridges go-ads slog records to a Benthos service.Logger.
-// Levels are taken as go-ads sets them, with the single exception in Handle.
+// Levels are taken as go-ads sets them; a second level policy here would drift.
 type benthosLogHandler struct {
 	logger *service.Logger
 	attrs  []slog.Attr
@@ -35,20 +34,12 @@ func (h *benthosLogHandler) Enabled(_ context.Context, level slog.Level) bool {
 	return level >= slog.LevelDebug
 }
 
-// unresolvedBaseTypeMessage is go-ads' warning for a symbol whose base type it
-// could not resolve.
-const unresolvedBaseTypeMessage = "cannot resolve the base type"
-
 func (h *benthosLogHandler) Handle(_ context.Context, r slog.Record) error {
 	var kvs []any
-	var dataType string
 	for _, a := range h.attrs {
 		kvs = append(kvs, a.Key, a.Value.Any())
 	}
 	r.Attrs(func(a slog.Attr) bool {
-		if a.Key == "dataType" {
-			dataType = a.Value.String()
-		}
 		kvs = append(kvs, a.Key, a.Value.Any())
 		return true
 	})
@@ -58,22 +49,12 @@ func (h *benthosLogHandler) Handle(_ context.Context, r slog.Record) error {
 		l = l.With(kvs...)
 	}
 
-	// The one level override: go-ads cannot resolve a STRING member's base type
-	// through the datatype table, and its hint asks for the symbol load that is
-	// already on. stringBaseType supplies the answer, so the warning is noise.
-	level := r.Level
-	if level == slog.LevelWarn &&
-		strings.Contains(r.Message, unresolvedBaseTypeMessage) &&
-		stringBaseType(dataType) != "" {
-		level = slog.LevelDebug
-	}
-
 	switch {
-	case level >= slog.LevelError:
+	case r.Level >= slog.LevelError:
 		l.Errorf("%s", r.Message)
-	case level >= slog.LevelWarn:
+	case r.Level >= slog.LevelWarn:
 		l.Warnf("%s", r.Message)
-	case level >= slog.LevelInfo:
+	case r.Level >= slog.LevelInfo:
 		l.Infof("%s", r.Message)
 	default:
 		l.Debugf("%s", r.Message)
