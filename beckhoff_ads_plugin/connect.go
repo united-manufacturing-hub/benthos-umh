@@ -103,6 +103,8 @@ func (a *AdsCommInput) setupNotifications(ctx context.Context) error {
 		}
 		a.Log.Warnf("Notification symbol %q rejected by PLC: ADS error 0x%X", r.SymbolName, r.Code)
 	}
+	// Same message text the library logs after a reconnect re-subscribe, so the
+	// first connect and a recovery read identically.
 	a.Log.Infof("Registering notifications succeeded for %d/%d symbols", registered, len(cfgs))
 
 	return a.waitForInitialSamples(ctx, results)
