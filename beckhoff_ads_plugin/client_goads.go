@@ -282,6 +282,12 @@ func connectDropKind(err error) dropKind {
 // instead (session.go "was registered but the PLC did not serve it"), so that
 // one is matched on text until go-ads exports a sentinel for it.
 func isRouteFault(err error) bool {
+	// Deaf router: unreachable for a moment, nothing to correct. Checked first,
+	// or the "route registration" text match below claims it and the long
+	// route-fault ramp holds the bridge down for minutes over a few seconds.
+	if errors.Is(err, adsLib.ErrRouterUnresponsive) {
+		return false
+	}
 	if errors.Is(err, adsLib.ErrRouteNotServed) {
 		return true
 	}

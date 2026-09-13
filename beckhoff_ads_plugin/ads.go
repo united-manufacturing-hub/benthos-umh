@@ -357,10 +357,14 @@ func (a *AdsCommInput) onSessionEvent(ev SessionEvent, reason string) {
 
 // markDegraded flags the session for rebuild. First writer wins: that is the
 // reason that caused it.
+//
+// Error, not Warn: both callers are the library reporting that it has given up,
+// so no data is read until the rebuild lands and a notification session loses
+// the samples in that window. The CompareAndSwap keeps it to one line.
 func (a *AdsCommInput) markDegraded(reason string, detail string) {
 	if a.degradedReason.CompareAndSwap(nil, &reason) {
 		a.Log.With("reason", reason, "detail", detail).
-			Warn("ADS session can no longer deliver; rebuilding it on the next read")
+			Error("ADS session can no longer deliver; rebuilding it on the next read")
 	}
 }
 
