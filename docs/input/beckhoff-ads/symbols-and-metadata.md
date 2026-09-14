@@ -4,31 +4,25 @@ How to address a symbol, and what each message carries once it is read.
 
 ## Addressing symbols
 
-Symbols are specified as `name[:opt1[:opt2...]]`. Options are either positional integers or `key=value` pairs. Both forms can be mixed.
+Symbols are specified as `name[:key=value...]`. Each option names the field it sets.
 
 | Format | maxDelay | cycleTime |
 |--------|----------|-----------|
 | `MAIN.var` | default | default |
-| `MAIN.var:50:100` | 50 | 100 |
-| `MAIN.var:50` | 50 | default |
-| `MAIN.var::100` | default | 100 |
 | `MAIN.var:cycleTime=100` | default | 100 |
 | `MAIN.var:maxDelay=50` | 50 | default |
-| `MAIN.var:50:cycleTime=100` | 50 (positional) | 100 (key) |
-| `MAIN.var:30:maxDelay=50` | 50 (key overrides positional 30) | default |
 | `MAIN.var:maxDelay=50:cycleTime=100` | 50 | 100 |
 
 **Rules:**
-- Positional integers fill `maxDelay` then `cycleTime` in order
-- An empty slot (`::`) reserves the position but keeps the default. Use it to skip `maxDelay` and set only `cycleTime`
-- `key=value` options override by name and do not consume a positional slot
-- A keyed option always wins over a positional option for the same field
+- Options are `key=value`; the only keys are `maxDelay` and `cycleTime`
+- A bare number is ignored with a warning, and the default is kept
+- Values without a unit are milliseconds; `cycleTime=10ms` and `cycleTime=10` are the same
 - Invalid or omitted values fall back to the plugin-level `maxDelay`/`cycleTime` defaults
 
 **Examples:**
 - `MAIN.MYBOOL`: uses plugin-level defaults for both
-- `MAIN.MYTRIGGER:0:10`: 0ms max delay, 10ms cycle time
-- `MAIN.MYSENSOR::10`: default max delay, 10ms cycle time
+- `MAIN.MYTRIGGER:maxDelay=0:cycleTime=10`: 0ms max delay, 10ms cycle time
+- `MAIN.MYSENSOR:cycleTime=10`: default max delay, 10ms cycle time
 - `.superDuperInt`: global variable (TC2, must start with `.`)
 
 **TwinCAT 3** qualifies every symbol with the object that declares it. A global variable is

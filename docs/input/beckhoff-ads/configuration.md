@@ -8,8 +8,7 @@ Every setting this input accepts, and two complete examples that use all of them
 |-----------|----------|---------|-------------|
 | **targetAddress** | Yes | — | IP address (and optional port) of the PLC's ADS gateway, as `ip` or `ip:port`. Port defaults to `48898` if omitted |
 | **targetAMS** | No | discovered | AMS net ID of the target runtime. Left empty, the plugin asks the PLC for its own on connect, so it normally does not need setting. Set it only to pin a specific runtime; a mismatch with what the PLC reports is logged as a warning, not an error |
-| **unifiedAddress** | No\* | `[]` | Symbols to read, in unified address form (see [Symbols Format](symbols-and-metadata.md#addressing-symbols) below) |
-| **symbols** | No\* | `[]` | Symbols to read by PLC symbol name, same format and parsing rules as `unifiedAddress`. Appended after `unifiedAddress` at connect time; use as an alternative when symbol names don't come from a shared unified-address list |
+| **unifiedAddress** | Yes | `[]` | Symbols to read, in unified address form (see [Symbols Format](symbols-and-metadata.md#addressing-symbols) below) |
 | **loadSymbols** | No | `false` | Download the PLC's symbol and datatype table on connect. Required to read a struct or array as one value, which arrives as nested JSON. A named member (`GVL.stStatus.fValue`) resolves without it. The download can cause brief real-time jitter on the PLC, so it is off by default |
 | **runtimePort** | No | `851` | AMS port of the PLC runtime. `851` is the first TwinCAT 3 runtime and `801` the first TwinCAT 2 one, so a TwinCAT 2 PLC has to set this. `0` asks the PLC for its TwinCAT version and uses the first runtime of that version. A later runtime (`811`, `821` on TwinCAT 2; `852`, `853` on TwinCAT 3) always has to be set explicitly |
 | **hostAMS** | No | `auto` | Host AMS net ID. Usually the IP address + `.1.1`. Must match a route on the PLC. `auto` derives it from `hostIP` if set, otherwise from the outbound connection's local IP |
@@ -27,8 +26,6 @@ Every setting this input accepts, and two complete examples that use all of them
 | **notificationSilenceTimeout** | No | `10s` | How long the plugin's [connection heartbeat](how-it-works.md#the-connection-heartbeat) may be silent before the subscriptions are treated as dead and re-registered. Converted internally into a number of missed beats. Only applies when `readType` is `notification`. `0s` keeps the library default |
 | **heartbeatRecovery** | No | `immediate` | What to do when notification delivery goes silent; see [Silent notification delivery](troubleshooting.md#silent-notification-delivery). Accepted values: `immediate`, `confirm`, `rebuild` |
 | **hostIP** | No | `""` | IP address the PLC associates with the route. It must be **the address the PLC sees this client as**, which behind a NATing gateway is not the client's own address. See [PLC behind a NATing gateway](networking.md#plc-behind-a-nating-gateway-or-subnet-router). Required in Docker bridge networking on TwinCAT 2, where replies are routed via this address (set to Docker host's IP); optional on TwinCAT 3. When `hostAMS` is `auto`, the AMS NetID is also derived from this. Auto-detected from outbound connection if empty (only correct with `host_network` or macvlan) |
-
-\* At least one of `unifiedAddress` or `symbols` must be non-empty; the config is rejected otherwise.
 
 ADS library log verbosity follows the pipeline log level (`logger.level`); there is no separate setting.
 
@@ -180,7 +177,7 @@ ones fails to start:
 | `routePassword` | `password` |
 | `routeHostAddress` | `hostIP` |
 | `logLevel` | removed; the pipeline's `logger.level` applies |
-| `symbols` | still accepted; `unifiedAddress` is the preferred name |
+| `symbols` | removed; use `unifiedAddress` |
 | `targetAMS` | unchanged, and now optional: left empty, the plugin asks the PLC for its NetID |
 | `runtimePort` | unchanged, and still `851` by default, so a TwinCAT 2 PLC still needs `801` |
 | `hostAMS`, `hostPort`, `readType`, `transmissionMode`, `cycleTime`, `maxDelay`, `intervalTime`, `loadSymbols` | unchanged |
