@@ -255,9 +255,6 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 	}
 
 	symbolList, symbolWarnings := CreateSymbolList(unifiedAddress, cycleTime, maxDelay)
-	for i := range symbolList {
-		symbolList[i].UnifiedAddress = symbolList[i].Name
-	}
 	for _, w := range symbolWarnings {
 		mgr.Logger().Warnf("%s", w)
 	}
