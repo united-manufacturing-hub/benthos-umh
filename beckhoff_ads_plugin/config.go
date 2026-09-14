@@ -166,9 +166,12 @@ func CreateSymbolList(s []string, defaultCycleTime time.Duration, defaultMaxDela
 	for _, symbol := range s {
 		parts := strings.Split(symbol, ":")
 		plcSym := PlcSymbol{
-			Name:      parts[0],
-			MaxDelay:  defaultMaxDelay,
-			CycleTime: defaultCycleTime,
+			// Name is what reaches the PLC; UnifiedAddress keeps the entry as
+			// configured, options included, for ads_unified_address.
+			Name:           parts[0],
+			UnifiedAddress: symbol,
+			MaxDelay:       defaultMaxDelay,
+			CycleTime:      defaultCycleTime,
 		}
 		warnings = append(warnings, parseSymbolOptions(parts[1:], symbol, &plcSym)...)
 		result = append(result, plcSym)
