@@ -393,30 +393,38 @@ var _ = Describe("Plugin Internal Functions", func() {
 	})
 
 	Describe("unifiedAddress wiring", func() {
-		// unifiedAddress is the only symbol source, so every symbol carries its own
-		// name as UnifiedAddress and ads_unified_address is always present.
-		It("sets UnifiedAddress on every symbol", func() {
-			symbolList, warnings := CreateSymbolList([]string{"GVL.unified1", "GVL.unified2"}, time.Second, 100*time.Millisecond)
+		// Name is what reaches the PLC, with the options stripped; UnifiedAddress
+		// keeps the entry as configured. The two differ whenever options are used,
+		// and a value equal to Name for an entry that had options means the field
+		// has silently become a copy of ads_symbol_name_original.
+		It("keeps the configured entry in UnifiedAddress and the bare name in Name", func() {
+			symbolList, warnings := CreateSymbolList(
+				[]string{"GVL.plain", "GVL.tuned:maxDelay=0s:cycleTime=50ms"},
+				time.Second, 100*time.Millisecond,
+			)
 			Expect(warnings).To(BeEmpty())
-			for i := range symbolList {
-				symbolList[i].UnifiedAddress = symbolList[i].Name
-			}
-
 			Expect(symbolList).To(HaveLen(2))
-			Expect(symbolList[0].Name).To(Equal("GVL.unified1"))
-			Expect(symbolList[0].UnifiedAddress).To(Equal("GVL.unified1"))
-			Expect(symbolList[1].Name).To(Equal("GVL.unified2"))
-			Expect(symbolList[1].UnifiedAddress).To(Equal("GVL.unified2"))
+
+			Expect(symbolList[0].Name).To(Equal("GVL.plain"))
+			Expect(symbolList[0].UnifiedAddress).To(Equal("GVL.plain"))
+
+			Expect(symbolList[1].Name).To(Equal("GVL.tuned"), "the PLC gets the bare symbol")
+			Expect(symbolList[1].UnifiedAddress).To(Equal("GVL.tuned:maxDelay=0s:cycleTime=50ms"))
+			Expect(symbolList[1].MaxDelay).To(Equal(0 * time.Second))
+			Expect(symbolList[1].CycleTime).To(Equal(50 * time.Millisecond))
 		})
 
 		It("carries the unified address into message metadata", func() {
 			a := &AdsCommInput{Log: service.MockResources().Logger()}
-			sym := &PlcSymbol{Name: "GVL.unified1", UnifiedAddress: "GVL.unified1", DataType: "INT", BaseType: "INT"}
-			msg := a.newSymbolMessage(sym, "42", time.Time{})
+			syms, _ := CreateSymbolList([]string{"GVL.tuned:cycleTime=50ms"}, time.Second, 100*time.Millisecond)
+			msg := a.newSymbolMessage(&syms[0], "42", time.Time{})
 
 			unified, ok := msg.MetaGet("ads_unified_address")
 			Expect(ok).To(BeTrue(), "ads_unified_address must always be set")
-			Expect(unified).To(Equal("GVL.unified1"))
+			Expect(unified).To(Equal("GVL.tuned:cycleTime=50ms"))
+
+			original, _ := msg.MetaGet("ads_symbol_name_original")
+			Expect(unified).NotTo(Equal(original), "must not be a copy of the symbol name")
 		})
 
 		It("NewAdsCommInput's config wiring produces the same UnifiedAddress result end-to-end", func() {
