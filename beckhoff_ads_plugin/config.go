@@ -52,7 +52,7 @@ var adsConf = service.NewConfigSpec().
 		"TwinCAT 3 qualifies globals with the Global Variable List name and program variables with the POU name: " +
 		"'GVL.counter', 'GVL_ProcessData.nCounter:cycleTime=10ms', 'MAIN.myVar'. " +
 		"TwinCAT 2 has one flat global namespace reached by a leading dot, while program variables keep the POU name: " +
-		"'.globalVar:maxDelay=0s:cycleTime=50ms', 'MAIN.myVar'.").Default([]string{}))
+		"'.globalVar:maxDelay=0s:cycleTime=50ms', 'MAIN.myVar'."))
 
 // durationField rejects a negative duration. go-ads reads <= 0 as "keep the
 // default", so a negative would be accepted and then do nothing.

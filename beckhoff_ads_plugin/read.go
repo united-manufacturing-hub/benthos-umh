@@ -96,6 +96,7 @@ func (a *AdsCommInput) newSymbolMessage(sym *PlcSymbol, value string, ts time.Ti
 	msg.MetaSet("ads_tag_type", tagType)
 	msg.MetaSet("ads_symbol_name", sanitize(sym.Name))
 	msg.MetaSet("ads_symbol_name_original", sym.Name)
+	msg.MetaSet("ads_unified_address", sym.UnifiedAddress)
 	if sym.DataType != "" {
 		msg.MetaSet("ads_datatype", sym.DataType)
 	}
