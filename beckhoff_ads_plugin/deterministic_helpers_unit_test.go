@@ -393,36 +393,36 @@ var _ = Describe("Plugin Internal Functions", func() {
 	})
 
 	Describe("unifiedAddress wiring", func() {
-		// Mirrors the unifiedAddress → Symbols wiring in NewAdsCommInput (ads.go):
-		// symbols parsed via CreateSymbolList same as "symbols", but each entry
-		// gets UnifiedAddress set to its own Name and is appended after the
-		// regular symbol list.
-		It("marks unifiedAddress-derived symbols with UnifiedAddress set, leaves regular symbols unset", func() {
-			symbolList, warnings := CreateSymbolList([]string{"MAIN.regular"}, time.Second, 100*time.Millisecond)
+		// unifiedAddress is the only symbol source, so every symbol carries its own
+		// name as UnifiedAddress and ads_unified_address is always present.
+		It("sets UnifiedAddress on every symbol", func() {
+			symbolList, warnings := CreateSymbolList([]string{"GVL.unified1", "GVL.unified2"}, time.Second, 100*time.Millisecond)
 			Expect(warnings).To(BeEmpty())
-
-			unifiedList, warnings2 := CreateSymbolList([]string{"GVL.unified1", "GVL.unified2"}, time.Second, 100*time.Millisecond)
-			Expect(warnings2).To(BeEmpty())
-			for i := range unifiedList {
-				unifiedList[i].UnifiedAddress = unifiedList[i].Name
+			for i := range symbolList {
+				symbolList[i].UnifiedAddress = symbolList[i].Name
 			}
-			symbolList = append(symbolList, unifiedList...)
 
-			Expect(symbolList).To(HaveLen(3))
-			Expect(symbolList[0].Name).To(Equal("MAIN.regular"))
-			Expect(symbolList[0].UnifiedAddress).To(BeEmpty())
-			Expect(symbolList[1].Name).To(Equal("GVL.unified1"))
-			Expect(symbolList[1].UnifiedAddress).To(Equal("GVL.unified1"))
-			Expect(symbolList[2].Name).To(Equal("GVL.unified2"))
-			Expect(symbolList[2].UnifiedAddress).To(Equal("GVL.unified2"))
+			Expect(symbolList).To(HaveLen(2))
+			Expect(symbolList[0].Name).To(Equal("GVL.unified1"))
+			Expect(symbolList[0].UnifiedAddress).To(Equal("GVL.unified1"))
+			Expect(symbolList[1].Name).To(Equal("GVL.unified2"))
+			Expect(symbolList[1].UnifiedAddress).To(Equal("GVL.unified2"))
+		})
+
+		It("carries the unified address into message metadata", func() {
+			a := &AdsCommInput{Log: service.MockResources().Logger()}
+			sym := &PlcSymbol{Name: "GVL.unified1", UnifiedAddress: "GVL.unified1", DataType: "INT", BaseType: "INT"}
+			msg := a.newSymbolMessage(sym, "42", time.Time{})
+
+			unified, ok := msg.MetaGet("ads_unified_address")
+			Expect(ok).To(BeTrue(), "ads_unified_address must always be set")
+			Expect(unified).To(Equal("GVL.unified1"))
 		})
 
 		It("NewAdsCommInput's config wiring produces the same UnifiedAddress result end-to-end", func() {
 			conf, err := adsConf.ParseYAML(`
 targetAddress: "1.2.3.4"
 targetAMS: "1.2.3.4.1.1"
-unifiedAddress:
-  - "MAIN.regular"
 unifiedAddress:
   - "GVL.unified1"
 `, nil)
@@ -435,6 +435,18 @@ unifiedAddress:
 			// wrapped value; the direct-construction test above exercises
 			// the actual field-assignment logic. This test only asserts
 			// that the config parses and constructs without error.
+		})
+
+		It("rejects a config with no unifiedAddress", func() {
+			// The schema marks it required (no default), but benthos does not enforce
+			// that at parse time -- FieldStringList returns an empty list, nil error.
+			conf, err := adsConf.ParseYAML(`
+targetAddress: "1.2.3.4"
+`, nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = NewAdsCommInput(conf, service.MockResources())
+			Expect(err).To(MatchError(ContainSubstring("unifiedAddress is required")))
 		})
 	})
 
