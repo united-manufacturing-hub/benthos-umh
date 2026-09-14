@@ -8,7 +8,7 @@ Every setting this input accepts, and two complete examples that use all of them
 |-----------|----------|---------|-------------|
 | **targetAddress** | Yes | — | IP address (and optional port) of the PLC's ADS gateway, as `ip` or `ip:port`. Port defaults to `48898` if omitted |
 | **targetAMS** | No | discovered | AMS net ID of the target runtime. Left empty, the plugin asks the PLC for its own on connect, so it normally does not need setting. Set it only to pin a specific runtime; a mismatch with what the PLC reports is logged as a warning, not an error |
-| **unifiedAddress** | Yes | `[]` | Symbols to read, in unified address form (see [Symbols Format](symbols-and-metadata.md#addressing-symbols) below) |
+| **unifiedAddress** | Yes | — | Symbols to read, in unified address form (see [Symbols Format](symbols-and-metadata.md#addressing-symbols) below) |
 | **loadSymbols** | No | `false` | Download the PLC's symbol and datatype table on connect. Required to read a struct or array as one value, which arrives as nested JSON. A named member (`GVL.stStatus.fValue`) resolves without it. The download can cause brief real-time jitter on the PLC, so it is off by default |
 | **runtimePort** | No | `851` | AMS port of the PLC runtime. `851` is the first TwinCAT 3 runtime and `801` the first TwinCAT 2 one, so a TwinCAT 2 PLC has to set this. `0` asks the PLC for its TwinCAT version and uses the first runtime of that version. A later runtime (`811`, `821` on TwinCAT 2; `852`, `853` on TwinCAT 3) always has to be set explicitly |
 | **hostAMS** | No | `auto` | Host AMS net ID. Usually the IP address + `.1.1`. Must match a route on the PLC. `auto` derives it from `hostIP` if set, otherwise from the outbound connection's local IP |
