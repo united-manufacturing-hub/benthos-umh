@@ -88,7 +88,7 @@ Each symbol produces one message whose payload is the value read from the PLC, s
 |---|---|
 | `ads_symbol_name` | PLC symbol name as one topic segment; see [Symbol names in topics](#symbol-names-in-topics) |
 | `ads_symbol_name_original` | The symbol exactly as the PLC names it, dots and brackets intact (e.g. `PRG_Diagnostics.astSensorHistory[0].fValue`) |
-| `ads_unified_address` | The `unifiedAddress` entry this message came from, without its options (e.g. `GVL_ProcessData.nCounter` for `GVL_ProcessData.nCounter:cycleTime=10ms`). Always set. The Modbus equivalent is `modbus_tag_unified_address` |
+| `ads_unified_address` | The `unifiedAddress` entry this message came from, exactly as configured and including its options (e.g. `GVL_ProcessData.nCounter:cycleTime=10ms`). Always set. For an entry with no options this equals `ads_symbol_name_original` |
 | `ads_datatype` | PLC data type string as reported by the symbol table (e.g. `DINT`, `E_MachineState`, `REAL`). Set after first successful symbol resolution, may be absent on the very first batch after connect. |
 | `ads_base_type` | Resolved IEC 61131-3 primitive underlying the symbol (e.g. `DINT` for an INT-aliased enum). Absent when the type does not resolve to a primitive |
 | `ads_data_size` | Byte length of the symbol as reported by the PLC (e.g. `4` for DINT, `82` for STRING). |
