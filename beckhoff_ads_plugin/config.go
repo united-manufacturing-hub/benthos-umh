@@ -48,12 +48,11 @@ var adsConf = service.NewConfigSpec().
 	Field(service.NewDurationField("notificationSilenceTimeout").Description("How long the PLC may deliver no notification at all before the subscriptions are treated as dead and re-registered. A runtime restart or CONFIG toggle stops delivery without dropping the connection, so silence is the only signal. 0 keeps the library default.").Default("10s").Advanced().Examples("10s", "30s")).
 	Field(service.NewStringEnumField("heartbeatRecovery", "immediate", "confirm", "rebuild").Description("What to do when notification delivery goes silent. immediate re-subscribes at once. confirm waits for a second consecutive silent window first, which doubles the time to notice a genuinely dead subscription but avoids deleting and re-adding every handle over one late beat — worth it on a PLC that stalls under load. rebuild does not re-subscribe at all: it drops the session and reconnects from scratch, which is cheaper than a per-handle churn against a PLC that ignores both the delete and the add.").Default("immediate").Advanced().Examples("immediate", "confirm", "rebuild")).
 	Field(service.NewBoolField("loadSymbols").Description("Download the full symbol and datatype table from the PLC on connect. Required for struct and array symbols. May cause brief real-time jitter on the PLC during initial connection; use with care on large programs.").Default(false).Advanced().Examples(true, false)).
-	Field(service.NewStringListField("unifiedAddress").Description("Symbols to read, in unified address form. Format: 'name', 'name:maxDelayMs:cycleTimeMs', or 'name:maxDelay=100ms:cycleTime=100ms'. " +
+	Field(service.NewStringListField("unifiedAddress").Description("Symbols to read, in unified address form. Format: 'name' or 'name:maxDelay=100ms:cycleTime=100ms'. " +
 		"TwinCAT 3 qualifies globals with the Global Variable List name and program variables with the POU name: " +
-		"'GVL.counter', 'GVL_ProcessData.nCounter:0s:10ms', 'MAIN.myVar'. " +
+		"'GVL.counter', 'GVL_ProcessData.nCounter:cycleTime=10ms', 'MAIN.myVar'. " +
 		"TwinCAT 2 has one flat global namespace reached by a leading dot, while program variables keep the POU name: " +
-		"'.globalVar:maxDelay=0s:cycleTime=50ms', 'MAIN.myVar'.").Default([]string{})).
-	Field(service.NewStringListField("symbols").Description("Symbols to read by PLC symbol name; same parsing as `unifiedAddress`. Alternative to unifiedAddress — at least one of the two must be non-empty.").Default([]string{}).Advanced())
+		"'.globalVar:maxDelay=0s:cycleTime=50ms', 'MAIN.myVar'.").Default([]string{}))
 
 // durationField rejects a negative duration. go-ads reads <= 0 as "keep the
 // default", so a negative would be accepted and then do nothing.
@@ -125,56 +124,33 @@ func validateAMSNetID(s string) error {
 	return nil
 }
 
-// parseSymbolOptions applies a symbol's option list onto sym (positional
-// maxDelay:cycleTime, or keyed "key=value"); fullSpec names the offender in warnings.
+// parseSymbolOptions applies keyed options ("key=value") onto sym; fullSpec names
+// the offender in warnings. Keyed only: "name:0s:10ms" hid which slot was which.
 func parseSymbolOptions(opts []string, fullSpec string, sym *PlcSymbol) []string {
 	var warnings []string
-	positionalIdx := 0 // 0=maxDelay, 1=cycleTime
 	for _, opt := range opts {
-		// Keyed option — overrides by name, does not consume a positional slot.
-		if kv := strings.SplitN(opt, "=", 2); len(kv) == 2 {
-			key, value := kv[0], kv[1]
-			var target *time.Duration
-			switch key {
-			case "maxDelay":
-				target = &sym.MaxDelay
-			case "cycleTime":
-				target = &sym.CycleTime
-			default:
-				warnings = append(warnings, fmt.Sprintf("symbol %q: ignoring unknown option %q (supported: maxDelay, cycleTime)", fullSpec, key))
-				continue
-			}
-			d, err := parseSymbolDuration(value)
-			if err != nil {
-				warnings = append(warnings, fmt.Sprintf("symbol %q: ignoring invalid %s value %q (using default)", fullSpec, key, value))
-				continue
-			}
-			*target = d
+		kv := strings.SplitN(opt, "=", 2)
+		if len(kv) != 2 {
+			warnings = append(warnings, fmt.Sprintf("symbol %q: ignoring option %q (use maxDelay=100ms or cycleTime=10ms)", fullSpec, opt))
 			continue
 		}
-
-		// Positional option — always advances the slot index.
-		// Empty string reserves the slot (keeps the default).
-		slot := positionalIdx
-		positionalIdx++
-		if opt == "" {
+		key, value := kv[0], kv[1]
+		var target *time.Duration
+		switch key {
+		case "maxDelay":
+			target = &sym.MaxDelay
+		case "cycleTime":
+			target = &sym.CycleTime
+		default:
+			warnings = append(warnings, fmt.Sprintf("symbol %q: ignoring unknown option %q (supported: maxDelay, cycleTime)", fullSpec, key))
 			continue
 		}
-		if slot >= 2 {
-			warnings = append(warnings, fmt.Sprintf("symbol %q: ignoring extra positional option %q (only maxDelay:cycleTime supported)", fullSpec, opt))
-			continue
-		}
-		d, err := parseSymbolDuration(opt)
+		d, err := parseSymbolDuration(value)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("symbol %q: ignoring invalid positional option %q (using default)", fullSpec, opt))
+			warnings = append(warnings, fmt.Sprintf("symbol %q: ignoring invalid %s value %q (using default)", fullSpec, key, value))
 			continue
 		}
-		switch slot {
-		case 0:
-			sym.MaxDelay = d
-		case 1:
-			sym.CycleTime = d
-		}
+		*target = d
 	}
 	return warnings
 }
