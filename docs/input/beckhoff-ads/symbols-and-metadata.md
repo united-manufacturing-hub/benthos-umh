@@ -18,6 +18,7 @@ Symbols are specified as `name[:key=value...]`. Each option names the field it s
 - A bare number is ignored with a warning, and the default is kept
 - Values without a unit are milliseconds; `cycleTime=10ms` and `cycleTime=10` are the same
 - Invalid or omitted values fall back to the plugin-level `maxDelay`/`cycleTime` defaults
+- Both options only apply when `readType` is `notification`; with `interval` the plugin polls every `intervalTime` and per-symbol timing is ignored
 
 **Examples:**
 - `MAIN.MYBOOL`: uses plugin-level defaults for both
