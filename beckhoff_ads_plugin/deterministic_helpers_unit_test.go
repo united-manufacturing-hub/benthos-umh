@@ -312,7 +312,7 @@ var _ = Describe("Plugin Internal Functions", func() {
 		})
 
 		It("parses symbols with custom maxDelay and cycleTime", func() {
-			symbols, _ := CreateSymbolList([]string{"MAIN.Trigger:0:10"}, 1000*time.Millisecond, 100*time.Millisecond)
+			symbols, _ := CreateSymbolList([]string{"MAIN.Trigger:maxDelay=0:cycleTime=10"}, 1000*time.Millisecond, 100*time.Millisecond)
 			Expect(symbols).To(HaveLen(1))
 			Expect(symbols[0].Name).To(Equal("MAIN.Trigger"))
 			Expect(symbols[0].MaxDelay).To(Equal(0 * time.Millisecond))
@@ -336,11 +336,13 @@ var _ = Describe("Plugin Internal Functions", func() {
 			Expect(warnings).NotTo(BeEmpty())
 		})
 
-		It("handles single positional value (sets maxDelay, cycleTime defaults)", func() {
-			symbols, _ := CreateSymbolList([]string{"MAIN.Var:50"}, 1000*time.Millisecond, 100*time.Millisecond)
+		It("ignores a positional option and says so", func() {
+			// Removed deliberately: "MAIN.Var:50" never said which field 50 was.
+			symbols, warnings := CreateSymbolList([]string{"MAIN.Var:50"}, 1000*time.Millisecond, 100*time.Millisecond)
 			Expect(symbols[0].Name).To(Equal("MAIN.Var"))
-			Expect(symbols[0].MaxDelay).To(Equal(50 * time.Millisecond))
-			Expect(symbols[0].CycleTime).To(Equal(1000 * time.Millisecond)) // default
+			Expect(symbols[0].MaxDelay).To(Equal(100*time.Millisecond), "default kept")
+			Expect(symbols[0].CycleTime).To(Equal(1000*time.Millisecond), "default kept")
+			Expect(warnings).To(ContainElement(ContainSubstring("use maxDelay=100ms or cycleTime=10ms")))
 		})
 
 		It("handles keyed cycleTime only", func() {
@@ -357,16 +359,9 @@ var _ = Describe("Plugin Internal Functions", func() {
 			Expect(symbols[0].CycleTime).To(Equal(1000 * time.Millisecond)) // default
 		})
 
-		It("handles mixed positional maxDelay with keyed cycleTime", func() {
-			symbols, _ := CreateSymbolList([]string{"MAIN.Var:50:cycleTime=200"}, 1000*time.Millisecond, 100*time.Millisecond)
-			Expect(symbols[0].Name).To(Equal("MAIN.Var"))
-			Expect(symbols[0].MaxDelay).To(Equal(50 * time.Millisecond))
-			Expect(symbols[0].CycleTime).To(Equal(200 * time.Millisecond))
-		})
-
 		It("omitted options get exact default values passed to CreateSymbolList", func() {
 			// Use non-obvious defaults to prove the function returns them, not zeros
-			symbols, _ := CreateSymbolList([]string{"MAIN.Var:50"}, 750*time.Millisecond, 300*time.Millisecond)
+			symbols, _ := CreateSymbolList([]string{"MAIN.Var:maxDelay=50"}, 750*time.Millisecond, 300*time.Millisecond)
 			Expect(symbols[0].MaxDelay).To(Equal(50 * time.Millisecond))
 			Expect(symbols[0].CycleTime).To(Equal(750*time.Millisecond), "omitted cycleTime must equal defaultCycleTime")
 
@@ -379,41 +374,15 @@ var _ = Describe("Plugin Internal Functions", func() {
 			Expect(symbols3[0].CycleTime).To(Equal(750*time.Millisecond), "plain name cycleTime must equal defaultCycleTime")
 		})
 
-		It("positional order: first=maxDelay, second=cycleTime", func() {
-			symbols, _ := CreateSymbolList([]string{"MAIN.Var:50:200"}, 1000*time.Millisecond, 100*time.Millisecond)
+		It("last keyed value wins for the same field", func() {
+			symbols, _ := CreateSymbolList([]string{"MAIN.Var:maxDelay=30:maxDelay=50"}, 1000*time.Millisecond, 100*time.Millisecond)
 			Expect(symbols[0].MaxDelay).To(Equal(50 * time.Millisecond))
-			Expect(symbols[0].CycleTime).To(Equal(200 * time.Millisecond))
-		})
-
-		It("empty first slot (::200) skips maxDelay, sets cycleTime", func() {
-			symbols, _ := CreateSymbolList([]string{"MAIN.Var::200"}, 1000*time.Millisecond, 100*time.Millisecond)
-			Expect(symbols[0].MaxDelay).To(Equal(100 * time.Millisecond)) // default — slot reserved but empty
-			Expect(symbols[0].CycleTime).To(Equal(200 * time.Millisecond))
-		})
-
-		It("empty second slot (50:) sets maxDelay, skips cycleTime", func() {
-			symbols, _ := CreateSymbolList([]string{"MAIN.Var:50:"}, 1000*time.Millisecond, 100*time.Millisecond)
-			Expect(symbols[0].MaxDelay).To(Equal(50 * time.Millisecond))
-			Expect(symbols[0].CycleTime).To(Equal(1000 * time.Millisecond)) // default — slot reserved but empty
-		})
-
-		It("keyed overrides positional for same field", func() {
-			// positional slot 0 sets maxDelay=30ms, then keyed maxDelay=50ms overwrites it
-			symbols, _ := CreateSymbolList([]string{"MAIN.Var:30:maxDelay=50"}, 1000*time.Millisecond, 100*time.Millisecond)
-			Expect(symbols[0].MaxDelay).To(Equal(50*time.Millisecond), "keyed maxDelay=50ms must override positional 30ms")
 			Expect(symbols[0].CycleTime).To(Equal(1000*time.Millisecond), "cycleTime untouched, must equal default")
-		})
-
-		It("keyed does not consume positional slot", func() {
-			// cycleTime=200 is keyed — positional slot 0 is still available for maxDelay
-			symbols, _ := CreateSymbolList([]string{"MAIN.Var:cycleTime=200:50"}, 1000*time.Millisecond, 100*time.Millisecond)
-			Expect(symbols[0].MaxDelay).To(Equal(50 * time.Millisecond))   // positional slot 0
-			Expect(symbols[0].CycleTime).To(Equal(200 * time.Millisecond)) // keyed
 		})
 
 		It("handles multiple symbols", func() {
 			symbols, _ := CreateSymbolList(
-				[]string{"MAIN.A", "MAIN.B:0:10", ".GlobalC"},
+				[]string{"MAIN.A", "MAIN.B:maxDelay=0:cycleTime=10", ".GlobalC"},
 				1000*time.Millisecond, 100*time.Millisecond,
 			)
 			Expect(symbols).To(HaveLen(3))
@@ -452,7 +421,7 @@ var _ = Describe("Plugin Internal Functions", func() {
 			conf, err := adsConf.ParseYAML(`
 targetAddress: "1.2.3.4"
 targetAMS: "1.2.3.4.1.1"
-symbols:
+unifiedAddress:
   - "MAIN.regular"
 unifiedAddress:
   - "GVL.unified1"
@@ -1594,7 +1563,7 @@ var _ = Describe("Partial batch reads", func() {
 var _ = Describe("reconnect and notification-health tuning fields", func() {
 	minimalYAML := `
 targetAddress: "1.2.3.4"
-symbols:
+unifiedAddress:
   - "MAIN.var"
 `
 
@@ -1823,7 +1792,7 @@ var _ = Describe("targetAMS is optional", func() {
 	It("builds without targetAMS, leaving the PLC to supply it", func() {
 		conf, err := adsConf.ParseYAML(`
 targetAddress: "1.2.3.4"
-symbols:
+unifiedAddress:
   - "MAIN.var"
 `, nil)
 		Expect(err).NotTo(HaveOccurred())
@@ -1837,7 +1806,7 @@ symbols:
 		conf, err := adsConf.ParseYAML(`
 targetAddress: "1.2.3.4"
 targetAMS: "not-an-ams-netid"
-symbols:
+unifiedAddress:
   - "MAIN.var"
 `, nil)
 		Expect(err).NotTo(HaveOccurred())

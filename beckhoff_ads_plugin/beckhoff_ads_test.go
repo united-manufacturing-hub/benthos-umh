@@ -549,7 +549,7 @@ ads:
   runtimePort: ` + strconv.Itoa(cfg.runtimePort) + `
   readType: interval
   intervalTime: 500ms
-  symbols:
+  unifiedAddress:
     - "` + syms.DiagNInt + `"
     - "` + syms.DiagFReal + `"
     - "` + syms.DiagBHeartbeat + `"
@@ -569,7 +569,7 @@ ads:
   readType: notification
   cycleTime: 100ms
   maxDelay: 50ms
-  symbols:
+  unifiedAddress:
     - "` + syms.DiagNFastDint + `"
 `)
 				Expect(err).NotTo(HaveOccurred())

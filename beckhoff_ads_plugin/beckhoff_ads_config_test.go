@@ -91,7 +91,7 @@ input:
     transmissionMode: serverCycle
     username: "${TEST_ADS_TC3_ROUTE_USER:}"
     password: "${TEST_ADS_TC3_ROUTE_PASS:}"
-    symbols:
+    unifiedAddress:
       - "PRG_Diagnostics.nFastDint"
       - "PRG_Diagnostics.nInt"
 `
@@ -109,7 +109,7 @@ input:
     transmissionMode: serverCycle
     username: "${TEST_ADS_TC2_ROUTE_USER:}"
     password: "${TEST_ADS_TC2_ROUTE_PASS:}"
-    symbols:
+    unifiedAddress:
       - "PRG_DIAGNOSTICS.nFastDint"
       - "PRG_DIAGNOSTICS.nInt"
 `
@@ -388,7 +388,7 @@ var _ = Describe("Config-Driven ADS Pipeline Tests", func() {
 ads:
   targetAddress: "1.2.3.4"
   targetAMS: "1.2.3.4.1.1"
-  symbols:
+  unifiedAddress:
     - "MAIN.var"
 `)
 			Expect(err).NotTo(HaveOccurred())
@@ -399,7 +399,7 @@ ads:
 			err := builder.AddInputYAML(`
 ads:
   targetAddress: "1.2.3.4"
-  symbols:
+  unifiedAddress:
     - "MAIN.var"
 `)
 			Expect(err).NotTo(HaveOccurred())
@@ -410,7 +410,7 @@ ads:
 			err := builder.AddInputYAML(`
 ads:
   targetAMS: "1.2.3.4.1.1"
-  symbols:
+  unifiedAddress:
     - "MAIN.var"
 `)
 			Expect(err).To(HaveOccurred())

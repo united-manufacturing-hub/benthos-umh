@@ -14,7 +14,7 @@ input:
     loadSymbols: true
     username: "${TEST_ADS_TC3_ROUTE_USER:}"
     password: "${TEST_ADS_TC3_ROUTE_PASS:}"
-    symbols:
+    unifiedAddress:
       # section:process_data — GVL counters, strings, enums, reals
       - "GVL_ProcessData.nMasterCycleCounter"
       - "GVL_ProcessData.sStatusMessage"
