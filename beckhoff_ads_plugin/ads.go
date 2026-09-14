@@ -180,13 +180,8 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 		return nil, err
 	}
 
-	symbols, err := conf.FieldStringList("symbols")
-	if err != nil {
-		return nil, err
-	}
-
-	if len(symbols) == 0 && len(unifiedAddress) == 0 {
-		return nil, fmt.Errorf("at least one of unifiedAddress or symbols is required")
+	if len(unifiedAddress) == 0 {
+		return nil, fmt.Errorf("unifiedAddress is required")
 	}
 
 	intervalTime, err := conf.FieldDuration("intervalTime")
@@ -259,13 +254,11 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 		hostAMS = hostIP + ".1.1"
 	}
 
-	symbolList, symbolWarnings := CreateSymbolList(symbols, cycleTime, maxDelay)
-	unifiedList, unifiedWarnings := CreateSymbolList(unifiedAddress, cycleTime, maxDelay)
-	for i := range unifiedList {
-		unifiedList[i].UnifiedAddress = unifiedList[i].Name
+	symbolList, symbolWarnings := CreateSymbolList(unifiedAddress, cycleTime, maxDelay)
+	for i := range symbolList {
+		symbolList[i].UnifiedAddress = symbolList[i].Name
 	}
-	symbolList = append(symbolList, unifiedList...)
-	for _, w := range append(symbolWarnings, unifiedWarnings...) {
+	for _, w := range symbolWarnings {
 		mgr.Logger().Warnf("%s", w)
 	}
 
