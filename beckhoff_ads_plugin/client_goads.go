@@ -37,7 +37,7 @@ type goADSClient struct {
 // resolveRouteHostIP returns the local IP for the ADS route: the configured
 // hostIP, else the source IP of a TCP dial to the ADS port (same interface).
 func resolveRouteHostIP(ctx context.Context, cfg SessionConfig) (string, error) {
-	if cfg.HostIP != "" {
+	if !isAuto(cfg.HostIP) {
 		return cfg.HostIP, nil
 	}
 	dialer := net.Dialer{Timeout: routeDialTimeout}
@@ -76,7 +76,7 @@ func buildSessionOptions(ctx context.Context, cfg SessionConfig, log *service.Lo
 	}
 
 	// "auto" (default) lets go-ads derive local AMS from the TCP connection.
-	if cfg.HostAMS != "" && cfg.HostAMS != "auto" {
+	if !isAuto(cfg.HostAMS) {
 		localAMS, err := adsLib.NewAMSAddress(cfg.HostAMS, uint16(cfg.HostPort))
 		if err != nil {
 			return nil, fmt.Errorf("hostAMS %q is not a valid AMS NetID: %w", cfg.HostAMS, err)

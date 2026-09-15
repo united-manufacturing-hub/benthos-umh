@@ -90,7 +90,7 @@ type AdsCommInput struct {
 	// Route registration; route registered when both Username and Password are set.
 	Username string
 	Password string
-	HostIP   string // IP address the PLC uses to reach this client (auto-detected if empty)
+	HostIP   string // IP address the PLC uses to reach this client ("auto"/empty detects it)
 }
 
 // transmissionModeValue maps the transmissionMode config string to a plain int code;
@@ -146,7 +146,7 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 		return nil, err
 	}
 
-	if hostAMS != "auto" && hostAMS != "" {
+	if !isAuto(hostAMS) {
 		if err = validateAMSNetID(hostAMS); err != nil {
 			return nil, fmt.Errorf("hostAMS: %w", err)
 		}
@@ -237,9 +237,9 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 	if err != nil {
 		return nil, err
 	}
-	// Empty means auto-detect on connect. A non-empty value feeds both route
+	// "auto" or empty means detect on connect. A real address feeds both route
 	// registration and the derived hostAMS below, neither of which re-checks it.
-	if hostIP != "" {
+	if !isAuto(hostIP) {
 		if err = validateIP(hostIP); err != nil {
 			return nil, fmt.Errorf("hostIP: %w", err)
 		}
@@ -250,7 +250,9 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 		return nil, err
 	}
 
-	if hostAMS == "auto" && hostIP != "" {
+	// Only a real hostIP can seed the NetID; otherwise hostAMS stays as the caller
+	// left it and go-ads derives from the TCP source IP at connect.
+	if isAuto(hostAMS) && !isAuto(hostIP) {
 		hostAMS = hostIP + ".1.1"
 	}
 
