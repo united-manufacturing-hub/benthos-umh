@@ -32,9 +32,9 @@ var adsConf = service.NewConfigSpec().
 	Field(service.NewStringField("targetAddress").Description("IP address (and optional port) of the PLC's ADS gateway, as 'ip' or 'ip:port'. Port defaults to 48898.").Examples("192.168.1.100", "192.168.1.100:48898")).
 	Field(service.NewStringField("targetAMS").Description("AMS net ID of the target PLC runtime (e.g. '5.66.133.203.1.1'). Leave empty to ask the PLC for its own NetID on connect. When set, it is checked against what the PLC reports and a mismatch is logged as a warning — not an error, because pointing at a router whose target sits behind it is legitimate.").Default("").Examples("", "5.66.133.203.1.1")).
 	Field(service.NewIntField("runtimePort").Description("ADS runtime port. TwinCAT 3: 851, TwinCAT 2: 801.").Default(851).Advanced().Examples(851, 801)).
-	Field(service.NewStringField("hostAMS").Description("Local AMS net ID sent in ADS requests. 'auto' derives it from the outbound TCP source IP (or hostIP when set).").Default("auto").Advanced().Examples("auto")).
+	Field(service.NewStringField("hostAMS").Description("Local AMS net ID sent in ADS requests. 'auto' (or empty) derives it from hostIP when that is set, otherwise from the outbound TCP source IP.").Default("auto").Advanced().Examples("auto", "192.168.1.50.1.1")).
 	Field(service.NewIntField("hostPort").Description("AMS source port in protocol headers. 0 uses a random port per session (recommended). Set fixed only in firewalled environments.").Default(0).Advanced().Examples(0, 10500)).
-	Field(service.NewStringField("hostIP").Description("IP address the PLC uses to reach this client. Required in Docker bridge networking. When hostAMS is auto, derives NetID as hostIP+.1.1.").Default("").Advanced().Examples("192.168.1.50")).
+	Field(service.NewStringField("hostIP").Description("IP address the PLC uses to reach this client; it must be the address the PLC sees, which behind NAT is not this client's own. 'auto' (or empty) detects it at connect time. Required in Docker bridge networking. When hostAMS is auto, the NetID is derived as hostIP+.1.1.").Default("auto").Advanced().Examples("auto", "192.168.1.50")).
 	Field(service.NewStringField("username").Description("PLC username for automatic route registration. Both username and password must be set to activate. Requires UDP 48899.").Default("").Advanced().Examples("Administrator")).
 	Field(service.NewStringField("password").Description("PLC password for automatic route registration.").Default("").Advanced().Secret().Examples("1")).
 	Field(service.NewStringEnumField("readType", "notification", "interval").Description("Read type. notification = PLC pushes on change; interval = plugin polls at intervalTime.").Default("notification").Advanced().Examples("notification", "interval")).
@@ -66,6 +66,10 @@ func durationField(conf *service.ParsedConfig, name string) (time.Duration, erro
 	}
 	return d, nil
 }
+
+// isAuto reports whether a field asks to be worked out at connect time. Both
+// spellings are accepted so hostAMS and hostIP read the same way.
+func isAuto(s string) bool { return s == "" || s == "auto" }
 
 // validateIP checks that s is a valid IPv4 address. Is4 also rejects the
 // IPv4-mapped IPv6 form (::ffff:192.168.1.1), which the PLC cannot route.
