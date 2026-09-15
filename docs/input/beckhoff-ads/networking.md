@@ -18,7 +18,7 @@ that answers only on a connection it opens back to the client. See
 [How a route is matched](how-it-works.md#how-a-route-is-matched).
 
 The only other requirement is that the `hostAMS` value matches a route registered on the PLC. When running in Docker with bridge networking:
-- **`hostIP` should be set** to the Docker host's IP on the PLC network (e.g. `192.168.1.50`). Left empty it auto-detects the container's bridge IP, which the PLC cannot match. See [How a route is matched](how-it-works.md#how-a-route-is-matched).
+- **`hostIP` should be set** to the Docker host's IP on the PLC network (e.g. `192.168.1.50`). Left as `auto` it detects the container's bridge IP, which the PLC cannot match. See [How a route is matched](how-it-works.md#how-a-route-is-matched).
 - **`hostAMS` can be set explicitly** to `hostIP` + `.1.1` (e.g. `192.168.1.50.1.1`), or left as `auto`: when route registration is configured with `hostIP`, `auto` will correctly derive the AMS NetID from `hostIP` instead of the container's bridge IP.
 - **A route must exist on the PLC** for the `hostAMS` NetID. This can be added manually in TwinCAT System Manager, or automatically via the `username`/`password` config fields.
 - **`hostPort` is optional** (default 0 = random per session). It is a logical AMS port used in protocol headers, not a network port.
@@ -190,7 +190,7 @@ The plugin can automatically register a route on the PLC using the Beckhoff UDP 
 
 **Parameters:**
 - `username` / `password`: PLC administrator credentials, same as used in TwinCAT System Manager to add routes
-- `hostIP`: the address stored in the route, which has to be [what the PLC sees this client as](how-it-works.md#how-a-route-is-matched). In Docker with bridge networking that is the Docker host's IP; mandatory on TwinCAT 2, which routes replies via this address. Auto-detected from the outbound connection if empty (only correct with `host_network` or macvlan)
+- `hostIP`: the address stored in the route, which has to be [what the PLC sees this client as](how-it-works.md#how-a-route-is-matched). In Docker with bridge networking that is the Docker host's IP; mandatory on TwinCAT 2, which routes replies via this address. `auto` (or empty) detects it from the outbound connection (only correct with `host_network` or macvlan)
 
 A registered route stays on the PLC. Removing one is done on the device, not from here: see
 [Create or delete ADS routes manually](https://infosys.beckhoff.com/content/1033/twincat_bsd/12459254539.html)

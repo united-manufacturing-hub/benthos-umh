@@ -82,7 +82,7 @@ A wrong `Address` produces a session that connects and registers successfully an
 usually as repeated request timeouts rather than a connection error.
 
 Automatic registration derives both fields from `hostIP` (`Address` = `hostIP`, `NetId` = `hostIP`
-+ `.1.1`). Firmwares differ in what they store when `hostIP` is left empty. Some record the source
++ `.1.1`). Firmwares differ in what they store when `hostIP` is left as `auto`. Some record the source
 address they observe, others the value the client advertises, so set `hostIP` explicitly or add
 the route manually.
 
