@@ -1868,3 +1868,54 @@ var _ = Describe("benthosLogHandler level mapping", func() {
 		Expect(h.Enabled(context.Background(), slog.LevelDebug)).To(BeTrue())
 	})
 })
+
+// hostAMS and hostIP both take "auto" or empty. They used to disagree: every site
+// treated the spellings alike except the NetID derivation, which tested
+// hostAMS == "auto" only, so an empty hostAMS silently skipped it.
+var _ = Describe("hostAMS and hostIP sentinels", func() {
+	parse := func(extra string) (*service.ParsedConfig, error) {
+		return adsConf.ParseYAML(`
+targetAddress: "1.2.3.4"
+unifiedAddress:
+  - "MAIN.var"
+`+extra, nil)
+	}
+
+	DescribeTable("isAuto treats both spellings as unset",
+		func(in string, want bool) { Expect(isAuto(in)).To(Equal(want)) },
+		Entry("empty", "", true),
+		Entry("auto", "auto", true),
+		Entry("an address", "10.0.0.5", false),
+		Entry("a NetID", "10.0.0.5.1.1", false),
+		Entry("not quite auto", "AUTO", false),
+	)
+
+	DescribeTable("a config using either spelling is accepted",
+		func(extra string) {
+			conf, err := parse(extra)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = NewAdsCommInput(conf, service.MockResources())
+			Expect(err).NotTo(HaveOccurred())
+		},
+		Entry("defaults", ""),
+		Entry("hostAMS auto, hostIP auto", "hostAMS: \"auto\"\nhostIP: \"auto\"\n"),
+		Entry("hostAMS empty, hostIP empty", "hostAMS: \"\"\nhostIP: \"\"\n"),
+		Entry("hostAMS empty, hostIP set", "hostAMS: \"\"\nhostIP: \"10.0.0.5\"\n"),
+		Entry("hostAMS auto, hostIP set", "hostAMS: \"auto\"\nhostIP: \"10.0.0.5\"\n"),
+		Entry("hostAMS set, hostIP auto", "hostAMS: \"10.0.0.5.1.1\"\nhostIP: \"auto\"\n"),
+	)
+
+	It("still rejects a hostIP that is neither auto nor an address", func() {
+		conf, err := parse("hostIP: \"not-an-ip\"\n")
+		Expect(err).NotTo(HaveOccurred())
+		_, err = NewAdsCommInput(conf, service.MockResources())
+		Expect(err).To(MatchError(ContainSubstring("hostIP")))
+	})
+
+	It("still rejects a hostAMS that is neither auto nor a NetID", func() {
+		conf, err := parse("hostAMS: \"nonsense\"\n")
+		Expect(err).NotTo(HaveOccurred())
+		_, err = NewAdsCommInput(conf, service.MockResources())
+		Expect(err).To(MatchError(ContainSubstring("hostAMS")))
+	})
+})
