@@ -27,7 +27,8 @@ Every setting this input accepts, and two complete examples that use all of them
 | **heartbeatRecovery** | No | `immediate` | What to do when notification delivery goes silent; see [Silent notification delivery](troubleshooting.md#silent-notification-delivery). Accepted values: `immediate`, `confirm`, `rebuild` |
 | **hostIP** | No | `auto` | IP address the PLC associates with the route. It must be **the address the PLC sees this client as**, which behind a NATing gateway is not the client's own address. See [PLC behind a NATing gateway](networking.md#plc-behind-a-nating-gateway-or-subnet-router). Required in Docker bridge networking on TwinCAT 2, where replies are routed via this address (set to Docker host's IP); optional on TwinCAT 3. When `hostAMS` is `auto`, the AMS NetID is also derived from this. `auto` (or empty) detects it from the outbound connection (only correct with `host_network` or macvlan) |
 
-ADS library log verbosity follows the pipeline log level (`logger.level`); there is no separate setting.
+ADS library log verbosity follows the pipeline log level, the top-level `logger.level` key in
+`config.yaml`. There is no separate setting.
 
 ## Transmission modes
 
@@ -46,7 +47,7 @@ The `transmissionMode` field controls how the PLC's internal notification handle
 - Use `serverOnChange` (default) for event-driven data where only changes matter
 - Use `serverCycle` for periodic snapshots regardless of changes
 - The `2` variants are safe to set on any PLC, because a symbol with ContextMask 0 falls back to the
-  v1 equivalent. They only change behaviour for variables local to a PROGRAM POU in a multi-task
+  v1 equivalent. They only change behavior for variables local to a PROGRAM POU in a multi-task
   project; a GVL variable or a single-task project always has ContextMask 0. Beckhoff describes
   these as [`CyclicInContext` and `OnChangeInContext`](https://infosys.beckhoff.com/content/1033/tcadsnetref/7313078411.html) and advises against them in the default
   case

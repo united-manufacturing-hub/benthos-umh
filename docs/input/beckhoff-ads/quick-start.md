@@ -53,7 +53,7 @@ pipeline:
           return msg;
 ```
 
-## 4. Send it somewhere
+## 4. Send the values somewhere
 
 `stdout` prints each value as it arrives, which is enough to prove the PLC side works:
 
@@ -70,18 +70,22 @@ output:
   uns: {}
 ```
 
-## 5. Check it worked
+## 5. Check the values arrive
 
 On the first connect the plugin registers a route on the PLC, subscribes to each symbol, and waits
 for one value from each before reporting itself connected. In the logs you should see, in order:
 
-```
+```text
 registering route               (only the first time, or after the PLC forgets the route)
 route registration successful
 Connected to PLC
 Registering notifications succeeded for 2/2 symbols
 Input type ads is now active
 ```
+
+Two different registrations appear there. The route registration writes an entry to the PLC's route
+table and happens once. The notification registration subscribes to each symbol and happens on
+every connect.
 
 Values then print one per line. The `tag_processor` step has already set each message's topic to
 `umh.v1.enterprise.site.area.line._historian.<symbol>`, which is what the `uns` output uses as the
@@ -90,7 +94,7 @@ message key.
 If the log stops after `Connected to PLC`, or symbols register but no values arrive, go to
 [Troubleshooting](troubleshooting.md). The cause is most often a wrong `hostIP`.
 
-## The same thing on TwinCAT 2
+## The same config on TwinCAT 2
 
 Global variables carry a leading dot, program variables an uppercase program prefix:
 

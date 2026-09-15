@@ -1,7 +1,8 @@
 # Troubleshooting
 
 Start from the symptom. Every entry below refers to the plugin's own log output, which Benthos
-writes to stdout; `--log.level DEBUG` adds the per-request detail. With no access to those logs, the
+writes to stdout; adding `--log.level DEBUG` to the `benthos -c config.yaml` command adds the
+per-request detail. With no access to those logs, the
 one check worth making from the PLC side is whether a route exists for this client and what address
 it holds: see [Getting a route onto the PLC](networking.md#getting-a-route-onto-the-plc).
 
@@ -34,8 +35,8 @@ A failed connect logs a `hint` field naming the likely cause, and the PLC closin
 | Log says | Meaning | Where to look |
 |----------|---------|---------------|
 | the PLC did not accept a TCP connection | Nothing answered on the ADS port | `targetAddress`, PLC powered, firewall |
-| closed it without serving a single AMS frame | TCP accepted, but the route does not authorise this client | `username`/`password`, `hostIP` (set it explicitly behind NAT or a VPN), another client holding the route from the same host |
-| dropped a connection that was already carrying AMS frames | Transport or device-side reset, not a configuration error | Network path (VPN or subnet-router flaps), and whether another client is evicting this one, a Beckhoff AMS router serves one TCP connection per host and closes the older |
+| closed it without serving a single AMS frame | TCP accepted, but the route does not authorize this client | `username`/`password`, `hostIP` (set it explicitly behind NAT or a VPN), another client holding the route from the same host |
+| dropped a connection that was already carrying AMS frames | Transport or device-side reset, not a configuration error | The network path, for VPN or subnet-router flaps. Or another client evicting this one: a Beckhoff AMS router serves one TCP connection per host and closes the older |
 
 If those drops arrive after a similar interval each time while the frame counts vary, suspect
 configuration rather than the network: most often a route whose `Address` does not match the
@@ -59,10 +60,10 @@ No manual intervention is needed.
 ## A device that keeps dropping
 
 Reconnect delays ramp `1s → 5s → 15s → 30s` and stay at the cap. A connection that drops
-repeatedly is treated as flapping and gets that cap as a cooldown, so a PLC that resets an
-established connection every few seconds spends most of its time waiting rather than reading, the
-default deliberately favours the PLC's socket table over stream continuity, since every reconnect
-costs it an accepted socket.
+repeatedly is treated as flapping and gets that cap as a cooldown. A PLC that resets an established
+connection every few seconds therefore spends most of its time waiting rather than reading. That is
+deliberate: every reconnect costs the PLC an accepted socket, and the default protects its socket
+table rather than stream continuity.
 
 Where the samples matter more than the sockets, lower the cap, accepting one more accepted socket
 on the PLC per reconnect:
@@ -81,7 +82,7 @@ reconnect. The [connection heartbeat](how-it-works.md#the-connection-heartbeat) 
 once its beats stop for `notificationSilenceTimeout`, the subscriptions count as dead and
 `heartbeatRecovery` decides what happens next:
 
-| Value | Behaviour | Use when |
+| Value | Behavior | Use when |
 |-------|-----------|----------|
 | `immediate` (default) | Re-subscribes at once: one delete plus one add per symbol, in a burst | The PLC answers reliably; fastest recovery from a genuine subscription death |
 | `confirm` | Waits for a second consecutive silent window, then re-subscribes | The PLC stalls under load. Twice as slow to notice a real death, but one late beat no longer churns every handle |
@@ -93,9 +94,7 @@ pipeline restarts the input rather than sitting on dead handles.
 
 ## Why retries slow down
 
-A route the PLC will not serve cannot be fixed by retrying, and every attempt costs the PLC a route
-registration and a socket, and enough of them will wedge its route table. So failed connects are paced
-by the plugin:
+The plugin paces failed connects, and how long it waits depends on why the connect failed:
 
 | Failure | Next attempt |
 |---|---|
@@ -106,6 +105,9 @@ by the plugin:
 The log says which is happening: `Waiting before the next connect attempt` with the delay, and on
 the third route failure a warning that registration is being skipped and that `hostIP` must be the
 address the PLC sees. Any successful connect clears all of it.
+
+The pacing exists because retrying cannot fix a route the PLC will not serve. Every attempt costs
+the PLC a route registration and a socket, and enough of them will wedge its route table.
 
 While registration is skipped the plugin also skips the probe, so the clean "route not served"
 verdict is unavailable until the window expires. That is the trade for not writing to the

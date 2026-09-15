@@ -37,5 +37,6 @@ Two limits worth knowing up front:
 - Beckhoff recommends [no more than **550 notifications per device**](https://infosys.beckhoff.com/content/1033/tc3_grundlagen/115880971.html). Above that, read in
   fewer, larger pieces (a struct instead of its members) or switch to `readType: interval`, which
   reads with sum commands.
-- A PLC serves **one connection per client address**. A second client from the same address (another instance of this input, or an
-  engineering station behind the same NAT gateway) displaces the first.
+- A PLC serves **one connection per client address**. A second client from the same address
+  displaces the first. That second client can be another instance of this input, or an engineering
+  station behind the same NAT gateway.

@@ -17,7 +17,7 @@ usually written like an IP with `.1.1` appended) identifies the system at either
 carries both your own NetID and the target's. The plugin asks the PLC for its NetID on connect, so
 normally only the IP needs configuring.
 
-**A route authorises you.** The PLC answers only clients it has a route for: an entry pairing your
+**A route authorizes you.** The PLC answers only clients it has a route for: an entry pairing your
 NetID with the address it expects you to come from. Routes live on the PLC, survive reboots, and
 can be created by the plugin itself (`username` + `password`) or by hand in TwinCAT. If a request
 arrives with no matching route, the connection is accepted and then ignored. That is the most
@@ -29,7 +29,7 @@ common cause of an input that looks connected but reads nothing. See
 subscribe and let the PLC push values when they change (`readType: notification`, the default).
 Use `interval` when the symbol list is long enough to pass the PLC's notification limit, and
 `notification` when values change less often than you would otherwise poll. Symbols are addressed by name, so `GVL_ProcessData.nMasterCycleCounter`
-is all you need; the PLC resolves it to a handle for you.
+is all you need; the PLC resolves it to a handle.
 
 ## Getting the PLC to accept this client
 
@@ -150,16 +150,17 @@ Which of the four transmission modes applies, and what the `2` variants change, 
 
 ### First batch completeness
 
-When `readType: notification`, TwinCAT sends an initial sample for every subscribed symbol immediately on registration (all modes except `NoTransmission`). The plugin waits for these initial samples before returning from `Connect`, so the **first `ReadBatch` always returns a complete batch** containing one message per successfully registered symbol. No separate read or warm-up period is needed to get the current state of all symbols.
+When `readType: notification`, TwinCAT sends an initial sample for every subscribed symbol immediately on registration, in every one of the four transmission modes. The plugin waits for these initial samples before returning from `Connect`, so the **first `ReadBatch` always returns a complete batch** containing one message per successfully registered symbol. No separate read or warm-up period is needed to get the current state of all symbols.
 
 ### The connection heartbeat
 
-A runtime restart or a CONFIG toggle can empty the PLC's notification table without dropping the
-TCP connection, which would otherwise leave the input connected and silent. So with
-`readType: notification` the plugin subscribes to one extra cyclic notification of its own, on the
-PLC's symbol-version group, and treats those beats as the sign the runtime is still serving
-notifications. It arrives every 2 s by default, carries one byte, and counts as one of the PLC's
-550 notifications.
+With `readType: notification` the plugin subscribes to one extra cyclic notification of its own, on
+the PLC's symbol-version group. Those beats are the sign that the runtime is still serving
+notifications. The beat arrives every 2 s by default, carries one byte, and counts as one of the
+PLC's 550 notifications.
+
+It exists because a runtime restart or a CONFIG toggle can empty the PLC's notification table
+without dropping the TCP connection, which would otherwise leave the input connected and silent.
 
 `notificationSilenceTimeout` sets how much silence is tolerated, and is converted into a number of
 beats: 10 s against a 2 s cycle means five missed beats mark the subscriptions dead. What happens
