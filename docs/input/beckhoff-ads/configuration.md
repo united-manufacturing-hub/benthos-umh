@@ -63,7 +63,7 @@ input:
     targetAddress: "192.168.1.100:48898"   # PLC IP[:port]; port defaults to 48898
     targetAMS: ""                          # empty = ask the PLC for its own NetID
     runtimePort: 851                       # TC3 runtime port (TC2: 801)
-    # Local AMS identity
+    # Host AMS identity
     hostAMS: "auto"                        # auto = derived from hostIP, else the TCP source IP
     hostPort: 0                            # 0 = random per session (recommended)
     hostIP: "192.168.1.50"                 # the address the PLC sees this client as
@@ -103,7 +103,7 @@ input:
     targetAddress: "192.168.1.200:48898"   # PLC IP[:port]; port defaults to 48898
     targetAMS: ""                          # empty = ask the PLC for its own NetID
     runtimePort: 801                       # TC2 runtime port
-    # Local AMS identity
+    # Host AMS identity
     hostAMS: "auto"
     hostPort: 0
     hostIP: "192.168.1.50"                 # the address the PLC sees this client as
