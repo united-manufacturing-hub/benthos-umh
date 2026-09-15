@@ -127,21 +127,20 @@ func validateAMSNetID(s string) error {
 // parseSymbolOptions applies keyed options ("key=value") onto sym; fullSpec names
 // the offender in warnings. Keyed only: "name:0s:10ms" hid which slot was which.
 func parseSymbolOptions(opts []string, fullSpec string, sym *PlcSymbol) []string {
+	targets := map[string]*time.Duration{
+		"maxDelay":  &sym.MaxDelay,
+		"cycleTime": &sym.CycleTime,
+	}
+
 	var warnings []string
 	for _, opt := range opts {
-		kv := strings.SplitN(opt, "=", 2)
-		if len(kv) != 2 {
+		key, value, ok := strings.Cut(opt, "=")
+		if !ok {
 			warnings = append(warnings, fmt.Sprintf("symbol %q: ignoring option %q (use maxDelay=100ms or cycleTime=10ms)", fullSpec, opt))
 			continue
 		}
-		key, value := kv[0], kv[1]
-		var target *time.Duration
-		switch key {
-		case "maxDelay":
-			target = &sym.MaxDelay
-		case "cycleTime":
-			target = &sym.CycleTime
-		default:
+		target, ok := targets[key]
+		if !ok {
 			warnings = append(warnings, fmt.Sprintf("symbol %q: ignoring unknown option %q (supported: maxDelay, cycleTime)", fullSpec, key))
 			continue
 		}
