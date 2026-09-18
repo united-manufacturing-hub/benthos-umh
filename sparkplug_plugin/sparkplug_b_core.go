@@ -269,26 +269,49 @@ func (ac *AliasCache) ResolveAliases(deviceKey string, metrics []*sparkplugb.Pay
 
 	count := 0
 	for _, metric := range metrics {
-		if metric == nil {
+		entry, found := lookupAliasEntry(metric, aliasMapCopy)
+		if !found {
 			continue
 		}
-		// If metric has an alias but no name, try to resolve it
-		if metric.Alias != nil && *metric.Alias != 0 && (metric.Name == nil || *metric.Name == "") {
-			if entry, found := aliasMapCopy[*metric.Alias]; found {
-				name := entry.name
-				metric.Name = &name
-				// Restore the datatype from the BIRTH certificate unless the
-				// DATA metric carries its own (publisher-sent wins).
-				if metric.Datatype == nil && entry.datatype != nil {
-					dt := *entry.datatype
-					metric.Datatype = &dt
-				}
-				count++
-			}
+		fillMissingDatatype(metric, entry)
+		if fillMissingName(metric, entry) {
+			count++
 		}
 	}
 
 	return count
+}
+
+// lookupAliasEntry finds the BIRTH definition a metric refers to. Alias 0 is the
+// Sparkplug sentinel for "no alias" and never appears in the cache.
+func lookupAliasEntry(metric *sparkplugb.Payload_Metric, aliases map[uint64]aliasEntry) (aliasEntry, bool) {
+	if metric == nil || metric.Alias == nil || *metric.Alias == 0 {
+		return aliasEntry{}, false
+	}
+	entry, found := aliases[*metric.Alias]
+	return entry, found
+}
+
+// fillMissingDatatype restores the datatype the BIRTH certificate declared. DATA
+// messages never carry a datatype, whether or not they repeat the metric name, so
+// the alias is the only thing that can supply one.
+func fillMissingDatatype(metric *sparkplugb.Payload_Metric, entry aliasEntry) {
+	if metric.Datatype != nil || entry.datatype == nil {
+		return
+	}
+	datatype := *entry.datatype
+	metric.Datatype = &datatype
+}
+
+// fillMissingName restores the metric name the alias stands in for, and reports
+// whether it did.
+func fillMissingName(metric *sparkplugb.Payload_Metric, entry aliasEntry) bool {
+	if metric.Name != nil && *metric.Name != "" {
+		return false
+	}
+	name := entry.name
+	metric.Name = &name
+	return true
 }
 
 // Clear removes all cached aliases.
