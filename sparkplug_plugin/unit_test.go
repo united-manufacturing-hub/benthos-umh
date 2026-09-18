@@ -112,6 +112,55 @@ var _ = Describe("AliasCache Unit Tests", func() {
 			Expect(*dataMetrics[1].Name).To(Equal("Pressure"))
 		})
 
+		It("should restore the datatype when DATA carries the name alongside the alias", func() {
+			birthMetrics := []*sparkplugb.Payload_Metric{
+				{
+					Name:     stringPtr("Temperature"),
+					Alias:    uint64Ptr(100),
+					Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt32),
+				},
+			}
+			Expect(cache.CacheAliases("TestFactory/Line1", birthMetrics)).To(Equal(1))
+
+			dataMetrics := []*sparkplugb.Payload_Metric{
+				{
+					Name:  stringPtr("Temperature"),
+					Alias: uint64Ptr(100),
+					Value: &sparkplugb.Payload_Metric_IntValue{IntValue: 4294967284},
+				},
+			}
+
+			cache.ResolveAliases("TestFactory/Line1", dataMetrics)
+
+			Expect(dataMetrics[0].Datatype).NotTo(BeNil(),
+				"datatype from the BIRTH certificate must be restored even when DATA already carries the name")
+			Expect(*dataMetrics[0].Datatype).To(Equal(sparkplugplugin.SparkplugDataTypeInt32))
+		})
+
+		It("should keep a datatype sent in DATA over the cached one", func() {
+			birthMetrics := []*sparkplugb.Payload_Metric{
+				{
+					Name:     stringPtr("Temperature"),
+					Alias:    uint64Ptr(100),
+					Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeInt32),
+				},
+			}
+			Expect(cache.CacheAliases("TestFactory/Line1", birthMetrics)).To(Equal(1))
+
+			dataMetrics := []*sparkplugb.Payload_Metric{
+				{
+					Alias:    uint64Ptr(100),
+					Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeDouble),
+					Value:    &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 25.5},
+				},
+			}
+
+			cache.ResolveAliases("TestFactory/Line1", dataMetrics)
+
+			Expect(*dataMetrics[0].Name).To(Equal("Temperature"))
+			Expect(*dataMetrics[0].Datatype).To(Equal(sparkplugplugin.SparkplugDataTypeDouble))
+		})
+
 		It("should handle alias collisions in NBIRTH", func() {
 			// Create metrics with duplicate aliases (collision)
 			metrics := []*sparkplugb.Payload_Metric{
