@@ -1919,3 +1919,141 @@ unifiedAddress:
 		Expect(err).To(MatchError(ContainSubstring("hostAMS")))
 	})
 })
+
+var _ = Describe("initialSampleTimeout", func() {
+	It("keeps the floor when no symbol is configured", func() {
+		var a AdsCommInput
+		Expect(a.initialSampleTimeout()).To(Equal(initialSampleWait))
+	})
+
+	It("adds the window of a symbol carrying the plugin defaults", func() {
+		// CreateSymbolList stamps defaultCycleTime/defaultMaxDelay onto every
+		// symbol, so a configured symbol always carries a window and the bare
+		// floor above is only reachable with no symbols at all. With the shipped
+		// defaults of 100ms each, this is the realistic minimum.
+		symbols, warnings := CreateSymbolList([]string{"MAIN.a", "MAIN.b"},
+			100*time.Millisecond, 100*time.Millisecond)
+		Expect(warnings).To(BeEmpty())
+		a := &AdsCommInput{Symbols: symbols}
+
+		Expect(a.initialSampleTimeout()).To(Equal(200*time.Millisecond + initialSampleWait))
+	})
+
+	It("gives the slowest symbol its own delivery window plus the margin", func() {
+		// A symbol's first sample arrives at the PLC's first change-check, one
+		// cycleTime after registration (floored by the PLC task cycle), plus
+		// maxDelay when the server batches. Measured on TC2 and TC3: cycleTime 0
+		// delivers in 11ms, 100ms in 120ms, 60s in 60.02s. The timeout has to
+		// outlast that window or a legitimately slow symbol warns on every
+		// connect; the extra initialSampleWait is margin on top.
+		a := &AdsCommInput{Symbols: []PlcSymbol{
+			{Name: "MAIN.fast", CycleTime: 10 * time.Millisecond},
+			{Name: "MAIN.slow", CycleTime: 30 * time.Second, MaxDelay: 5 * time.Second},
+		}}
+		Expect(a.initialSampleTimeout()).To(Equal(35*time.Second + initialSampleWait))
+	})
+})
+
+var _ = Describe("waitForInitialSamples", func() {
+	newInput := func() (*AdsCommInput, *[]capturedLog) {
+		log, recs := capturingLogger()
+		return &AdsCommInput{Log: log, NotificationChan: make(chan *Update, 8)}, recs
+	}
+
+	It("buffers one sample per registered symbol and returns as soon as the last arrives", func() {
+		// The timeout is a deadline, not a sleep: a healthy connect returns when
+		// the slowest symbol has reported, not when the window expires.
+		a, _ := newInput()
+		a.NotificationChan <- &Update{Variable: "MAIN.a", Value: "1"}
+		a.NotificationChan <- &Update{Variable: "MAIN.b", Value: "2"}
+
+		err := a.waitForInitialSamples(context.Background(), []NotifyResult{
+			{SymbolName: "MAIN.a", Registered: true},
+			{SymbolName: "MAIN.b", Registered: true},
+		})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(a.pendingInitial).To(HaveLen(2), "both samples are held for the first ReadBatch")
+	})
+
+	It("matches the PLC's own spelling of the symbol name", func() {
+		// An update carries the symbol's canonical name from the PLC's table, not
+		// the one we subscribed with: TC2 reports its table in upper case, TC3
+		// keeps the project's casing. A case-sensitive match would wait out the
+		// full timeout on every TC2 symbol.
+		a, _ := newInput()
+		a.NotificationChan <- &Update{Variable: ".NMASTERCYCLECOUNTER", Value: "1"}
+
+		Expect(a.waitForInitialSamples(context.Background(), []NotifyResult{
+			{SymbolName: ".nMasterCycleCounter", Registered: true},
+		})).To(Succeed())
+		Expect(a.pendingInitial).To(HaveLen(1))
+	})
+
+	It("waits only for the symbols the PLC actually registered", func() {
+		a, _ := newInput()
+		a.NotificationChan <- &Update{Variable: "MAIN.ok", Value: "1"}
+
+		Expect(a.waitForInitialSamples(context.Background(), []NotifyResult{
+			{SymbolName: "MAIN.ok", Registered: true},
+			{SymbolName: "MAIN.rejected", Skipped: true},
+		})).To(Succeed())
+		Expect(a.pendingInitial).To(HaveLen(1), "a rejected symbol never sends a sample")
+	})
+
+	It("skips a nil update instead of buffering it", func() {
+		// go-ads recovers a send on a closed channel, so a nil can reach us.
+		a, _ := newInput()
+		a.NotificationChan <- nil
+		a.NotificationChan <- &Update{Variable: "MAIN.a", Value: "1"}
+
+		Expect(a.waitForInitialSamples(context.Background(), []NotifyResult{
+			{SymbolName: "MAIN.a", Registered: true},
+		})).To(Succeed())
+		Expect(a.pendingInitial).To(HaveLen(1))
+	})
+
+	It("discards samples buffered by an earlier connect", func() {
+		a, _ := newInput()
+		a.pendingInitial = []*Update{{Variable: "MAIN.stale", Value: "1"}}
+
+		Expect(a.waitForInitialSamples(context.Background(), nil)).To(Succeed())
+		Expect(a.pendingInitial).To(BeEmpty(), "a reconnect must not replay the previous session")
+	})
+
+	It("returns the context error and stays quiet when the input is shutting down", func() {
+		// The timeout warn is about a late PLC, not about our own shutdown.
+		a, recs := newInput()
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		err := a.waitForInitialSamples(ctx, []NotifyResult{{SymbolName: "MAIN.silent", Registered: true}})
+
+		Expect(err).To(MatchError(context.Canceled))
+		Expect(levelsOf(recs, slog.LevelWarn)).To(BeEmpty())
+	})
+
+	It("warns and lets the connect succeed when a registered symbol never sends", func() {
+		// Costs initialSampleWait: the timeout is floored there, so a real wait is
+		// the only way into this branch. Worth the wall clock -- this warn is what
+		// made the go-ads TC2 notification regression visible in the field.
+		a, recs := newInput()
+		a.NotificationChan <- &Update{Variable: "MAIN.a", Value: "1"}
+
+		err := a.waitForInitialSamples(context.Background(), []NotifyResult{
+			{SymbolName: "MAIN.a", Registered: true},
+			{SymbolName: "MAIN.silent", Registered: true},
+		})
+
+		Expect(err).NotTo(HaveOccurred(), "a missing first sample must not fail the connect")
+		Expect(a.pendingInitial).To(HaveLen(1), "the sample that did arrive is still delivered")
+		// Names are reported folded, because the wait keys them lowercase to match
+		// the PLC's own spelling back to the configured one.
+		Expect(*recs).To(ContainElement(SatisfyAll(
+			HaveField("Level", slog.LevelWarn),
+			HaveField("Msg", ContainSubstring("main.silent")),
+		)), "the warn has to name the symbols still missing")
+		Expect(*recs).NotTo(ContainElement(HaveField("Msg", ContainSubstring("main.a"))),
+			"a symbol that did report must not be listed as missing")
+	})
+})
