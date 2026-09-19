@@ -345,6 +345,29 @@ var _ = Describe("Plugin Internal Functions", func() {
 			Expect(warnings).To(ContainElement(ContainSubstring("use maxDelay=100ms or cycleTime=10ms")))
 		})
 
+		It("ignores an unknown option key and names it", func() {
+			// Keys are matched exactly, so a miscased one is unknown rather than
+			// silently applied -- which is the mistake worth reporting.
+			symbols, warnings := CreateSymbolList([]string{"MAIN.Var:cycletime=10ms"}, 1000*time.Millisecond, 100*time.Millisecond)
+			Expect(symbols[0].Name).To(Equal("MAIN.Var"))
+			Expect(symbols[0].CycleTime).To(Equal(1000*time.Millisecond), "default kept")
+			Expect(symbols[0].MaxDelay).To(Equal(100*time.Millisecond), "default kept")
+			Expect(warnings).To(ContainElement(SatisfyAll(
+				ContainSubstring(`ignoring unknown option "cycletime"`),
+				ContainSubstring("supported: maxDelay, cycleTime"),
+			)))
+		})
+
+		It("keeps the default for a value that is not a duration, and applies the rest", func() {
+			// Each option is independent: one unparseable value must not discard
+			// the options beside it.
+			symbols, warnings := CreateSymbolList([]string{"MAIN.Var:cycleTime=fast:maxDelay=1h"}, 1000*time.Millisecond, 100*time.Millisecond)
+			Expect(symbols[0].CycleTime).To(Equal(1000*time.Millisecond), "unparseable value falls back to the default")
+			Expect(symbols[0].MaxDelay).To(Equal(time.Hour), "the valid option beside it still applies")
+			Expect(warnings).To(ContainElement(ContainSubstring(`ignoring invalid cycleTime value "fast"`)))
+			Expect(warnings).To(HaveLen(1), "only the bad option warns")
+		})
+
 		It("handles keyed cycleTime only", func() {
 			symbols, _ := CreateSymbolList([]string{"MAIN.Var:cycleTime=200"}, 1000*time.Millisecond, 100*time.Millisecond)
 			Expect(symbols[0].Name).To(Equal("MAIN.Var"))
