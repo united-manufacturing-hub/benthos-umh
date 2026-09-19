@@ -41,6 +41,7 @@ type fakeClient struct {
 	readFromSymbolValue map[string]string
 	readFromSymbolErr   error
 	connectErr          error
+	closeErr            error
 	loadSymbolsErr      error
 	notifyErr           error
 	notifyResults       []NotifyResult
@@ -51,7 +52,7 @@ type fakeClient struct {
 }
 
 func (f *fakeClient) Connect(_ context.Context) error { return f.connectErr }
-func (f *fakeClient) Close() error                    { f.closed = true; return nil }
+func (f *fakeClient) Close() error                    { f.closed = true; return f.closeErr }
 func (f *fakeClient) IsClosed() bool                  { return f.closed }
 func (f *fakeClient) LoadSymbols(_ context.Context) error {
 	f.callOrder = append(f.callOrder, "LoadSymbols")
@@ -2032,6 +2033,55 @@ unifiedAddress:
 		Expect(err).NotTo(HaveOccurred())
 		_, err = NewAdsCommInput(conf, service.MockResources())
 		Expect(err).To(MatchError(ContainSubstring("hostAMS")))
+	})
+})
+
+var _ = Describe("Close", func() {
+	It("is a no-op when no session was ever established", func() {
+		// Benthos calls Close even when Connect never succeeded.
+		a := &AdsCommInput{Log: service.MockResources().Logger()}
+		Expect(a.Close(context.Background())).To(Succeed())
+	})
+
+	It("closes the session and drops the reference", func() {
+		client := &fakeClient{}
+		a := &AdsCommInput{Log: service.MockResources().Logger(), client: client}
+
+		Expect(a.Close(context.Background())).To(Succeed())
+
+		Expect(client.closed).To(BeTrue())
+		Expect(a.client).To(BeNil(), "a second Close must not reach a closed session")
+	})
+
+	It("returns the close error but still drops the reference", func() {
+		// The session is gone either way; keeping the pointer would let a later
+		// read reach a dead client instead of reconnecting.
+		client := &fakeClient{closeErr: errors.New("socket already gone")}
+		a, recs := func() (*AdsCommInput, *[]capturedLog) {
+			log, recs := capturingLogger()
+			return &AdsCommInput{Log: log, client: client}, recs
+		}()
+
+		err := a.Close(context.Background())
+
+		Expect(err).To(MatchError(ContainSubstring("socket already gone")))
+		Expect(a.client).To(BeNil())
+		Expect(levelsOf(recs, slog.LevelError)).To(HaveLen(1))
+	})
+})
+
+var _ = Describe("Connect", func() {
+	It("keeps a live session instead of building a second one", func() {
+		// Benthos re-calls Connect after a read error, and a fresh session per
+		// call would leave the PLC holding the abandoned one. The rest of Connect
+		// builds a real go-ads session, so it is covered by the hardware suite.
+		client := &fakeClient{}
+		a := &AdsCommInput{Log: service.MockResources().Logger(), client: client}
+
+		Expect(a.Connect(context.Background())).To(Succeed())
+
+		Expect(a.client).To(BeIdenticalTo(client), "the existing session must be kept")
+		Expect(client.closed).To(BeFalse())
 	})
 })
 
