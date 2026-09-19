@@ -580,6 +580,80 @@ targetAddress: "1.2.3.4"
 		})
 	})
 
+	Describe("ReadBatchNotification channel reads", func() {
+		newInput := func(client Client) (*AdsCommInput, *[]capturedLog) {
+			log, recs := capturingLogger()
+			return &AdsCommInput{
+				ReadType:         "notification",
+				Log:              log,
+				client:           client,
+				NotificationChan: make(chan *Update, 8),
+			}, recs
+		}
+
+		It("emits an update that arrives on the channel and drains what is buffered behind it", func() {
+			// One ReadBatch should hand Benthos everything already queued rather
+			// than one message per call, which is what the channel-depth snapshot
+			// after the first update is for.
+			a, _ := newInput(&fakeClient{})
+			a.NotificationChan <- &Update{Variable: "MAIN.a", Value: "1"}
+			a.NotificationChan <- &Update{Variable: "MAIN.b", Value: "2"}
+			a.NotificationChan <- &Update{Variable: "MAIN.c", Value: "3"}
+
+			msgs, ack, err := a.ReadBatchNotification(context.Background())
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ack).NotTo(BeNil())
+			Expect(msgs).To(HaveLen(3))
+			names := make([]string, 0, len(msgs))
+			for _, msg := range msgs {
+				name, _ := msg.MetaGet("ads_symbol_name")
+				names = append(names, name)
+			}
+			Expect(names).To(ConsistOf("MAIN_a", "MAIN_b", "MAIN_c"))
+		})
+
+		It("skips a nil update instead of building a message from it", func() {
+			// go-ads recovers a send on a closed channel, so a nil can arrive.
+			a, recs := newInput(&fakeClient{})
+			a.NotificationChan <- nil
+
+			msgs, ack, err := a.ReadBatchNotification(context.Background())
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ack).NotTo(BeNil(), "an empty poll still has to be ackable")
+			Expect(msgs).To(BeEmpty())
+			Expect(levelsOf(recs, slog.LevelWarn)).To(HaveLen(1), "a nil update is worth one warn")
+		})
+
+		It("returns an empty batch when nothing arrives before the wait expires", func() {
+			// A cancelled parent reaches the same waitCtx.Done() branch as the
+			// notificationWait timeout, without spending it: slow-changing symbols
+			// are normal, so this must not look like an error to Benthos.
+			a, _ := newInput(&fakeClient{})
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+
+			msgs, ack, err := a.ReadBatchNotification(ctx)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ack).NotTo(BeNil())
+			Expect(msgs).To(BeEmpty())
+			Expect(a.client).NotTo(BeNil(), "a live session must not be torn down by a quiet poll")
+		})
+
+		It("reports the session as gone when the wait expires on a dead session", func() {
+			a, _ := newInput(&fakeClient{closed: true})
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+
+			_, _, err := a.ReadBatchNotification(ctx)
+
+			Expect(err).To(Equal(service.ErrNotConnected), "Benthos reconnects on this, a nil error would stall the input")
+			Eventually(func() bool { return a.client == nil }).Should(BeTrue(), "closeHandler runs asynchronously")
+		})
+	})
+
 	Describe("ReadBatchPull via fakeClient", func() {
 		It("emits metadata (ads_symbol_name, ads_datatype, ads_tag_type) and quotes strings but not numbers", func() {
 			client := &fakeClient{
