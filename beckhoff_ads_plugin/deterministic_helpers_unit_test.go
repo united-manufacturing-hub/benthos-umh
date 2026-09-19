@@ -1921,6 +1921,53 @@ var _ = Describe("session rebuild on a degraded session", func() {
 
 			Expect(optionCount(zeroed)).To(Equal(optionCount(base)))
 		})
+
+		It("adds the route and host options only when both credentials are given", func() {
+			// hostIP is set so the route host resolves without dialling the PLC.
+			// Either credential alone leaves the session unrouted, which is how a
+			// half-filled config stays a connect failure rather than a silent
+			// registration attempt.
+			routed := base
+			routed.Username, routed.Password, routed.HostIP = "Administrator", "1", "192.168.3.52"
+			Expect(optionCount(routed)).To(Equal(optionCount(base)+2), "WithRoute and WithHostIP")
+
+			userOnly := base
+			userOnly.Username, userOnly.HostIP = "Administrator", "192.168.3.52"
+			Expect(optionCount(userOnly)).To(Equal(optionCount(base)))
+
+			passOnly := base
+			passOnly.Password, passOnly.HostIP = "1", "192.168.3.52"
+			Expect(optionCount(passOnly)).To(Equal(optionCount(base)))
+		})
+
+		It("adds the local AMS override only for a real NetID", func() {
+			pinned := base
+			pinned.HostAMS, pinned.HostPort = "192.168.3.52.1.1", 10500
+			Expect(optionCount(pinned)).To(Equal(optionCount(base) + 1))
+
+			for _, unset := range []string{"", "auto"} {
+				auto := base
+				auto.HostAMS = unset
+				Expect(optionCount(auto)).To(Equal(optionCount(base)), "%q means let go-ads derive it", unset)
+			}
+		})
+
+		It("fails rather than connecting with an unusable local AMS", func() {
+			bad := base
+			bad.HostAMS = "192.168.3.52"
+
+			_, err := buildSessionOptions(context.Background(), bad, service.MockResources().Logger())
+
+			Expect(err).To(MatchError(ContainSubstring("hostAMS")))
+			Expect(err).To(MatchError(ContainSubstring("192.168.3.52")), "the rejected value belongs in the message")
+		})
+
+		It("adds the skip-registration option when the connect gate has given up on the route", func() {
+			skipped := base
+			skipped.SkipRouteRegistration = true
+
+			Expect(optionCount(skipped)).To(Equal(optionCount(base) + 1))
+		})
 	})
 })
 
@@ -2034,6 +2081,81 @@ unifiedAddress:
 		_, err = NewAdsCommInput(conf, service.MockResources())
 		Expect(err).To(MatchError(ContainSubstring("hostAMS")))
 	})
+})
+
+var _ = Describe("toTransMode", func() {
+	// The config field is a string, transmissionModeValue turns it into the code
+	// stored on the input, and this maps that code to the library constant. A
+	// drift anywhere along that chain silently subscribes in the wrong mode.
+	DescribeTable("maps each configured transmission mode to its library constant",
+		func(configured string, want adsLib.TransMode) {
+			Expect(toTransMode(transmissionModeValue(configured))).To(Equal(want))
+		},
+		Entry("serverOnChange", "serverOnChange", adsLib.TransModeServerOnChange),
+		Entry("serverCycle", "serverCycle", adsLib.TransModeServerCycle),
+		Entry("serverOnChange2", "serverOnChange2", adsLib.TransModeServerOnChange2),
+		Entry("serverCycle2", "serverCycle2", adsLib.TransModeServerCycle2),
+		Entry("an unknown name falls back to on-change", "nonsense", adsLib.TransModeServerOnChange),
+	)
+
+	It("falls back to on-change for a code no config can produce", func() {
+		Expect(toTransMode(99)).To(Equal(adsLib.TransModeServerOnChange))
+	})
+})
+
+var _ = Describe("resolveRouteHostIP", func() {
+	It("returns a configured hostIP without touching the network", func() {
+		// TEST-NET-1 with a discard port: if the configured address were ignored
+		// and this dialled, the spec would sit here for routeDialTimeout instead
+		// of returning at once.
+		cfg := SessionConfig{HostIP: "192.168.3.52", TargetIP: "192.0.2.1", TargetPort: 48898}
+
+		start := time.Now()
+		ip, err := resolveRouteHostIP(context.Background(), cfg)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ip).To(Equal("192.168.3.52"))
+		Expect(time.Since(start)).To(BeNumerically("<", routeDialTimeout), "a configured hostIP must short-circuit the probe")
+	})
+
+	It("takes the source address of a dial the PLC accepts", func() {
+		// A listener stands in for the PLC's ADS port: the point is that the
+		// address reported is the local end of a connection to the target, which
+		// is the interface the PLC will see the route coming from.
+		listener, err := net.Listen("tcp4", "127.0.0.1:0")
+		Expect(err).NotTo(HaveOccurred())
+		defer listener.Close()
+		go func() {
+			conn, acceptErr := listener.Accept()
+			if acceptErr == nil {
+				_ = conn.Close()
+			}
+		}()
+
+		addr := listener.Addr().(*net.TCPAddr)
+		ip, err := resolveRouteHostIP(context.Background(), SessionConfig{
+			TargetIP: "127.0.0.1", TargetPort: addr.Port,
+		})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ip).To(Equal("127.0.0.1"))
+	})
+
+	DescribeTable("falls back to a routing lookup when the PLC will not answer",
+		func(hostIP string) {
+			// Port 1 on loopback refuses at once, so this takes the dial-failed
+			// path without waiting out routeDialTimeout, and the UDP lookup behind
+			// it sends nothing. Both spellings of unset have to reach it.
+			cfg := SessionConfig{HostIP: hostIP, TargetIP: "127.0.0.1", TargetPort: 1}
+
+			ip, err := resolveRouteHostIP(context.Background(), cfg)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ip).To(Equal("127.0.0.1"), "the source address the route would use")
+		},
+		Entry("empty", ""),
+		Entry("auto", "auto"),
+	)
 })
 
 var _ = Describe("Close", func() {
