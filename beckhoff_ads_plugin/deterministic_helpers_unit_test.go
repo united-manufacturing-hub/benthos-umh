@@ -498,6 +498,24 @@ targetAddress: "1.2.3.4"
 			Entry("lowercase base type still classifies", "bool", "false", []byte("false"), "bool"),
 		)
 
+		It("encodes a value the PLC sent as invalid UTF-8 without failing", func() {
+			// A STRING read out of PLC memory can hold arbitrary bytes. json.Marshal
+			// of a Go string cannot return an error -- invalid bytes are replaced
+			// with U+FFFD -- which is why the strconv.Quote fallback beside it is
+			// unreachable. It would also be wrong if it ran: strconv.Quote emits Go
+			// escapes such as \xff that JSON rejects, so the payload below would
+			// stop being parseable downstream.
+			payload, tagType := adsValueBytes("STRING", "bad\xff\xfeend")
+
+			Expect(tagType).To(Equal("string"))
+			Expect(json.Valid(payload)).To(BeTrue(), "the payload has to survive as JSON")
+			var roundTrip string
+			Expect(json.Unmarshal(payload, &roundTrip)).To(Succeed())
+			Expect(roundTrip).To(ContainSubstring("�"))
+			Expect(roundTrip).To(HavePrefix("bad"))
+			Expect(roundTrip).To(HaveSuffix("end"))
+		})
+
 		It("JSON-quotes a string containing special characters correctly", func() {
 			payload, tagType := adsValueBytes("STRING", `has "quotes"`)
 			Expect(tagType).To(Equal("string"))
