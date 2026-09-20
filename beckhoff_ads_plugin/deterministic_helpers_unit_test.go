@@ -1626,6 +1626,89 @@ var _ = Describe("setupNotifications", func() {
 	})
 })
 
+var _ = Describe("setupNotifications partial success", func() {
+	It("keeps the symbols the PLC took, names the ones it refused, and buffers their first samples", func() {
+		// go-ads reports per-symbol outcomes rather than failing the batch, so a
+		// connect must survive a mixed result: one registered, one the library
+		// skipped, one the PLC rejected with a code.
+		log, recs := capturingLogger()
+		a := &AdsCommInput{
+			Log:              log,
+			ReadType:         "notification",
+			NotificationChan: make(chan *Update, 4),
+			Symbols:          []PlcSymbol{{Name: "MAIN.ok"}, {Name: "MAIN.typo"}, {Name: "MAIN.refused"}},
+			client: &fakeClient{notifyResults: []NotifyResult{
+				{SymbolName: "MAIN.ok", Registered: true},
+				{SymbolName: "MAIN.typo", Skipped: true},
+				{SymbolName: "MAIN.refused", Code: 0x70A},
+			}},
+		}
+		// Only the registered symbol will ever report, so supplying its sample
+		// keeps the readiness gate from waiting out its full timeout.
+		a.NotificationChan <- &Update{Variable: "MAIN.ok", Value: "1"}
+
+		Expect(a.setupNotifications(context.Background())).To(Succeed())
+
+		Expect(a.pendingInitial).To(HaveLen(1))
+		Expect(levelsOf(recs, slog.LevelWarn)).To(HaveLen(2), "one warn per symbol that did not register")
+		msgs := make([]string, 0, len(*recs))
+		for _, r := range *recs {
+			msgs = append(msgs, r.Msg)
+		}
+		Expect(msgs).To(ContainElement(ContainSubstring("MAIN.typo")))
+		Expect(msgs).To(ContainElement(SatisfyAll(
+			ContainSubstring("MAIN.refused"),
+			ContainSubstring("0x70A"), // the ADS code is what the user looks up
+		)))
+		Expect(msgs).To(ContainElement(ContainSubstring("1/3")), "the summary states how many made it")
+	})
+})
+
+var _ = Describe("ReadBatch dispatch", func() {
+	It("routes to the notification path when readType is notification", func() {
+		// A cancelled context returns from the notification wait at once; the
+		// pull path would have failed on the nil client instead.
+		a := &AdsCommInput{
+			Log:              service.MockResources().Logger(),
+			ReadType:         "notification",
+			NotificationChan: make(chan *Update, 1),
+			client:           &fakeClient{},
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		msgs, _, err := a.ReadBatch(ctx)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(msgs).To(BeEmpty())
+	})
+
+	It("routes to the pull path for any other readType", func() {
+		a := &AdsCommInput{Log: service.MockResources().Logger(), ReadType: "interval"}
+
+		_, _, err := a.ReadBatch(context.Background())
+
+		Expect(err).To(Equal(service.ErrNotConnected), "the pull path checks the client first")
+	})
+})
+
+var _ = Describe("BatchReadError", func() {
+	It("counts the failures against the batch size", func() {
+		err := &BatchReadError{Requested: 40, Failed: []NotifyResult{
+			{SymbolName: "MAIN.typo", Skipped: true},
+			{SymbolName: "MAIN.gone", Code: 0x710},
+		}}
+		Expect(err.Error()).To(Equal("2 of 40 symbols failed"))
+	})
+})
+
+var _ = Describe("benthosLogHandler.WithGroup", func() {
+	It("ignores grouping, since benthos logs flat key=value pairs", func() {
+		h := &benthosLogHandler{logger: service.MockResources().Logger()}
+		Expect(h.WithGroup("session")).To(BeIdenticalTo(slog.Handler(h)))
+	})
+})
+
 var _ = Describe("finishConnect failure branches", func() {
 	newInput := func(client *fakeClient, readType string) (*AdsCommInput, *[]capturedLog) {
 		log, recs := capturingLogger()
