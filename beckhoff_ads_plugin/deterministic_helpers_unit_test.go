@@ -41,6 +41,7 @@ type fakeClient struct {
 	readFromSymbolValue map[string]string
 	readFromSymbolErr   error
 	connectErr          error
+	closeErr            error
 	loadSymbolsErr      error
 	notifyErr           error
 	notifyResults       []NotifyResult
@@ -51,7 +52,7 @@ type fakeClient struct {
 }
 
 func (f *fakeClient) Connect(_ context.Context) error { return f.connectErr }
-func (f *fakeClient) Close() error                    { f.closed = true; return nil }
+func (f *fakeClient) Close() error                    { f.closed = true; return f.closeErr }
 func (f *fakeClient) IsClosed() bool                  { return f.closed }
 func (f *fakeClient) LoadSymbols(_ context.Context) error {
 	f.callOrder = append(f.callOrder, "LoadSymbols")
@@ -345,6 +346,29 @@ var _ = Describe("Plugin Internal Functions", func() {
 			Expect(warnings).To(ContainElement(ContainSubstring("use maxDelay=100ms or cycleTime=10ms")))
 		})
 
+		It("ignores an unknown option key and names it", func() {
+			// Keys are matched exactly, so a miscased one is unknown rather than
+			// silently applied -- which is the mistake worth reporting.
+			symbols, warnings := CreateSymbolList([]string{"MAIN.Var:cycletime=10ms"}, 1000*time.Millisecond, 100*time.Millisecond)
+			Expect(symbols[0].Name).To(Equal("MAIN.Var"))
+			Expect(symbols[0].CycleTime).To(Equal(1000*time.Millisecond), "default kept")
+			Expect(symbols[0].MaxDelay).To(Equal(100*time.Millisecond), "default kept")
+			Expect(warnings).To(ContainElement(SatisfyAll(
+				ContainSubstring(`ignoring unknown option "cycletime"`),
+				ContainSubstring("supported: maxDelay, cycleTime"),
+			)))
+		})
+
+		It("keeps the default for a value that is not a duration, and applies the rest", func() {
+			// Each option is independent: one unparseable value must not discard
+			// the options beside it.
+			symbols, warnings := CreateSymbolList([]string{"MAIN.Var:cycleTime=fast:maxDelay=1h"}, 1000*time.Millisecond, 100*time.Millisecond)
+			Expect(symbols[0].CycleTime).To(Equal(1000*time.Millisecond), "unparseable value falls back to the default")
+			Expect(symbols[0].MaxDelay).To(Equal(time.Hour), "the valid option beside it still applies")
+			Expect(warnings).To(ContainElement(ContainSubstring(`ignoring invalid cycleTime value "fast"`)))
+			Expect(warnings).To(HaveLen(1), "only the bad option warns")
+		})
+
 		It("handles keyed cycleTime only", func() {
 			symbols, _ := CreateSymbolList([]string{"MAIN.Var:cycleTime=200"}, 1000*time.Millisecond, 100*time.Millisecond)
 			Expect(symbols[0].Name).To(Equal("MAIN.Var"))
@@ -475,6 +499,24 @@ targetAddress: "1.2.3.4"
 			Entry("lowercase base type still classifies", "bool", "false", []byte("false"), "bool"),
 		)
 
+		It("encodes a value the PLC sent as invalid UTF-8 without failing", func() {
+			// A STRING read out of PLC memory can hold arbitrary bytes. json.Marshal
+			// of a Go string cannot return an error -- invalid bytes are replaced
+			// with U+FFFD -- which is why the strconv.Quote fallback beside it is
+			// unreachable. It would also be wrong if it ran: strconv.Quote emits Go
+			// escapes such as \xff that JSON rejects, so the payload below would
+			// stop being parseable downstream.
+			payload, tagType := adsValueBytes("STRING", "bad\xff\xfeend")
+
+			Expect(tagType).To(Equal("string"))
+			Expect(json.Valid(payload)).To(BeTrue(), "the payload has to survive as JSON")
+			var roundTrip string
+			Expect(json.Unmarshal(payload, &roundTrip)).To(Succeed())
+			Expect(roundTrip).To(ContainSubstring("�"))
+			Expect(roundTrip).To(HavePrefix("bad"))
+			Expect(roundTrip).To(HaveSuffix("end"))
+		})
+
 		It("JSON-quotes a string containing special characters correctly", func() {
 			payload, tagType := adsValueBytes("STRING", `has "quotes"`)
 			Expect(tagType).To(Equal("string"))
@@ -536,6 +578,80 @@ targetAddress: "1.2.3.4"
 			Expect(tagType1).To(Equal("string"), "unresolved symbol falls back to string classification")
 			b1, _ := msgs[1].AsBytes()
 			Expect(string(b1)).To(Equal(`"99"`))
+		})
+	})
+
+	Describe("ReadBatchNotification channel reads", func() {
+		newInput := func(client Client) (*AdsCommInput, *[]capturedLog) {
+			log, recs := capturingLogger()
+			return &AdsCommInput{
+				ReadType:         "notification",
+				Log:              log,
+				client:           client,
+				NotificationChan: make(chan *Update, 8),
+			}, recs
+		}
+
+		It("emits an update that arrives on the channel and drains what is buffered behind it", func() {
+			// One ReadBatch should hand Benthos everything already queued rather
+			// than one message per call, which is what the channel-depth snapshot
+			// after the first update is for.
+			a, _ := newInput(&fakeClient{})
+			a.NotificationChan <- &Update{Variable: "MAIN.a", Value: "1"}
+			a.NotificationChan <- &Update{Variable: "MAIN.b", Value: "2"}
+			a.NotificationChan <- &Update{Variable: "MAIN.c", Value: "3"}
+
+			msgs, ack, err := a.ReadBatchNotification(context.Background())
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ack).NotTo(BeNil())
+			Expect(msgs).To(HaveLen(3))
+			names := make([]string, 0, len(msgs))
+			for _, msg := range msgs {
+				name, _ := msg.MetaGet("ads_symbol_name")
+				names = append(names, name)
+			}
+			Expect(names).To(ConsistOf("MAIN_a", "MAIN_b", "MAIN_c"))
+		})
+
+		It("skips a nil update instead of building a message from it", func() {
+			// go-ads recovers a send on a closed channel, so a nil can arrive.
+			a, recs := newInput(&fakeClient{})
+			a.NotificationChan <- nil
+
+			msgs, ack, err := a.ReadBatchNotification(context.Background())
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ack).NotTo(BeNil(), "an empty poll still has to be ackable")
+			Expect(msgs).To(BeEmpty())
+			Expect(levelsOf(recs, slog.LevelWarn)).To(HaveLen(1), "a nil update is worth one warn")
+		})
+
+		It("returns an empty batch when nothing arrives before the wait expires", func() {
+			// A cancelled parent reaches the same waitCtx.Done() branch as the
+			// notificationWait timeout, without spending it: slow-changing symbols
+			// are normal, so this must not look like an error to Benthos.
+			a, _ := newInput(&fakeClient{})
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+
+			msgs, ack, err := a.ReadBatchNotification(ctx)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ack).NotTo(BeNil())
+			Expect(msgs).To(BeEmpty())
+			Expect(a.client).NotTo(BeNil(), "a live session must not be torn down by a quiet poll")
+		})
+
+		It("reports the session as gone when the wait expires on a dead session", func() {
+			a, _ := newInput(&fakeClient{closed: true})
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+
+			_, _, err := a.ReadBatchNotification(ctx)
+
+			Expect(err).To(Equal(service.ErrNotConnected), "Benthos reconnects on this, a nil error would stall the input")
+			Eventually(func() bool { return a.client == nil }).Should(BeTrue(), "closeHandler runs asynchronously")
 		})
 	})
 
@@ -650,6 +766,69 @@ targetAddress: "1.2.3.4"
 			Expect(err).To(Equal(service.ErrNotConnected))
 			// closeHandler async-closes; give it a moment.
 			Eventually(func() bool { return a.client == nil }).Should(BeTrue())
+		})
+	})
+
+	Describe("parseTargetAddress", func() {
+		DescribeTable("accepts an address with or without a port",
+			func(in, wantHost string, wantPort int) {
+				host, port, err := parseTargetAddress(in)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(host).To(Equal(wantHost))
+				Expect(port).To(Equal(wantPort))
+			},
+			Entry("bare IP takes the TwinCAT gateway port", "192.168.3.70", "192.168.3.70", defaultTargetPort),
+			Entry("explicit port wins", "192.168.3.70:48899", "192.168.3.70", 48899),
+			Entry("port 0 is allowed, go-ads reads it as 'pick one'", "192.168.3.70:0", "192.168.3.70", 0),
+		)
+
+		DescribeTable("rejects what would otherwise fail at connect time",
+			func(in, wantMsg string) {
+				_, _, err := parseTargetAddress(in)
+				Expect(err).To(MatchError(ContainSubstring(wantMsg)))
+			},
+			// SplitHostPort succeeds here, so the port is what fails.
+			Entry("port above the range", "192.168.3.70:70000", "out of range"),
+			Entry("negative port", "192.168.3.70:-1", "out of range"),
+			Entry("non-numeric port", "192.168.3.70:ads", "out of range"),
+			// SplitHostPort fails, so the whole string is treated as a host.
+			Entry("not an address at all", "plc-01.local", "not a valid IPv4 address"),
+			Entry("empty", "", "not a valid IPv4 address"),
+			// IPv6 parses as an address but the PLC cannot route it.
+			Entry("IPv6 with a port", "[::1]:48898", "not a valid IPv4 address"),
+			Entry("bare IPv6", "::1", "not a valid IPv4 address"),
+		)
+	})
+
+	Describe("NewAdsCommInput rejects", func() {
+		minimal := `
+targetAddress: "1.2.3.4"
+unifiedAddress:
+  - "MAIN.var"
+`
+		DescribeTable("a value the PLC would only reject later, or silently ignore",
+			func(extra, wantMsg string) {
+				conf, err := adsConf.ParseYAML(minimal+extra, nil)
+				Expect(err).NotTo(HaveOccurred())
+
+				_, err = NewAdsCommInput(conf, service.MockResources())
+
+				Expect(err).To(MatchError(ContainSubstring(wantMsg)))
+			},
+			Entry("targetAMS that is not a NetID", "targetAMS: \"1.2.3.4\"\n", "targetAMS"),
+			Entry("runtimePort above the range", "runtimePort: 70000\n", "runtimePort 70000 out of range"),
+			Entry("hostPort above the range", "hostPort: 70000\n", "hostPort 70000 out of range"),
+			Entry("unsupported heartbeatRecovery", "heartbeatRecovery: \"restart\"\n", "heartbeatRecovery"),
+		)
+
+		It("rejects a targetAddress whose port is out of range", func() {
+			conf, err := adsConf.ParseYAML("targetAddress: \"1.2.3.4:70000\"\nunifiedAddress:\n  - \"MAIN.var\"\n", nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = NewAdsCommInput(conf, service.MockResources())
+
+			Expect(err).To(MatchError(ContainSubstring("targetAddress")))
+			Expect(err).To(MatchError(ContainSubstring("out of range")))
 		})
 	})
 
@@ -1447,6 +1626,89 @@ var _ = Describe("setupNotifications", func() {
 	})
 })
 
+var _ = Describe("setupNotifications partial success", func() {
+	It("keeps the symbols the PLC took, names the ones it refused, and buffers their first samples", func() {
+		// go-ads reports per-symbol outcomes rather than failing the batch, so a
+		// connect must survive a mixed result: one registered, one the library
+		// skipped, one the PLC rejected with a code.
+		log, recs := capturingLogger()
+		a := &AdsCommInput{
+			Log:              log,
+			ReadType:         "notification",
+			NotificationChan: make(chan *Update, 4),
+			Symbols:          []PlcSymbol{{Name: "MAIN.ok"}, {Name: "MAIN.typo"}, {Name: "MAIN.refused"}},
+			client: &fakeClient{notifyResults: []NotifyResult{
+				{SymbolName: "MAIN.ok", Registered: true},
+				{SymbolName: "MAIN.typo", Skipped: true},
+				{SymbolName: "MAIN.refused", Code: 0x70A},
+			}},
+		}
+		// Only the registered symbol will ever report, so supplying its sample
+		// keeps the readiness gate from waiting out its full timeout.
+		a.NotificationChan <- &Update{Variable: "MAIN.ok", Value: "1"}
+
+		Expect(a.setupNotifications(context.Background())).To(Succeed())
+
+		Expect(a.pendingInitial).To(HaveLen(1))
+		Expect(levelsOf(recs, slog.LevelWarn)).To(HaveLen(2), "one warn per symbol that did not register")
+		msgs := make([]string, 0, len(*recs))
+		for _, r := range *recs {
+			msgs = append(msgs, r.Msg)
+		}
+		Expect(msgs).To(ContainElement(ContainSubstring("MAIN.typo")))
+		Expect(msgs).To(ContainElement(SatisfyAll(
+			ContainSubstring("MAIN.refused"),
+			ContainSubstring("0x70A"), // the ADS code is what the user looks up
+		)))
+		Expect(msgs).To(ContainElement(ContainSubstring("1/3")), "the summary states how many made it")
+	})
+})
+
+var _ = Describe("ReadBatch dispatch", func() {
+	It("routes to the notification path when readType is notification", func() {
+		// A cancelled context returns from the notification wait at once; the
+		// pull path would have failed on the nil client instead.
+		a := &AdsCommInput{
+			Log:              service.MockResources().Logger(),
+			ReadType:         "notification",
+			NotificationChan: make(chan *Update, 1),
+			client:           &fakeClient{},
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		msgs, _, err := a.ReadBatch(ctx)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(msgs).To(BeEmpty())
+	})
+
+	It("routes to the pull path for any other readType", func() {
+		a := &AdsCommInput{Log: service.MockResources().Logger(), ReadType: "interval"}
+
+		_, _, err := a.ReadBatch(context.Background())
+
+		Expect(err).To(Equal(service.ErrNotConnected), "the pull path checks the client first")
+	})
+})
+
+var _ = Describe("BatchReadError", func() {
+	It("counts the failures against the batch size", func() {
+		err := &BatchReadError{Requested: 40, Failed: []NotifyResult{
+			{SymbolName: "MAIN.typo", Skipped: true},
+			{SymbolName: "MAIN.gone", Code: 0x710},
+		}}
+		Expect(err.Error()).To(Equal("2 of 40 symbols failed"))
+	})
+})
+
+var _ = Describe("benthosLogHandler.WithGroup", func() {
+	It("ignores grouping, since benthos logs flat key=value pairs", func() {
+		h := &benthosLogHandler{logger: service.MockResources().Logger()}
+		Expect(h.WithGroup("session")).To(BeIdenticalTo(slog.Handler(h)))
+	})
+})
+
 var _ = Describe("finishConnect failure branches", func() {
 	newInput := func(client *fakeClient, readType string) (*AdsCommInput, *[]capturedLog) {
 		log, recs := capturingLogger()
@@ -1805,6 +2067,53 @@ var _ = Describe("session rebuild on a degraded session", func() {
 
 			Expect(optionCount(zeroed)).To(Equal(optionCount(base)))
 		})
+
+		It("adds the route and host options only when both credentials are given", func() {
+			// hostIP is set so the route host resolves without dialling the PLC.
+			// Either credential alone leaves the session unrouted, which is how a
+			// half-filled config stays a connect failure rather than a silent
+			// registration attempt.
+			routed := base
+			routed.Username, routed.Password, routed.HostIP = "Administrator", "1", "192.168.3.52"
+			Expect(optionCount(routed)).To(Equal(optionCount(base)+2), "WithRoute and WithHostIP")
+
+			userOnly := base
+			userOnly.Username, userOnly.HostIP = "Administrator", "192.168.3.52"
+			Expect(optionCount(userOnly)).To(Equal(optionCount(base)))
+
+			passOnly := base
+			passOnly.Password, passOnly.HostIP = "1", "192.168.3.52"
+			Expect(optionCount(passOnly)).To(Equal(optionCount(base)))
+		})
+
+		It("adds the local AMS override only for a real NetID", func() {
+			pinned := base
+			pinned.HostAMS, pinned.HostPort = "192.168.3.52.1.1", 10500
+			Expect(optionCount(pinned)).To(Equal(optionCount(base) + 1))
+
+			for _, unset := range []string{"", "auto"} {
+				auto := base
+				auto.HostAMS = unset
+				Expect(optionCount(auto)).To(Equal(optionCount(base)), "%q means let go-ads derive it", unset)
+			}
+		})
+
+		It("fails rather than connecting with an unusable local AMS", func() {
+			bad := base
+			bad.HostAMS = "192.168.3.52"
+
+			_, err := buildSessionOptions(context.Background(), bad, service.MockResources().Logger())
+
+			Expect(err).To(MatchError(ContainSubstring("hostAMS")))
+			Expect(err).To(MatchError(ContainSubstring("192.168.3.52")), "the rejected value belongs in the message")
+		})
+
+		It("adds the skip-registration option when the connect gate has given up on the route", func() {
+			skipped := base
+			skipped.SkipRouteRegistration = true
+
+			Expect(optionCount(skipped)).To(Equal(optionCount(base) + 1))
+		})
 	})
 })
 
@@ -1917,5 +2226,267 @@ unifiedAddress:
 		Expect(err).NotTo(HaveOccurred())
 		_, err = NewAdsCommInput(conf, service.MockResources())
 		Expect(err).To(MatchError(ContainSubstring("hostAMS")))
+	})
+})
+
+var _ = Describe("toTransMode", func() {
+	// The config field is a string, transmissionModeValue turns it into the code
+	// stored on the input, and this maps that code to the library constant. A
+	// drift anywhere along that chain silently subscribes in the wrong mode.
+	DescribeTable("maps each configured transmission mode to its library constant",
+		func(configured string, want adsLib.TransMode) {
+			Expect(toTransMode(transmissionModeValue(configured))).To(Equal(want))
+		},
+		Entry("serverOnChange", "serverOnChange", adsLib.TransModeServerOnChange),
+		Entry("serverCycle", "serverCycle", adsLib.TransModeServerCycle),
+		Entry("serverOnChange2", "serverOnChange2", adsLib.TransModeServerOnChange2),
+		Entry("serverCycle2", "serverCycle2", adsLib.TransModeServerCycle2),
+		Entry("an unknown name falls back to on-change", "nonsense", adsLib.TransModeServerOnChange),
+	)
+
+	It("falls back to on-change for a code no config can produce", func() {
+		Expect(toTransMode(99)).To(Equal(adsLib.TransModeServerOnChange))
+	})
+})
+
+var _ = Describe("resolveRouteHostIP", func() {
+	It("returns a configured hostIP without touching the network", func() {
+		// TEST-NET-1 with a discard port: if the configured address were ignored
+		// and this dialled, the spec would sit here for routeDialTimeout instead
+		// of returning at once.
+		cfg := SessionConfig{HostIP: "192.168.3.52", TargetIP: "192.0.2.1", TargetPort: 48898}
+
+		start := time.Now()
+		ip, err := resolveRouteHostIP(context.Background(), cfg)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ip).To(Equal("192.168.3.52"))
+		Expect(time.Since(start)).To(BeNumerically("<", routeDialTimeout), "a configured hostIP must short-circuit the probe")
+	})
+
+	It("takes the source address of a dial the PLC accepts", func() {
+		// A listener stands in for the PLC's ADS port: the point is that the
+		// address reported is the local end of a connection to the target, which
+		// is the interface the PLC will see the route coming from.
+		listener, err := net.Listen("tcp4", "127.0.0.1:0")
+		Expect(err).NotTo(HaveOccurred())
+		defer listener.Close()
+		go func() {
+			conn, acceptErr := listener.Accept()
+			if acceptErr == nil {
+				_ = conn.Close()
+			}
+		}()
+
+		addr := listener.Addr().(*net.TCPAddr)
+		ip, err := resolveRouteHostIP(context.Background(), SessionConfig{
+			TargetIP: "127.0.0.1", TargetPort: addr.Port,
+		})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ip).To(Equal("127.0.0.1"))
+	})
+
+	DescribeTable("falls back to a routing lookup when the PLC will not answer",
+		func(hostIP string) {
+			// Port 1 on loopback refuses at once, so this takes the dial-failed
+			// path without waiting out routeDialTimeout, and the UDP lookup behind
+			// it sends nothing. Both spellings of unset have to reach it.
+			cfg := SessionConfig{HostIP: hostIP, TargetIP: "127.0.0.1", TargetPort: 1}
+
+			ip, err := resolveRouteHostIP(context.Background(), cfg)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ip).To(Equal("127.0.0.1"), "the source address the route would use")
+		},
+		Entry("empty", ""),
+		Entry("auto", "auto"),
+	)
+})
+
+var _ = Describe("Close", func() {
+	It("is a no-op when no session was ever established", func() {
+		// Benthos calls Close even when Connect never succeeded.
+		a := &AdsCommInput{Log: service.MockResources().Logger()}
+		Expect(a.Close(context.Background())).To(Succeed())
+	})
+
+	It("closes the session and drops the reference", func() {
+		client := &fakeClient{}
+		a := &AdsCommInput{Log: service.MockResources().Logger(), client: client}
+
+		Expect(a.Close(context.Background())).To(Succeed())
+
+		Expect(client.closed).To(BeTrue())
+		Expect(a.client).To(BeNil(), "a second Close must not reach a closed session")
+	})
+
+	It("returns the close error but still drops the reference", func() {
+		// The session is gone either way; keeping the pointer would let a later
+		// read reach a dead client instead of reconnecting.
+		client := &fakeClient{closeErr: errors.New("socket already gone")}
+		a, recs := func() (*AdsCommInput, *[]capturedLog) {
+			log, recs := capturingLogger()
+			return &AdsCommInput{Log: log, client: client}, recs
+		}()
+
+		err := a.Close(context.Background())
+
+		Expect(err).To(MatchError(ContainSubstring("socket already gone")))
+		Expect(a.client).To(BeNil())
+		Expect(levelsOf(recs, slog.LevelError)).To(HaveLen(1))
+	})
+})
+
+var _ = Describe("Connect", func() {
+	It("keeps a live session instead of building a second one", func() {
+		// Benthos re-calls Connect after a read error, and a fresh session per
+		// call would leave the PLC holding the abandoned one. The rest of Connect
+		// builds a real go-ads session, so it is covered by the hardware suite.
+		client := &fakeClient{}
+		a := &AdsCommInput{Log: service.MockResources().Logger(), client: client}
+
+		Expect(a.Connect(context.Background())).To(Succeed())
+
+		Expect(a.client).To(BeIdenticalTo(client), "the existing session must be kept")
+		Expect(client.closed).To(BeFalse())
+	})
+})
+
+var _ = Describe("initialSampleTimeout", func() {
+	It("keeps the floor when no symbol is configured", func() {
+		var a AdsCommInput
+		Expect(a.initialSampleTimeout()).To(Equal(initialSampleWait))
+	})
+
+	It("adds the window of a symbol carrying the plugin defaults", func() {
+		// CreateSymbolList stamps defaultCycleTime/defaultMaxDelay onto every
+		// symbol, so a configured symbol always carries a window and the bare
+		// floor above is only reachable with no symbols at all. With the shipped
+		// defaults of 100ms each, this is the realistic minimum.
+		symbols, warnings := CreateSymbolList([]string{"MAIN.a", "MAIN.b"},
+			100*time.Millisecond, 100*time.Millisecond)
+		Expect(warnings).To(BeEmpty())
+		a := &AdsCommInput{Symbols: symbols}
+
+		Expect(a.initialSampleTimeout()).To(Equal(200*time.Millisecond + initialSampleWait))
+	})
+
+	It("gives the slowest symbol its own delivery window plus the margin", func() {
+		// A symbol's first sample arrives at the PLC's first change-check, one
+		// cycleTime after registration (floored by the PLC task cycle), plus
+		// maxDelay when the server batches. Measured on TC2 and TC3: cycleTime 0
+		// delivers in 11ms, 100ms in 120ms, 60s in 60.02s. The timeout has to
+		// outlast that window or a legitimately slow symbol warns on every
+		// connect; the extra initialSampleWait is margin on top.
+		a := &AdsCommInput{Symbols: []PlcSymbol{
+			{Name: "MAIN.fast", CycleTime: 10 * time.Millisecond},
+			{Name: "MAIN.slow", CycleTime: 30 * time.Second, MaxDelay: 5 * time.Second},
+		}}
+		Expect(a.initialSampleTimeout()).To(Equal(35*time.Second + initialSampleWait))
+	})
+})
+
+var _ = Describe("waitForInitialSamples", func() {
+	newInput := func() (*AdsCommInput, *[]capturedLog) {
+		log, recs := capturingLogger()
+		return &AdsCommInput{Log: log, NotificationChan: make(chan *Update, 8)}, recs
+	}
+
+	It("buffers one sample per registered symbol and returns as soon as the last arrives", func() {
+		// The timeout is a deadline, not a sleep: a healthy connect returns when
+		// the slowest symbol has reported, not when the window expires.
+		a, _ := newInput()
+		a.NotificationChan <- &Update{Variable: "MAIN.a", Value: "1"}
+		a.NotificationChan <- &Update{Variable: "MAIN.b", Value: "2"}
+
+		err := a.waitForInitialSamples(context.Background(), []NotifyResult{
+			{SymbolName: "MAIN.a", Registered: true},
+			{SymbolName: "MAIN.b", Registered: true},
+		})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(a.pendingInitial).To(HaveLen(2), "both samples are held for the first ReadBatch")
+	})
+
+	It("matches the PLC's own spelling of the symbol name", func() {
+		// An update carries the symbol's canonical name from the PLC's table, not
+		// the one we subscribed with: TC2 reports its table in upper case, TC3
+		// keeps the project's casing. A case-sensitive match would wait out the
+		// full timeout on every TC2 symbol.
+		a, _ := newInput()
+		a.NotificationChan <- &Update{Variable: ".NMASTERCYCLECOUNTER", Value: "1"}
+
+		Expect(a.waitForInitialSamples(context.Background(), []NotifyResult{
+			{SymbolName: ".nMasterCycleCounter", Registered: true},
+		})).To(Succeed())
+		Expect(a.pendingInitial).To(HaveLen(1))
+	})
+
+	It("waits only for the symbols the PLC actually registered", func() {
+		a, _ := newInput()
+		a.NotificationChan <- &Update{Variable: "MAIN.ok", Value: "1"}
+
+		Expect(a.waitForInitialSamples(context.Background(), []NotifyResult{
+			{SymbolName: "MAIN.ok", Registered: true},
+			{SymbolName: "MAIN.rejected", Skipped: true},
+		})).To(Succeed())
+		Expect(a.pendingInitial).To(HaveLen(1), "a rejected symbol never sends a sample")
+	})
+
+	It("skips a nil update instead of buffering it", func() {
+		// go-ads recovers a send on a closed channel, so a nil can reach us.
+		a, _ := newInput()
+		a.NotificationChan <- nil
+		a.NotificationChan <- &Update{Variable: "MAIN.a", Value: "1"}
+
+		Expect(a.waitForInitialSamples(context.Background(), []NotifyResult{
+			{SymbolName: "MAIN.a", Registered: true},
+		})).To(Succeed())
+		Expect(a.pendingInitial).To(HaveLen(1))
+	})
+
+	It("discards samples buffered by an earlier connect", func() {
+		a, _ := newInput()
+		a.pendingInitial = []*Update{{Variable: "MAIN.stale", Value: "1"}}
+
+		Expect(a.waitForInitialSamples(context.Background(), nil)).To(Succeed())
+		Expect(a.pendingInitial).To(BeEmpty(), "a reconnect must not replay the previous session")
+	})
+
+	It("returns the context error and stays quiet when the input is shutting down", func() {
+		// The timeout warn is about a late PLC, not about our own shutdown.
+		a, recs := newInput()
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		err := a.waitForInitialSamples(ctx, []NotifyResult{{SymbolName: "MAIN.silent", Registered: true}})
+
+		Expect(err).To(MatchError(context.Canceled))
+		Expect(levelsOf(recs, slog.LevelWarn)).To(BeEmpty())
+	})
+
+	It("warns and lets the connect succeed when a registered symbol never sends", func() {
+		// Costs initialSampleWait: the timeout is floored there, so a real wait is
+		// the only way into this branch. Worth the wall clock -- this warn is what
+		// made the go-ads TC2 notification regression visible in the field.
+		a, recs := newInput()
+		a.NotificationChan <- &Update{Variable: "MAIN.a", Value: "1"}
+
+		err := a.waitForInitialSamples(context.Background(), []NotifyResult{
+			{SymbolName: "MAIN.a", Registered: true},
+			{SymbolName: "MAIN.silent", Registered: true},
+		})
+
+		Expect(err).NotTo(HaveOccurred(), "a missing first sample must not fail the connect")
+		Expect(a.pendingInitial).To(HaveLen(1), "the sample that did arrive is still delivered")
+		// Names are reported folded, because the wait keys them lowercase to match
+		// the PLC's own spelling back to the configured one.
+		Expect(*recs).To(ContainElement(SatisfyAll(
+			HaveField("Level", slog.LevelWarn),
+			HaveField("Msg", ContainSubstring("main.silent")),
+		)), "the warn has to name the symbols still missing")
+		Expect(*recs).NotTo(ContainElement(HaveField("Msg", ContainSubstring("main.a"))),
+			"a symbol that did report must not be listed as missing")
 	})
 })
