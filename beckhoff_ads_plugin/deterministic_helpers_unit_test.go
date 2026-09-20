@@ -769,6 +769,69 @@ targetAddress: "1.2.3.4"
 		})
 	})
 
+	Describe("parseTargetAddress", func() {
+		DescribeTable("accepts an address with or without a port",
+			func(in, wantHost string, wantPort int) {
+				host, port, err := parseTargetAddress(in)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(host).To(Equal(wantHost))
+				Expect(port).To(Equal(wantPort))
+			},
+			Entry("bare IP takes the TwinCAT gateway port", "192.168.3.70", "192.168.3.70", defaultTargetPort),
+			Entry("explicit port wins", "192.168.3.70:48899", "192.168.3.70", 48899),
+			Entry("port 0 is allowed, go-ads reads it as 'pick one'", "192.168.3.70:0", "192.168.3.70", 0),
+		)
+
+		DescribeTable("rejects what would otherwise fail at connect time",
+			func(in, wantMsg string) {
+				_, _, err := parseTargetAddress(in)
+				Expect(err).To(MatchError(ContainSubstring(wantMsg)))
+			},
+			// SplitHostPort succeeds here, so the port is what fails.
+			Entry("port above the range", "192.168.3.70:70000", "out of range"),
+			Entry("negative port", "192.168.3.70:-1", "out of range"),
+			Entry("non-numeric port", "192.168.3.70:ads", "out of range"),
+			// SplitHostPort fails, so the whole string is treated as a host.
+			Entry("not an address at all", "plc-01.local", "not a valid IPv4 address"),
+			Entry("empty", "", "not a valid IPv4 address"),
+			// IPv6 parses as an address but the PLC cannot route it.
+			Entry("IPv6 with a port", "[::1]:48898", "not a valid IPv4 address"),
+			Entry("bare IPv6", "::1", "not a valid IPv4 address"),
+		)
+	})
+
+	Describe("NewAdsCommInput rejects", func() {
+		minimal := `
+targetAddress: "1.2.3.4"
+unifiedAddress:
+  - "MAIN.var"
+`
+		DescribeTable("a value the PLC would only reject later, or silently ignore",
+			func(extra, wantMsg string) {
+				conf, err := adsConf.ParseYAML(minimal+extra, nil)
+				Expect(err).NotTo(HaveOccurred())
+
+				_, err = NewAdsCommInput(conf, service.MockResources())
+
+				Expect(err).To(MatchError(ContainSubstring(wantMsg)))
+			},
+			Entry("targetAMS that is not a NetID", "targetAMS: \"1.2.3.4\"\n", "targetAMS"),
+			Entry("runtimePort above the range", "runtimePort: 70000\n", "runtimePort 70000 out of range"),
+			Entry("hostPort above the range", "hostPort: 70000\n", "hostPort 70000 out of range"),
+			Entry("unsupported heartbeatRecovery", "heartbeatRecovery: \"restart\"\n", "heartbeatRecovery"),
+		)
+
+		It("rejects a targetAddress whose port is out of range", func() {
+			conf, err := adsConf.ParseYAML("targetAddress: \"1.2.3.4:70000\"\nunifiedAddress:\n  - \"MAIN.var\"\n", nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = NewAdsCommInput(conf, service.MockResources())
+
+			Expect(err).To(MatchError(ContainSubstring("targetAddress")))
+			Expect(err).To(MatchError(ContainSubstring("out of range")))
+		})
+	})
+
 	Describe("validateIP", func() {
 		It("accepts valid IPv4", func() {
 			Expect(validateIP("192.168.1.100")).To(Succeed())
