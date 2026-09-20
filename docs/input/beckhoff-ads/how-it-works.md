@@ -92,14 +92,14 @@ The `interval` and `notification` read types can produce similar-looking results
 
 - **`interval`**: The client polls the PLC every `intervalTime`, reading the whole symbol list in one
   sum command. No PLC notification overhead, and the 550-notification limit does not apply.
-- **`notification` + `serverOnChange`**: The PLC pushes data only when a value changes. Sends nothing while the value is unchanged. Counts against the 550-notification limit.
+- **`notification` + `serverOnChange`**: The PLC pushes data only when a value changes. After one initial sample at the first check, it sends nothing while the value is unchanged. Counts against the 550-notification limit.
 - **`notification` + `serverCycle`**: The PLC pushes data at every `cycleTime` interval regardless of changes. Similar result to `interval` but PLC-driven: more precise timing, with no request/response overhead per cycle. Counts against the 550-notification limit.
 
 | Aspect | `interval` | `notification` + `serverOnChange` | `notification` + `serverCycle` |
 |--------|-----------|-----------------------------------|-------------------------------|
 | Who drives | Client polls | PLC pushes on change | PLC pushes on timer |
 | Network per cycle | Request + response | Push only | Push only |
-| Sends unchanged values | Yes | No | Yes |
+| Sends unchanged values | Yes | No, after the initial sample | Yes |
 | Timing precision | Subject to network latency | PLC real-time task | PLC real-time task |
 | PLC notification limit | No limit | 550 per device | 550 per device |
 | Best for | Large symbol lists, simple setup | Event-driven data (most use cases) | Precise periodic sampling |
@@ -150,7 +150,20 @@ Which of the four transmission modes applies, and what the `2` variants change, 
 
 ### First batch completeness
 
-When `readType: notification`, TwinCAT sends an initial sample for every subscribed symbol immediately on registration, in every one of the four transmission modes. The plugin waits for these initial samples before returning from `Connect`, so the **first `ReadBatch` always returns a complete batch** containing one message per successfully registered symbol. No separate read or warm-up period is needed to get the current state of all symbols.
+When `readType: notification`, TwinCAT sends an initial sample for every subscribed symbol in every one of the four transmission modes, including for a symbol whose value never changes: the first check has no previous value to compare against, so it always reports.
+
+That initial sample arrives at the **first check, one `cycleTime` after registration** (plus `maxDelay` where the PLC batches), not at registration itself. `cycleTime` is the interval at which the PLC compares the value, floored by the task cycle, so the wait scales with what you configure:
+
+| `cycleTime` | First sample arrives after |
+|-------------|----------------------------|
+| `0s` | one PLC task cycle (~10ms on a 10ms task) |
+| `100ms` (default) | ~120ms |
+| `1s` | ~1.02s |
+| `60s` | ~60.02s |
+
+The plugin waits for these initial samples before returning from `Connect`, so the **first `ReadBatch` returns a complete batch** containing one message per successfully registered symbol, and no separate read or warm-up period is needed to get the current state of all symbols.
+
+The consequence is that a large `cycleTime` delays startup, because `Connect` cannot complete before the slowest symbol's first check. With the defaults that is about 0.2s. The wait is bounded at `cycleTime + maxDelay + 10s` for the slowest configured symbol; if a symbol has still not reported by then, a warning names it and startup continues, and that symbol's data arrives once the PLC does report it.
 
 ### The connection heartbeat
 
