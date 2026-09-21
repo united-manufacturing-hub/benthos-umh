@@ -1,12 +1,14 @@
 # Networking
 
-What to configure when something sits between this plugin and the PLC (a container
-boundary, a router, or a VPN), and how to create a route by hand.
+This section covers what to configure when network is not a straight path to the PLC, for example
+running from a docker container, special network routing, or via a VPN. It also shows how to create a route on the PLC by hand,
+for the cases where the plugin cannot register one itself.
 
-## Where the input runs
+## Where the client runs
 
-The network side, for whoever administers the host and the network path between it and the
-PLC.
+Where the client runs decides which address the PLC sees, and that address is what a route has to
+match. The three cases below cover a container, a virtual machine, and a host on a routed network.
+This part is written for whoever administers the host and the network path to the PLC.
 
 ### Containers and Kubernetes
 

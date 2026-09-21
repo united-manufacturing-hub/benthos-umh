@@ -1,6 +1,8 @@
 # How it works
 
-Background that makes the settings make sense. None of it is required reading to get data flowing;
+This section covers the background that makes the settings on the other pages understandable. It
+explains how ADS addresses a device, how the PLC decides whether to accept this client, and what
+the timing options control. None of it is required reading to get data flowing — the
 [Quick start](quick-start.md) is enough for that.
 
 ## How ADS works

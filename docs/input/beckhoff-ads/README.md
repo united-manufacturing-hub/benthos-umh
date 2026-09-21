@@ -1,8 +1,8 @@
 # Beckhoff ADS (Input)
 
-Reads variables from Beckhoff PLCs over ADS, by symbol name, either as change notifications pushed
-by the PLC or as interval polling. Works with TwinCAT 2 and TwinCAT 3, from a VM or a container,
-and can register its own route on the PLC.
+This input reads variables from Beckhoff PLCs over ADS by symbol name, either as change
+notifications pushed by the PLC or as interval polling. It works with TwinCAT 2 and TwinCAT 3, runs
+from a virtual machine or a container, and can register its own route on the PLC.
 
 This input reads **symbols only**: named variables such as `GVL_ProcessData.nMasterCycleCounter`.
 Direct addresses (`%MB100`) are not supported.

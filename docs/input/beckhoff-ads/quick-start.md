@@ -1,13 +1,27 @@
 # Quick start
 
-Goal: values from one TwinCAT 3 PLC arriving in a Benthos pipeline, in five steps. The same steps work for
-TwinCAT 2; the symbol names and the runtime port differ, and there is a TwinCAT 2 example at the
-end.
+In this quick start we set up a TwinCAT 3 PLC as a data source in a Benthos pipeline. By the end
+of this section you will know how to:
 
-You need the PLC's IP address and an administrator user on the PLC. The result is a Benthos config
-file you run with `benthos -c config.yaml`. Takes about 15 minutes.
+1. Find the symbols you want to read
+2. Write the input configuration
+3. Add a tag processor
+4. Send the values somewhere
+5. Check that values are arriving
+
+Before you start you need:
+
+- A Beckhoff PLC reachable from this host
+- An administrator user on that PLC
+- The PLC's IP address
+
+You end with a Benthos config file that you run with `benthos -c config.yaml`. The whole thing
+takes about 15 minutes.
 
 Step 2 writes a route entry to the PLC, so point this at a PLC you are allowed to configure.
+
+The same five steps work for TwinCAT 2, with different symbol names and a different runtime port.
+There is a complete TwinCAT 2 example at the end of this page.
 
 ## 1. Find the symbols you want
 

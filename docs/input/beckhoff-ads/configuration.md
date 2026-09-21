@@ -1,6 +1,6 @@
 # Configuration
 
-Every setting this input accepts, and two complete examples that use all of them.
+This section covers every setting the Beckhoff ADS input accepts, if they are required or not and the default value if not used, together with two complete example configurations that use them.
 
 ## Settings
 

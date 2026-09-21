@@ -1,6 +1,7 @@
 # Symbols and metadata
 
-How to address a symbol, and what each message carries once it is read.
+This section explains how to configure a symbol, how its name becomes a topic, and what metadata
+each message carries once it has been read.
 
 ## Addressing symbols
 
