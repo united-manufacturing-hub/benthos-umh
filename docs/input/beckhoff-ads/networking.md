@@ -1,7 +1,7 @@
 # Networking
 
 This section covers what to configure when network is not a straight path to the PLC, for example
-running from a docker container, special network routing, or via a VPN. It also shows how to create a route on the PLC by hand,
+running from a Docker container, special network routing, or via a VPN. It also shows how to create a route on the PLC by hand,
 for the cases where the plugin cannot register one itself.
 
 ## Where the client runs
