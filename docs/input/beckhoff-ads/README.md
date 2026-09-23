@@ -1,5 +1,8 @@
 # Beckhoff ADS (Input)
 
+**This protocol is experimental. It has been tested on CX7000 and CX8190 (TwinCAT 3) and CX1020
+(TwinCAT 2); behaviour on other controllers may differ.**
+
 This input reads variables from Beckhoff PLCs over ADS by symbol name, either as change
 notifications pushed by the PLC or as interval polling. It works with TwinCAT 2 and TwinCAT 3, runs
 from a virtual machine or a container, and can register its own route on the PLC.
