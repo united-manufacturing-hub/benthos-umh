@@ -25,6 +25,7 @@ RUN go mod download
 
 COPY ./pkg ./pkg
 COPY ./cmd ./cmd
+COPY ./beckhoff_ads_plugin ./beckhoff_ads_plugin
 COPY ./downsampler_plugin ./downsampler_plugin
 COPY ./opcua_plugin ./opcua_plugin
 COPY ./s7comm_plugin ./s7comm_plugin
