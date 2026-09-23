@@ -1,3 +1,0 @@
-kind: breaking
-body: 'Beckhoff ADS input plugin for reading variables from TwinCAT 2 and TwinCAT 3 PLCs over the ADS protocol, with optional automatic route registration. It replaces the community `ads` plugin under the same input name, and a config using the old field names fails to start: `targetIP` and `targetPort` become `targetAddress` (`ip` or `ip:port`), `routeUsername` becomes `username`, `routePassword` becomes `password`, `routeHostAddress` becomes `hostIP`, `logLevel` is removed in favor of `logger.level`, `symbols` is removed in favor of `unifiedAddress`, and the `symbol_name` metadata field is now `ads_symbol_name` (ENG-4538)'
-time: 2026-09-23T14:08:55.269496+02:00
