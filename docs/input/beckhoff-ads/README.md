@@ -1,4 +1,4 @@
-# Beckhoff ADS (Input)
+# Beckhoff ADS (experimental)
 
 **This protocol is experimental. It has been tested on CX7000 and CX8190 (TwinCAT 3) and CX1020
 (TwinCAT 2); behaviour on other controllers may differ.**

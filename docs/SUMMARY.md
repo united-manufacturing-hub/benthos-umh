@@ -6,7 +6,7 @@
   - [OPC UA (Input)](input/opc-ua-input.md)
   - [Modbus](input/modbus.md)
   - [ifm IO-Link Master / "sensorconnect"](input/ifm-io-link-master-sensorconnect.md)
-  - [Beckhoff ADS](input/beckhoff-ads/README.md)
+  - [Beckhoff ADS (experimental)](input/beckhoff-ads/README.md)
     - [Quick start](input/beckhoff-ads/quick-start.md)
     - [How it works](input/beckhoff-ads/how-it-works.md)
     - [Configuration](input/beckhoff-ads/configuration.md)
