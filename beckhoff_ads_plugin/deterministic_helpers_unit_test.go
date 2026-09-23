@@ -2069,7 +2069,7 @@ var _ = Describe("session rebuild on a degraded session", func() {
 		})
 
 		It("adds the route and host options only when both credentials are given", func() {
-			// hostIP is set so the route host resolves without dialling the PLC.
+			// hostIP is set so the route host resolves without dialing the PLC.
 			// Either credential alone leaves the session unrouted, which is how a
 			// half-filled config stays a connect failure rather than a silent
 			// registration attempt.
@@ -2252,7 +2252,7 @@ var _ = Describe("toTransMode", func() {
 var _ = Describe("resolveRouteHostIP", func() {
 	It("returns a configured hostIP without touching the network", func() {
 		// TEST-NET-1 with a discard port: if the configured address were ignored
-		// and this dialled, the spec would sit here for routeDialTimeout instead
+		// and this dialed, the spec would sit here for routeDialTimeout instead
 		// of returning at once.
 		cfg := SessionConfig{HostIP: "192.168.3.52", TargetIP: "192.0.2.1", TargetPort: 48898}
 
