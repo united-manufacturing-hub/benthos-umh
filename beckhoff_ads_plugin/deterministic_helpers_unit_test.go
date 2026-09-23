@@ -1,0 +1,2492 @@
+// Copyright 2026 UMH Systems GmbH
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package beckhoff_ads_plugin
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"math"
+	"net"
+	"strings"
+	"sync"
+	"time"
+
+	adsLib "github.com/RuneRoven/go-ads/v2"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"github.com/redpanda-data/benthos/v4/public/service"
+)
+
+// fakeClient is a scriptable in-memory implementation of Client used to unit
+// test the read paths (pull/notification) without a real ADS session.
+type fakeClient struct {
+	symbols             map[string]SymbolInfo
+	multiValues         map[string]string
+	multiErr            error
+	readFromSymbolValue map[string]string
+	readFromSymbolErr   error
+	connectErr          error
+	closeErr            error
+	loadSymbolsErr      error
+	notifyErr           error
+	notifyResults       []NotifyResult
+	closed              bool
+	getSymbolCalls      int
+	readFromSymbolCalls int
+	callOrder           []string
+}
+
+func (f *fakeClient) Connect(_ context.Context) error { return f.connectErr }
+func (f *fakeClient) Close() error                    { f.closed = true; return f.closeErr }
+func (f *fakeClient) IsClosed() bool                  { return f.closed }
+func (f *fakeClient) LoadSymbols(_ context.Context) error {
+	f.callOrder = append(f.callOrder, "LoadSymbols")
+	return f.loadSymbolsErr
+}
+
+func (f *fakeClient) GetSymbol(_ context.Context, name string) (SymbolInfo, error) {
+	f.getSymbolCalls++
+	f.callOrder = append(f.callOrder, "GetSymbol")
+	if info, ok := f.symbols[name]; ok {
+		return info, nil
+	}
+	return SymbolInfo{}, errors.New("symbol not found: " + name)
+}
+
+func (f *fakeClient) AddNotifications(_ context.Context, cfgs []NotifyConfig, _ chan *Update) ([]NotifyResult, error) {
+	if f.notifyErr != nil {
+		return nil, f.notifyErr
+	}
+	if f.notifyResults != nil {
+		return f.notifyResults, nil
+	}
+	out := make([]NotifyResult, len(cfgs))
+	for i, c := range cfgs {
+		out[i] = NotifyResult{SymbolName: c.SymbolName, Registered: true}
+	}
+	return out, nil
+}
+
+func (f *fakeClient) ReadMultipleSymbols(_ context.Context, _ []string) (map[string]string, error) {
+	// Mirrors the real adapter since go-ads v2.3.0: a partial batch returns the
+	// values that succeeded *and* an error naming the ones that did not.
+	return f.multiValues, f.multiErr
+}
+
+func (f *fakeClient) ReadFromSymbol(_ context.Context, name string) (string, error) {
+	f.readFromSymbolCalls++
+	if f.readFromSymbolErr != nil {
+		return "", f.readFromSymbolErr
+	}
+	if v, ok := f.readFromSymbolValue[name]; ok {
+		return v, nil
+	}
+	return "", errors.New("no value for " + name)
+}
+
+var _ = Describe("Deterministic Helper Functions", func() {
+	Describe("ExpectedCounterValue", func() {
+		It("computes basic counter values", func() {
+			Expect(ExpectedCounterValue(1000, 100, 1)).To(Equal(uint64(10)))
+			Expect(ExpectedCounterValue(1000, 100, 3)).To(Equal(uint64(30)))
+			Expect(ExpectedCounterValue(999, 100, 1)).To(Equal(uint64(9)))
+			Expect(ExpectedCounterValue(0, 100, 1)).To(Equal(uint64(0)))
+		})
+
+		It("handles zero updateCycles by defaulting to 1", func() {
+			Expect(ExpectedCounterValue(500, 0, 3)).To(Equal(uint64(1500)))
+		})
+	})
+
+	Describe("Integer truncation", func() {
+		DescribeTable("ExpectedIntValue truncates to signed width",
+			func(masterCounter uint64, updateCycles uint64, stepSize uint64, bitWidth int, expected int64) {
+				Expect(ExpectedIntValue(masterCounter, updateCycles, stepSize, bitWidth)).To(Equal(expected))
+			},
+			// 8-bit signed: 128 truncates to -128, 256 truncates to 0
+			Entry("SINT truncates 128 to -128", uint64(12800), uint64(100), uint64(1), 8, int64(-128)),
+			Entry("SINT at 127", uint64(12700), uint64(100), uint64(1), 8, int64(127)),
+			Entry("SINT wraps 256 to 0", uint64(25600), uint64(100), uint64(1), 8, int64(0)),
+			// 16-bit signed
+			Entry("INT basic", uint64(1000), uint64(100), uint64(3), 16, int64(30)),
+			// 32-bit signed
+			Entry("DINT basic", uint64(1000), uint64(100), uint64(7), 32, int64(70)),
+		)
+
+		DescribeTable("ExpectedUintValue truncates to unsigned width",
+			func(masterCounter uint64, updateCycles uint64, stepSize uint64, bitWidth int, expected uint64) {
+				Expect(ExpectedUintValue(masterCounter, updateCycles, stepSize, bitWidth)).To(Equal(expected))
+			},
+			Entry("BYTE wraps at 256", uint64(25600), uint64(100), uint64(1), 8, uint64(0)),
+			Entry("BYTE at 255", uint64(25500), uint64(100), uint64(1), 8, uint64(255)),
+			Entry("WORD basic", uint64(1000), uint64(100), uint64(1), 16, uint64(10)),
+		)
+	})
+
+	Describe("ExpectedBoolToggle", func() {
+		It("starts as false and toggles", func() {
+			Expect(ExpectedBoolToggle(0, 50)).To(BeFalse())
+			Expect(ExpectedBoolToggle(49, 50)).To(BeFalse())
+			Expect(ExpectedBoolToggle(50, 50)).To(BeTrue())
+			Expect(ExpectedBoolToggle(99, 50)).To(BeTrue())
+			Expect(ExpectedBoolToggle(100, 50)).To(BeFalse())
+		})
+	})
+
+	Describe("ExpectedSawtoothFloat", func() {
+		It("produces sawtooth pattern for fReal", func() {
+			// masterCounter=10000, updateCycles=100 → counterVal=100, 100%1000=100, 100*0.1=10.0
+			Expect(ExpectedSawtoothFloat(10000, 100, 1000, 0.1)).To(BeNumerically("~", 10.0, 0.01))
+			// masterCounter=0 → counterVal=0, 0%1000=0, 0*0.1=0.0
+			Expect(ExpectedSawtoothFloat(0, 100, 1000, 0.1)).To(BeNumerically("~", 0.0, 0.01))
+		})
+
+		It("wraps at mod boundary", func() {
+			// counterVal = 1000 → 1000%1000 = 0
+			Expect(ExpectedSawtoothFloat(100000, 100, 1000, 0.1)).To(BeNumerically("~", 0.0, 0.01))
+		})
+	})
+
+	Describe("ExpectedMotorState", func() {
+		It("cycles through 0-5", func() {
+			Expect(ExpectedMotorState(0, 100)).To(Equal(int64(0)))   // IDLE
+			Expect(ExpectedMotorState(100, 100)).To(Equal(int64(1))) // STARTING
+			Expect(ExpectedMotorState(200, 100)).To(Equal(int64(2))) // RUNNING
+			Expect(ExpectedMotorState(300, 100)).To(Equal(int64(3))) // STOPPING
+			Expect(ExpectedMotorState(400, 100)).To(Equal(int64(4))) // ERROR
+			Expect(ExpectedMotorState(500, 100)).To(Equal(int64(5))) // MAINTENANCE
+			Expect(ExpectedMotorState(600, 100)).To(Equal(int64(0))) // Back to IDLE
+		})
+	})
+
+	Describe("ExpectedMotorEnabled", func() {
+		It("is true for STARTING, RUNNING, MAINTENANCE", func() {
+			Expect(ExpectedMotorEnabled(0, 100)).To(BeFalse())   // IDLE
+			Expect(ExpectedMotorEnabled(100, 100)).To(BeTrue())  // STARTING
+			Expect(ExpectedMotorEnabled(200, 100)).To(BeTrue())  // RUNNING
+			Expect(ExpectedMotorEnabled(300, 100)).To(BeFalse()) // STOPPING
+			Expect(ExpectedMotorEnabled(400, 100)).To(BeFalse()) // ERROR
+			Expect(ExpectedMotorEnabled(500, 100)).To(BeTrue())  // MAINTENANCE
+		})
+	})
+
+	Describe("ExpectedMotorError", func() {
+		It("is true only for ERROR state", func() {
+			Expect(ExpectedMotorError(400, 100)).To(BeTrue())
+			Expect(ExpectedMotorError(0, 100)).To(BeFalse())
+			Expect(ExpectedMotorError(200, 100)).To(BeFalse())
+		})
+	})
+
+	Describe("ExpectedLwordROL", func() {
+		It("rotates bit left", func() {
+			Expect(ExpectedLwordROL(0, 100)).To(Equal(uint64(1)))
+			Expect(ExpectedLwordROL(100, 100)).To(Equal(uint64(2)))
+			Expect(ExpectedLwordROL(200, 100)).To(Equal(uint64(4)))
+			// After 64 rotations, wraps back
+			Expect(ExpectedLwordROL(6400, 100)).To(Equal(uint64(1)))
+		})
+	})
+
+	Describe("ExpectedStringCycler", func() {
+		It("produces correct pattern", func() {
+			Expect(ExpectedStringCycler(0, 100, "Machine")).To(Equal("Machine_000_A"))
+			Expect(ExpectedStringCycler(100, 100, "Machine")).To(Equal("Machine_000_B"))
+			Expect(ExpectedStringCycler(2500, 100, "Machine")).To(Equal("Machine_000_Z"))
+			Expect(ExpectedStringCycler(2600, 100, "Machine")).To(Equal("Machine_001_A"))
+		})
+	})
+
+	Describe("ExpectedArrayCounter", func() {
+		It("computes array element values", func() {
+			// index 0: step=1, updateCycles=100
+			Expect(ExpectedArrayCounter(10000, 0)).To(Equal(int64(100)))
+			// index 2: step=3, updateCycles=100
+			Expect(ExpectedArrayCounter(10000, 2)).To(Equal(int64(300)))
+		})
+	})
+
+	Describe("ExpectedArrayMeasurement", func() {
+		It("computes sawtooth measurement", func() {
+			// index 0: modVal=1000, divisor=10
+			val := ExpectedArrayMeasurement(10000, 0)
+			// counterVal = 100, 100%1000=100, 100/10=10.0
+			Expect(val).To(BeNumerically("~", 10.0, 0.01))
+		})
+	})
+
+	Describe("Production stats", func() {
+		It("computes parts produced and yield", func() {
+			// masterCounter=10000 → nUpdates=100
+			Expect(ExpectedProductionPartsProduced(10000)).To(Equal(uint64(200)))
+			Expect(ExpectedProductionPartsRejected(10000)).To(Equal(uint64(10)))
+			Expect(ExpectedProductionYield(10000)).To(BeNumerically("~", 95.0, 0.01))
+			Expect(ExpectedBatchNumber(10000)).To(Equal(uint64(2)))
+		})
+
+		It("returns 100% yield when no parts produced", func() {
+			Expect(ExpectedProductionYield(0)).To(Equal(100.0))
+		})
+	})
+
+	Describe("VerifyIntWithTolerance", func() {
+		It("matches exact value", func() {
+			expected := ExpectedIntValue(1000, 100, 3, 16)
+			Expect(VerifyIntWithTolerance(expected, 1000, 100, 3, 16)).To(BeTrue())
+		})
+
+		It("matches within tolerance window", func() {
+			// Value at counter+3 should also match
+			expected := ExpectedIntValue(1003, 100, 3, 16)
+			Expect(VerifyIntWithTolerance(expected, 1000, 100, 3, 16)).To(BeTrue())
+		})
+
+		It("rejects out-of-tolerance values", func() {
+			Expect(VerifyIntWithTolerance(99999, 1000, 100, 3, 16)).To(BeFalse())
+		})
+	})
+
+	Describe("VerifyFloatWithTolerance", func() {
+		It("matches within epsilon", func() {
+			calc := func(mc uint64) float64 {
+				return ExpectedSawtoothFloat(mc, 100, 1000, 0.1)
+			}
+			actual := calc(1000) + 0.001
+			Expect(VerifyFloatWithTolerance(actual, 1000, calc, 0.01)).To(BeTrue())
+		})
+	})
+
+	Describe("VerifyStringWithTolerance", func() {
+		It("matches within tolerance", func() {
+			calc := func(mc uint64) string {
+				return ExpectedStringCycler(mc, 100, "Test")
+			}
+			actual := calc(1002)
+			Expect(VerifyStringWithTolerance(actual, 1000, calc)).To(BeTrue())
+		})
+	})
+
+	Describe("Internal utilities", func() {
+		It("truncateToSigned handles edge cases", func() {
+			Expect(truncateToSigned(255, 8)).To(Equal(int64(-1)))
+			Expect(truncateToSigned(127, 8)).To(Equal(int64(127)))
+			Expect(truncateToSigned(128, 8)).To(Equal(int64(-128)))
+		})
+
+		It("truncateToUnsigned masks correctly", func() {
+			Expect(truncateToUnsigned(256, 8)).To(Equal(uint64(0)))
+			Expect(truncateToUnsigned(255, 8)).To(Equal(uint64(255)))
+		})
+
+		It("rotateLeft64 rotates correctly", func() {
+			Expect(rotateLeft64(1, 0)).To(Equal(uint64(1)))
+			Expect(rotateLeft64(1, 1)).To(Equal(uint64(2)))
+			Expect(rotateLeft64(1, 63)).To(Equal(uint64(1 << 63)))
+			Expect(rotateLeft64(1, 64)).To(Equal(uint64(1))) // wraps
+		})
+	})
+})
+
+var _ = Describe("Plugin Internal Functions", func() {
+	Describe("CreateSymbolList", func() {
+		It("parses symbols with defaults", func() {
+			symbols, _ := CreateSymbolList([]string{"MAIN.MyVar"}, 1000*time.Millisecond, 100*time.Millisecond)
+			Expect(symbols).To(HaveLen(1))
+			Expect(symbols[0].Name).To(Equal("MAIN.MyVar"))
+			Expect(symbols[0].MaxDelay).To(Equal(100 * time.Millisecond))
+			Expect(symbols[0].CycleTime).To(Equal(1000 * time.Millisecond))
+		})
+
+		It("parses symbols with custom maxDelay and cycleTime", func() {
+			symbols, _ := CreateSymbolList([]string{"MAIN.Trigger:maxDelay=0:cycleTime=10"}, 1000*time.Millisecond, 100*time.Millisecond)
+			Expect(symbols).To(HaveLen(1))
+			Expect(symbols[0].Name).To(Equal("MAIN.Trigger"))
+			Expect(symbols[0].MaxDelay).To(Equal(0 * time.Millisecond))
+			Expect(symbols[0].CycleTime).To(Equal(10 * time.Millisecond))
+		})
+
+		It("preserves symbol name casing", func() {
+			symbols, _ := CreateSymbolList([]string{"main.myvar"}, 1000*time.Millisecond, 100*time.Millisecond)
+			Expect(symbols[0].Name).To(Equal("main.myvar"))
+		})
+
+		It("handles global variables starting with dot", func() {
+			symbols, _ := CreateSymbolList([]string{".globalVar"}, 1000*time.Millisecond, 100*time.Millisecond)
+			Expect(symbols[0].Name).To(Equal(".globalVar"))
+		})
+
+		It("uses defaults for malformed custom values", func() {
+			symbols, warnings := CreateSymbolList([]string{"MAIN.Var:abc:def"}, 1000*time.Millisecond, 100*time.Millisecond)
+			Expect(symbols[0].MaxDelay).To(Equal(100 * time.Millisecond))
+			Expect(symbols[0].CycleTime).To(Equal(1000 * time.Millisecond))
+			Expect(warnings).NotTo(BeEmpty())
+		})
+
+		It("ignores a positional option and says so", func() {
+			// Removed deliberately: "MAIN.Var:50" never said which field 50 was.
+			symbols, warnings := CreateSymbolList([]string{"MAIN.Var:50"}, 1000*time.Millisecond, 100*time.Millisecond)
+			Expect(symbols[0].Name).To(Equal("MAIN.Var"))
+			Expect(symbols[0].MaxDelay).To(Equal(100*time.Millisecond), "default kept")
+			Expect(symbols[0].CycleTime).To(Equal(1000*time.Millisecond), "default kept")
+			Expect(warnings).To(ContainElement(ContainSubstring("use maxDelay=100ms or cycleTime=10ms")))
+		})
+
+		It("ignores an unknown option key and names it", func() {
+			// Keys are matched exactly, so a miscased one is unknown rather than
+			// silently applied -- which is the mistake worth reporting.
+			symbols, warnings := CreateSymbolList([]string{"MAIN.Var:cycletime=10ms"}, 1000*time.Millisecond, 100*time.Millisecond)
+			Expect(symbols[0].Name).To(Equal("MAIN.Var"))
+			Expect(symbols[0].CycleTime).To(Equal(1000*time.Millisecond), "default kept")
+			Expect(symbols[0].MaxDelay).To(Equal(100*time.Millisecond), "default kept")
+			Expect(warnings).To(ContainElement(SatisfyAll(
+				ContainSubstring(`ignoring unknown option "cycletime"`),
+				ContainSubstring("supported: maxDelay, cycleTime"),
+			)))
+		})
+
+		It("keeps the default for a value that is not a duration, and applies the rest", func() {
+			// Each option is independent: one unparseable value must not discard
+			// the options beside it.
+			symbols, warnings := CreateSymbolList([]string{"MAIN.Var:cycleTime=fast:maxDelay=1h"}, 1000*time.Millisecond, 100*time.Millisecond)
+			Expect(symbols[0].CycleTime).To(Equal(1000*time.Millisecond), "unparseable value falls back to the default")
+			Expect(symbols[0].MaxDelay).To(Equal(time.Hour), "the valid option beside it still applies")
+			Expect(warnings).To(ContainElement(ContainSubstring(`ignoring invalid cycleTime value "fast"`)))
+			Expect(warnings).To(HaveLen(1), "only the bad option warns")
+		})
+
+		It("handles keyed cycleTime only", func() {
+			symbols, _ := CreateSymbolList([]string{"MAIN.Var:cycleTime=200"}, 1000*time.Millisecond, 100*time.Millisecond)
+			Expect(symbols[0].Name).To(Equal("MAIN.Var"))
+			Expect(symbols[0].MaxDelay).To(Equal(100 * time.Millisecond)) // default
+			Expect(symbols[0].CycleTime).To(Equal(200 * time.Millisecond))
+		})
+
+		It("handles keyed maxDelay only", func() {
+			symbols, _ := CreateSymbolList([]string{"MAIN.Var:maxDelay=50"}, 1000*time.Millisecond, 100*time.Millisecond)
+			Expect(symbols[0].Name).To(Equal("MAIN.Var"))
+			Expect(symbols[0].MaxDelay).To(Equal(50 * time.Millisecond))
+			Expect(symbols[0].CycleTime).To(Equal(1000 * time.Millisecond)) // default
+		})
+
+		It("omitted options get exact default values passed to CreateSymbolList", func() {
+			// Use non-obvious defaults to prove the function returns them, not zeros
+			symbols, _ := CreateSymbolList([]string{"MAIN.Var:maxDelay=50"}, 750*time.Millisecond, 300*time.Millisecond)
+			Expect(symbols[0].MaxDelay).To(Equal(50 * time.Millisecond))
+			Expect(symbols[0].CycleTime).To(Equal(750*time.Millisecond), "omitted cycleTime must equal defaultCycleTime")
+
+			symbols2, _ := CreateSymbolList([]string{"MAIN.Var:cycleTime=200"}, 750*time.Millisecond, 300*time.Millisecond)
+			Expect(symbols2[0].MaxDelay).To(Equal(300*time.Millisecond), "omitted maxDelay must equal defaultMaxDelay")
+			Expect(symbols2[0].CycleTime).To(Equal(200 * time.Millisecond))
+
+			symbols3, _ := CreateSymbolList([]string{"MAIN.Var"}, 750*time.Millisecond, 300*time.Millisecond)
+			Expect(symbols3[0].MaxDelay).To(Equal(300*time.Millisecond), "plain name maxDelay must equal defaultMaxDelay")
+			Expect(symbols3[0].CycleTime).To(Equal(750*time.Millisecond), "plain name cycleTime must equal defaultCycleTime")
+		})
+
+		It("last keyed value wins for the same field", func() {
+			symbols, _ := CreateSymbolList([]string{"MAIN.Var:maxDelay=30:maxDelay=50"}, 1000*time.Millisecond, 100*time.Millisecond)
+			Expect(symbols[0].MaxDelay).To(Equal(50 * time.Millisecond))
+			Expect(symbols[0].CycleTime).To(Equal(1000*time.Millisecond), "cycleTime untouched, must equal default")
+		})
+
+		It("handles multiple symbols", func() {
+			symbols, _ := CreateSymbolList(
+				[]string{"MAIN.A", "MAIN.B:maxDelay=0:cycleTime=10", ".GlobalC"},
+				1000*time.Millisecond, 100*time.Millisecond,
+			)
+			Expect(symbols).To(HaveLen(3))
+			Expect(symbols[0].Name).To(Equal("MAIN.A"))
+			Expect(symbols[1].CycleTime).To(Equal(10 * time.Millisecond))
+			Expect(symbols[2].Name).To(Equal(".GlobalC"))
+		})
+	})
+
+	Describe("unifiedAddress wiring", func() {
+		// Name is what reaches the PLC, with the options stripped; UnifiedAddress
+		// keeps the entry as configured. The two differ whenever options are used,
+		// and a value equal to Name for an entry that had options means the field
+		// has silently become a copy of ads_symbol_name_original.
+		It("keeps the configured entry in UnifiedAddress and the bare name in Name", func() {
+			symbolList, warnings := CreateSymbolList(
+				[]string{"GVL.plain", "GVL.tuned:maxDelay=0s:cycleTime=50ms"},
+				time.Second, 100*time.Millisecond,
+			)
+			Expect(warnings).To(BeEmpty())
+			Expect(symbolList).To(HaveLen(2))
+
+			Expect(symbolList[0].Name).To(Equal("GVL.plain"))
+			Expect(symbolList[0].UnifiedAddress).To(Equal("GVL.plain"))
+
+			Expect(symbolList[1].Name).To(Equal("GVL.tuned"), "the PLC gets the bare symbol")
+			Expect(symbolList[1].UnifiedAddress).To(Equal("GVL.tuned:maxDelay=0s:cycleTime=50ms"))
+			Expect(symbolList[1].MaxDelay).To(Equal(0 * time.Second))
+			Expect(symbolList[1].CycleTime).To(Equal(50 * time.Millisecond))
+		})
+
+		It("carries the unified address into message metadata", func() {
+			a := &AdsCommInput{Log: service.MockResources().Logger()}
+			syms, _ := CreateSymbolList([]string{"GVL.tuned:cycleTime=50ms"}, time.Second, 100*time.Millisecond)
+			msg := a.newSymbolMessage(&syms[0], "42", time.Time{})
+
+			unified, ok := msg.MetaGet("ads_unified_address")
+			Expect(ok).To(BeTrue(), "ads_unified_address must always be set")
+			Expect(unified).To(Equal("GVL.tuned:cycleTime=50ms"))
+
+			original, _ := msg.MetaGet("ads_symbol_name_original")
+			Expect(unified).NotTo(Equal(original), "must not be a copy of the symbol name")
+		})
+
+		It("NewAdsCommInput's config wiring produces the same UnifiedAddress result end-to-end", func() {
+			conf, err := adsConf.ParseYAML(`
+targetAddress: "1.2.3.4"
+targetAMS: "1.2.3.4.1.1"
+unifiedAddress:
+  - "GVL.unified1"
+`, nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = NewAdsCommInput(conf, service.MockResources())
+			Expect(err).NotTo(HaveOccurred())
+			// NewAdsCommInput wraps the concrete *AdsCommInput in
+			// service.AutoRetryNacksBatched, which does not expose the
+			// wrapped value; the direct-construction test above exercises
+			// the actual field-assignment logic. This test only asserts
+			// that the config parses and constructs without error.
+		})
+
+		It("rejects a config with no unifiedAddress", func() {
+			// The schema marks it required (no default), but benthos does not enforce
+			// that at parse time -- FieldStringList returns an empty list, nil error.
+			conf, err := adsConf.ParseYAML(`
+targetAddress: "1.2.3.4"
+`, nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = NewAdsCommInput(conf, service.MockResources())
+			Expect(err).To(MatchError(ContainSubstring("unifiedAddress is required")))
+		})
+	})
+
+	Describe("adsValueBytes", func() {
+		DescribeTable("classifies and encodes decoded values by ADS base type",
+			func(typ, decoded string, wantPayload []byte, wantTagType string) {
+				payload, tagType := adsValueBytes(typ, decoded)
+				Expect(tagType).To(Equal(wantTagType))
+				Expect(payload).To(Equal(wantPayload))
+			},
+			Entry("REAL is unquoted number", "REAL", "3.14", []byte("3.14"), "number"),
+			Entry("DINT is unquoted number", "DINT", "42", []byte("42"), "number"),
+			Entry("BOOL is unquoted bool", "BOOL", "true", []byte("true"), "bool"),
+			Entry("STRING is JSON-quoted", "STRING", "hello", []byte(`"hello"`), "string"),
+			Entry("numeric-looking STRING stays quoted", "STRING", "007", []byte(`"007"`), "string"),
+			Entry("unknown/empty type defaults to quoted string", "", "abc", []byte(`"abc"`), "string"),
+			Entry("WSTRING is JSON-quoted", "WSTRING", "wide", []byte(`"wide"`), "string"),
+			Entry("lowercase base type still classifies", "bool", "false", []byte("false"), "bool"),
+		)
+
+		It("encodes a value the PLC sent as invalid UTF-8 without failing", func() {
+			// A STRING read out of PLC memory can hold arbitrary bytes. json.Marshal
+			// of a Go string cannot return an error -- invalid bytes are replaced
+			// with U+FFFD -- which is why the strconv.Quote fallback beside it is
+			// unreachable. It would also be wrong if it ran: strconv.Quote emits Go
+			// escapes such as \xff that JSON rejects, so the payload below would
+			// stop being parseable downstream.
+			payload, tagType := adsValueBytes("STRING", "bad\xff\xfeend")
+
+			Expect(tagType).To(Equal("string"))
+			Expect(json.Valid(payload)).To(BeTrue(), "the payload has to survive as JSON")
+			var roundTrip string
+			Expect(json.Unmarshal(payload, &roundTrip)).To(Succeed())
+			Expect(roundTrip).To(ContainSubstring("�"))
+			Expect(roundTrip).To(HavePrefix("bad"))
+			Expect(roundTrip).To(HaveSuffix("end"))
+		})
+
+		It("JSON-quotes a string containing special characters correctly", func() {
+			payload, tagType := adsValueBytes("STRING", `has "quotes"`)
+			Expect(tagType).To(Equal("string"))
+			var roundTrip string
+			Expect(json.Unmarshal(payload, &roundTrip)).To(Succeed())
+			Expect(roundTrip).To(Equal(`has "quotes"`))
+		})
+	})
+
+	Describe("ReadBatchNotification initial-sample flush", func() {
+		It("emits samples captured during Connect before waiting on the channel", func() {
+			a := &AdsCommInput{
+				ReadType:         "notification",
+				Log:              service.MockResources().Logger(),
+				NotificationChan: make(chan *Update, 8),
+				pendingInitial: []*Update{
+					{Variable: "MAIN.a", Value: "1"},
+					{Variable: "MAIN.b", Value: "2"},
+				},
+			}
+			msgs, _, err := a.ReadBatchNotification(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(msgs).To(HaveLen(2))
+			Expect(a.pendingInitial).To(BeEmpty())
+		})
+
+		It("resolves enriched symbol metadata for known symbols, falls back to bare name for unknown ones", func() {
+			knownSym := &PlcSymbol{Name: "MAIN.Known", DataType: "INT", BaseType: "INT", Size: 2}
+			a := &AdsCommInput{
+				ReadType:         "notification",
+				Log:              service.MockResources().Logger(),
+				NotificationChan: make(chan *Update, 8),
+				symbolByName: map[string]*PlcSymbol{
+					strings.ToLower(knownSym.Name): knownSym,
+				},
+				pendingInitial: []*Update{
+					{Variable: "MAIN.Known", Value: "42"},
+					{Variable: "MAIN.Unknown", Value: "99"},
+				},
+			}
+			msgs, _, err := a.ReadBatchNotification(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(msgs).To(HaveLen(2))
+
+			name0, _ := msgs[0].MetaGet("ads_symbol_name")
+			Expect(name0).To(Equal("MAIN_Known"))
+			dataType0, _ := msgs[0].MetaGet("ads_datatype")
+			Expect(dataType0).To(Equal("INT"))
+			tagType0, _ := msgs[0].MetaGet("ads_tag_type")
+			Expect(tagType0).To(Equal("number"))
+			b0, _ := msgs[0].AsBytes()
+			Expect(string(b0)).To(Equal("42"))
+
+			name1, _ := msgs[1].MetaGet("ads_symbol_name")
+			Expect(name1).To(Equal("MAIN_Unknown"))
+			_, hasDataType1 := msgs[1].MetaGet("ads_datatype")
+			Expect(hasDataType1).To(BeFalse(), "unresolved symbol should not carry a data_type")
+			tagType1, _ := msgs[1].MetaGet("ads_tag_type")
+			Expect(tagType1).To(Equal("string"), "unresolved symbol falls back to string classification")
+			b1, _ := msgs[1].AsBytes()
+			Expect(string(b1)).To(Equal(`"99"`))
+		})
+	})
+
+	Describe("ReadBatchNotification channel reads", func() {
+		newInput := func(client Client) (*AdsCommInput, *[]capturedLog) {
+			log, recs := capturingLogger()
+			return &AdsCommInput{
+				ReadType:         "notification",
+				Log:              log,
+				client:           client,
+				NotificationChan: make(chan *Update, 8),
+			}, recs
+		}
+
+		It("emits an update that arrives on the channel and drains what is buffered behind it", func() {
+			// One ReadBatch should hand Benthos everything already queued rather
+			// than one message per call, which is what the channel-depth snapshot
+			// after the first update is for.
+			a, _ := newInput(&fakeClient{})
+			a.NotificationChan <- &Update{Variable: "MAIN.a", Value: "1"}
+			a.NotificationChan <- &Update{Variable: "MAIN.b", Value: "2"}
+			a.NotificationChan <- &Update{Variable: "MAIN.c", Value: "3"}
+
+			msgs, ack, err := a.ReadBatchNotification(context.Background())
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ack).NotTo(BeNil())
+			Expect(msgs).To(HaveLen(3))
+			names := make([]string, 0, len(msgs))
+			for _, msg := range msgs {
+				name, _ := msg.MetaGet("ads_symbol_name")
+				names = append(names, name)
+			}
+			Expect(names).To(ConsistOf("MAIN_a", "MAIN_b", "MAIN_c"))
+		})
+
+		It("skips a nil update instead of building a message from it", func() {
+			// go-ads recovers a send on a closed channel, so a nil can arrive.
+			a, recs := newInput(&fakeClient{})
+			a.NotificationChan <- nil
+
+			msgs, ack, err := a.ReadBatchNotification(context.Background())
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ack).NotTo(BeNil(), "an empty poll still has to be ackable")
+			Expect(msgs).To(BeEmpty())
+			Expect(levelsOf(recs, slog.LevelWarn)).To(HaveLen(1), "a nil update is worth one warn")
+		})
+
+		It("returns an empty batch when nothing arrives before the wait expires", func() {
+			// A cancelled parent reaches the same waitCtx.Done() branch as the
+			// notificationWait timeout, without spending it: slow-changing symbols
+			// are normal, so this must not look like an error to Benthos.
+			a, _ := newInput(&fakeClient{})
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+
+			msgs, ack, err := a.ReadBatchNotification(ctx)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ack).NotTo(BeNil())
+			Expect(msgs).To(BeEmpty())
+			Expect(a.client).NotTo(BeNil(), "a live session must not be torn down by a quiet poll")
+		})
+
+		It("reports the session as gone when the wait expires on a dead session", func() {
+			a, _ := newInput(&fakeClient{closed: true})
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+
+			_, _, err := a.ReadBatchNotification(ctx)
+
+			Expect(err).To(Equal(service.ErrNotConnected), "Benthos reconnects on this, a nil error would stall the input")
+			Eventually(func() bool { return a.client == nil }).Should(BeTrue(), "closeHandler runs asynchronously")
+		})
+	})
+
+	Describe("ReadBatchPull via fakeClient", func() {
+		It("emits metadata (ads_symbol_name, ads_datatype, ads_tag_type) and quotes strings but not numbers", func() {
+			client := &fakeClient{
+				multiValues: map[string]string{
+					"MAIN.temp":   "42.5",
+					"MAIN.name":   "hello",
+					"MAIN.numstr": "007",
+				},
+			}
+			a := &AdsCommInput{
+				Log:    service.MockResources().Logger(),
+				client: client,
+				Symbols: []PlcSymbol{
+					{Name: "MAIN.temp", DataType: "REAL", BaseType: "REAL"},
+					{Name: "MAIN.name", DataType: "STRING", BaseType: "STRING"},
+					{Name: "MAIN.numstr", DataType: "STRING", BaseType: "STRING"},
+				},
+			}
+
+			msgs, _, err := a.ReadBatchPull(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(msgs).To(HaveLen(3))
+
+			byName := make(map[string]service.MessageBatch)
+			for _, msg := range msgs {
+				name, _ := msg.MetaGet("ads_symbol_name")
+				byName[name] = append(byName[name], msg)
+			}
+
+			tempMsg := byName["MAIN_temp"][0]
+			dataType, _ := tempMsg.MetaGet("ads_datatype")
+			Expect(dataType).To(Equal("REAL"))
+			tagType, _ := tempMsg.MetaGet("ads_tag_type")
+			Expect(tagType).To(Equal("number"))
+			b, _ := tempMsg.AsBytes()
+			Expect(string(b)).To(Equal("42.5"))
+
+			nameMsg := byName["MAIN_name"][0]
+			tagType, _ = nameMsg.MetaGet("ads_tag_type")
+			Expect(tagType).To(Equal("string"))
+			b, _ = nameMsg.AsBytes()
+			Expect(string(b)).To(Equal(`"hello"`))
+
+			numstrMsg := byName["MAIN_numstr"][0]
+			tagType, _ = numstrMsg.MetaGet("ads_tag_type")
+			Expect(tagType).To(Equal("string"))
+			b, _ = numstrMsg.AsBytes()
+			Expect(string(b)).To(Equal(`"007"`), "numeric-looking STRING value must stay JSON-quoted")
+		})
+
+		It("resolves unresolved symbol types on a later poll instead of staying string-typed forever", func() {
+			client := &fakeClient{
+				multiValues: map[string]string{"MAIN.late": "123"},
+				symbols: map[string]SymbolInfo{
+					"MAIN.late": {DataType: "DINT", BaseType: "DINT", Length: 4},
+				},
+			}
+			a := &AdsCommInput{
+				Log:     service.MockResources().Logger(),
+				client:  client,
+				Symbols: []PlcSymbol{{Name: "MAIN.late"}}, // DataType/BaseType unresolved
+			}
+
+			msgs, _, err := a.ReadBatchPull(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(msgs).To(HaveLen(1))
+			dataType, _ := msgs[0].MetaGet("ads_datatype")
+			Expect(dataType).To(Equal("DINT"))
+			tagType, _ := msgs[0].MetaGet("ads_tag_type")
+			Expect(tagType).To(Equal("number"))
+			// The resolved type must also be cached on a.Symbols for subsequent polls.
+			Expect(a.Symbols[0].DataType).To(Equal("DINT"))
+		})
+
+		It("falls back to individual reads when the batch read returns no results", func() {
+			client := &fakeClient{
+				multiValues:         map[string]string{}, // empty: simulates a PLC without sum-read support
+				readFromSymbolValue: map[string]string{"MAIN.solo": "true"},
+			}
+			a := &AdsCommInput{
+				Log:     service.MockResources().Logger(),
+				client:  client,
+				Symbols: []PlcSymbol{{Name: "MAIN.solo", DataType: "BOOL", BaseType: "BOOL"}},
+			}
+
+			msgs, _, err := a.ReadBatchPull(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(msgs).To(HaveLen(1))
+			tagType, _ := msgs[0].MetaGet("ads_tag_type")
+			Expect(tagType).To(Equal("bool"))
+			b, _ := msgs[0].AsBytes()
+			Expect(string(b)).To(Equal("true"))
+		})
+
+		It("returns ErrNotConnected when the client is nil", func() {
+			a := &AdsCommInput{Log: service.MockResources().Logger()}
+			_, _, err := a.ReadBatchPull(context.Background())
+			Expect(err).To(Equal(service.ErrNotConnected))
+		})
+
+		It("returns ErrNotConnected and closes the client when the batch read fails on a dead session", func() {
+			client := &fakeClient{multiErr: errors.New("session dead"), closed: true}
+			a := &AdsCommInput{
+				Log:     service.MockResources().Logger(),
+				client:  client,
+				Symbols: []PlcSymbol{{Name: "MAIN.x"}},
+			}
+			_, _, err := a.ReadBatchPull(context.Background())
+			Expect(err).To(Equal(service.ErrNotConnected))
+			// closeHandler async-closes; give it a moment.
+			Eventually(func() bool { return a.client == nil }).Should(BeTrue())
+		})
+	})
+
+	Describe("parseTargetAddress", func() {
+		DescribeTable("accepts an address with or without a port",
+			func(in, wantHost string, wantPort int) {
+				host, port, err := parseTargetAddress(in)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(host).To(Equal(wantHost))
+				Expect(port).To(Equal(wantPort))
+			},
+			Entry("bare IP takes the TwinCAT gateway port", "192.168.3.70", "192.168.3.70", defaultTargetPort),
+			Entry("explicit port wins", "192.168.3.70:48899", "192.168.3.70", 48899),
+			Entry("port 0 is allowed, go-ads reads it as 'pick one'", "192.168.3.70:0", "192.168.3.70", 0),
+		)
+
+		DescribeTable("rejects what would otherwise fail at connect time",
+			func(in, wantMsg string) {
+				_, _, err := parseTargetAddress(in)
+				Expect(err).To(MatchError(ContainSubstring(wantMsg)))
+			},
+			// SplitHostPort succeeds here, so the port is what fails.
+			Entry("port above the range", "192.168.3.70:70000", "out of range"),
+			Entry("negative port", "192.168.3.70:-1", "out of range"),
+			Entry("non-numeric port", "192.168.3.70:ads", "out of range"),
+			// SplitHostPort fails, so the whole string is treated as a host.
+			Entry("not an address at all", "plc-01.local", "not a valid IPv4 address"),
+			Entry("empty", "", "not a valid IPv4 address"),
+			// IPv6 parses as an address but the PLC cannot route it.
+			Entry("IPv6 with a port", "[::1]:48898", "not a valid IPv4 address"),
+			Entry("bare IPv6", "::1", "not a valid IPv4 address"),
+		)
+	})
+
+	Describe("NewAdsCommInput rejects", func() {
+		minimal := `
+targetAddress: "1.2.3.4"
+unifiedAddress:
+  - "MAIN.var"
+`
+		DescribeTable("a value the PLC would only reject later, or silently ignore",
+			func(extra, wantMsg string) {
+				conf, err := adsConf.ParseYAML(minimal+extra, nil)
+				Expect(err).NotTo(HaveOccurred())
+
+				_, err = NewAdsCommInput(conf, service.MockResources())
+
+				Expect(err).To(MatchError(ContainSubstring(wantMsg)))
+			},
+			Entry("targetAMS that is not a NetID", "targetAMS: \"1.2.3.4\"\n", "targetAMS"),
+			Entry("runtimePort above the range", "runtimePort: 70000\n", "runtimePort 70000 out of range"),
+			Entry("hostPort above the range", "hostPort: 70000\n", "hostPort 70000 out of range"),
+			Entry("unsupported heartbeatRecovery", "heartbeatRecovery: \"restart\"\n", "heartbeatRecovery"),
+		)
+
+		It("rejects a targetAddress whose port is out of range", func() {
+			conf, err := adsConf.ParseYAML("targetAddress: \"1.2.3.4:70000\"\nunifiedAddress:\n  - \"MAIN.var\"\n", nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = NewAdsCommInput(conf, service.MockResources())
+
+			Expect(err).To(MatchError(ContainSubstring("targetAddress")))
+			Expect(err).To(MatchError(ContainSubstring("out of range")))
+		})
+	})
+
+	Describe("validateIP", func() {
+		It("accepts valid IPv4", func() {
+			Expect(validateIP("192.168.1.100")).To(Succeed())
+			Expect(validateIP("0.0.0.0")).To(Succeed())
+			Expect(validateIP("255.255.255.255")).To(Succeed())
+		})
+		It("rejects wrong octet count", func() {
+			Expect(validateIP("192.168.1")).To(MatchError(ContainSubstring("not a valid IPv4 address")))
+			Expect(validateIP("192.168.1.1.1")).To(MatchError(ContainSubstring("not a valid IPv4 address")))
+		})
+		It("rejects out-of-range octet", func() {
+			Expect(validateIP("192.168.1.256")).To(MatchError(ContainSubstring("not a valid IPv4 address")))
+			Expect(validateIP("192.168.1.-1")).To(MatchError(ContainSubstring("not a valid IPv4 address")))
+		})
+		It("rejects non-numeric octet", func() {
+			Expect(validateIP("192.168.1.abc")).To(MatchError(ContainSubstring("not a valid IPv4 address")))
+		})
+		It("rejects leading-zero octets", func() {
+			Expect(validateIP("192.168.001.1")).To(MatchError(ContainSubstring("not a valid IPv4 address")))
+		})
+		It("rejects the IPv4-mapped IPv6 form", func() {
+			Expect(validateIP("::ffff:192.168.1.1")).To(MatchError(ContainSubstring("not a valid IPv4 address")))
+		})
+	})
+
+	Describe("validateAMSNetID", func() {
+		It("accepts valid AMS NetID", func() {
+			Expect(validateAMSNetID("192.168.1.100.1.1")).To(Succeed())
+			Expect(validateAMSNetID("10.0.0.5.1.1")).To(Succeed())
+			Expect(validateAMSNetID("255.255.255.255.255.255")).To(Succeed())
+		})
+		It("rejects wrong octet count", func() {
+			Expect(validateAMSNetID("192.168.1.100.1")).To(MatchError(ContainSubstring("6 dot-separated")))
+			Expect(validateAMSNetID("192.168.1.100.1.1.1")).To(MatchError(ContainSubstring("6 dot-separated")))
+		})
+		It("rejects out-of-range octet", func() {
+			Expect(validateAMSNetID("192.168.1.100.1.256")).To(MatchError(ContainSubstring("invalid octet")))
+		})
+		It("rejects a zero suffix octet", func() {
+			// Beckhoff specifies 1–255 per NetID element; the trailing two are the
+			// AMS suffix (conventionally .1.1), so .0 is not a valid value there.
+			Expect(validateAMSNetID("0.0.0.0.0.0")).To(MatchError(ContainSubstring("must be 1–255")))
+			Expect(validateAMSNetID("192.168.1.100.0.1")).To(MatchError(ContainSubstring("must be 1–255")))
+			Expect(validateAMSNetID("192.168.1.100.1.0")).To(MatchError(ContainSubstring("must be 1–255")))
+		})
+		It("rejects an invalid IPv4 prefix", func() {
+			Expect(validateAMSNetID("192.168.1.256.1.1")).To(MatchError(ContainSubstring("not a valid IPv4 address")))
+		})
+		It("rejects non-numeric octet", func() {
+			Expect(validateAMSNetID("192.168.1.100.1.x")).To(MatchError(ContainSubstring("invalid octet")))
+		})
+	})
+
+	Describe("sanitize", func() {
+		DescribeTable("turns a PLC symbol name into one UMH topic segment",
+			func(in, want string) {
+				Expect(sanitize(in)).To(Equal(want))
+			},
+			Entry("a dot separates topic levels, so it cannot survive", "MAIN.MyVar", "MAIN_MyVar"),
+			Entry("alphanumerics and dashes are already legal", "my-var_123", "my-var_123"),
+			Entry("an array index keeps one separator", "MAIN.MyVar[0]", "MAIN_MyVar_0"),
+			// The two names measured on hardware that prompted this.
+			Entry("index followed by a member, once the source of two underscores",
+				"PRG_DIAGNOSTICS.astSensorHistory[0].fValue", "PRG_DIAGNOSTICS_astSensorHistory_0_fValue"),
+			Entry("TC2 global, once padded at both ends", ".afMeasurements[0]", "afMeasurements_0"),
+			Entry("TC2 global scalar loses only the namespace dot", ".nMasterCycleCounter", "nMasterCycleCounter"),
+			Entry("nested struct members", "GVL_ProcessData.stMachineStatus.stMotor1.fSpeed",
+				"GVL_ProcessData_stMachineStatus_stMotor1_fSpeed"),
+			Entry("multi-dimensional index", "a[0][1]", "a_0_1"),
+			Entry("a negative array bound keeps its sign", "a[-1]", "a_-1"),
+			// A leading underscore may be the PLC's own naming, so only the tail is trimmed.
+			Entry("leading underscore is left alone", "_internalVar", "_internalVar"),
+			Entry("a name that sanitizes to nothing keeps a segment", ".", "_"),
+		)
+	})
+})
+
+var _ = Describe("Time-delta Formula Verification", func() {
+	Describe("value delta over simulated time", func() {
+		It("nInt increases by expected step*cycles over 2s", func() {
+			// nInt: updateCycles=100, step=3, 16-bit
+			// 200 cycles = 2s at 10ms PLC task cycle
+			counter0 := uint64(10000)
+			counter1 := uint64(10200)
+			nInt0 := ExpectedIntValue(counter0, 100, 3, 16)
+			nInt1 := ExpectedIntValue(counter1, 100, 3, 16)
+			expectedDelta := int64(3) * int64((counter1-counter0)/100)
+			Expect(nInt1 - nInt0).To(Equal(expectedDelta))
+		})
+
+		It("nByte wraps correctly across 256 boundary", func() {
+			// At counter=25500, counterVal=255, byte=255
+			// At counter=25600, counterVal=256, byte=0 (wraps)
+			val255 := ExpectedUintValue(25500, 100, 1, 8)
+			val0 := ExpectedUintValue(25600, 100, 1, 8)
+			Expect(val255).To(Equal(uint64(255)))
+			Expect(val0).To(Equal(uint64(0)))
+		})
+
+		It("slow variable stays constant for sub-interval counters", func() {
+			// updateCycles=100: counter 10000 and 10050 both floor-divide to 100
+			val0 := ExpectedIntValue(10000, 100, 3, 16)
+			val50 := ExpectedIntValue(10050, 100, 3, 16)
+			Expect(val0).To(Equal(val50))
+		})
+
+		It("fast variable changes every cycle", func() {
+			// updateCycles=1, step=1: every counter increment changes the value
+			val0 := ExpectedIntValue(1000, 1, 1, 16)
+			val1 := ExpectedIntValue(1001, 1, 1, 16)
+			Expect(val0).NotTo(Equal(val1))
+		})
+	})
+})
+
+var _ = Describe("Simulated Poll Rate Transitions", func() {
+	It("nInt shows ~2 transitions over 200 cycles", func() {
+		// nInt: updateCycles=100, step=3
+		// 200 counter increments = 200 cycles
+		// Value changes when floor(counter/100) changes → every 100 cycles → 2 transitions
+		baseCounter := uint64(10000)
+		transitions := 0
+		prevVal := ExpectedIntValue(baseCounter, 100, 3, 16)
+		for i := uint64(1); i <= 200; i++ {
+			val := ExpectedIntValue(baseCounter+i, 100, 3, 16)
+			if val != prevVal {
+				transitions++
+				prevVal = val
+			}
+		}
+		Expect(transitions).To(Equal(2))
+	})
+
+	It("nFastDint changes almost every cycle", func() {
+		// updateCycles=1, step=1: changes every PLC cycle
+		// Simulating 50ms polls (5 cycles apart) over 20 samples
+		baseCounter := uint64(10000)
+		transitions := 0
+		prevVal := ExpectedIntValue(baseCounter, 1, 1, 32)
+		for i := 1; i < 20; i++ {
+			val := ExpectedIntValue(baseCounter+uint64(i*5), 1, 1, 32)
+			if val != prevVal {
+				transitions++
+				prevVal = val
+			}
+		}
+		// Every sample should differ (5 cycles apart with updateCycles=1)
+		Expect(transitions).To(Equal(19))
+	})
+
+	It("nByte stays stable within one update interval", func() {
+		// updateCycles=100: within a single 100-cycle window, value is constant
+		baseCounter := uint64(10000) // starts at exactly an update boundary
+		firstVal := ExpectedUintValue(baseCounter, 100, 1, 8)
+		for i := uint64(1); i < 100; i++ {
+			val := ExpectedUintValue(baseCounter+i, 100, 1, 8)
+			Expect(val).To(Equal(firstVal),
+				"nByte should be constant within update interval, but changed at offset %d", i)
+		}
+	})
+})
+
+var _ = Describe("Counter Reset Period Handling", func() {
+	It("formulas produce valid values near counterResetPeriod boundary", func() {
+		// Should not panic or overflow
+		val := ExpectedIntValue(counterResetPeriod-1, 100, 3, 16)
+		Expect(val).To(BeNumerically(">=", int64(math.MinInt16)))
+		Expect(val).To(BeNumerically("<=", int64(math.MaxInt16)))
+
+		val0 := ExpectedIntValue(0, 100, 3, 16)
+		Expect(val0).To(Equal(int64(0)))
+
+		val1 := ExpectedIntValue(1, 100, 3, 16)
+		Expect(val1).To(Equal(int64(0))) // 1/100 = 0
+	})
+
+	It("tolerance window works near reset boundary", func() {
+		// Near the reset period, VerifyIntWithTolerance should still work
+		expected := ExpectedIntValue(counterResetPeriod-2, 100, 3, 16)
+		Expect(VerifyIntWithTolerance(expected, counterResetPeriod-2, 100, 3, 16)).To(BeTrue())
+	})
+
+	It("all formula types handle counterResetPeriod without panic", func() {
+		mc := uint64(counterResetPeriod - 1)
+		// These should all execute without panic
+		_ = ExpectedCounterValue(mc, 100, 1)
+		_ = ExpectedIntValue(mc, 100, 3, 16)
+		_ = ExpectedUintValue(mc, 100, 1, 8)
+		_ = ExpectedBoolToggle(mc, 50)
+		_ = ExpectedSawtoothFloat(mc, 100, 1000, 0.1)
+		_ = ExpectedSensorValue(mc, 100, 120.0, 1000)
+		_ = ExpectedSensorValid(mc, 100, 1000)
+		_ = ExpectedAlarmSeverity(mc, 100, 1000)
+		_ = ExpectedMotorSpeed(mc, 100)
+		_ = ExpectedMotorState(mc, 100)
+		_ = ExpectedMotorEnabled(mc, 100)
+		_ = ExpectedMotorError(mc, 100)
+		_ = ExpectedMotorTorque(mc, 100)
+		_ = ExpectedLwordROL(mc, 100)
+		_ = ExpectedStringCycler(mc, 100, "Machine")
+		_ = ExpectedArrayCounter(mc, 0)
+		_ = ExpectedArrayMeasurement(mc, 0)
+		_ = ExpectedProductionPartsProduced(mc)
+		_ = ExpectedProductionYield(mc)
+		_ = ExpectedBatchNumber(mc)
+	})
+})
+
+var _ = Describe("Multi-symbol Consistency", func() {
+	It("all slow symbols produce deterministic values at the same counter", func() {
+		mc := uint64(50000)
+
+		// Each call with the same counter should always return the same value
+		nByte1 := ExpectedUintValue(mc, 100, 1, 8)
+		nByte2 := ExpectedUintValue(mc, 100, 1, 8)
+		Expect(nByte1).To(Equal(nByte2))
+
+		nInt1 := ExpectedIntValue(mc, 100, 3, 16)
+		nInt2 := ExpectedIntValue(mc, 100, 3, 16)
+		Expect(nInt1).To(Equal(nInt2))
+
+		nDint1 := ExpectedIntValue(mc, 100, 7, 32)
+		nDint2 := ExpectedIntValue(mc, 100, 7, 32)
+		Expect(nDint1).To(Equal(nDint2))
+
+		fReal1 := ExpectedSawtoothFloat(mc, 100, 1000, 0.1)
+		fReal2 := ExpectedSawtoothFloat(mc, 100, 1000, 0.1)
+		Expect(fReal1).To(Equal(fReal2))
+	})
+
+	It("values are consistent between related formulas", func() {
+		mc := uint64(50000)
+
+		// Motor torque should be speed * 0.1
+		speed := ExpectedMotorSpeed(mc, 100)
+		torque := ExpectedMotorTorque(mc, 100)
+		Expect(torque).To(BeNumerically("~", speed*0.1, 1e-9))
+
+		// Motor enabled/error should be consistent with state
+		state := ExpectedMotorState(mc, 100)
+		enabled := ExpectedMotorEnabled(mc, 100)
+		isError := ExpectedMotorError(mc, 100)
+
+		if state == 1 || state == 2 || state == 5 {
+			Expect(enabled).To(BeTrue(), "state %d should be enabled", state)
+		} else {
+			Expect(enabled).To(BeFalse(), "state %d should not be enabled", state)
+		}
+		Expect(isError).To(Equal(state == 4))
+	})
+
+	It("production yield is consistent with parts produced/rejected", func() {
+		mc := uint64(100000)
+		produced := ExpectedProductionPartsProduced(mc)
+		rejected := ExpectedProductionPartsRejected(mc)
+		yield := ExpectedProductionYield(mc)
+
+		expectedYield := 100.0 - (float64(rejected) * 100.0 / float64(produced))
+		Expect(yield).To(BeNumerically("~", expectedYield, 1e-9))
+	})
+})
+
+var _ = Describe("connectHint", func() {
+	It("blames the transport when the dial itself failed", func() {
+		err := &net.OpError{Op: "dial", Err: errors.New("connection refused")}
+		Expect(connectHint(err)).To(ContainSubstring("targetAddress"))
+		Expect(connectHint(err)).NotTo(ContainSubstring("targetAMS"))
+	})
+
+	It("blames the AMS layer when the PLC reset an established connection", func() {
+		err := &net.OpError{Op: "read", Err: errors.New("connection reset by peer")}
+		hint := connectHint(err)
+		Expect(hint).To(ContainSubstring("targetAMS"))
+		Expect(hint).To(ContainSubstring("username/password"))
+		Expect(hint).To(ContainSubstring("runtimePort"))
+	})
+
+	It("treats a non-net error as an AMS-layer rejection", func() {
+		Expect(connectHint(errors.New("boom"))).To(ContainSubstring("targetAMS"))
+	})
+
+	It("blames the route when the PLC served no frame at all", func() {
+		err := fmt.Errorf("connect: %w", adsLib.ErrRouteNotServed)
+		hint := connectHint(err)
+		Expect(connectDropKind(err)).To(Equal(dropRouteNotServed))
+		Expect(hint).To(ContainSubstring("hostIP"))
+		Expect(hint).NotTo(ContainSubstring("runtimePort"))
+	})
+
+	It("blames the network when an established connection was dropped", func() {
+		err := fmt.Errorf("connect: %w", adsLib.ErrEstablishedDropped)
+		hint := connectHint(err)
+		Expect(connectDropKind(err)).To(Equal(dropEstablished))
+		Expect(hint).To(ContainSubstring("not a configuration error"))
+	})
+
+	It("leaves an unrelated error unclassified", func() {
+		Expect(connectDropKind(errors.New("boom"))).To(Equal(dropUnknown))
+	})
+})
+
+var _ = Describe("Shutdown quiets expected failures", func() {
+	It("stops resolving symbols instead of failing once per remaining symbol", func() {
+		client := &fakeClient{symbols: map[string]SymbolInfo{}}
+		a := &AdsCommInput{
+			Log:    service.MockResources().Logger(),
+			client: client,
+			Symbols: []PlcSymbol{
+				{Name: "MAIN.a"}, {Name: "MAIN.b"}, {Name: "MAIN.c"},
+			},
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		a.initSymbolIndex(ctx)
+
+		Expect(client.getSymbolCalls).To(BeZero())
+		// The index is still fully populated so later reads can resolve names.
+		Expect(a.symbolByName).To(HaveLen(3))
+	})
+
+	It("returns the context error rather than retrying a pull read", func() {
+		client := &fakeClient{multiErr: context.Canceled}
+		a := &AdsCommInput{
+			Log:     service.MockResources().Logger(),
+			client:  client,
+			Symbols: []PlcSymbol{{Name: "MAIN.a"}},
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		msgs, _, err := a.ReadBatchPull(ctx)
+
+		Expect(err).To(MatchError(context.Canceled))
+		Expect(msgs).To(BeNil())
+	})
+
+	It("abandons the individual-read fallback", func() {
+		// Batch read yields nothing, which normally triggers per-symbol reads.
+		client := &fakeClient{multiValues: map[string]string{}}
+		a := &AdsCommInput{
+			Log:     service.MockResources().Logger(),
+			client:  client,
+			Symbols: []PlcSymbol{{Name: "MAIN.a"}, {Name: "MAIN.b"}},
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		_, _, err := a.ReadBatchPull(ctx)
+
+		Expect(err).To(MatchError(context.Canceled))
+		Expect(client.readFromSymbolCalls).To(BeZero())
+	})
+})
+
+var _ = Describe("adsValueBytes value validation", func() {
+	DescribeTable("emits a number only when the value survives as JSON",
+		func(typ, decoded, wantPayload, wantTag string) {
+			payload, tag := adsValueBytes(typ, decoded)
+			Expect(string(payload)).To(Equal(wantPayload))
+			Expect(tag).To(Equal(wantTag))
+		},
+		Entry("integer", "DINT", "42", "42", "number"),
+		Entry("negative integer", "INT", "-7", "-7", "number"),
+		Entry("float", "REAL", "42.5", "42.5", "number"),
+		// A PLC REAL holds these after an uninitialised read or 0.0/0.0.
+		Entry("NaN falls back to a string", "REAL", "NaN", `"NaN"`, "string"),
+		Entry("+Inf falls back to a string", "REAL", "+Inf", `"+Inf"`, "string"),
+		Entry("-Inf falls back to a string", "LREAL", "-Inf", `"-Inf"`, "string"),
+		Entry("empty numeric falls back to a string", "DINT", "", `""`, "string"),
+		// strconv would accept both of these; encoding/json does not.
+		Entry("leading plus falls back to a string", "DINT", "+1", `"+1"`, "string"),
+		Entry("hex float falls back to a string", "REAL", "0x1p+2", `"0x1p+2"`, "string"),
+		Entry("bool true", "BOOL", "true", "true", "bool"),
+		Entry("bool false", "BOOL", "false", "false", "bool"),
+		Entry("unparseable bool falls back to a string", "BOOL", "maybe", `"maybe"`, "string"),
+		Entry("string stays quoted", "STRING", "hello", `"hello"`, "string"),
+		Entry("numeric-looking string stays quoted", "STRING", "007", `"007"`, "string"),
+	)
+})
+
+var _ = Describe("benthosLogHandler.WithAttrs", func() {
+	It("does not let sibling handlers share a backing array", func() {
+		base := &benthosLogHandler{logger: service.MockResources().Logger()}
+		parent := base.WithAttrs([]slog.Attr{slog.String("a", "1")}).(*benthosLogHandler)
+
+		left := parent.WithAttrs([]slog.Attr{slog.String("b", "left")}).(*benthosLogHandler)
+		right := parent.WithAttrs([]slog.Attr{slog.String("b", "right")}).(*benthosLogHandler)
+
+		Expect(left.attrs).To(HaveLen(2))
+		Expect(right.attrs).To(HaveLen(2))
+		Expect(left.attrs[1].Value.String()).To(Equal("left"))
+		Expect(right.attrs[1].Value.String()).To(Equal("right"))
+		Expect(parent.attrs).To(HaveLen(1))
+	})
+})
+
+// capturedLog is one record the plugin logged, flattened for assertions.
+type capturedLog struct {
+	Level slog.Level
+	Msg   string
+	Attrs map[string]string
+}
+
+// captureHandler collects records so a test can assert the level the plugin
+// chose, which is the whole behavior of logConnectFailure.
+type captureHandler struct {
+	mu    *sync.Mutex
+	recs  *[]capturedLog
+	attrs []slog.Attr
+}
+
+func (h captureHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h captureHandler) Handle(_ context.Context, r slog.Record) error {
+	rec := capturedLog{Level: r.Level, Msg: r.Message, Attrs: map[string]string{}}
+	for _, a := range h.attrs {
+		rec.Attrs[a.Key] = a.Value.String()
+	}
+	r.Attrs(func(a slog.Attr) bool {
+		rec.Attrs[a.Key] = a.Value.String()
+		return true
+	})
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	*h.recs = append(*h.recs, rec)
+	return nil
+}
+
+func (h captureHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	merged := make([]slog.Attr, 0, len(h.attrs)+len(attrs))
+	return captureHandler{mu: h.mu, recs: h.recs, attrs: append(append(merged, h.attrs...), attrs...)}
+}
+
+func (h captureHandler) WithGroup(string) slog.Handler { return h }
+
+// capturingLogger returns a benthos logger and the slice its records land in.
+func capturingLogger() (*service.Logger, *[]capturedLog) {
+	recs := &[]capturedLog{}
+	h := captureHandler{mu: &sync.Mutex{}, recs: recs}
+	return service.NewLoggerFromSlog(slog.New(h)), recs
+}
+
+func levelsOf(recs *[]capturedLog, floor slog.Level) []slog.Level {
+	var out []slog.Level
+	for _, r := range *recs {
+		if r.Level >= floor {
+			out = append(out, r.Level)
+		}
+	}
+	return out
+}
+
+var _ = Describe("logConnectFailure", func() {
+	newInput := func() (*AdsCommInput, *[]capturedLog) {
+		log, recs := capturingLogger()
+		return &AdsCommInput{Log: log, TargetIP: "1.2.3.4", TargetPort: 48898, RuntimePort: 851}, recs
+	}
+
+	It("warns and promises a retry when the PLC dropped the transport", func() {
+		a, recs := newInput()
+		err := fmt.Errorf("DownloadDataTypes failed: %w", adsLib.ErrTransportClosed)
+
+		Expect(a.logConnectFailure(context.Background(), "Loading the table failed", err)).To(MatchError(err))
+
+		Expect(*recs).To(HaveLen(1))
+		Expect((*recs)[0].Level).To(Equal(slog.LevelWarn))
+		Expect((*recs)[0].Msg).To(ContainSubstring("retries"))
+		// The hint describes a rejected session, so it must not appear here.
+		Expect((*recs)[0].Attrs).NotTo(HaveKey("hint"))
+	})
+
+	It("errors with a hint when the PLC rejected the session", func() {
+		a, recs := newInput()
+		err := errors.New("ADS error 0x706")
+
+		Expect(a.logConnectFailure(context.Background(), "Connecting to PLC failed", err)).To(MatchError(err))
+
+		Expect(*recs).To(HaveLen(1))
+		Expect((*recs)[0].Level).To(Equal(slog.LevelError))
+		Expect((*recs)[0].Attrs).To(HaveKeyWithValue("hint", ContainSubstring("targetAMS")))
+	})
+
+	It("errors on the activation failure, which wraps a dropped transport", func() {
+		// The wrapping made this read as a blip that would retry itself; only a
+		// person can fix a route the PLC will not serve.
+		a, recs := newInput()
+		err := errors.New(`route registration during connect: route "benthosADS-1.2.3.4" was registered but the PLC did not serve it within 10s (3 redials): ads: client transport closed`)
+
+		a.logConnectFailure(context.Background(), "Connecting to PLC failed", err)
+
+		Expect((*recs)[0].Level).To(Equal(slog.LevelError))
+		Expect((*recs)[0].Attrs).To(HaveKeyWithValue("hint", ContainSubstring("hostIP")))
+	})
+
+	It("keeps a route the PLC will not serve an error, since it needs a person", func() {
+		a, recs := newInput()
+		err := fmt.Errorf("connect: %w", adsLib.ErrRouteNotServed)
+
+		a.logConnectFailure(context.Background(), "Connecting to PLC failed", err)
+
+		Expect((*recs)[0].Level).To(Equal(slog.LevelError))
+		Expect((*recs)[0].Attrs).To(HaveKeyWithValue("hint", ContainSubstring("hostIP")))
+	})
+
+	It("drops to debug during shutdown, like every other aborted operation", func() {
+		a, recs := newInput()
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		a.logConnectFailure(ctx, "Connecting to PLC failed", adsLib.ErrTransportClosed)
+
+		Expect(*recs).To(HaveLen(1))
+		Expect((*recs)[0].Level).To(Equal(slog.LevelDebug))
+	})
+})
+
+var _ = Describe("connect retry gate", func() {
+	routeErr := fmt.Errorf("connect: %w", adsLib.ErrRouteNotServed)
+	activationErr := errors.New(`route "benthosADS-1.2.3.4" was registered but the PLC did not serve it within 10s (3 redials): timeout`)
+
+	newInput := func() (*AdsCommInput, *[]capturedLog) {
+		log, recs := capturingLogger()
+		return &AdsCommInput{Log: log, TargetIP: "1.2.3.4", TargetPort: 48898, RuntimePort: 851}, recs
+	}
+
+	DescribeTable("classifies what a retry cannot fix",
+		func(err error, want bool) {
+			Expect(isRouteFault(err)).To(Equal(want))
+		},
+		Entry("the drop verdict", routeErr, true),
+		Entry("activation gave up", activationErr, true),
+		Entry("registration wrapped", errors.New("route registration during connect: boom"), true),
+		Entry("a refused session is not a route fault", errors.New("ADS error 0x706"), false),
+		Entry("a dropped transport is not a route fault", adsLib.ErrTransportClosed, false),
+	)
+
+	It("ramps an ordinary failure from 1s to a 1m ceiling", func() {
+		a, _ := newInput()
+		var delays []time.Duration
+		for i := 0; i < 8; i++ {
+			a.noteConnectFailure(errors.New("dial refused"))
+			delays = append(delays, time.Until(a.nextAttempt).Round(time.Second))
+		}
+		Expect(delays[0]).To(BeNumerically("~", time.Second, time.Second))
+		Expect(delays[7]).To(Equal(connectRetryMax))
+		// A rebooting PLC has to be picked up promptly, so the ceiling stays low.
+		Expect(delays[7]).To(BeNumerically("<=", time.Minute))
+	})
+
+	It("puts a route fault on the long ramp immediately", func() {
+		a, _ := newInput()
+
+		a.noteConnectFailure(routeErr)
+
+		Expect(time.Until(a.nextAttempt)).To(BeNumerically(">=", routeFaultRetryFirst-time.Second))
+	})
+
+	It("stops asking for registration after three route faults", func() {
+		a, recs := newInput()
+
+		for i := 0; i < routeSkipAfter; i++ {
+			Expect(a.sessionConfig().SkipRouteRegistration).To(BeFalse())
+			a.noteConnectFailure(routeErr)
+		}
+
+		Expect(a.sessionConfig().SkipRouteRegistration).To(BeTrue())
+		warn := (*recs)[len(*recs)-1]
+		Expect(warn.Level).To(Equal(slog.LevelWarn))
+		Expect(warn.Msg).To(ContainSubstring("hostIP"))
+	})
+
+	It("counts only consecutive route faults toward the breaker", func() {
+		a, _ := newInput()
+		a.noteConnectFailure(routeErr)
+		a.noteConnectFailure(routeErr)
+		a.noteConnectFailure(errors.New("dial refused")) // resets the run
+		a.noteConnectFailure(routeErr)
+
+		Expect(a.sessionConfig().SkipRouteRegistration).To(BeFalse())
+	})
+
+	It("reopens everything on a successful connect", func() {
+		a, _ := newInput()
+		for i := 0; i < 5; i++ {
+			a.noteConnectFailure(routeErr)
+		}
+		Expect(a.sessionConfig().SkipRouteRegistration).To(BeTrue())
+
+		a.noteConnectSuccess()
+
+		Expect(a.connectFailures).To(BeZero())
+		Expect(a.routeFaults).To(BeZero())
+		Expect(a.nextAttempt.IsZero()).To(BeTrue())
+		Expect(a.sessionConfig().SkipRouteRegistration).To(BeFalse())
+	})
+
+	It("waits out the gate instead of returning early, so Benthos cannot spin", func() {
+		a, recs := newInput()
+		a.nextAttempt = time.Now().Add(80 * time.Millisecond)
+
+		start := time.Now()
+		Expect(a.awaitRetryWindow(context.Background())).To(Succeed())
+
+		Expect(time.Since(start)).To(BeNumerically(">=", 70*time.Millisecond))
+		Expect(levelsOf(recs, slog.LevelInfo)).To(HaveLen(1))
+	})
+
+	It("abandons the wait when the pipeline shuts down", func() {
+		a, _ := newInput()
+		a.nextAttempt = time.Now().Add(time.Hour)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		Expect(a.awaitRetryWindow(ctx)).To(MatchError(context.Canceled))
+	})
+
+	It("does not gate the first attempt", func() {
+		a, recs := newInput()
+
+		Expect(a.awaitRetryWindow(context.Background())).To(Succeed())
+
+		Expect(*recs).To(BeEmpty())
+	})
+})
+
+var _ = Describe("logReadFailure", func() {
+	newInput := func(client Client) (*AdsCommInput, *[]capturedLog) {
+		log, recs := capturingLogger()
+		return &AdsCommInput{
+			Log: log, client: client, RequestTimeout: 5 * time.Second,
+			Symbols: []PlcSymbol{{Name: "MAIN.a"}, {Name: "MAIN.b"}},
+		}, recs
+	}
+
+	It("warns and names requestTimeout when the PLC did not answer in time", func() {
+		a, recs := newInput(&fakeClient{})
+		err := fmt.Errorf("batch read failed: SumRead failed: %w", context.DeadlineExceeded)
+
+		a.logReadFailure(context.Background(), 2, err)
+
+		Expect(*recs).To(HaveLen(1))
+		Expect((*recs)[0].Level).To(Equal(slog.LevelWarn))
+		Expect((*recs)[0].Msg).To(ContainSubstring("requestTimeout"))
+		Expect((*recs)[0].Attrs).To(HaveKeyWithValue("requestTimeout", "5s"))
+		Expect((*recs)[0].Attrs).To(HaveKeyWithValue("symbols", "2"))
+	})
+
+	It("warns that it is reconnecting when the session is gone", func() {
+		a, recs := newInput(&fakeClient{closed: true})
+
+		a.logReadFailure(context.Background(), 2, errors.New("read failed"))
+
+		Expect((*recs)[0].Level).To(Equal(slog.LevelWarn))
+		Expect((*recs)[0].Msg).To(ContainSubstring("reconnecting"))
+	})
+
+	It("warns on a dropped transport", func() {
+		a, recs := newInput(&fakeClient{})
+
+		a.logReadFailure(context.Background(), 2, fmt.Errorf("read: %w", adsLib.ErrTransportClosed))
+
+		Expect((*recs)[0].Level).To(Equal(slog.LevelWarn))
+		Expect((*recs)[0].Msg).To(ContainSubstring("dropped"))
+	})
+
+	It("keeps an unrecognized failure at error", func() {
+		a, recs := newInput(&fakeClient{})
+
+		a.logReadFailure(context.Background(), 2, errors.New("ADS error 0x706"))
+
+		Expect((*recs)[0].Level).To(Equal(slog.LevelError))
+	})
+
+	It("drops to debug during shutdown", func() {
+		a, recs := newInput(&fakeClient{})
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		a.logReadFailure(ctx, 2, context.DeadlineExceeded)
+
+		Expect((*recs)[0].Level).To(Equal(slog.LevelDebug))
+	})
+
+	It("reports a failed poll exactly once, and keeps polling", func() {
+		// The field report was one ERROR plus one WARN for the same timeout.
+		client := &fakeClient{multiErr: fmt.Errorf("batch read failed: SumRead failed: %w", context.DeadlineExceeded)}
+		a, recs := newInput(client)
+
+		msgs, _, err := a.ReadBatchPull(context.Background())
+
+		Expect(err).NotTo(HaveOccurred()) // transient: empty batch, next poll retries
+		Expect(msgs).To(BeEmpty())
+		Expect(levelsOf(recs, slog.LevelWarn)).To(HaveLen(1))
+	})
+})
+
+var _ = Describe("isTransportGone", func() {
+	DescribeTable("separates a transport that went away from a session that was refused",
+		func(err error, want bool) {
+			Expect(isTransportGone(err)).To(Equal(want))
+		},
+		Entry("transport closed, wrapped", fmt.Errorf("upload: %w", adsLib.ErrTransportClosed), true),
+		Entry("disconnected", adsLib.ErrDisconnected, true),
+		Entry("established connection dropped", fmt.Errorf("connect: %w", adsLib.ErrEstablishedDropped), true),
+		// Excluded on purpose: this one usually needs credentials or an address fixed.
+		Entry("route never served", fmt.Errorf("connect: %w", adsLib.ErrRouteNotServed), false),
+		Entry("an ADS return code", errors.New("ADS error 0x706"), false),
+		Entry("no error", nil, false),
+	)
+})
+
+var _ = Describe("sessionConfig", func() {
+	It("carries every tuning field through to the adapter", func() {
+		a := &AdsCommInput{
+			TargetIP: "1.2.3.4", TargetPort: 48898, RuntimePort: 851,
+			TargetAMS: "1.2.3.4.1.1", HostAMS: "auto", HostIP: "5.6.7.8", HostPort: 0,
+			Username: "Administrator", Password: "secret",
+			RequestTimeout:             5 * time.Second,
+			MaxReconnectInterval:       7 * time.Second,
+			RouteActivationTimeout:     20 * time.Second,
+			NotificationSilenceTimeout: 15 * time.Second,
+			HeartbeatRecovery:          heartbeatRecoveryRebuild,
+			Log:                        service.MockResources().Logger(),
+		}
+
+		cfg := a.sessionConfig()
+
+		Expect(cfg.MaxReconnectInterval).To(Equal(7 * time.Second))
+		Expect(cfg.RouteActivationTimeout).To(Equal(20 * time.Second))
+		Expect(cfg.NotificationSilenceTimeout).To(Equal(15 * time.Second))
+		Expect(cfg.HeartbeatRecovery).To(Equal(heartbeatRecoveryRebuild))
+		Expect(cfg.RequestTimeout).To(Equal(5 * time.Second))
+	})
+
+	It("wires OnSessionEvent to the flag the read path consumes", func() {
+		a := &AdsCommInput{Log: service.MockResources().Logger()}
+
+		cfg := a.sessionConfig()
+		Expect(cfg.OnSessionEvent).NotTo(BeNil())
+		cfg.OnSessionEvent(SessionEventSubscriptionsDead, "heartbeat-silent")
+
+		reason := a.degradedReason.Load()
+		Expect(reason).NotTo(BeNil())
+		Expect(*reason).To(Equal("heartbeat-silent"))
+	})
+
+	It("reports an event it does not handle without degrading the session", func() {
+		// Stands in for a SessionEvent added to client.go without a case in
+		// onSessionEvent: it has to be visible, and it must not force a rebuild.
+		logger, recs := capturingLogger()
+		a := &AdsCommInput{Log: logger}
+
+		a.onSessionEvent(SessionEvent(99), "something-new")
+
+		Expect(levelsOf(recs, slog.LevelWarn)).To(Equal([]slog.Level{slog.LevelWarn}))
+		Expect((*recs)[0].Attrs).To(HaveKeyWithValue("event", "99"))
+		Expect((*recs)[0].Attrs).To(HaveKeyWithValue("reason", "something-new"))
+		Expect(a.degradedReason.Load()).To(BeNil())
+	})
+})
+
+var _ = Describe("setupNotifications", func() {
+	newInput := func(client *fakeClient) *AdsCommInput {
+		return &AdsCommInput{
+			Log:              service.MockResources().Logger(),
+			client:           client,
+			ReadType:         "notification",
+			NotificationChan: make(chan *Update, 4),
+			Symbols:          []PlcSymbol{{Name: "MAIN.a"}, {Name: "MAIN.b"}},
+		}
+	}
+
+	It("names the symbol count when the whole registration fails", func() {
+		a := newInput(&fakeClient{notifyErr: errors.New("transport down")})
+
+		err := a.setupNotifications(context.Background())
+
+		Expect(err).To(MatchError(ContainSubstring("2 symbols")))
+		Expect(err).To(MatchError(ContainSubstring("transport down")))
+	})
+
+	It("fails when the PLC resolved none of the symbols", func() {
+		// go-ads reports this per symbol rather than as an error, so an
+		// all-skipped batch would otherwise look like a successful connect.
+		a := newInput(&fakeClient{notifyResults: []NotifyResult{
+			{SymbolName: "MAIN.a", Skipped: true},
+			{SymbolName: "MAIN.b", Skipped: true},
+		}})
+
+		Expect(a.setupNotifications(context.Background())).To(MatchError(ContainSubstring("no symbols registered")))
+	})
+})
+
+var _ = Describe("setupNotifications partial success", func() {
+	It("keeps the symbols the PLC took, names the ones it refused, and buffers their first samples", func() {
+		// go-ads reports per-symbol outcomes rather than failing the batch, so a
+		// connect must survive a mixed result: one registered, one the library
+		// skipped, one the PLC rejected with a code.
+		log, recs := capturingLogger()
+		a := &AdsCommInput{
+			Log:              log,
+			ReadType:         "notification",
+			NotificationChan: make(chan *Update, 4),
+			Symbols:          []PlcSymbol{{Name: "MAIN.ok"}, {Name: "MAIN.typo"}, {Name: "MAIN.refused"}},
+			client: &fakeClient{notifyResults: []NotifyResult{
+				{SymbolName: "MAIN.ok", Registered: true},
+				{SymbolName: "MAIN.typo", Skipped: true},
+				{SymbolName: "MAIN.refused", Code: 0x70A},
+			}},
+		}
+		// Only the registered symbol will ever report, so supplying its sample
+		// keeps the readiness gate from waiting out its full timeout.
+		a.NotificationChan <- &Update{Variable: "MAIN.ok", Value: "1"}
+
+		Expect(a.setupNotifications(context.Background())).To(Succeed())
+
+		Expect(a.pendingInitial).To(HaveLen(1))
+		Expect(levelsOf(recs, slog.LevelWarn)).To(HaveLen(2), "one warn per symbol that did not register")
+		msgs := make([]string, 0, len(*recs))
+		for _, r := range *recs {
+			msgs = append(msgs, r.Msg)
+		}
+		Expect(msgs).To(ContainElement(ContainSubstring("MAIN.typo")))
+		Expect(msgs).To(ContainElement(SatisfyAll(
+			ContainSubstring("MAIN.refused"),
+			ContainSubstring("0x70A"), // the ADS code is what the user looks up
+		)))
+		Expect(msgs).To(ContainElement(ContainSubstring("1/3")), "the summary states how many made it")
+	})
+})
+
+var _ = Describe("ReadBatch dispatch", func() {
+	It("routes to the notification path when readType is notification", func() {
+		// A cancelled context returns from the notification wait at once; the
+		// pull path would have failed on the nil client instead.
+		a := &AdsCommInput{
+			Log:              service.MockResources().Logger(),
+			ReadType:         "notification",
+			NotificationChan: make(chan *Update, 1),
+			client:           &fakeClient{},
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		msgs, _, err := a.ReadBatch(ctx)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(msgs).To(BeEmpty())
+	})
+
+	It("routes to the pull path for any other readType", func() {
+		a := &AdsCommInput{Log: service.MockResources().Logger(), ReadType: "interval"}
+
+		_, _, err := a.ReadBatch(context.Background())
+
+		Expect(err).To(Equal(service.ErrNotConnected), "the pull path checks the client first")
+	})
+})
+
+var _ = Describe("BatchReadError", func() {
+	It("counts the failures against the batch size", func() {
+		err := &BatchReadError{Requested: 40, Failed: []NotifyResult{
+			{SymbolName: "MAIN.typo", Skipped: true},
+			{SymbolName: "MAIN.gone", Code: 0x710},
+		}}
+		Expect(err.Error()).To(Equal("2 of 40 symbols failed"))
+	})
+})
+
+var _ = Describe("benthosLogHandler.WithGroup", func() {
+	It("ignores grouping, since benthos logs flat key=value pairs", func() {
+		h := &benthosLogHandler{logger: service.MockResources().Logger()}
+		Expect(h.WithGroup("session")).To(BeIdenticalTo(slog.Handler(h)))
+	})
+})
+
+var _ = Describe("finishConnect failure branches", func() {
+	newInput := func(client *fakeClient, readType string) (*AdsCommInput, *[]capturedLog) {
+		log, recs := capturingLogger()
+		return &AdsCommInput{
+			Log: log, client: client, ReadType: readType,
+			LoadSymbols:      true,
+			NotificationChan: make(chan *Update, 4),
+			Symbols:          []PlcSymbol{{Name: "MAIN.a"}},
+		}, recs
+	}
+
+	DescribeTable("reports each failed step exactly once",
+		func(client *fakeClient, readType string, wantErr string) {
+			a, recs := newInput(client, readType)
+
+			err := a.finishConnect(context.Background())
+
+			Expect(err).To(MatchError(ContainSubstring(wantErr)))
+			// One line per failure: the step used to log the error it then returned.
+			Expect(levelsOf(recs, slog.LevelWarn)).To(HaveLen(1))
+		},
+		Entry("connect refused",
+			&fakeClient{connectErr: errors.New("ADS error 0x706")}, "interval", "0x706"),
+		Entry("symbol table upload interrupted",
+			&fakeClient{loadSymbolsErr: fmt.Errorf("upload: %w", adsLib.ErrTransportClosed)}, "interval", "transport closed"),
+		// Symbol metadata has to resolve, or initSymbolIndex adds a warning of
+		// its own and the count stops being about the failure under test.
+		Entry("notification registration failed",
+			&fakeClient{
+				notifyErr: errors.New("sum command failed"),
+				symbols:   map[string]SymbolInfo{"MAIN.a": {DataType: "DINT", BaseType: "DINT", Length: 4}},
+			}, "notification", "sum command failed"),
+	)
+})
+
+var _ = Describe("finishConnect ordering", func() {
+	It("loads the datatype table before resolving symbol metadata", func() {
+		// A user-defined type only resolves to its primitive once the datatype
+		// table is cached, and an unresolved base type is never retried.
+		client := &fakeClient{symbols: map[string]SymbolInfo{
+			"MAIN.state": {DataType: "E_MachineState", BaseType: "DINT", Length: 4},
+		}}
+		a := &AdsCommInput{
+			Log:         service.MockResources().Logger(),
+			client:      client,
+			LoadSymbols: true,
+			ReadType:    "interval",
+			Symbols:     []PlcSymbol{{Name: "MAIN.state"}},
+		}
+
+		Expect(a.finishConnect(context.Background())).To(Succeed())
+
+		Expect(client.callOrder).To(Equal([]string{"LoadSymbols", "GetSymbol"}))
+		Expect(a.Symbols[0].BaseType).To(Equal("DINT"))
+	})
+})
+
+var _ = Describe("Partial batch reads", func() {
+	// go-ads v2.3.0 reports a partial batch as an error while still returning
+	// every value that succeeded. Treating that as a failed poll would discard
+	// good data on every read because one symbol name was wrong.
+	newInput := func(client *fakeClient) *AdsCommInput {
+		return &AdsCommInput{
+			Log:    service.MockResources().Logger(),
+			client: client,
+			Symbols: []PlcSymbol{
+				{Name: "MAIN.ok1", DataType: "DINT", BaseType: "DINT"},
+				{Name: "MAIN.ok2", DataType: "DINT", BaseType: "DINT"},
+				{Name: "MAIN.missing", DataType: "DINT", BaseType: "DINT"},
+			},
+		}
+	}
+	partial := func() (*fakeClient, *BatchReadError) {
+		err := &BatchReadError{
+			Requested: 3,
+			Failed:    []NotifyResult{{SymbolName: "MAIN.missing", Code: 0x710}},
+		}
+		return &fakeClient{
+			multiValues: map[string]string{"MAIN.ok1": "1", "MAIN.ok2": "2"},
+			multiErr:    err,
+		}, err
+	}
+
+	It("emits the symbols that succeeded instead of dropping the batch", func() {
+		client, _ := partial()
+		a := newInput(client)
+
+		msgs, _, err := a.ReadBatchPull(context.Background())
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(msgs).To(HaveLen(2))
+		names := []string{}
+		for _, m := range msgs {
+			n, _ := m.MetaGet("ads_symbol_name")
+			names = append(names, n)
+		}
+		Expect(names).To(ConsistOf("MAIN_ok1", "MAIN_ok2"))
+	})
+
+	It("does not fall back to individual reads when some symbols succeeded", func() {
+		client, _ := partial()
+		a := newInput(client)
+
+		_, _, err := a.ReadBatchPull(context.Background())
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(client.readFromSymbolCalls).To(BeZero())
+	})
+
+	It("names each failed symbol once per session, not once per poll", func() {
+		client, _ := partial()
+		a := newInput(client)
+
+		for i := 0; i < 3; i++ {
+			_, _, err := a.ReadBatchPull(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		Expect(a.warnedBatchFailures).To(HaveLen(1))
+		Expect(a.warnedBatchFailures).To(HaveKey("MAIN.missing"))
+	})
+
+	It("still treats a whole-batch failure as a failed poll", func() {
+		client := &fakeClient{multiErr: errors.New("transport down")}
+		a := newInput(client)
+
+		msgs, _, err := a.ReadBatchPull(context.Background())
+
+		Expect(err).NotTo(HaveOccurred()) // transient: empty batch, caller retries
+		Expect(msgs).To(BeEmpty())
+	})
+})
+
+var _ = Describe("reconnect and notification-health tuning fields", func() {
+	minimalYAML := `
+targetAddress: "1.2.3.4"
+unifiedAddress:
+  - "MAIN.var"
+`
+
+	It("defaults to go-ads' own values, stated explicitly", func() {
+		conf, err := adsConf.ParseYAML(minimalYAML, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(durationField(conf, "maxReconnectInterval")).To(Equal(30 * time.Second))
+		Expect(durationField(conf, "routeActivationTimeout")).To(Equal(10 * time.Second))
+		Expect(durationField(conf, "notificationSilenceTimeout")).To(Equal(10 * time.Second))
+		Expect(conf.FieldString("heartbeatRecovery")).To(Equal("immediate"))
+	})
+
+	It("accepts 0 as 'keep the library default'", func() {
+		conf, err := adsConf.ParseYAML(minimalYAML+"maxReconnectInterval: 0s\n", nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(durationField(conf, "maxReconnectInterval")).To(BeZero())
+	})
+
+	DescribeTable("rejects a negative duration rather than silently ignoring it",
+		func(field string) {
+			conf, err := adsConf.ParseYAML(minimalYAML+field+": -5s\n", nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = NewAdsCommInput(conf, service.MockResources())
+
+			Expect(err).To(MatchError(ContainSubstring(field)))
+			Expect(err).To(MatchError(ContainSubstring("must not be negative")))
+		},
+		Entry("maxReconnectInterval", "maxReconnectInterval"),
+		Entry("routeActivationTimeout", "routeActivationTimeout"),
+		Entry("notificationSilenceTimeout", "notificationSilenceTimeout"),
+	)
+
+	DescribeTable("rejects a heartbeatRecovery mode it cannot honor",
+		// Outside `benthos lint` the enum is not enforced: ParseYAML and
+		// FieldString accept anything, so unchecked values reach the adapter.
+		func(mode string) {
+			conf, err := adsConf.ParseYAML(minimalYAML+"heartbeatRecovery: "+mode+"\n", nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = NewAdsCommInput(conf, service.MockResources())
+
+			Expect(err).To(MatchError(ContainSubstring("heartbeatRecovery")))
+		},
+		// observe never re-subscribes: a dead subscription, no data, no error.
+		Entry("observe, which needs a callback the plugin does not register", "observe"),
+		Entry("a typo", "confrim"),
+	)
+
+	DescribeTable("accepts the two modes it does honor",
+		func(mode string) {
+			conf, err := adsConf.ParseYAML(minimalYAML+"heartbeatRecovery: "+mode+"\n", nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = NewAdsCommInput(conf, service.MockResources())
+
+			Expect(err).NotTo(HaveOccurred())
+		},
+		Entry("immediate", heartbeatRecoveryImmediate),
+		Entry("confirm", heartbeatRecoveryConfirm),
+		Entry("rebuild", heartbeatRecoveryRebuild),
+	)
+
+	Describe("rebuild mode needs a callback to hand the decision to", func() {
+		base := SessionConfig{TargetIP: "1.2.3.4", TargetPort: 48898, RuntimePort: 851}
+
+		optionCount := func(cfg SessionConfig) int {
+			opts, err := buildSessionOptions(context.Background(), cfg, service.MockResources().Logger())
+			Expect(err).NotTo(HaveOccurred())
+			return len(opts)
+		}
+
+		It("adds both the recovery mode and the callback when one is set", func() {
+			withCB := base
+			withCB.HeartbeatRecovery = heartbeatRecoveryRebuild
+			withCB.OnSessionEvent = func(SessionEvent, string) {}
+
+			Expect(optionCount(withCB)).To(Equal(optionCount(base) + 2))
+		})
+
+		It("does not switch go-ads out of recovering when there is no callback", func() {
+			// Observe with no callback stops delivering and says nothing.
+			noCB := base
+			noCB.HeartbeatRecovery = heartbeatRecoveryRebuild
+
+			Expect(optionCount(noCB)).To(Equal(optionCount(base)))
+		})
+	})
+
+	Describe("sessionEventFor", func() {
+		DescribeTable("classifies the reasons the plugin must act on",
+			func(reason adsLib.Reason, want SessionEvent) {
+				Expect(sessionEventFor(reason)).To(Equal(want))
+			},
+			Entry("heartbeat silent", adsLib.ReasonHeartbeatSilent, SessionEventSubscriptionsDead),
+			Entry("reload cap exhausted", adsLib.ReasonReloadCapExhausted, SessionEventSymbolReloadGaveUp),
+			// go-ads drives its own reload for these; escalating would undo it.
+			Entry("symbol version invalid", adsLib.ReasonSymbolVersionInvalid, SessionEventOther),
+			Entry("notify handle invalid", adsLib.ReasonNotifyHandleInvalid, SessionEventOther),
+			Entry("a reason added in a later version", adsLib.Reason("something-new"), SessionEventOther),
+		)
+	})
+})
+
+var _ = Describe("session rebuild on a degraded session", func() {
+	newDegradableInput := func(client Client) *AdsCommInput {
+		return &AdsCommInput{
+			ReadType: "notification",
+			Log:      service.MockResources().Logger(),
+			client:   client,
+			Symbols:  []PlcSymbol{{Name: "MAIN.var"}},
+		}
+	}
+
+	DescribeTable("reports itself disconnected so the pipeline reconnects",
+		func(ev SessionEvent) {
+			a := newDegradableInput(&fakeClient{})
+			a.onSessionEvent(ev, "some-reason")
+
+			_, _, err := a.ReadBatch(context.Background())
+
+			Expect(err).To(MatchError(service.ErrNotConnected))
+			// closeHandler drops the client so Connect builds a new session.
+			Expect(a.client).To(BeNil())
+		},
+		Entry("subscriptions dead", SessionEventSubscriptionsDead),
+		Entry("symbol reload gave up", SessionEventSymbolReloadGaveUp),
+	)
+
+	It("leaves a healthy session alone for an event go-ads handles itself", func() {
+		a := newDegradableInput(&fakeClient{})
+		a.onSessionEvent(SessionEventOther, "symbol-version-invalid")
+
+		Expect(a.rebuildIfDegraded()).To(Succeed())
+		Expect(a.client).NotTo(BeNil())
+	})
+
+	It("consumes the flag, so one event costs one rebuild", func() {
+		a := newDegradableInput(&fakeClient{})
+		a.onSessionEvent(SessionEventSubscriptionsDead, "heartbeat-silent")
+
+		Expect(a.rebuildIfDegraded()).To(MatchError(service.ErrNotConnected))
+		Expect(a.rebuildIfDegraded()).To(Succeed())
+	})
+
+	It("keeps the first reason when a second event arrives before the read", func() {
+		a := newDegradableInput(&fakeClient{})
+		a.onSessionEvent(SessionEventSubscriptionsDead, "heartbeat-silent")
+		a.onSessionEvent(SessionEventSymbolReloadGaveUp, "reload-cap-exhausted")
+
+		reason := a.degradedReason.Load()
+		Expect(reason).NotTo(BeNil())
+		Expect(*reason).To(Equal("heartbeat-silent"))
+	})
+
+	Describe("cappedBackoff", func() {
+		DescribeTable("keeps the tiers valid for any cap go-ads would otherwise reject",
+			func(limit time.Duration) {
+				bc := cappedBackoff(limit)
+
+				// Guards the case where WithBackoff warns, keeps the default, and
+				// the requested cap applies to nothing.
+				Expect(bc.Validate()).To(Succeed())
+				Expect(bc.MaxInterval).To(Equal(limit))
+				Expect(bc.SlowInterval).To(BeNumerically("<=", limit))
+				Expect(bc.MidInterval).To(BeNumerically("<=", bc.SlowInterval))
+				Expect(bc.InitialInterval).To(BeNumerically("<=", bc.MidInterval))
+			},
+			Entry("below every tier", 500*time.Millisecond),
+			Entry("between the initial and mid tiers", 2*time.Second),
+			Entry("between the mid and slow tiers", 10*time.Second),
+			Entry("the default cap", 30*time.Second),
+			Entry("above the default cap", 2*time.Minute),
+		)
+
+		It("leaves the lower tiers alone when the cap is above them", func() {
+			bc := cappedBackoff(2 * time.Minute)
+			def := adsLib.DefaultBackoffConfig()
+
+			Expect(bc.InitialInterval).To(Equal(def.InitialInterval))
+			Expect(bc.MidInterval).To(Equal(def.MidInterval))
+			Expect(bc.SlowInterval).To(Equal(def.SlowInterval))
+		})
+	})
+
+	Describe("buildSessionOptions", func() {
+		// No username/password, so no route resolution and no network access.
+		base := SessionConfig{TargetIP: "1.2.3.4", TargetPort: 48898, RuntimePort: 851}
+
+		optionCount := func(cfg SessionConfig) int {
+			opts, err := buildSessionOptions(context.Background(), cfg, service.MockResources().Logger())
+			Expect(err).NotTo(HaveOccurred())
+			return len(opts)
+		}
+
+		It("adds one option per knob that is set", func() {
+			tuned := base
+			tuned.MaxReconnectInterval = 5 * time.Second
+			tuned.RouteActivationTimeout = 30 * time.Second
+			tuned.NotificationSilenceTimeout = 20 * time.Second
+			tuned.HeartbeatRecovery = "confirm"
+
+			Expect(optionCount(tuned)).To(Equal(optionCount(base) + 4))
+		})
+
+		It("adds nothing for the immediate recovery mode, which is already the default", func() {
+			immediate := base
+			immediate.HeartbeatRecovery = "immediate"
+
+			Expect(optionCount(immediate)).To(Equal(optionCount(base)))
+		})
+
+		It("adds nothing for a zero duration", func() {
+			zeroed := base
+			zeroed.MaxReconnectInterval = 0
+			zeroed.RouteActivationTimeout = 0
+			zeroed.NotificationSilenceTimeout = 0
+
+			Expect(optionCount(zeroed)).To(Equal(optionCount(base)))
+		})
+
+		It("adds the route and host options only when both credentials are given", func() {
+			// hostIP is set so the route host resolves without dialling the PLC.
+			// Either credential alone leaves the session unrouted, which is how a
+			// half-filled config stays a connect failure rather than a silent
+			// registration attempt.
+			routed := base
+			routed.Username, routed.Password, routed.HostIP = "Administrator", "1", "192.168.3.52"
+			Expect(optionCount(routed)).To(Equal(optionCount(base)+2), "WithRoute and WithHostIP")
+
+			userOnly := base
+			userOnly.Username, userOnly.HostIP = "Administrator", "192.168.3.52"
+			Expect(optionCount(userOnly)).To(Equal(optionCount(base)))
+
+			passOnly := base
+			passOnly.Password, passOnly.HostIP = "1", "192.168.3.52"
+			Expect(optionCount(passOnly)).To(Equal(optionCount(base)))
+		})
+
+		It("adds the local AMS override only for a real NetID", func() {
+			pinned := base
+			pinned.HostAMS, pinned.HostPort = "192.168.3.52.1.1", 10500
+			Expect(optionCount(pinned)).To(Equal(optionCount(base) + 1))
+
+			for _, unset := range []string{"", "auto"} {
+				auto := base
+				auto.HostAMS = unset
+				Expect(optionCount(auto)).To(Equal(optionCount(base)), "%q means let go-ads derive it", unset)
+			}
+		})
+
+		It("fails rather than connecting with an unusable local AMS", func() {
+			bad := base
+			bad.HostAMS = "192.168.3.52"
+
+			_, err := buildSessionOptions(context.Background(), bad, service.MockResources().Logger())
+
+			Expect(err).To(MatchError(ContainSubstring("hostAMS")))
+			Expect(err).To(MatchError(ContainSubstring("192.168.3.52")), "the rejected value belongs in the message")
+		})
+
+		It("adds the skip-registration option when the connect gate has given up on the route", func() {
+			skipped := base
+			skipped.SkipRouteRegistration = true
+
+			Expect(optionCount(skipped)).To(Equal(optionCount(base) + 1))
+		})
+	})
+})
+
+var _ = Describe("targetAMS is optional", func() {
+	It("builds without targetAMS, leaving the PLC to supply it", func() {
+		conf, err := adsConf.ParseYAML(`
+targetAddress: "1.2.3.4"
+unifiedAddress:
+  - "MAIN.var"
+`, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = NewAdsCommInput(conf, service.MockResources())
+
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("still rejects a targetAMS that is present but malformed", func() {
+		conf, err := adsConf.ParseYAML(`
+targetAddress: "1.2.3.4"
+targetAMS: "not-an-ams-netid"
+unifiedAddress:
+  - "MAIN.var"
+`, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = NewAdsCommInput(conf, service.MockResources())
+
+		Expect(err).To(MatchError(ContainSubstring("targetAMS")))
+	})
+})
+
+var _ = Describe("benthosLogHandler level mapping", func() {
+	// go-ads owns the level; the bridge only maps slog levels onto benthos ones.
+	rec := func(level slog.Level, msg string, attrs ...slog.Attr) slog.Record {
+		r := slog.NewRecord(time.Time{}, level, msg, 0)
+		r.AddAttrs(attrs...)
+		return r
+	}
+	handle := func(r slog.Record) error {
+		h := &benthosLogHandler{logger: service.MockResources().Logger()}
+		return h.Handle(context.Background(), r)
+	}
+
+	DescribeTable("forwards a record at the level go-ads set, attributes and all",
+		func(level slog.Level, attrs []slog.Attr) {
+			r := rec(level, "x", attrs...)
+			Expect(handle(r)).To(Succeed())
+			Expect(r.Level).To(Equal(level))
+		},
+		Entry("connection line", slog.LevelInfo, nil),
+		Entry("per-symbol bookkeeping arrives as debug", slog.LevelDebug, []slog.Attr{slog.String("symbol", "MAIN.a")}),
+		Entry("per-handle bookkeeping arrives as debug", slog.LevelDebug, []slog.Attr{slog.Uint64("handle", 91)}),
+		Entry("a failure carrying a symbol stays a warning", slog.LevelWarn, []slog.Attr{slog.String("symbol", "MAIN.a")}),
+		Entry("error", slog.LevelError, []slog.Attr{slog.String("symbol", "MAIN.a")}),
+	)
+
+	It("suppresses trace records below debug", func() {
+		h := &benthosLogHandler{logger: service.MockResources().Logger()}
+		Expect(h.Enabled(context.Background(), slog.Level(-8))).To(BeFalse())
+		Expect(h.Enabled(context.Background(), slog.LevelDebug)).To(BeTrue())
+	})
+})
+
+// hostAMS and hostIP both take "auto" or empty. They used to disagree: every site
+// treated the spellings alike except the NetID derivation, which tested
+// hostAMS == "auto" only, so an empty hostAMS silently skipped it.
+var _ = Describe("hostAMS and hostIP sentinels", func() {
+	parse := func(extra string) (*service.ParsedConfig, error) {
+		return adsConf.ParseYAML(`
+targetAddress: "1.2.3.4"
+unifiedAddress:
+  - "MAIN.var"
+`+extra, nil)
+	}
+
+	DescribeTable("isAuto treats both spellings as unset",
+		func(in string, want bool) { Expect(isAuto(in)).To(Equal(want)) },
+		Entry("empty", "", true),
+		Entry("auto", "auto", true),
+		Entry("an address", "10.0.0.5", false),
+		Entry("a NetID", "10.0.0.5.1.1", false),
+		Entry("not quite auto", "AUTO", false),
+	)
+
+	DescribeTable("a config using either spelling is accepted",
+		func(extra string) {
+			conf, err := parse(extra)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = NewAdsCommInput(conf, service.MockResources())
+			Expect(err).NotTo(HaveOccurred())
+		},
+		Entry("defaults", ""),
+		Entry("hostAMS auto, hostIP auto", "hostAMS: \"auto\"\nhostIP: \"auto\"\n"),
+		Entry("hostAMS empty, hostIP empty", "hostAMS: \"\"\nhostIP: \"\"\n"),
+		Entry("hostAMS empty, hostIP set", "hostAMS: \"\"\nhostIP: \"10.0.0.5\"\n"),
+		Entry("hostAMS auto, hostIP set", "hostAMS: \"auto\"\nhostIP: \"10.0.0.5\"\n"),
+		Entry("hostAMS set, hostIP auto", "hostAMS: \"10.0.0.5.1.1\"\nhostIP: \"auto\"\n"),
+	)
+
+	It("still rejects a hostIP that is neither auto nor an address", func() {
+		conf, err := parse("hostIP: \"not-an-ip\"\n")
+		Expect(err).NotTo(HaveOccurred())
+		_, err = NewAdsCommInput(conf, service.MockResources())
+		Expect(err).To(MatchError(ContainSubstring("hostIP")))
+	})
+
+	It("still rejects a hostAMS that is neither auto nor a NetID", func() {
+		conf, err := parse("hostAMS: \"nonsense\"\n")
+		Expect(err).NotTo(HaveOccurred())
+		_, err = NewAdsCommInput(conf, service.MockResources())
+		Expect(err).To(MatchError(ContainSubstring("hostAMS")))
+	})
+})
+
+var _ = Describe("toTransMode", func() {
+	// The config field is a string, transmissionModeValue turns it into the code
+	// stored on the input, and this maps that code to the library constant. A
+	// drift anywhere along that chain silently subscribes in the wrong mode.
+	DescribeTable("maps each configured transmission mode to its library constant",
+		func(configured string, want adsLib.TransMode) {
+			Expect(toTransMode(transmissionModeValue(configured))).To(Equal(want))
+		},
+		Entry("serverOnChange", "serverOnChange", adsLib.TransModeServerOnChange),
+		Entry("serverCycle", "serverCycle", adsLib.TransModeServerCycle),
+		Entry("serverOnChange2", "serverOnChange2", adsLib.TransModeServerOnChange2),
+		Entry("serverCycle2", "serverCycle2", adsLib.TransModeServerCycle2),
+		Entry("an unknown name falls back to on-change", "nonsense", adsLib.TransModeServerOnChange),
+	)
+
+	It("falls back to on-change for a code no config can produce", func() {
+		Expect(toTransMode(99)).To(Equal(adsLib.TransModeServerOnChange))
+	})
+})
+
+var _ = Describe("resolveRouteHostIP", func() {
+	It("returns a configured hostIP without touching the network", func() {
+		// TEST-NET-1 with a discard port: if the configured address were ignored
+		// and this dialled, the spec would sit here for routeDialTimeout instead
+		// of returning at once.
+		cfg := SessionConfig{HostIP: "192.168.3.52", TargetIP: "192.0.2.1", TargetPort: 48898}
+
+		start := time.Now()
+		ip, err := resolveRouteHostIP(context.Background(), cfg)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ip).To(Equal("192.168.3.52"))
+		Expect(time.Since(start)).To(BeNumerically("<", routeDialTimeout), "a configured hostIP must short-circuit the probe")
+	})
+
+	It("takes the source address of a dial the PLC accepts", func() {
+		// A listener stands in for the PLC's ADS port: the point is that the
+		// address reported is the local end of a connection to the target, which
+		// is the interface the PLC will see the route coming from.
+		listener, err := net.Listen("tcp4", "127.0.0.1:0")
+		Expect(err).NotTo(HaveOccurred())
+		defer listener.Close()
+		go func() {
+			conn, acceptErr := listener.Accept()
+			if acceptErr == nil {
+				_ = conn.Close()
+			}
+		}()
+
+		addr := listener.Addr().(*net.TCPAddr)
+		ip, err := resolveRouteHostIP(context.Background(), SessionConfig{
+			TargetIP: "127.0.0.1", TargetPort: addr.Port,
+		})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ip).To(Equal("127.0.0.1"))
+	})
+
+	DescribeTable("falls back to a routing lookup when the PLC will not answer",
+		func(hostIP string) {
+			// Port 1 on loopback refuses at once, so this takes the dial-failed
+			// path without waiting out routeDialTimeout, and the UDP lookup behind
+			// it sends nothing. Both spellings of unset have to reach it.
+			cfg := SessionConfig{HostIP: hostIP, TargetIP: "127.0.0.1", TargetPort: 1}
+
+			ip, err := resolveRouteHostIP(context.Background(), cfg)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ip).To(Equal("127.0.0.1"), "the source address the route would use")
+		},
+		Entry("empty", ""),
+		Entry("auto", "auto"),
+	)
+})
+
+var _ = Describe("Close", func() {
+	It("is a no-op when no session was ever established", func() {
+		// Benthos calls Close even when Connect never succeeded.
+		a := &AdsCommInput{Log: service.MockResources().Logger()}
+		Expect(a.Close(context.Background())).To(Succeed())
+	})
+
+	It("closes the session and drops the reference", func() {
+		client := &fakeClient{}
+		a := &AdsCommInput{Log: service.MockResources().Logger(), client: client}
+
+		Expect(a.Close(context.Background())).To(Succeed())
+
+		Expect(client.closed).To(BeTrue())
+		Expect(a.client).To(BeNil(), "a second Close must not reach a closed session")
+	})
+
+	It("returns the close error but still drops the reference", func() {
+		// The session is gone either way; keeping the pointer would let a later
+		// read reach a dead client instead of reconnecting.
+		client := &fakeClient{closeErr: errors.New("socket already gone")}
+		a, recs := func() (*AdsCommInput, *[]capturedLog) {
+			log, recs := capturingLogger()
+			return &AdsCommInput{Log: log, client: client}, recs
+		}()
+
+		err := a.Close(context.Background())
+
+		Expect(err).To(MatchError(ContainSubstring("socket already gone")))
+		Expect(a.client).To(BeNil())
+		Expect(levelsOf(recs, slog.LevelError)).To(HaveLen(1))
+	})
+})
+
+var _ = Describe("Connect", func() {
+	It("keeps a live session instead of building a second one", func() {
+		// Benthos re-calls Connect after a read error, and a fresh session per
+		// call would leave the PLC holding the abandoned one. The rest of Connect
+		// builds a real go-ads session, so it is covered by the hardware suite.
+		client := &fakeClient{}
+		a := &AdsCommInput{Log: service.MockResources().Logger(), client: client}
+
+		Expect(a.Connect(context.Background())).To(Succeed())
+
+		Expect(a.client).To(BeIdenticalTo(client), "the existing session must be kept")
+		Expect(client.closed).To(BeFalse())
+	})
+})
+
+var _ = Describe("initialSampleTimeout", func() {
+	It("keeps the floor when no symbol is configured", func() {
+		var a AdsCommInput
+		Expect(a.initialSampleTimeout()).To(Equal(initialSampleWait))
+	})
+
+	It("adds the window of a symbol carrying the plugin defaults", func() {
+		// CreateSymbolList stamps defaultCycleTime/defaultMaxDelay onto every
+		// symbol, so a configured symbol always carries a window and the bare
+		// floor above is only reachable with no symbols at all. With the shipped
+		// defaults of 100ms each, this is the realistic minimum.
+		symbols, warnings := CreateSymbolList([]string{"MAIN.a", "MAIN.b"},
+			100*time.Millisecond, 100*time.Millisecond)
+		Expect(warnings).To(BeEmpty())
+		a := &AdsCommInput{Symbols: symbols}
+
+		Expect(a.initialSampleTimeout()).To(Equal(200*time.Millisecond + initialSampleWait))
+	})
+
+	It("gives the slowest symbol its own delivery window plus the margin", func() {
+		// A symbol's first sample arrives at the PLC's first change-check, one
+		// cycleTime after registration (floored by the PLC task cycle), plus
+		// maxDelay when the server batches. Measured on TC2 and TC3: cycleTime 0
+		// delivers in 11ms, 100ms in 120ms, 60s in 60.02s. The timeout has to
+		// outlast that window or a legitimately slow symbol warns on every
+		// connect; the extra initialSampleWait is margin on top.
+		a := &AdsCommInput{Symbols: []PlcSymbol{
+			{Name: "MAIN.fast", CycleTime: 10 * time.Millisecond},
+			{Name: "MAIN.slow", CycleTime: 30 * time.Second, MaxDelay: 5 * time.Second},
+		}}
+		Expect(a.initialSampleTimeout()).To(Equal(35*time.Second + initialSampleWait))
+	})
+})
+
+var _ = Describe("waitForInitialSamples", func() {
+	newInput := func() (*AdsCommInput, *[]capturedLog) {
+		log, recs := capturingLogger()
+		return &AdsCommInput{Log: log, NotificationChan: make(chan *Update, 8)}, recs
+	}
+
+	It("buffers one sample per registered symbol and returns as soon as the last arrives", func() {
+		// The timeout is a deadline, not a sleep: a healthy connect returns when
+		// the slowest symbol has reported, not when the window expires.
+		a, _ := newInput()
+		a.NotificationChan <- &Update{Variable: "MAIN.a", Value: "1"}
+		a.NotificationChan <- &Update{Variable: "MAIN.b", Value: "2"}
+
+		err := a.waitForInitialSamples(context.Background(), []NotifyResult{
+			{SymbolName: "MAIN.a", Registered: true},
+			{SymbolName: "MAIN.b", Registered: true},
+		})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(a.pendingInitial).To(HaveLen(2), "both samples are held for the first ReadBatch")
+	})
+
+	It("matches the PLC's own spelling of the symbol name", func() {
+		// An update carries the symbol's canonical name from the PLC's table, not
+		// the one we subscribed with: TC2 reports its table in upper case, TC3
+		// keeps the project's casing. A case-sensitive match would wait out the
+		// full timeout on every TC2 symbol.
+		a, _ := newInput()
+		a.NotificationChan <- &Update{Variable: ".NMASTERCYCLECOUNTER", Value: "1"}
+
+		Expect(a.waitForInitialSamples(context.Background(), []NotifyResult{
+			{SymbolName: ".nMasterCycleCounter", Registered: true},
+		})).To(Succeed())
+		Expect(a.pendingInitial).To(HaveLen(1))
+	})
+
+	It("waits only for the symbols the PLC actually registered", func() {
+		a, _ := newInput()
+		a.NotificationChan <- &Update{Variable: "MAIN.ok", Value: "1"}
+
+		Expect(a.waitForInitialSamples(context.Background(), []NotifyResult{
+			{SymbolName: "MAIN.ok", Registered: true},
+			{SymbolName: "MAIN.rejected", Skipped: true},
+		})).To(Succeed())
+		Expect(a.pendingInitial).To(HaveLen(1), "a rejected symbol never sends a sample")
+	})
+
+	It("skips a nil update instead of buffering it", func() {
+		// go-ads recovers a send on a closed channel, so a nil can reach us.
+		a, _ := newInput()
+		a.NotificationChan <- nil
+		a.NotificationChan <- &Update{Variable: "MAIN.a", Value: "1"}
+
+		Expect(a.waitForInitialSamples(context.Background(), []NotifyResult{
+			{SymbolName: "MAIN.a", Registered: true},
+		})).To(Succeed())
+		Expect(a.pendingInitial).To(HaveLen(1))
+	})
+
+	It("discards samples buffered by an earlier connect", func() {
+		a, _ := newInput()
+		a.pendingInitial = []*Update{{Variable: "MAIN.stale", Value: "1"}}
+
+		Expect(a.waitForInitialSamples(context.Background(), nil)).To(Succeed())
+		Expect(a.pendingInitial).To(BeEmpty(), "a reconnect must not replay the previous session")
+	})
+
+	It("returns the context error and stays quiet when the input is shutting down", func() {
+		// The timeout warn is about a late PLC, not about our own shutdown.
+		a, recs := newInput()
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		err := a.waitForInitialSamples(ctx, []NotifyResult{{SymbolName: "MAIN.silent", Registered: true}})
+
+		Expect(err).To(MatchError(context.Canceled))
+		Expect(levelsOf(recs, slog.LevelWarn)).To(BeEmpty())
+	})
+
+	It("warns and lets the connect succeed when a registered symbol never sends", func() {
+		// Costs initialSampleWait: the timeout is floored there, so a real wait is
+		// the only way into this branch. Worth the wall clock -- this warn is what
+		// made the go-ads TC2 notification regression visible in the field.
+		a, recs := newInput()
+		a.NotificationChan <- &Update{Variable: "MAIN.a", Value: "1"}
+
+		err := a.waitForInitialSamples(context.Background(), []NotifyResult{
+			{SymbolName: "MAIN.a", Registered: true},
+			{SymbolName: "MAIN.silent", Registered: true},
+		})
+
+		Expect(err).NotTo(HaveOccurred(), "a missing first sample must not fail the connect")
+		Expect(a.pendingInitial).To(HaveLen(1), "the sample that did arrive is still delivered")
+		// Names are reported folded, because the wait keys them lowercase to match
+		// the PLC's own spelling back to the configured one.
+		Expect(*recs).To(ContainElement(SatisfyAll(
+			HaveField("Level", slog.LevelWarn),
+			HaveField("Msg", ContainSubstring("main.silent")),
+		)), "the warn has to name the symbols still missing")
+		Expect(*recs).NotTo(ContainElement(HaveField("Msg", ContainSubstring("main.a"))),
+			"a symbol that did report must not be listed as missing")
+	})
+})
