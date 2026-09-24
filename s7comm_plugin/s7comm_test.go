@@ -248,5 +248,32 @@ var _ = Describe("S7Comm Test Against Local PLC", func() {
 				}
 			})
 		})
+
+		// NOTE: as we don't exactly have time response-time by the plcs + they
+		// differ on each device, we only check that the time between the reads work
+		It("waits the configured pollRate before every read", func() {
+			input.PollRate = 500 * time.Millisecond
+
+			By("Connecting to the remote instance", func() {
+				err := input.Connect(ctx)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			By("Reading one datapoint twice and timing both reads", func() {
+				for range 2 {
+					start := time.Now()
+
+					messageBatch, _, err := input.ReadBatch(ctx)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(messageBatch).To(HaveLen(1))
+
+					s7Address, wasFound := messageBatch[0].MetaGet("s7_address")
+					Expect(wasFound).To(BeTrue())
+					Expect(s7Address).To(Equal("DB2.W0"))
+
+					Expect(time.Since(start)).To(BeNumerically(">=", input.PollRate))
+				}
+			})
+		})
 	})
 })
