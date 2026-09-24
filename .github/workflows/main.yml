@@ -62,8 +62,3 @@ jobs:
             ```
             ghcr.io/united-manufacturing-hub/benthos-umh:sha-${{ steps.short-sha.outputs.SHORT_SHA }}
             ```
-
-            Pull with:
-            ```bash
-            docker pull ghcr.io/united-manufacturing-hub/benthos-umh:sha-${{ steps.short-sha.outputs.SHORT_SHA }}
-            ```
