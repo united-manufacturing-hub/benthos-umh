@@ -72,10 +72,12 @@ runs:
     # Depot occasionally drops the build stream mid-`go build` ("keepalive ping
     # failed to receive ACK"), failing the job with nothing wrong in the tree.
     # toJSON keeps multi-line tags/labels on one line; wretry parses `with:` as YAML
+    # Pinned to the JS action directly: the v3.8.0 composite fetches it by tag.
     - name: Build and Push Docker Image
-      uses: Wandalen/wretry.action@e68c23e6309f2871ca8ae4763e7629b9c258e1ea # v3.8.0
+      uses: Wandalen/wretry.action@71a909ebf09f3ffdc6f42a17bd54ecb43481da49 # v3.8.0_js_action
       with:
         action: depot/build-push-action@98e78adca7817480b8185f474a400b451d74e287 # v1.18.0
+        env_context: ${{ toJSON(env) }}
         attempt_limit: 2
         attempt_delay: 15000
         with: |
