@@ -1,0 +1,3 @@
+kind: improvements
+body: The S7 input takes `pollRate`, a duration such as `500ms` or `2s`, setting how long it waits between reads. It defaults to `1s`, the interval the input was previously fixed at, and a very low rate can overload the PLC (ENG-6196)
+time: 2026-09-24T16:20:01.218599+02:00
