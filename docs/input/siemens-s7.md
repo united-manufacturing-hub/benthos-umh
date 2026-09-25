@@ -15,7 +15,7 @@ input:
     tcpDevice: '192.168.0.1' # IP address of the S7 PLC (optionally with port, e.g., '192.168.0.1:102')
     rack: 0                  # Rack number of the PLC. Defaults to 0
     slot: 1                  # Slot number of the PLC. Defaults to 1
-    pollRate: 1s             # Wait between two read cycles. Defaults to 1s
+    timeBetweenReads: 1s     # Time waited between two attempts to read data from the device. Defaults to 1s
     batchMaxSize: 480        # DEPRECATED: This field never worked correctly because batches were calculated before connecting to the PLC, so the actual negotiated PDU size was unknown. PDU size is now automatically negotiated during connection.
     timeout: 10              # Timeout in seconds for connections and requests. Default to 10
     disableCPUInfo: false    # Set this to true to not fetch CPU information from the PLC
@@ -29,7 +29,7 @@ input:
 * **tcpDevice**: IP address or hostname of the Siemens S7 PLC, optionally with port (e.g., `192.168.0.1:102`). If no port is specified, the default S7 port 102 is used.
 * **rack**: Identifies the physical location of the CPU within the PLC rack.
 * **slot**: Identifies the specific CPU slot within the rack.
-* **pollRate**: Wait between two read cycles, as a duration string such as `500ms` or `2s`. Defaults to `1s`. Low values can overload the PLC. A value of zero or less logs a warning and falls back to `1s`.
+* **timeBetweenReads**: Time the input waits between two attempts to read data from the device. Takes a duration string with a unit, such as `500ms`, `1s` or `2m`. The units are `ns`, `us`, `ms`, `s`, `m` and `h`. A bare number such as `1000` is rejected at startup. Defaults to `1s`. No upper limit is enforced. A negative value or zero is not a usable interval: the input logs a warning and falls back to `1s`. Low values can overload the PLC.
 * **timeout**: Timeout duration in seconds for connection attempts and read requests.
 * **disableCPUInfo**: Set this to true to not fetch CPU information from the PLC. Should be used when you get the error 'Failed to get CPU information'
 * **addresses**: List of PLC memory addresses to read. See [Address Format](#address-format) below.

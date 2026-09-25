@@ -28,8 +28,8 @@ import (
 )
 
 const (
-	addressRegexp   = `^(?P<area>[A-Z]+)(?P<no>[0-9]*)\.(?P<type>[A-Z]+)(?P<start>[0-9]+)(?:\.(?P<extra>.*))?$`
-	defaultPollRate = time.Second
+	addressRegexp           = `^(?P<area>[A-Z]+)(?P<no>[0-9]*)\.(?P<type>[A-Z]+)(?P<start>[0-9]+)(?:\.(?P<extra>.*))?$`
+	defaultTimeBetweenReads = time.Second
 )
 
 var (
@@ -69,17 +69,17 @@ type S7DataItemWithAddressAndConverter struct {
 
 // S7CommInput struct defines the structure for our custom Benthos input plugin.
 type S7CommInput struct {
-	TcpDevice       string
-	Rack            int
-	Slot            int
-	PollRate        time.Duration
-	Timeout         time.Duration
-	Client          gos7.Client
-	Handler         *gos7.TCPClientHandler
-	Log             *service.Logger
-	ParsedAddresses []S7DataItemWithAddressAndConverter   // All parsed addresses (before batching)
-	Batches         [][]S7DataItemWithAddressAndConverter // Batches calculated after connect with actual PDU
-	DisableCPUInfo  bool
+	TcpDevice        string
+	Rack             int
+	Slot             int
+	TimeBetweenReads time.Duration
+	Timeout          time.Duration
+	Client           gos7.Client
+	Handler          *gos7.TCPClientHandler
+	Log              *service.Logger
+	ParsedAddresses  []S7DataItemWithAddressAndConverter   // All parsed addresses (before batching)
+	Batches          [][]S7DataItemWithAddressAndConverter // Batches calculated after connect with actual PDU
+	DisableCPUInfo   bool
 }
 
 type converterFunc func([]byte) interface{}
@@ -101,9 +101,9 @@ var S7CommConfigSpec = service.NewConfigSpec().
 		Description("Slot number from hardware configuration, usually 1.").
 		Default(1).
 		Examples(1, 2, 3)).
-	Field(service.NewDurationField("pollRate").
-		Description("The interval we are trying to read data from the s7 device. Be careful to not overflow the device with very low rates here as this might crash the plc.").
-		Default(defaultPollRate.String()).
+	Field(service.NewDurationField("timeBetweenReads").
+		Description("The time we are waiting between read-cycles from the s7 device. Be careful to not overflow the device with very low rates here as this might crash the plc.").
+		Default(defaultTimeBetweenReads.String()).
 		Advanced().
 		Examples("1000ms", "1s", "200ms")).
 	Field(service.NewIntField("timeout").
@@ -149,14 +149,14 @@ func newS7CommInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		return nil, err
 	}
 
-	pollRate, err := conf.FieldDuration("pollRate")
+	timeBetweenReads, err := conf.FieldDuration("timeBetweenReads")
 	if err != nil {
 		return nil, err
 	}
 
-	if pollRate <= 0 {
-		mgr.Logger().Warnf("invalid pollRate %v, must be greater than 0. Using default %v.", pollRate, defaultPollRate)
-		pollRate = defaultPollRate
+	if timeBetweenReads <= 0 {
+		mgr.Logger().Warnf("invalid timeBetweenReads %v, must be greater than 0. Using default %v.", timeBetweenReads, defaultTimeBetweenReads)
+		timeBetweenReads = defaultTimeBetweenReads
 	}
 
 	addresses, err := conf.FieldStringList("addresses")
@@ -191,14 +191,14 @@ func newS7CommInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	}
 
 	m := &S7CommInput{
-		TcpDevice:       tcpDevice,
-		Rack:            rack,
-		Slot:            slot,
-		PollRate:        pollRate,
-		Log:             mgr.Logger(),
-		ParsedAddresses: parsedAddresses,
-		Timeout:         time.Duration(timeoutInt) * time.Second,
-		DisableCPUInfo:  disableCPUInfo,
+		TcpDevice:        tcpDevice,
+		Rack:             rack,
+		Slot:             slot,
+		TimeBetweenReads: timeBetweenReads,
+		Log:              mgr.Logger(),
+		ParsedAddresses:  parsedAddresses,
+		Timeout:          time.Duration(timeoutInt) * time.Second,
+		DisableCPUInfo:   disableCPUInfo,
 	}
 
 	return service.AutoRetryNacksBatched(m), nil
@@ -374,8 +374,8 @@ func (s *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 		return nil, nil, fmt.Errorf("S7Comm client is not initialized")
 	}
 
-	// NOTE: we define this as pollRate whereas in reality it doesn't respect true
-	// read time, it just adds a waiting time before the read.
+	// NOTE: this is the wait between reads, not a cycle time: it does not
+	// subtract the time the read itself takes.
 	err := s.pause(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -430,7 +430,7 @@ func (s *S7CommInput) pause(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-time.After(s.PollRate):
+	case <-time.After(s.TimeBetweenReads):
 	}
 	return nil
 }

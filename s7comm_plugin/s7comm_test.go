@@ -251,8 +251,8 @@ var _ = Describe("S7Comm Test Against Local PLC", func() {
 
 		// NOTE: as we don't exactly have time response-time by the plcs + they
 		// differ on each device, we only check that the time between the reads work
-		It("waits the configured pollRate before every read", func() {
-			input.PollRate = 500 * time.Millisecond
+		It("waits the configured timeBetweenReads before every read", func() {
+			input.TimeBetweenReads = 500 * time.Millisecond
 
 			By("Connecting to the remote instance", func() {
 				err := input.Connect(ctx)
@@ -271,7 +271,7 @@ var _ = Describe("S7Comm Test Against Local PLC", func() {
 					Expect(wasFound).To(BeTrue())
 					Expect(s7Address).To(Equal("DB2.W0"))
 
-					Expect(time.Since(start)).To(BeNumerically(">=", input.PollRate))
+					Expect(time.Since(start)).To(BeNumerically(">=", input.TimeBetweenReads))
 				}
 			})
 		})
