@@ -174,7 +174,7 @@ var _ = Describe("S7Comm Plugin Unittests", func() {
 	})
 })
 
-var _ = Describe("S7Comm Test Against Local PLC", func() {
+var _ = Describe("S7Comm Test Against Local PLC", Serial, func() {
 	Describe("Communication with a Remote S7 Instance", func() {
 		var (
 			endpoint string
