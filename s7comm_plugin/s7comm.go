@@ -27,7 +27,10 @@ import (
 	"github.com/robinson/gos7" // gos7 is a Go client library for interacting with Siemens S7 PLCs.
 )
 
-const addressRegexp = `^(?P<area>[A-Z]+)(?P<no>[0-9]*)\.(?P<type>[A-Z]+)(?P<start>[0-9]+)(?:\.(?P<extra>.*))?$`
+const (
+	addressRegexp           = `^(?P<area>[A-Z]+)(?P<no>[0-9]*)\.(?P<type>[A-Z]+)(?P<start>[0-9]+)(?:\.(?P<extra>.*))?$`
+	defaultTimeBetweenReads = time.Second
+)
 
 var (
 	regexAddr = regexp.MustCompile(addressRegexp)
@@ -66,16 +69,17 @@ type S7DataItemWithAddressAndConverter struct {
 
 // S7CommInput struct defines the structure for our custom Benthos input plugin.
 type S7CommInput struct {
-	TcpDevice       string
-	Rack            int
-	Slot            int
-	Timeout         time.Duration
-	Client          gos7.Client
-	Handler         *gos7.TCPClientHandler
-	Log             *service.Logger
-	ParsedAddresses []S7DataItemWithAddressAndConverter   // All parsed addresses (before batching)
-	Batches         [][]S7DataItemWithAddressAndConverter // Batches calculated after connect with actual PDU
-	DisableCPUInfo  bool
+	TcpDevice        string
+	Rack             int
+	Slot             int
+	TimeBetweenReads time.Duration
+	Timeout          time.Duration
+	Client           gos7.Client
+	Handler          *gos7.TCPClientHandler
+	Log              *service.Logger
+	ParsedAddresses  []S7DataItemWithAddressAndConverter   // All parsed addresses (before batching)
+	Batches          [][]S7DataItemWithAddressAndConverter // Batches calculated after connect with actual PDU
+	DisableCPUInfo   bool
 }
 
 type converterFunc func([]byte) interface{}
@@ -97,6 +101,11 @@ var S7CommConfigSpec = service.NewConfigSpec().
 		Description("Slot number from hardware configuration, usually 1.").
 		Default(1).
 		Examples(1, 2, 3)).
+	Field(service.NewDurationField("timeBetweenReads").
+		Description("The time we are waiting between read-cycles from the s7 device. Be careful to not overflow the device with very low rates here as this might crash the plc.").
+		Default(defaultTimeBetweenReads.String()).
+		Advanced().
+		Examples("1000ms", "1s", "200ms")).
 	Field(service.NewIntField("timeout").
 		Description("The timeout duration in seconds for connection attempts and read requests.").
 		Default(10).
@@ -140,6 +149,16 @@ func newS7CommInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		return nil, err
 	}
 
+	timeBetweenReads, err := conf.FieldDuration("timeBetweenReads")
+	if err != nil {
+		return nil, err
+	}
+
+	if timeBetweenReads <= 0 {
+		mgr.Logger().Warnf("invalid timeBetweenReads %v, must be greater than 0. Using default %v.", timeBetweenReads, defaultTimeBetweenReads)
+		timeBetweenReads = defaultTimeBetweenReads
+	}
+
 	addresses, err := conf.FieldStringList("addresses")
 	if err != nil {
 		return nil, err
@@ -172,13 +191,14 @@ func newS7CommInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	}
 
 	m := &S7CommInput{
-		TcpDevice:       tcpDevice,
-		Rack:            rack,
-		Slot:            slot,
-		Log:             mgr.Logger(),
-		ParsedAddresses: parsedAddresses,
-		Timeout:         time.Duration(timeoutInt) * time.Second,
-		DisableCPUInfo:  disableCPUInfo,
+		TcpDevice:        tcpDevice,
+		Rack:             rack,
+		Slot:             slot,
+		TimeBetweenReads: timeBetweenReads,
+		Log:              mgr.Logger(),
+		ParsedAddresses:  parsedAddresses,
+		Timeout:          time.Duration(timeoutInt) * time.Second,
+		DisableCPUInfo:   disableCPUInfo,
 	}
 
 	return service.AutoRetryNacksBatched(m), nil
@@ -314,48 +334,55 @@ func init() {
 	}
 }
 
-func (g *S7CommInput) Connect(_ context.Context) error {
-	g.Handler = gos7.NewTCPClientHandler(g.TcpDevice, g.Rack, g.Slot)
-	g.Handler.Timeout = g.Timeout
-	g.Handler.IdleTimeout = g.Timeout
+func (s *S7CommInput) Connect(_ context.Context) error {
+	s.Handler = gos7.NewTCPClientHandler(s.TcpDevice, s.Rack, s.Slot)
+	s.Handler.Timeout = s.Timeout
+	s.Handler.IdleTimeout = s.Timeout
 
-	err := g.Handler.Connect()
+	err := s.Handler.Connect()
 	if err != nil {
-		g.Log.Errorf("Failed to connect to S7 PLC at %s: %v", g.TcpDevice, err)
+		s.Log.Errorf("Failed to connect to S7 PLC at %s: %v", s.TcpDevice, err)
 		return err
 	}
 
-	g.Client = gos7.NewClient(g.Handler)
-	g.Log.Infof("Successfully connected to S7 PLC at %s", g.TcpDevice)
+	s.Client = gos7.NewClient(s.Handler)
+	s.Log.Infof("Successfully connected to S7 PLC at %s", s.TcpDevice)
 
 	// Build batches using the PDU size negotiated with the PLC
-	batches, err := BuildBatches(g.ParsedAddresses, g.Handler.PDULength)
+	batches, err := BuildBatches(s.ParsedAddresses, s.Handler.PDULength)
 	if err != nil {
 		return fmt.Errorf("failed to build batches: %w", err)
 	}
-	g.Batches = batches
-	g.Log.Infof("Created %d batches for %d addresses (PDU size: %d)", len(g.Batches), len(g.ParsedAddresses), g.Handler.PDULength)
+	s.Batches = batches
+	s.Log.Infof("Created %d batches for %d addresses (PDU size: %d)", len(s.Batches), len(s.ParsedAddresses), s.Handler.PDULength)
 
 	// Fetch and show CPU information, but only if the user has not disabled it
-	if !g.DisableCPUInfo {
-		cpuInfo, err := g.Client.GetCPUInfo()
+	if !s.DisableCPUInfo {
+		cpuInfo, err := s.Client.GetCPUInfo()
 		if err != nil {
-			g.Log.Warnf("Failed to get CPU information: %v", err)
+			s.Log.Warnf("Failed to get CPU information: %v", err)
 		} else {
-			g.Log.Infof("CPU Information: %s", cpuInfo)
+			s.Log.Infof("CPU Information: %s", cpuInfo)
 		}
 	}
 
 	return nil
 }
 
-func (g *S7CommInput) ReadBatch(_ context.Context) (service.MessageBatch, service.AckFunc, error) {
-	if g.Client == nil {
+func (s *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
+	if s.Client == nil {
 		return nil, nil, fmt.Errorf("S7Comm client is not initialized")
 	}
 
+	// NOTE: this is the wait between reads, not a cycle time: it does not
+	// subtract the time the read itself takes.
+	err := s.pause(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	msgs := make(service.MessageBatch, 0)
-	for i, b := range g.Batches {
+	for i, b := range s.Batches {
 		// Create a new batch to read
 		batchToRead := make([]gos7.S7DataItem, len(b))
 		for i, item := range b {
@@ -363,11 +390,11 @@ func (g *S7CommInput) ReadBatch(_ context.Context) (service.MessageBatch, servic
 		}
 
 		// Read the batch
-		g.Log.Debugf("Reading batch %d...", i+1)
-		if err := g.Client.AGReadMulti(batchToRead, len(batchToRead)); err != nil {
+		s.Log.Debugf("Reading batch %d...", i+1)
+		if err := s.Client.AGReadMulti(batchToRead, len(batchToRead)); err != nil {
 			// Try to reconnect and skip this gather cycle to avoid hammering
 			// the network if the server is down or under load.
-			g.Log.Errorf("Failed to read batch %d: %v", i+1, err)
+			s.Log.Errorf("Failed to read batch %d: %v", i+1, err)
 			return nil, nil, service.ErrNotConnected
 		}
 
@@ -394,18 +421,25 @@ func (g *S7CommInput) ReadBatch(_ context.Context) (service.MessageBatch, servic
 		}
 	}
 
-	time.Sleep(time.Second)
-
 	return msgs, func(_ context.Context, _ error) error {
 		return nil // Acknowledgment handling here if needed
 	}, nil
 }
 
-func (g *S7CommInput) Close(_ context.Context) error {
-	if g.Handler != nil {
-		g.Handler.Close()
-		g.Handler = nil
-		g.Client = nil
+func (s *S7CommInput) pause(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(s.TimeBetweenReads):
+	}
+	return nil
+}
+
+func (s *S7CommInput) Close(_ context.Context) error {
+	if s.Handler != nil {
+		s.Handler.Close()
+		s.Handler = nil
+		s.Client = nil
 	}
 
 	return nil
