@@ -1,0 +1,29 @@
+# Copyright 2025 UMH Systems GmbH
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Settings not defined here come from the organization's CodeRabbit settings.
+inheritance: true
+knowledge_base:
+  code_guidelines:
+    # The defaults include **/CLAUDE.md but not .claude/rules/. Each rule file applies to the paths in its own frontmatter.
+    filePatterns:
+      - "**/CLAUDE.md"
+      - files: ".claude/rules/opcua.md"
+        applyTo: "opcua_plugin/**,docs/input/opc-ua-input.md,docs/output/opc-ua-output.md"
+      - files: ".claude/rules/plugin-fields.md"
+        applyTo: "*_plugin/**/*.go,cmd/schema-export/**"
+      - files: ".claude/rules/processor-plugins.md"
+        applyTo: "tag_processor_plugin/**,stream_processor_plugin/**,nodered_js_plugin/**,downsampler_plugin/**,topic_browser_plugin/**,classic_to_core_plugin/**"
+      - files: ".claude/rules/uns-messages.md"
+        applyTo: "tag_processor_plugin/**,uns_plugin/**,nodered_js_plugin/**,topic_browser_plugin/**,pkg/umh/topic/**,docs/processing/**,docs/output/uns-output.md,docs/input/uns-input.md"
