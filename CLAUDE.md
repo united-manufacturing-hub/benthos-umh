@@ -72,7 +72,7 @@ Protocol integration tests need a device or simulator. Where a plugin has a CI w
 2. Add the blank import to `cmd/benthos/bundle/package.go`.
 3. Add docs under `docs/input/`, `docs/processing/` or `docs/output/`, and an entry in `docs/SUMMARY.md`.
 4. Add a `test-<name>` Make target and a CI workflow in `.github/workflows/`.
-5. Mark config fields as `FieldSpec` in `cmd/schema-export/types.go` describes, because the Management Console renders the form from that schema.
+5. Declare each config field with `.Default()`, `.Optional()` and `.Examples()` as the comments on `FieldSpec` in `cmd/schema-export/types.go` describe, because the Management Console renders the form from that schema.
 
 ## Engineering Handbook
 
