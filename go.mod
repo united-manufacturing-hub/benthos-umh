@@ -25,7 +25,7 @@ require (
 	github.com/danomagnum/gologix v0.35.1-beta
 	github.com/dop251/goja v0.0.0-20260723142020-b4aef50fa347
 	github.com/eclipse/paho.mqtt.golang v1.5.1
-	github.com/goccy/go-json v0.10.6
+	github.com/goccy/go-json v0.11.2
 	github.com/gofrs/uuid/v5 v5.5.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
@@ -35,17 +35,17 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/kaptinlin/jsonschema v0.9.10
 	github.com/onsi/ginkgo/v2 v2.33.0
-	github.com/onsi/gomega v1.43.1
+	github.com/onsi/gomega v1.44.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/redpanda-data/benthos/v4 v4.81.0
-	github.com/redpanda-data/connect/public/bundle/free/v4 v4.108.0
-	github.com/robinson/gos7 v0.0.0-20260622162611-2d6806f80c8b
+	github.com/redpanda-data/connect/public/bundle/free/v4 v4.111.1
+	github.com/robinson/gos7 v0.0.0-20260924061028-c54e650665ba
 	github.com/snowflakedb/gosnowflake v1.19.1
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/redpanda v0.44.0
-	github.com/twmb/franz-go v1.22.0
+	github.com/twmb/franz-go v1.22.1
 	github.com/twmb/franz-go/pkg/kadm v1.19.0
 	github.com/x448/float16 v0.8.4
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78
@@ -53,7 +53,7 @@ require (
 	golang.org/x/sys v0.48.0
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
-	k8s.io/apimachinery v0.37.0
+	k8s.io/apimachinery v0.37.1
 )
 
 require (
@@ -401,7 +401,7 @@ require (
 	github.com/redpanda-data/common-go/authz v0.2.1-0.20260319205134-242ab3c168b8 // indirect
 	github.com/redpanda-data/common-go/license v0.0.0-20260318014216-2bbd72bde0a0 // indirect
 	github.com/redpanda-data/common-go/redpanda-otel-exporter v0.4.0 // indirect
-	github.com/redpanda-data/connect/v4 v4.108.0 // indirect
+	github.com/redpanda-data/connect/v4 v4.111.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rickb777/period v1.0.32 // indirect
 	github.com/rickb777/plural/v2 v2.1.1 // indirect
@@ -420,6 +420,7 @@ require (
 	github.com/sirupsen/logrus v1.10.2 // indirect
 	github.com/skeema/knownhosts v1.3.2 // indirect
 	github.com/smira/go-statsd v1.3.4 // indirect
+	github.com/snowflakedb/gosnowflake/v2 v2.2.0 // indirect
 	github.com/sourcegraph/conc v0.3.0 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.8.1 // indirect
