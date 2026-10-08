@@ -5,7 +5,7 @@ benthos-umh extends Benthos (Redpanda Connect) with industrial protocol inputs, 
 ## Branches and pull requests
 
 - PRs target `staging`, the default branch.
-- A release is a `main ← staging` PR titled with the bare version (`v0.13.0`), merged as a **merge commit** (not a squash). Then push a lightweight `vX.Y.Z` tag on the `main` tip. The tag triggers `release.yml` and the umh-core and ManagementConsole version bumps. The cross-repo pattern is in umh-core's [`RELEASING.md`](https://github.com/united-manufacturing-hub/united-manufacturing-hub/blob/staging/umh-core/RELEASING.md).
+- Releases are cut from `staging`; `main` is no longer used. First run Actions > Changelog > Run workflow with the version (`v0.17.0`) and merge the changelog PR it opens. Then push a lightweight tag on the `staging` tip (`git tag vX.Y.Z origin/staging && git push origin vX.Y.Z`). Do not create the GitHub Release by hand: `release.yml` creates it with the changelog as its body, and it keeps the body of a release that already exists. The tag also triggers the umh-core and ManagementConsole version bumps.
 - Every source file needs the Apache 2.0 license header (`make license-check`, `make license-fix`).
 
 ## Changelog (changie)
@@ -20,7 +20,7 @@ make changelog   # installs changie into .tools/ on first use, prompts for kind 
 - Kinds: `breaking`, `new`, `improvements`, `fixes`.
 - End the line with the uppercase Linear id in parentheses, e.g. `(ENG-1234)`. Leave the id out when you copy the entry into the umh-core changelog. No workflow removes it.
 - Describe the user-visible change in product language. No "Added"/"Fixed" lead-ins.
-- The release PR runs `.github/workflows/changelog.yml`, which batches the fragments into `.changelog/<version>.md` and regenerates `CHANGELOG.md`.
+- The Changelog workflow (`.github/workflows/changelog.yml`, run by hand at release time) batches the fragments into `.changelog/<version>.md` and regenerates `CHANGELOG.md`.
 
 ## Layout
 

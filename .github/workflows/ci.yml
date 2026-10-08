@@ -17,7 +17,7 @@ name: CI
 
 on:
   pull_request:
-    branches: [main, staging]
+    branches: [staging]
   merge_group:
 
 permissions:
@@ -56,7 +56,7 @@ jobs:
           persist-credentials: false
       - name: Check if PLC tests should run
         id: plc-check
-        run: echo "test_plc=${{ github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.base_ref == 'main') }}" >> "$GITHUB_OUTPUT"
+        run: echo "test_plc=${{ github.event_name == 'merge_group' }}" >> "$GITHUB_OUTPUT"
       - name: Detect changes
         uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4
         id: filter
