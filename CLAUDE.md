@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-benthos-umh extends Benthos (Redpanda Connect) with industrial protocol inputs, processors and the UNS output. UNS means Unified Namespace: the topic tree under `umh.v1.` that all UMH data is written to. benthos-umh does not run on its own in production. umh-core generates each benthos config from a template and runs the process under S6 (see umh-core's `CLAUDE.md`).
+benthos-umh extends Benthos (Redpanda Connect) with industrial protocol inputs, processors and the UNS output. UNS means Unified Namespace: the topic tree under `umh.v1.` that all UMH data is written to. benthos-umh does not run on its own in production. umh-core generates each benthos config from a template and runs the process under S6 (see the root `CLAUDE.md` of the united-manufacturing-hub repo).
 
 ## Branches and pull requests
 
@@ -18,7 +18,7 @@ make changelog   # installs changie into .tools/ on first use, prompts for kind 
 ```
 
 - Kinds: `breaking`, `new`, `improvements`, `fixes`.
-- End the line with the uppercase Linear id in parentheses, e.g. `(ENG-1234)`. It is stripped when entries propagate to the umh-core changelog.
+- End the line with the uppercase Linear id in parentheses, e.g. `(ENG-1234)`. Leave the id out when you copy the entry into the umh-core changelog. No workflow removes it.
 - Describe the user-visible change in product language. No "Added"/"Fixed" lead-ins.
 - The release PR runs `.github/workflows/changelog.yml`, which batches the fragments into `.changelog/<version>.md` and regenerates `CHANGELOG.md`.
 
@@ -32,7 +32,7 @@ make changelog   # installs changie into .tools/ on first use, prompts for kind 
 | `pkg/umh/topic/` | UMH topic builder and parser. |
 | `docs/` | User docs (GitBook, published at [docs.umh.app/benthos-umh](https://docs.umh.app/benthos-umh)). `docs/SUMMARY.md` is the index. |
 | `config/` | Example configs. |
-| `templates/` | `umh_input`, `umh_processor`, `umh_output` Benthos templates. |
+| `templates/` | The `umh_*` Benthos templates. |
 | `proto/` | Sparkplug B protobuf definitions. |
 | `tests/` | Docker Compose setups for protocol tests. |
 | `.changelog/` | changie fragments and released versions. |
@@ -58,9 +58,9 @@ make test                     # all Ginkgo suites
 make serve-pprof              # profiling server
 ```
 
-Per-plugin targets: `test-unit-opc`, `test-integration-opc`, `test-modbus`, `test-s7comm`, `test-sparkplug`, `test-eip`, `test-sensorconnect`, `test-ads`, `test-noderedjs`, `test-tag-processor`, `test-stream-processor`, `test-topic-browser`, `test-downsampler`, `test-classic-to-core`, `test-uns`, `test-historian`, `test-snowflake-put`, `test-pkg-umh-topic`, `test-schema-export`. Benchmarks: `bench-stream-processor`, `bench-pkg-umh-topic`.
+Each plugin has a `test-<plugin>` target, and some have benchmarks. List them with `grep -E '^(test|bench)-' Makefile`.
 
-Protocol integration tests need a device or simulator. The plugin's CI workflow in `.github/workflows/test-*.yml` shows how it is started.
+Protocol integration tests need a device or simulator. Where a plugin has a CI workflow in `.github/workflows/test-*.yml`, that workflow shows how the simulator is started.
 
 ## Tests
 

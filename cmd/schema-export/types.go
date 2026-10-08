@@ -92,6 +92,7 @@ type FieldSpec struct {
 	Description string `json:"description"`
 	// Required puts an asterisk on the field in the Management Console form.
 	// A plugin field is required unless it has .Default() or .Optional().
+	// A field with children is also not required when none of its children is required.
 	Required bool        `json:"required"`
 	Default  interface{} `json:"default"`
 	// Examples are shown under the field in the Management Console as a hint.
