@@ -1,6 +1,6 @@
 # OPC UA (Input)
 
-The plugin is designed to browse and subscribe to all child nodes within a folder for each configured NodeID, provided that the NodeID represents a folder. It features a recursion depth of up to 10 levels, enabling thorough exploration of nested folder structures. The browsing specifically targets nodes organized under the OPC UA 'Organizes' relationship type, intentionally excluding nodes under 'HasProperty' and 'HasComponent' relationships. Additionally, the plugin does not browse Objects represented by red, blue, or green cube icons in UAExpert.
+The plugin browses each configured NodeID and subscribes to the variables below it. It follows all hierarchical references, such as `Organizes` and `HasComponent`, down to 25 levels. It browses into both Objects and Variables, and subscribes only to Variables.
 
 Subscriptions are selectively managed, with tags having a DataType of null being excluded from subscription. Also, by default, the plugin does not subscribe to the properties of a tag, such as minimum and maximum values.
 
