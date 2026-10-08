@@ -102,8 +102,6 @@ type FieldSpec struct {
 	Examples []interface{} `json:"examples,omitempty"`
 	Options  []string      `json:"options,omitempty"`
 	// Advanced hides the field behind the form's advanced toggle.
-	// Whether a field should exist at all is decided by
-	// https://engineering.umh.app/product/product-standards/opinionated-simplicity.
 	Advanced   bool        `json:"advanced,omitempty"`
 	Deprecated bool        `json:"deprecated,omitempty"`
 	Children   []FieldSpec `json:"children,omitempty"` // For nested objects/arrays
