@@ -470,7 +470,7 @@ To fix: Set required fields (msg.meta.location_path, msg.meta.data_contract, msg
 // constructFinalMessage builds the final message (topic + payload), filtering internal metadata.
 // Returns drop reason ("value_convert_failed"/"topic_build_failed") for RecordDrop.
 func (p *TagProcessor) constructFinalMessage(msg *service.Message) (*service.Message, string, error) {
-	// NewMessage(nil) is safe: the engine restores input context (see CLAUDE.md).
+	// NewMessage(nil) is safe: the engine restores input context (see nodered_js_plugin's ProcessBatch).
 	newMsg := service.NewMessage(nil)
 
 	// Clean up metadata values that might stringify to invalid values (e.g., virtual_path = null)

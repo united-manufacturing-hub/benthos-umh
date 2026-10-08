@@ -86,15 +86,23 @@ func (p PluginSpec) MarshalJSON() ([]byte, error) {
 
 // FieldSpec represents a single configuration field
 type FieldSpec struct {
-	Name        string        `json:"name"`
-	Type        string        `json:"type"`
-	Kind        string        `json:"kind"`
-	Description string        `json:"description"`
-	Required    bool          `json:"required"`
-	Default     interface{}   `json:"default"`
-	Examples    []interface{} `json:"examples,omitempty"`
-	Options     []string      `json:"options,omitempty"`
-	Advanced    bool          `json:"advanced,omitempty"`
-	Deprecated  bool          `json:"deprecated,omitempty"`
-	Children    []FieldSpec   `json:"children,omitempty"` // For nested objects/arrays
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Kind        string `json:"kind"`
+	Description string `json:"description"`
+	// Required puts an asterisk on the field in the Management Console form.
+	// A plugin field is required unless it has .Default() or .Optional().
+	// A field with children is also not required when none of its children is required.
+	Required bool        `json:"required"`
+	Default  interface{} `json:"default"`
+	// Examples are shown under the field in the Management Console as a hint.
+	// An enum-like field lists every valid value, and a boolean lists true and false.
+	// A number lists only its default, unless another value is a meaningful threshold.
+	// A string list shows one example with one item and one with several.
+	Examples []interface{} `json:"examples,omitempty"`
+	Options  []string      `json:"options,omitempty"`
+	// Advanced hides the field behind the form's advanced toggle.
+	Advanced   bool        `json:"advanced,omitempty"`
+	Deprecated bool        `json:"deprecated,omitempty"`
+	Children   []FieldSpec `json:"children,omitempty"` // For nested objects/arrays
 }

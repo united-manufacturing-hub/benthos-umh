@@ -1,625 +1,87 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with the benthos-umh repository.
+benthos-umh extends Benthos (Redpanda Connect) with industrial protocol inputs, processors and the UNS output. UNS means Unified Namespace: the topic tree under `umh.v1.` that all UMH data is written to. benthos-umh does not run on its own in production. umh-core generates each benthos config from a template and runs the process under S6 (see the root `CLAUDE.md` of the united-manufacturing-hub repo).
 
-## Repository Purpose
+## Branches and pull requests
 
-benthos-umh is a specialized extension of Benthos (Redpanda Connect) tailored for the manufacturing industry. It serves as the stream processing engine for the United Manufacturing Hub, bridging industrial protocols with the UNS (Unified Namespace) through YAML-defined data pipelines.
+- PRs target `staging`, the default branch.
+- A release is a `main ← staging` PR titled with the bare version (`v0.13.0`), merged as a **merge commit** (not a squash). Then push a lightweight `vX.Y.Z` tag on the `main` tip. The tag triggers `release.yml` and the umh-core and ManagementConsole version bumps. The cross-repo pattern is in umh-core's [`RELEASING.md`](https://github.com/united-manufacturing-hub/united-manufacturing-hub/blob/staging/umh-core/RELEASING.md).
+- Every source file needs the Apache 2.0 license header (`make license-check`, `make license-fix`).
 
-## Documentation Structure
+## Changelog (changie)
 
-- `docs/input/` - Input connectors documentation
-  - OPC UA, Modbus, S7, Sparkplug B, Ethernet/IP, sensorconnect
-- `docs/output/` - Output connectors documentation
-  - UNS, OPC UA, Sparkplug B
-- `docs/processing/` - Processing pipelines documentation
-  - Tag processor, downsampler, stream processor, topic browser
-- `docs/libraries/` - Shared libraries documentation
-  - UMH topic parser
-- `docs/testing/` - Testing approach and examples
-- Full documentation: [docs.umh.app/benthos-umh](https://docs.umh.app/benthos-umh)
+Do not edit `CHANGELOG.md` by hand. It is generated from per-PR fragments in `.changelog/unreleased/`.
 
-## Plugin Architecture
-
-benthos-umh extends Benthos with 13 specialized plugins organized by function:
-
-### Input Plugins
-Industrial protocol connectors that read data from field devices:
-- `opcua_plugin/` - OPC UA protocol input/output (Server/Client)
-- `modbus_plugin/` - Modbus TCP/RTU protocol (Master/Slave)
-- `s7comm_plugin/` - Siemens S7 protocol (S7-300/400/1200/1500)
-- `sparkplug_plugin/` - Sparkplug B MQTT protocol (Edge/Host)
-- `eip_plugin/` - Ethernet/IP protocol (Allen-Bradley)
-- `sensorconnect_plugin/` - ifm IO-Link Master integration
-
-**Integration**: Used in Bridge "Read" flows, orchestrated by UMH Core FSM
-
-### Processing Plugins
-Data transformation and enrichment processors:
-- `tag_processor_plugin/` - Individual sensor data processing (metadata injection, value wrapping)
-- `stream_processor_plugin/` - Multi-source data aggregation with state management
-- `downsampler_plugin/` - Data reduction and aggregation (time-based sampling)
-- `topic_browser_plugin/` - Topic discovery and metadata extraction
-- `classic_to_core_plugin/` - UMH Classic to Core migration transformer
-- `nodered_js_plugin/` - Node-RED JavaScript execution engine (goja-based)
-
-**Integration**: Used in `pipeline.processors[]` section of DFC YAML
-
-### Output Plugin
-Unified Namespace writer with validation:
-- `uns_plugin/` - Unified Namespace output with topic validation and Kafka batching
-
-**Integration**: Only works within UMH Core (requires embedded Redpanda)
-
-### Plugin Registration
-
-All plugins auto-register during `init()`:
-- Input plugins: `input.RegisterPlugin()`
-- Processor plugins: `processor.RegisterPlugin()`
-- Output plugins: `output.RegisterPlugin()`
-
-**Discovery**: Run `benthos list inputs`, `benthos list processors`, `benthos list outputs`
-
-## Key Concepts
-
-- **Data Flow Component (DFC)**: YAML-defined data pipeline configuration
-- **Protocol Converter**: Bridge between industrial protocols and UNS
-- **Stream Processor**: Aggregates multiple data sources into unified streams
-- **Tag Processor**: Handles individual sensor/tag data points
-- **UNS (Unified Namespace)**: Central data structure following ISA-95 standard
-- **Topic Browser**: Discovers and catalogs available data topics
-- **Downsampler**: Reduces data volume while preserving important changes
-
-## Integration with UMH Core
-
-benthos-umh is **orchestrated by UMH Core** - it does not run standalone. UMH Core manages benthos instances through FSM state machines and S6 process supervision.
-
-**High-level flow**:
-1. User deploys bridge in ManagementConsole
-2. umh-core Agent generates benthos config from templates
-3. umh-core launches benthos process via S6
-4. benthos process runs and sends data to Kafka
-
-**For orchestration details** (FSM, S6, template expansion, logging, debugging in production), see `umh-core/CLAUDE.md`.
-
-## Debugging benthos
-
-**Config validation errors**:
 ```bash
-# Test config without running
-benthos lint -c config.yaml
-
-# Check for template expansion issues
-grep "{{" config.yaml  # Should be empty if variables expanded
-```
-
-**Plugin errors**:
-```bash
-# List available plugins
-benthos list inputs
-benthos list processors
-benthos list outputs
-
-# Run with debug logging
-benthos run -c config.yaml --log.level DEBUG
-```
-
-**Connection issues**:
-- Check protocol-specific logs for timeout/refused/unreachable errors
-- Verify input plugin addresses, ports, credentials
-- Test connectivity outside benthos (ping, telnet, protocol-specific tools)
-
-**Data processing issues**:
-- Enable debug logging to see message flow
-- Check processor JavaScript for syntax errors (goja engine)
-- Verify metadata fields are set correctly (msg.meta.*)
-- Test with minimal config to isolate the problem
-
-**For production debugging in UMH Core environment**, see `umh-core/CLAUDE.md`.
-
-## Message Architecture
-
-benthos-umh uses **Node-RED style message format** with separate payload and metadata:
-
-```javascript
-{
-  "payload": {
-    "value": 42,
-    "timestamp_ms": 1730986400000
-  },
-  "meta": {
-    "location_path": "enterprise.site.area.line",
-    "data_contract": "_raw",
-    "tag_name": "temperature",
-    "virtual_path": "motor.electrical",  // Optional
-    "umh_topic": "umh.v1.enterprise.site.area.line._raw.motor.electrical.temperature"  // Auto-generated
-  }
-}
-```
-
-### Metadata Flow
-
-**Critical**: `msg.meta` becomes Benthos metadata, **NOT** part of payload:
-1. **Tag Processor**: Sets `msg.meta` fields via JavaScript
-2. **Benthos Metadata**: `msg.meta` → Benthos internal metadata
-3. **Kafka Headers**: Benthos metadata → Kafka message headers
-4. **UNS Output**: Reconstructs topic from `umh_topic` metadata field
-
-**Common mistake**: Trying to access `msg.meta` in payload - it's not there!
-
-### Value Wrapping
-
-Tag processor automatically wraps primitive values:
-```javascript
-// Input: msg.payload = 42
-// Output: msg.payload = {value: 42, timestamp_ms: 1730986400000}
-
-// Input: msg.payload = {temperature: 42, pressure: 100}
-// Output: Unchanged (already an object)
-```
-
-### Topic Generation
-
-The `umh_topic` field is **auto-generated** from metadata:
-```javascript
-// tag_processor automatically creates:
-msg.meta.umh_topic = `umh.v1.${msg.meta.location_path}.${msg.meta.data_contract}.${msg.meta.virtual_path || ''}.${msg.meta.tag_name}`;
-```
-
-**Never set `umh_topic` manually** - let tag_processor generate it to ensure validation.
-
-## Topic Naming Convention
-
-UMH topics follow strict validation rules defined in `pkg/umhtopic/`:
-
-### Pattern Structure
-
-```
-umh.v1.<location_path>.<data_contract>[.<virtual_path>].<name>
-       └─────────────┘  └─────────────┘  └────────────┘  └────┘
-       WHERE data is    WHAT data is     HOW organized   Sensor
-       (ISA-95 levels)  (validation)     (optional)      name
-```
-
-### Validation Rules
-
-| Component | Underscore Rule | Example | Validation |
-|-----------|----------------|---------|------------|
-| `location_path` | **MUST NOT** start with `_` | `enterprise.site.area` | ✅ Path segments |
-| `data_contract` | **MUST** start with `_` | `_raw`, `_pump_v1` | ✅ Required underscore |
-| `virtual_path` | **CAN** start with `_` | `motor.electrical`, `_hidden` | ✅ Optional organization |
-| `name` | **CAN** start with `_` | `temperature`, `_internal` | ✅ Any valid identifier |
-
-## Data Flow Patterns
-
-### Tag Processor → UNS Output Flow
-
-The most common pattern in bridges:
-
-```yaml
-input:
-  s7comm:
-    tcpDevice: "{{ .IP }}"
-    addresses: ["DB1.DW20", "DB3.I270"]
-pipeline:
-  processors:
-    - tag_processor:
-        defaults: |
-          msg.meta.location_path = "{{ .location_path }}";
-          msg.meta.data_contract = "_raw";
-          msg.meta.tag_name = msg.meta.s7_address;  // Use S7 address as tag name
-          return msg;
-output:
-  uns: {}
-```
-
-**Flow**: S7 input → tag_processor (sets metadata) → UNS output (writes to Kafka)
-
-### One Tag, One Topic Principle
-
-**Design rule**: Each sensor/tag publishes to its own topic.
-
-**Why**:
-- **Zero merge logic**: No need to combine multiple sensors into one payload
-- **Simple subscriptions**: Subscribe to exact data you need
-- **Clear debugging**: One topic = one data source
-- **Schema simplicity**: Each topic has single value type
-
-**Wrong approach**:
-```javascript
-// ❌ DON'T: Multiple sensors in one payload
-msg.payload = {
-  temperature: 42,
-  pressure: 100,
-  flow: 75
-};
-msg.meta.tag_name = "machine_01";  // Ambiguous!
-```
-
-**Correct approach**:
-```javascript
-// ✅ DO: One message per sensor
-// Message 1:
-msg.payload = {value: 42, timestamp_ms: 1730986400000};
-msg.meta.tag_name = "temperature";
-
-// Message 2:
-msg.payload = {value: 100, timestamp_ms: 1730986400000};
-msg.meta.tag_name = "pressure";
-```
-
-### Processor Behaviors
-
-**Dropping**: Return `null` or `undefined` to drop message
-```javascript
-if (msg.payload.value < threshold) {
-  return null;  // Message dropped
-}
-return msg;
-```
-
-**Duplicating**: Return array of messages
-```javascript
-return [
-  {payload: {value: msg.payload.temp}, meta: {tag_name: "temperature"}},
-  {payload: {value: msg.payload.temp * 1.8 + 32}, meta: {tag_name: "temperature_f"}}
-];
-```
-
-### Single Kafka Topic Architecture
-
-**Critical**: UNS output writes ALL data to ONE Kafka topic: `umh.messages`
-
-**Routing**:
-- Topic name: Always `umh.messages` (created with `compact,delete` policy)
-- Kafka key: `umh_topic` metadata field (the full topic string)
-- Kafka headers: All Benthos metadata fields
-
-**Why single topic**:
-- Simplifies Kafka topic management (no dynamic topic creation)
-- Enables compaction with meaningful keys
-- Centralizes all UNS data in one place
-
-**Consumer pattern**:
-```go
-// Consumers filter by Kafka key (umh_topic)
-kafkaConsumer.Subscribe("umh.messages")
-for msg := range kafkaConsumer.Messages() {
-  topicKey := msg.Key  // e.g., "umh.v1.enterprise.site._raw.temperature"
-  if strings.HasPrefix(topicKey, "umh.v1.enterprise.site") {
-    // Process this location's data
-  }
-}
-```
-
-## Non-Intuitive Patterns
-
-### UNS Output Requires UMH Core
-
-The `uns` output plugin **ONLY works within UMH Core environment**:
-- Requires embedded Redpanda (Kafka-compatible broker)
-- Expects `umh.messages` topic to exist
-- Uses UMH Core's Kafka configuration
-
-**Cannot use standalone**: If running benthos-umh outside UMH Core, use standard Benthos outputs:
-```yaml
-output:
-  kafka:
-    addresses: ["localhost:9092"]
-    topic: "umh.messages"
-    key: "${! @umh_topic }"  # Use metadata as key
-```
-
-### Output context is restored by the engine, not the plugin
-
-`service.NewMessage(nil)` in these plugins was flagged as dropping the SortGroup source tag and the OpenTelemetry trace parent from output messages. It does not. Every processor registered via `service.RegisterBatchProcessor` (all benthos-umh processors) is wrapped at runtime in `v2BatchedToV1Processor` (`internal/component/processor/auto_observed.go`), which saves and restores message contexts around the plugin call:
-
-1. Before the plugin runs, it saves each input part's `context.Context` (`origCtxs`, `auto_observed.go:242`).
-2. After the plugin returns, it restores the saved input context onto every output part (`auto_observed.go:280-294`); fan-out children (`partIdx >= len(inputs)`) fall back to input index 0.
-
-The SortGroup tag and trace parent reach the output regardless of how the plugin builds its messages. `NewMessage(nil)` is safe here, and a plugin-side `msg.Copy()` or `newMsg.WithContext(input.Context())` is a no-op (the wrapper overwrites it). Verified: a `tag_processor` 1→2 fan-out through the full `service.NewStreamBuilder` pipeline resolves `Indexer.IndexOf(output)` to the source index with no plugin-side context handling.
-
-Caveat (multi-input batches): the restore maps by output part index with fallback to input index 0 (`if partIdx >= len(origCtxs) { ctxIdx = 0 }`). For a single-input fan-out (one input → N outputs) every child correctly gets input 0's context. For a multi-input batch where inputs fan out, the part-index mapping can mis-attribute a child to the wrong input's context (e.g. input0→3 outputs then input1→1 output: the 4th output is mapped to input0, not input1). This is pre-existing engine behavior (present for the drop case too, and in `tag_processor`'s existing fan-out), not something the plugin can fix. The wrapper overwrites whatever the plugin sets. If correct per-child attribution ever matters for a multi-input fan-out pipeline, the fix belongs in the vendored `v2BatchedToV1Processor`, not the plugin.
-
-Any context/lineage/ACK-SortGroup claim about these plugins must be verified against the full stream pipeline, not the plugin's `ProcessBatch` in isolation.
-
-### JavaScript Engine: goja
-
-All JavaScript execution uses **goja engine** (pure Go):
-- **Security**: Sandbox isolated from host system
-- **Performance**: Slower than V8 but no CGO dependency
-- **Compatibility**: ES5.1 with some ES6 features
-- **No Node.js APIs**: No `require()`, `fs`, `http`, etc.
-
-**Available in**:
-- `tag_processor` - Per-message transformation
-- `nodered_js` - Node-RED style flows
-- `stream_processor` - Multi-source aggregation with state
-
-**Limitations**:
-```javascript
-// ✅ Works:
-const result = msg.payload.value * 2;
-JSON.stringify(msg);
-Date.now();
-
-// ❌ Doesn't work:
-require('fs');           // No Node.js modules
-fetch('https://...');    // No external HTTP
-setTimeout(() => {}, 1000);  // No async timers
-```
-
-### OPC UA Browsing Behavior
-
-OPC UA browse operations **only follow `Organizes` references**:
-- Ignores `HasComponent`, `HasProperty`, `HasTypeDefinition`
-- This is intentional to limit browse depth
-- To access non-organized nodes, specify NodeID directly in configuration
-
-### Stream Processor State Management
-
-Stream processors maintain **in-memory state** across messages:
-```javascript
-// State persists across messages
-if (!state.counter) state.counter = 0;
-state.counter++;
-
-// Access multiple sources
-const temp = sources.temperature[0].payload.value;
-const pressure = sources.pressure[0].payload.value;
-```
-
-**State lifecycle**: State lost on restart unless persisted to external storage.
-
-### Template Variables in Nested Structures
-
-Variables flatten during injection:
-```yaml
-variables:
-  connection:
-    ip: "192.168.1.100"
-    port: 102
-```
-
-**Becomes**: `{{ .connection.ip }}` and `{{ .connection.port }}` (nested path preserved)
-
-But in most configs, variables are flat:
-```yaml
-variables:
-  IP: "192.168.1.100"  # Access as {{ .IP }}
-  PORT: 102            # Access as {{ .PORT }}
-```
-
-### Payload Format Implications
-
-**Time-series** (`{timestamp_ms, value}`): Use for sensor data
-- Single value per timestamp
-- Efficient for time-range queries
-- Max 1MiB per message
-
-**Relational** (any JSON): Use for business events
-- Work orders, batch reports, alerts
-- No timestamp requirement
-- Can include arrays and nested objects
-
-**Mixing formats**: Don't mix in same topic - use different `data_contract` values.
-
-## Implementation Details
-
-### OPC UA Server Profiles
-
-Auto-optimizes Browse workers and Subscribe batch size based on detected server vendor.
-
-**User docs**: See [docs/input/opc-ua-input.md](docs/input/opc-ua-input.md#server-profiles-and-performance-tuning)
-
-**Implementation files**:
-- `opcua_plugin/server_profiles.go` - Profile definitions and auto-detection logic
-- `opcua_plugin/core_browse_workers.go` - Worker pool (Browse phase)
-- `opcua_plugin/read_discover.go` - Batch operations (Subscribe phase)
-
-**Key insight**: Profile values are production-safe limits from vendor docs, not server-reported theoretical maximums (e.g., S7-1200 uses 100 not 1000).
-
-**Adding new profiles**: Define in `server_profiles.go`, add detection logic in `DetectServerProfile()`, validate in `init()`.
-
-## Development Guidelines
-
-### General Preferences
-- Be terse and code-focused - provide answers immediately, explanations after
-- Treat developer as expert - no basic explanations needed
-- Give actual code, not high-level descriptions
-- Respect existing code comments unless clearly irrelevant
-- No unnecessary preambles, disclaimers, or AI identification
-- Value arguments over authorities - source doesn't matter, correctness does
-- Consider new technologies and contrarian approaches
-
-### Golang Specific
-- **Testing Framework**: Ginkgo v2 with Gomega matchers
-- **Go Version Features**: Use newer Go methods when applicable
-  - go1.21+: min/max/clear builtins, slices/maps packages
-  - go1.22+: range over integers, math/rand/v2
-  - go1.23+: iterator functions, unique package
-- **Testing Rules**:
-  - Do not remove focused tests (`FIt`, `FDescribe`)
-  - Maintain existing documentation
-  - Tests use `_test.go` and `_suite_test.go` pattern
-
-### Plugin Field Classification
-
-Plugin fields follow a required/optional rule for consistent UI generation in the Management Console.
-
-#### Core Rule
-
-| Field Type | Modifiers | Shows in UI |
-|------------|-----------|-------------|
-| **Basic** | No `.Default()`, no `.Advanced()` | Required (asterisk) |
-| **Advanced** | `.Default().Advanced()` | Optional (collapsed) |
-
-**Key insight:** `.Default()` alone makes a field not required. `.Optional()` is rarely needed.
-
-#### Examples
-
-```go
-// Basic field - required, user MUST configure
-Field(service.NewStringField("endpoint").
-    Description("OPC UA endpoint URL"))
-
-// Advanced field - optional with sensible default
-Field(service.NewIntField("sessionTimeout").
-    Description("Session timeout in milliseconds").
-    Default(10000).
-    Advanced())
-```
-
-#### Field Examples Best Practices
-
-- **Always list all valid options** in `.Examples()` for enum-like fields
-- **Boolean fields**: Include both `true` and `false`
-- **Numeric fields**: Only include the default value unless other values represent meaningful thresholds
-- **String lists**: Show common patterns (single item, multiple items)
-
-```go
-// Good: enum-like field with all options
-Field(service.NewStringField("securityMode").
-    Examples("", "None", "Sign", "SignAndEncrypt"))
-
-// Good: boolean with both values
-Field(service.NewBoolField("subscribeEnabled").
-    Examples(true, false))
-
-// Good: numeric with just default (no arbitrary values)
-Field(service.NewIntField("queueSize").
-    Default(10).
-    Examples(10))
-```
-
-#### When to Use Basic vs Advanced
-
-**Basic**: Required for plugin to function (endpoint, device address, credentials)
-**Advanced**: Optimization parameters with sensible defaults (timeout, buffer size, retry count)
-
-## Build & Test Commands
-
-### Core Commands
-```bash
-make all          # Clean and build
-make target       # Build benthos binary
-make clean        # Remove build artifacts
-make test         # Run all tests with Ginkgo
-```
-
-### Plugin-Specific Tests
-```bash
-make test-opcua              # OPC UA plugin tests
-make test-modbus             # Modbus plugin tests
-make test-s7                 # S7 protocol tests
-make test-sparkplug          # Sparkplug B tests
-make test-eip                # Ethernet/IP tests
-make test-sensorconnect      # Sensorconnect tests
-make test-stream-processor   # Stream processor tests
-make test-tag-processor      # Tag processor tests
-make test-topic-browser      # Topic browser tests
-make test-downsampler        # Downsampler tests
-make test-classic-to-core    # Migration plugin tests
-make test-uns                # UNS output tests
-```
-
-### Utility Commands
-```bash
-make license-check    # Verify Apache 2.0 headers
-make license-fix      # Add missing license headers
-make setup-test-deps  # Install test dependencies
-make serve-pprof      # Run profiling server
-```
-
-## Changelog
-
-This repo manages its changelog with [changie](https://changie.dev). Do **not** edit `CHANGELOG.md` by hand; it is regenerated from per-PR fragments in `.changelog/unreleased/` and conflicts otherwise.
-
-Add an entry to your PR:
-```bash
-make changelog        # prompts for kind + body, writes a fragment
-```
-Or non-interactively:
-```bash
+make changelog   # installs changie into .tools/ on first use, prompts for kind and body, writes a fragment
 ./.tools/changie new --kind fixes --body "OPC UA browse no longer stalls on large address spaces (ENG-1234)"
 ```
 
-- **Kinds:** `breaking`, `new`, `improvements`, `fixes`. Sections render New, Improvements, Fixes (Breaking Changes first when present).
-- **Issue reference:** append the uppercase Linear id in parentheses at the end of the line, e.g. `(ENG-1234)`. This is benthos-umh-only; it gets stripped when entries propagate to the umh-core changelog.
-- **Entry wording:** user-visible change in product language, no "Added"/"Fixed" lead-ins, no marketing language.
-- **Release:** a staging→main PR titled with a bare semver (`v0.13.0`) triggers the Changelog workflow, which batches fragments into `.changelog/<version>.md` and regenerates `CHANGELOG.md`.
+- Kinds: `breaking`, `new`, `improvements`, `fixes`.
+- End the line with the uppercase Linear id in parentheses, e.g. `(ENG-1234)`. Leave the id out when you copy the entry into the umh-core changelog. No workflow removes it.
+- Describe the user-visible change in product language. No "Added"/"Fixed" lead-ins.
+- The release PR runs `.github/workflows/changelog.yml`, which batches the fragments into `.changelog/<version>.md` and regenerates `CHANGELOG.md`.
 
-Commit the fragment from `.changelog/unreleased/` as part of your PR.
+## Layout
 
-## Releasing
+| Path | Contents |
+|---|---|
+| `<name>_plugin/` | One package per plugin. Each registers itself in `init()` with `service.RegisterBatchInput`, `RegisterBatchProcessor`, `RegisterBatchOutput` or `RegisterOutput`. |
+| `cmd/benthos/` | Main binary. `bundle/package.go` blank-imports every plugin package. |
+| `cmd/schema-export/` | Exports plugin config schemas for the ManagementConsole (`make generate-schema VERSION=…`). |
+| `pkg/umh/topic/` | UMH topic builder and parser. |
+| `docs/` | User docs (GitBook, published at [docs.umh.app/benthos-umh](https://docs.umh.app/benthos-umh)). `docs/SUMMARY.md` is the index. |
+| `config/` | Example configs. |
+| `templates/` | The `umh_*` Benthos templates. |
+| `proto/` | Sparkplug B protobuf definitions. |
+| `tests/` | Docker Compose setups for protocol tests. |
+| `.changelog/` | changie fragments and released versions. |
 
-Cut a release by opening a `main ← staging` PR titled with the bare version (e.g. `v0.13.0`); the Changelog workflow generates the changelog automatically. Merge it as a **merge commit** (not a squash), then push a lightweight `vX.Y.Z` tag on the `main` tip — that triggers `release.yml` and the downstream umh-core/ManagementConsole bumps. See umh-core's [`RELEASING.md`](https://github.com/united-manufacturing-hub/united-manufacturing-hub/blob/staging/umh-core/RELEASING.md) for the cross-repo pattern.
+Plugins by role:
 
-## Testing Approach
+- **Inputs:** `opcua_plugin` (also an output), `modbus_plugin`, `s7comm_plugin`, `sparkplug_plugin` (also an output), `eip_plugin`, `sensorconnect_plugin`, `beckhoff_ads_plugin`, `uns_plugin` (`uns` input).
+- **Processors:** `tag_processor_plugin`, `stream_processor_plugin`, `downsampler_plugin`, `topic_browser_plugin`, `classic_to_core_plugin`, `nodered_js_plugin`.
+- **Outputs:** `uns_plugin` (`uns` output), `historian_plugin`, `snowflake_put_plugin`.
 
-- **Unit Tests**: Per-plugin using Ginkgo v2
-  - Focus on business logic validation
-  - Mock external dependencies
-- **Integration Tests**: Using Docker containers
-  - Test real protocol connections
-  - Validate end-to-end data flow
-- **YAML Validation**: Schema-based config testing
-- **Benchmarks**: Performance testing for critical paths
-  - `make bench-stream-processor`
-  - `make bench-pkg-umh-topic`
+UNS messages, topics and payloads are described in the user docs: [tag processor](docs/processing/tag-processor.md), [topic parser](docs/libraries/umh-topic-parser.md), [UNS output](docs/output/uns-output.md) and umh-core's [payload formats](https://docs.umh.app/usage/unified-namespace/payload-formats). A time-series payload and a relational payload never share a topic. Give them different `data_contract` values.
 
-### Test Patterns
-```go
-var _ = Describe("PluginName", func() {
-    Context("when processing data", func() {
-        It("should handle valid input", func() {
-            // Test implementation
-            Expect(result).To(Equal(expected))
-        })
-    })
-})
+## Build, run and test
+
+```bash
+make build                    # binary at tmp/bin/benthos
+make run CONFIG=config/stdout.yaml LOG_LEVEL=debug
+tmp/bin/benthos lint config/stdout.yaml
+tmp/bin/benthos list inputs   # also: processors, outputs
+make lint                     # golangci-lint
+make fmt
+make test                     # all Ginkgo suites
+make serve-pprof              # profiling server
 ```
 
-## Common Tasks
+Each plugin has a `test-<plugin>` target, and some have benchmarks. List them with `grep -E '^(test|bench)-' Makefile`.
 
-### Adding a New Protocol
-1. Create new plugin directory: `protocol_plugin/`
-2. Implement input/output interfaces
-3. Add documentation in `docs/input/` or `docs/output/`
-4. Create tests with `_suite_test.go` and `_test.go`
-5. Add Make target for testing
-6. Update this CLAUDE.md
+Protocol integration tests need a device or simulator. Where a plugin has a CI workflow in `.github/workflows/test-*.yml`, that workflow shows how the simulator is started.
 
-### Debugging Data Flows
-1. Enable debug logging in configuration
-2. Use `make serve-pprof` for performance profiling
-3. Check plugin-specific logs for protocol details
-4. Test with minimal config first
-5. Use example configurations from `config/` directory
+## Tests
 
-## Project Structure
+- Ginkgo v2 with Gomega. Each package has a `*_suite_test.go` and `*_test.go` files.
 
-```
-benthos-umh/
-├── cmd/benthos/          # Main application entry
-├── config/               # Configuration examples
-├── docs/                 # Documentation (GitBook format)
-├── pkg/                  # Shared packages
-│   └── umhtopic/         # UMH topic parsing
-├── *_plugin/             # Protocol/processor plugins
-├── Makefile              # Build automation
-└── Makefile.Common       # Shared Make configuration
-```
+## Adding a plugin
 
-## Important Notes
+1. Create `<name>_plugin/` and register the component in `init()`.
+2. Add the blank import to `cmd/benthos/bundle/package.go`.
+3. Add docs under `docs/input/`, `docs/processing/` or `docs/output/`, and an entry in `docs/SUMMARY.md`.
+4. Add a `test-<name>` Make target and a CI workflow in `.github/workflows/`.
+5. Declare each config field with `.Default()`, `.Optional()` and `.Examples()` as the comments on `FieldSpec` in `cmd/schema-export/types.go` describe, because the Management Console renders the form from that schema.
 
-- Default branch is `master` (not `main` or `staging`)
-- Apache 2.0 license headers required on all source files
-- Ginkgo runs tests in parallel with randomization
-- Plugins are loaded dynamically at runtime
-- Configuration uses standard Benthos YAML format
-- Each plugin maintains its own documentation
+## Engineering Handbook
 
-## UX Standards
+Our shared standards live at https://engineering.umh.app. Look up the pages your task needs before you write code. Each page has a Markdown version: append `.md` to its URL. https://engineering.umh.app/llms.txt lists every page. Start with:
 
-See `UX_STANDARDS.md` for UI/UX principles when building management interfaces or user-facing components.
+- Go: https://engineering.umh.app/engineering/development-process/how-to-build/coding-standards/go
+- Error management: https://engineering.umh.app/engineering/development-process/how-to-build/coding-standards/error-management
+- Product standards: https://engineering.umh.app/product/product-standards ([Opinionated simplicity](https://engineering.umh.app/product/product-standards/opinionated-simplicity), [Code and UI](https://engineering.umh.app/product/product-standards/code-and-ui), [Immediate trust](https://engineering.umh.app/product/product-standards/immediate-trust))
+- How to build: https://engineering.umh.app/engineering/development-process/how-to-build
+- Testing: https://engineering.umh.app/engineering/development-process/how-to-build/testing
+- How to ship: https://engineering.umh.app/engineering/development-process/how-to-ship
+

@@ -162,6 +162,13 @@ type ServerProfile struct {
 // Profile values are conservative/production-safe limits validated through real-world deployments.
 //
 // Research: See UMH-ENG-3852 for detailed analysis of optimal batch sizes per server type.
+//
+// A new profile needs a name constant, a case in GetProfileByName and an entry in
+// the list that init validates. A vendor profile also needs a match in
+// DetectServerProfile. Add the name to the Examples of the profile field in
+// core_connection.go: the Management Console shows that list as the valid values.
+// Users read the profiles in the "Server Profiles and Performance Tuning" section
+// of docs/input/opc-ua-input.md, so add it there too.
 var (
 	profileAuto = ServerProfile{
 		Name:                     ProfileAuto,
