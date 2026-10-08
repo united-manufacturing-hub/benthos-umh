@@ -15,14 +15,18 @@
 ---
 name: Changelog
 
+# Step 1 of a release: Actions > Changelog > Run workflow, with the version.
+# It opens a PR to staging that merges the changelog fragments.
 on:
-  pull_request:
-    branches: [main]
-    types: [opened, reopened]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, e.g. v0.17.0"
+        required: true
+        type: string
 
 jobs:
   generate-changelog:
-    if: startsWith(github.event.pull_request.title, 'v') && github.head_ref == 'staging'
     runs-on: ubuntu-latest
     steps:
       - name: Generate GitHub App Token
@@ -36,18 +40,18 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
-          ref: ${{ github.head_ref }}
+          ref: staging
           token: ${{ steps.generate-token.outputs.token }}
 
-      - name: Validate and extract version from PR title
+      - name: Validate version
         env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [[ ! "$PR_TITLE" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
-            echo "::error::PR title is not a valid semver: $PR_TITLE"
+          if [[ ! "$INPUT_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "::error::Version is not a valid semver: $INPUT_VERSION"
             exit 1
           fi
-          echo "VERSION=$PR_TITLE" >> "$GITHUB_ENV"
+          echo "VERSION=$INPUT_VERSION" >> "$GITHUB_ENV"
 
       - name: Setup Go
         uses: ./.github/actions/setup-go
@@ -62,7 +66,7 @@ jobs:
           commit-message: "chore: generate changelog for ${{ env.VERSION }}"
           branch: chore/changelog-${{ env.VERSION }}
           delete-branch: true
-          base: ${{ github.head_ref }}
+          base: staging
           title: "chore: generate changelog for ${{ env.VERSION }}"
           body: |
             Merges changelog fragments for ${{ env.VERSION }}.

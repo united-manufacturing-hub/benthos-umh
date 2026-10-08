@@ -5,7 +5,7 @@ benthos-umh extends Benthos (Redpanda Connect) with industrial protocol inputs, 
 ## Branches and pull requests
 
 - PRs target `staging`, the default branch.
-- A release is a `main ← staging` PR titled with the bare version (`v0.13.0`), merged as a **merge commit** (not a squash). Then push a lightweight `vX.Y.Z` tag on the `main` tip. The tag triggers `release.yml` and the umh-core and ManagementConsole version bumps. The cross-repo pattern is in umh-core's [`RELEASING.md`](https://github.com/united-manufacturing-hub/united-manufacturing-hub/blob/staging/umh-core/RELEASING.md).
+- Releases are cut from `staging`; `main` is no longer used. First run Actions > Changelog > Run workflow with the version (`v0.17.0`) and merge the changelog PR it opens. Then create a GitHub Release with tag `vX.Y.Z` targeting `staging`. The tag triggers `release.yml` and the umh-core and ManagementConsole version bumps. The cross-repo pattern is in umh-core's [`RELEASING.md`](https://github.com/united-manufacturing-hub/united-manufacturing-hub/blob/staging/umh-core/RELEASING.md).
 - Every source file needs the Apache 2.0 license header (`make license-check`, `make license-fix`).
 
 ## Changelog (changie)
