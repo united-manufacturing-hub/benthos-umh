@@ -502,8 +502,8 @@ func RecordDrop(counter *service.MetricCounter, logger *service.Logger, reason s
 // (internal/component/processor/auto_observed.go in github.com/redpanda-data/benthos/v4).
 // The wrapper saves each input's context and, after this method returns, sets it on the outputs by index.
 // Output i gets the context of input i, or of input 0 when there are fewer inputs than outputs.
-// A batch where one input fans out or is dropped therefore shifts the later outputs onto
-// the wrong input's context. That is engine behaviour, so a fix belongs upstream.
+// A batch where one input fans out or is dropped shifts the later outputs onto
+// the wrong input's context (ENG-6427).
 // A test of context or SortGroup handling needs a full service.NewStreamBuilder pipeline,
 // because ProcessBatch alone runs without the wrapper (ENG-5256).
 func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
