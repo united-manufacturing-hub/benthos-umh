@@ -15,8 +15,9 @@
 ---
 name: Changelog
 
-# Step 1 of a release: Actions > Changelog > Run workflow, with the version.
-# It opens a PR to staging that merges the changelog fragments.
+# First step of a release; CLAUDE.md "Branches and pull requests" lists the rest.
+# Run it from Actions > Changelog > Run workflow, with the version. It opens a
+# PR to staging that merges the changelog fragments.
 on:
   workflow_dispatch:
     inputs:
