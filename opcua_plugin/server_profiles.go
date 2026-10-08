@@ -162,6 +162,11 @@ type ServerProfile struct {
 // Profile values are conservative/production-safe limits validated through real-world deployments.
 //
 // Research: See UMH-ENG-3852 for detailed analysis of optimal batch sizes per server type.
+//
+// A new profile needs a name constant, a case in GetProfileByName, a match in
+// DetectServerProfile and an entry in the list that init validates. Users read the
+// profiles in the "Server Profiles and Performance Tuning" section of
+// docs/input/opc-ua-input.md, so add it there too.
 var (
 	profileAuto = ServerProfile{
 		Name:                     ProfileAuto,

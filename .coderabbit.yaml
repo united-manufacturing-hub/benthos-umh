@@ -16,14 +16,5 @@
 inheritance: true
 knowledge_base:
   code_guidelines:
-    # The defaults include **/CLAUDE.md but not .claude/rules/. Each rule file applies to the paths in its own frontmatter.
     filePatterns:
       - "**/CLAUDE.md"
-      - files: ".claude/rules/opcua.md"
-        applyTo: "opcua_plugin/**,docs/input/opc-ua-input.md,docs/output/opc-ua-output.md"
-      - files: ".claude/rules/plugin-fields.md"
-        applyTo: "*_plugin/**/*.go,cmd/schema-export/**"
-      - files: ".claude/rules/processor-plugins.md"
-        applyTo: "tag_processor_plugin/**,stream_processor_plugin/**,nodered_js_plugin/**,downsampler_plugin/**,topic_browser_plugin/**,classic_to_core_plugin/**"
-      - files: ".claude/rules/uns-messages.md"
-        applyTo: "tag_processor_plugin/**,uns_plugin/**,nodered_js_plugin/**,topic_browser_plugin/**,pkg/umh/topic/**,docs/processing/**,docs/output/uns-output.md,docs/input/uns-input.md"

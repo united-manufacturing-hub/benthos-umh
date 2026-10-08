@@ -26,7 +26,7 @@ make changelog   # installs changie into .tools/ on first use, prompts for kind 
 
 | Path | Contents |
 |---|---|
-| `<name>_plugin/` | One package per plugin (16). Each registers itself in `init()` with `service.RegisterBatchInput`, `RegisterBatchProcessor`, `RegisterBatchOutput` or `RegisterOutput`. |
+| `<name>_plugin/` | One package per plugin. Each registers itself in `init()` with `service.RegisterBatchInput`, `RegisterBatchProcessor`, `RegisterBatchOutput` or `RegisterOutput`. |
 | `cmd/benthos/` | Main binary. `bundle/package.go` blank-imports every plugin package. |
 | `cmd/schema-export/` | Exports plugin config schemas for the ManagementConsole (`make generate-schema VERSION=…`). |
 | `pkg/umh/topic/` | UMH topic builder and parser. |
@@ -43,7 +43,7 @@ Plugins by role:
 - **Processors:** `tag_processor_plugin`, `stream_processor_plugin`, `downsampler_plugin`, `topic_browser_plugin`, `classic_to_core_plugin`, `nodered_js_plugin`.
 - **Outputs:** `uns_plugin` (`uns` output), `historian_plugin`, `snowflake_put_plugin`.
 
-Plugin internals load as path-scoped rules from `.claude/rules/` when you open a file in the matching directory.
+UNS messages, topics and payloads are described in the user docs: [tag processor](docs/processing/tag-processor.md), [topic parser](docs/libraries/umh-topic-parser.md), [UNS output](docs/output/uns-output.md) and umh-core's [payload formats](https://docs.umh.app/usage/unified-namespace/payload-formats). A time-series payload and a relational payload never share a topic. Give them different `data_contract` values.
 
 ## Build, run and test
 
@@ -65,8 +65,6 @@ Protocol integration tests need a device or simulator. The plugin's CI workflow 
 ## Tests
 
 - Ginkgo v2 with Gomega. Each package has a `*_suite_test.go` and `*_test.go` files.
-- Ginkgo runs specs in parallel and in random order. Specs must not depend on each other.
-- Never commit a focused spec (`FIt`, `FDescribe`, `FContext`).
 
 ## Adding a plugin
 
@@ -74,7 +72,7 @@ Protocol integration tests need a device or simulator. The plugin's CI workflow 
 2. Add the blank import to `cmd/benthos/bundle/package.go`.
 3. Add docs under `docs/input/`, `docs/processing/` or `docs/output/`, and an entry in `docs/SUMMARY.md`.
 4. Add a `test-<name>` Make target and a CI workflow in `.github/workflows/`.
-5. Classify the config fields as described in `.claude/rules/plugin-fields.md`.
+5. Mark config fields as `FieldSpec` in `cmd/schema-export/types.go` describes, because the Management Console renders the form from that schema.
 
 ## Engineering Handbook
 
@@ -87,10 +85,3 @@ Our shared standards live at https://engineering.umh.app. Start with:
 - Testing: https://engineering.umh.app/engineering/development-process/how-to-build/testing
 - How to ship: https://engineering.umh.app/engineering/development-process/how-to-ship
 
-Rules to apply while writing code here:
-
-- benthos-umh moves customer data, so a change to it is a one-way door. Agree the approach with a Code Owner before you code.
-- Every change in behaviour comes with a test that fails without the change.
-- Every error is either retried, shown to the user (the bridge goes degraded and says why), or sent to Sentry.
-- The YAML is limited to what the UI can render. Do not add a config field when one value works for nearly every user.
-- Behaviour changes ship behind a feature flag.
