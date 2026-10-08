@@ -76,7 +76,7 @@ Protocol integration tests need a device or simulator. Where a plugin has a CI w
 
 ## Engineering Handbook
 
-Our shared standards live at https://engineering.umh.app. Start with:
+Our shared standards live at https://engineering.umh.app. Look up the pages your task needs before you write code. Each page has a Markdown version: append `.md` to its URL. https://engineering.umh.app/llms.txt lists every page. Start with:
 
 - Go: https://engineering.umh.app/engineering/development-process/how-to-build/coding-standards/go
 - Error management: https://engineering.umh.app/engineering/development-process/how-to-build/coding-standards/error-management
