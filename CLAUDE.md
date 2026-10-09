@@ -73,6 +73,7 @@ Protocol integration tests need a device or simulator. Where a plugin has a CI w
 3. Add docs under `docs/input/`, `docs/processing/` or `docs/output/`, and an entry in `docs/SUMMARY.md`.
 4. Add a `test-<name>` Make target and a CI workflow in `.github/workflows/`.
 5. Declare each config field with `.Default()`, `.Optional()` and `.Examples()` as the comments on `FieldSpec` in `cmd/schema-export/types.go` describe, because the Management Console renders the form from that schema.
+6. For an input plugin, add a `value_type_survival_test.go` table with the fixture values from `tag_processor_plugin/tagprocessortest`: a numeric string, a non-numeric string, the 17-digit numeric string, a number, a boolean, and arrays where the protocol has them. Each entry passes the message the plugin emits to `tagprocessortest.ExpectTagProcessorKeepsValue`, which fails when tag_processor writes a different JSON type or value than the plugin decoded. A plugin that emits a JSON object uses `ExpectTagProcessorKeepsPayloadField` instead. [`modbus_plugin/value_type_survival_test.go`](modbus_plugin/value_type_survival_test.go) is an example.
 
 ## Engineering Handbook
 
