@@ -16,6 +16,7 @@ package s7comm_plugin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -240,6 +241,16 @@ func deprecatedAddressWarning(address string) string {
 		address, suggestion, groups["area"])
 }
 
+// encodePayload quotes string values as JSON, because tag_processor parses the
+// payload as JSON and turns an unquoted numeric string into a number.
+func encodePayload(value any) ([]byte, error) {
+	text, isString := value.(string)
+	if !isString {
+		return []byte(fmt.Sprintf("%v", value)), nil
+	}
+	return json.Marshal(text)
+}
+
 func ParseAddresses(addresses []string) ([]S7DataItemWithAddressAndConverter, error) {
 	parsedAddresses := make([]S7DataItemWithAddressAndConverter, 0, len(addresses))
 
@@ -403,12 +414,11 @@ func (s *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 			// Execute the converter function to get the converted data
 			convertedData := item.ConverterFunc(item.Item.Data)
 
-			// Convert any type of convertedData to a string.
-			// The fmt.Sprintf function is used here for its ability to handle various types gracefully.
-			dataAsString := fmt.Sprintf("%v", convertedData)
-
-			// Convert the string representation to a []byte
-			dataAsBytes := []byte(dataAsString)
+			dataAsBytes, err := encodePayload(convertedData)
+			if err != nil {
+				s.Log.Errorf("Failed to encode value of address %s: %v", item.Address, err)
+				continue
+			}
 
 			// Create a new message with the current state of the buffer
 			// Note: Depending on your requirements, you may want to reset the buffer
