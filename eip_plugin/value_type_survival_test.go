@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	. "github.com/united-manufacturing-hub/benthos-umh/eip_plugin"
+	"github.com/united-manufacturing-hub/benthos-umh/eip_plugin"
 	"github.com/united-manufacturing-hub/benthos-umh/tag_processor_plugin/tagprocessortest"
 )
 
@@ -31,13 +31,13 @@ const survivalTagName = "tag"
 var _ = Describe("Ethernet/IP value type through tag_processor", func() {
 	DescribeTable("keeps the type and value of the tag",
 		func(cipType gologix.CIPType, plcValue any) {
-			item := &CIPReadItem{TagName: survivalTagName, CIPDatatype: cipType}
+			item := &eip_plugin.CIPReadItem{TagName: survivalTagName, CIPDatatype: cipType}
 			if reflect.ValueOf(plcValue).Kind() == reflect.Slice {
 				item.IsArray = true
 				item.ArrayLength = reflect.ValueOf(plcValue).Len()
 			}
-			input := &EIPInput{
-				Items: []*CIPReadItem{item},
+			input := &eip_plugin.EIPInput{
+				Items: []*eip_plugin.CIPReadItem{item},
 				CIP:   &MockCIPReader{Tags: map[string]any{survivalTagName: plcValue}},
 			}
 
