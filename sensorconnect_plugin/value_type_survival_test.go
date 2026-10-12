@@ -20,7 +20,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	. "github.com/united-manufacturing-hub/benthos-umh/sensorconnect_plugin"
+	"github.com/united-manufacturing-hub/benthos-umh/sensorconnect_plugin"
 	"github.com/united-manufacturing-hub/benthos-umh/tag_processor_plugin/tagprocessortest"
 )
 
@@ -31,9 +31,9 @@ const (
 	survivalProcessData   = "Value"
 )
 
-var digitalInputPort = ConnectedDeviceInfo{Uri: "/iolinkmaster/port[1]", Mode: 1, Connected: true, Port: "1"}
+var digitalInputPort = sensorconnect_plugin.ConnectedDeviceInfo{Uri: "/iolinkmaster/port[1]", Mode: 1, Connected: true, Port: "1"}
 
-var ioLinkPort = ConnectedDeviceInfo{
+var ioLinkPort = sensorconnect_plugin.ConnectedDeviceInfo{
 	Uri:       "/iolinkmaster/port[2]",
 	Mode:      3,
 	Connected: true,
@@ -42,13 +42,13 @@ var ioLinkPort = ConnectedDeviceInfo{
 	DeviceID:  survivalDeviceID,
 }
 
-func ioddWithProcessDataIn(processDataIn Datatype) IoDevice {
-	return IoDevice{
-		ExternalTextCollection: ExternalTextCollection{PrimaryLanguage: PrimaryLanguage{Text: []Text{
+func ioddWithProcessDataIn(processDataIn sensorconnect_plugin.Datatype) sensorconnect_plugin.IoDevice {
+	return sensorconnect_plugin.IoDevice{
+		ExternalTextCollection: sensorconnect_plugin.ExternalTextCollection{PrimaryLanguage: sensorconnect_plugin.PrimaryLanguage{Text: []sensorconnect_plugin.Text{
 			{Id: survivalProcessDataID, Value: survivalProcessData},
 		}}},
-		ProfileBody: ProfileBody{DeviceFunction: DeviceFunction{ProcessDataCollection: ProcessDataCollection{ProcessData: ProcessData{
-			ProcessDataIn: ProcessDataIn{Name: Name{TextId: survivalProcessDataID}, Datatype: processDataIn},
+		ProfileBody: sensorconnect_plugin.ProfileBody{DeviceFunction: sensorconnect_plugin.DeviceFunction{ProcessDataCollection: sensorconnect_plugin.ProcessDataCollection{ProcessData: sensorconnect_plugin.ProcessData{
+			ProcessDataIn: sensorconnect_plugin.ProcessDataIn{Name: sensorconnect_plugin.Name{TextId: survivalProcessDataID}, Datatype: processDataIn},
 		}}}},
 	}
 }
@@ -58,12 +58,12 @@ var _ = Describe("sensorconnect value type through tag_processor", func() {
 	// encoding/json decodes from the master's response
 	DescribeTable("keeps the type and value of a digital-input port",
 		func(masterValue any) {
-			input := &SensorConnectInput{}
+			input := &sensorconnect_plugin.SensorConnectInput{}
 			sensorData := map[string]any{
 				digitalInputPort.Uri + "/pin2in": map[string]any{"code": float64(200), "data": masterValue},
 			}
 
-			batch, err := input.ProcessSensorData(context.Background(), []ConnectedDeviceInfo{digitalInputPort}, sensorData)
+			batch, err := input.ProcessSensorData(context.Background(), []sensorconnect_plugin.ConnectedDeviceInfo{digitalInputPort}, sensorData)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(batch).To(HaveLen(1))
 
@@ -78,24 +78,24 @@ var _ = Describe("sensorconnect value type through tag_processor", func() {
 	)
 
 	DescribeTable("keeps the type and value of an IO-Link process data value",
-		func(processDataIn Datatype, pdinHex string, sensorValue any) {
-			input := &SensorConnectInput{}
-			ioddKey := IoddFilemapKey{VendorId: survivalVendorID, DeviceId: survivalDeviceID}
+		func(processDataIn sensorconnect_plugin.Datatype, pdinHex string, sensorValue any) {
+			input := &sensorconnect_plugin.SensorConnectInput{}
+			ioddKey := sensorconnect_plugin.IoddFilemapKey{VendorId: survivalVendorID, DeviceId: survivalDeviceID}
 			input.IoDeviceMap.Store(ioddKey, ioddWithProcessDataIn(processDataIn))
 			sensorData := map[string]any{
 				ioLinkPort.Uri + "/iolinkdevice/pdin": map[string]any{"code": float64(200), "data": pdinHex},
 			}
 
-			batch, err := input.ProcessSensorData(context.Background(), []ConnectedDeviceInfo{ioLinkPort}, sensorData)
+			batch, err := input.ProcessSensorData(context.Background(), []sensorconnect_plugin.ConnectedDeviceInfo{ioLinkPort}, sensorData)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(batch).To(HaveLen(1))
 
 			tagprocessortest.ExpectTagProcessorKeepsPayloadField(sensorValue, batch[0], survivalProcessData)
 		},
-		Entry("UIntegerT", Datatype{Type: "UIntegerT", BitLength: 16}, "04D2", 1234),
-		Entry("IntegerT", Datatype{Type: "IntegerT", BitLength: 16}, "FFFE", tagprocessortest.NegativeInteger),
-		Entry("Float32T", Datatype{Type: "Float32T", BitLength: 32}, "41BC0000", tagprocessortest.FractionalNumber),
-		Entry("BooleanT", Datatype{Type: "BooleanT", BitLength: 8}, "01", true),
-		Entry("OctetStringT", Datatype{Type: "OctetStringT", FixedLength: 2}, "1234", "1234"),
+		Entry("UIntegerT", sensorconnect_plugin.Datatype{Type: "UIntegerT", BitLength: 16}, "04D2", 1234),
+		Entry("IntegerT", sensorconnect_plugin.Datatype{Type: "IntegerT", BitLength: 16}, "FFFE", tagprocessortest.NegativeInteger),
+		Entry("Float32T", sensorconnect_plugin.Datatype{Type: "Float32T", BitLength: 32}, "41BC0000", tagprocessortest.FractionalNumber),
+		Entry("BooleanT", sensorconnect_plugin.Datatype{Type: "BooleanT", BitLength: 8}, "01", true),
+		Entry("OctetStringT", sensorconnect_plugin.Datatype{Type: "OctetStringT", FixedLength: 2}, "1234", "1234"),
 	)
 })
