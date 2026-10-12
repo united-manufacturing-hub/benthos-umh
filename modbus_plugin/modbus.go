@@ -21,6 +21,7 @@ package modbus_plugin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/maphash"
@@ -888,7 +889,13 @@ func (m *ModbusInput) createMessageFromValue(item modbusTag, rawValue []byte, re
 		b = append(b, []byte(strconv.FormatFloat(v, 'f', -1, 64))...)
 		tagType = "number"
 	case string:
-		b = append(b, []byte(v)...)
+		// tag_processor parses the payload as JSON, so an unquoted numeric string becomes a number
+		jsonBytes, err := json.Marshal(v)
+		if err != nil {
+			m.Log.Errorf("Error marshaling string for item %s to JSON: %v", item.name, err)
+			return nil
+		}
+		b = append(b, jsonBytes...)
 		tagType = "string"
 	case bool:
 		b = append(b, []byte(strconv.FormatBool(v))...)
