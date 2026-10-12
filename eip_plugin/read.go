@@ -15,6 +15,7 @@
 package eip_plugin
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/danomagnum/gologix"
@@ -126,7 +127,7 @@ func (g *EIPInput) readSingleTagValue(item *CIPReadItem) (string, error) {
 	default:
 		return "", fmt.Errorf("Failed to read tag for not supported CIPtype: %v", item.CIPDatatype)
 	}
-	return fmt.Sprintf("%v", value), nil
+	return encodeSingleValue(value)
 }
 
 // readArrayTagValue reads the values of a tag which is an array into the specified variable
@@ -140,94 +141,128 @@ func (g *EIPInput) readArrayTagValue(item *CIPReadItem) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("%v", arr), nil
+		return encodeArray(arr)
 	case gologix.CIPTypeBYTE:
 		arr := make([]byte, item.ArrayLength)
 		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("%v", arr), nil
+		return encodeArray(uint8sAsNumbers(arr))
 	case gologix.CIPTypeSINT:
 		arr := make([]int8, item.ArrayLength)
 		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("%v", arr), nil
+		return encodeArray(arr)
 	case gologix.CIPTypeUSINT:
 		arr := make([]uint8, item.ArrayLength)
 		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("%v", arr), nil
+		return encodeArray(uint8sAsNumbers(arr))
 	case gologix.CIPTypeINT:
 		arr := make([]int16, item.ArrayLength)
 		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("%v", arr), nil
+		return encodeArray(arr)
 	case gologix.CIPTypeUINT:
 		arr := make([]uint16, item.ArrayLength)
 		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("%v", arr), nil
+		return encodeArray(arr)
 	case gologix.CIPTypeDINT:
 		arr := make([]int32, item.ArrayLength)
 		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("%v", arr), nil
+		return encodeArray(arr)
 	case gologix.CIPTypeUDINT:
 		arr := make([]uint32, item.ArrayLength)
 		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("%v", arr), nil
+		return encodeArray(arr)
 	case gologix.CIPTypeLINT:
 		arr := make([]int64, item.ArrayLength)
 		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("%v", arr), nil
+		return encodeArray(arr)
 	case gologix.CIPTypeLWORD, gologix.CIPTypeULINT:
 		arr := make([]uint64, item.ArrayLength)
 		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("%v", arr), nil
+		return encodeArray(arr)
 	case gologix.CIPTypeREAL:
 		arr := make([]float32, item.ArrayLength)
 		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("%v", arr), nil
+		return encodeArray(arr)
 	case gologix.CIPTypeLREAL:
 		arr := make([]float64, item.ArrayLength)
 		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("%v", arr), nil
+		return encodeArray(arr)
 	case gologix.CIPTypeSTRING:
 		arr := make([]string, item.ArrayLength)
 		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("%v", arr), nil
+		return encodeArray(arr)
 	default:
 		return "", fmt.Errorf("Failed to read array for not supported CIPType: %v", item.CIPDatatype)
 	}
+}
+
+// encodeSingleValue quotes a string as JSON, because tag_processor parses the
+// payload as JSON and turns an unquoted numeric string into a number.
+func encodeSingleValue(value any) (string, error) {
+	text, isString := value.(string)
+	if !isString {
+		return fmt.Sprintf("%v", value), nil
+	}
+	jsonBytes, err := json.Marshal(text)
+	if err != nil {
+		return "", fmt.Errorf("encode string as JSON: %w", err)
+	}
+	return string(jsonBytes), nil
+}
+
+// encodeArray writes arr as a JSON array, so tag_processor reads the elements
+// with their types instead of the Go print format "[1 2]".
+func encodeArray(arr any) (string, error) {
+	jsonBytes, err := json.Marshal(arr)
+	if err != nil {
+		return "", fmt.Errorf("encode array as JSON: %w", err)
+	}
+	return string(jsonBytes), nil
+}
+
+// uint8sAsNumbers widens arr, because json.Marshal writes a []uint8 as a
+// base64 string instead of an array of numbers.
+func uint8sAsNumbers(arr []uint8) []uint16 {
+	numbers := make([]uint16, len(arr))
+	for index, value := range arr {
+		numbers[index] = uint16(value)
+	}
+	return numbers
 }
 
 // createTagVar is prepared so that we can later on store the corresponding variable
