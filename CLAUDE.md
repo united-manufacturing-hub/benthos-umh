@@ -6,10 +6,10 @@ benthos-umh extends Benthos (Redpanda Connect) with industrial protocol inputs, 
 
 - PRs target `staging`, the default branch.
 - Releases are cut from `staging`; `main` is no longer used. A release works like the ManagementConsole release:
-  1. On a branch off `staging`, run `make changelog-merge VERSION=vX.Y.Z`. Merge the result into `staging` through a PR.
+  1. On a branch off `staging`, run `make release-changelog VERSION=vX.Y.Z`. Merge the result into `staging` through a PR.
   2. Publish a release on the `staging` tip, titled with the version: `gh release create vX.Y.Z --target staging --title vX.Y.Z --notes ""`.
-  3. `release.yml` checks that the tag is the `staging` tip, that the title equals the tag, and that `.changelog/vX.Y.Z.md` exists. It then runs every plugin's tests, PLC tests included. Only then does it build the image and binaries, write the changelog into the release body, and open the umh-core version bump.
-  4. If the check fails, the release turns back into a draft. Delete the draft and its tag, fix `staging`, and publish again. If the tests fail, the release stays published but nothing is built. Delete the release and its tag, fix `staging`, and publish again.
+  3. `release.yml` checks that the tag is the `staging` tip, that the title equals the tag, that `.changelog/vX.Y.Z.md` has entries, and that `.changelog/unreleased/` is empty. It then runs every CI test job without the path filter, PLC tests included. Only then does it build the image and binaries, write the changelog into the release body, and open the umh-core version bump.
+  4. If the check fails, the release turns back into a draft. Delete the draft and its tag, fix `staging`, and publish again. If the tests or the build fail, the release also turns back into a draft. Delete the draft, fix `staging`, and publish the next patch version. Do not reuse the tag: the Go module proxy may already have cached it.
 - Every source file needs the Apache 2.0 license header (`make license-check`, `make license-fix`).
 
 ## Changelog (changie)
@@ -24,7 +24,7 @@ make changelog   # installs changie into .tools/ on first use, prompts for kind 
 - Kinds: `breaking`, `new`, `improvements`, `fixes`.
 - End the line with the uppercase Linear id in parentheses, e.g. `(ENG-1234)`. Leave the id out when you copy the entry into the umh-core changelog. No workflow removes it.
 - Describe the user-visible change in product language. No "Added"/"Fixed" lead-ins.
-- At release time, `make changelog-merge VERSION=vX.Y.Z` batches the fragments into `.changelog/<version>.md` and regenerates `CHANGELOG.md`.
+- At release time, `make release-changelog VERSION=vX.Y.Z` batches the fragments into `.changelog/<version>.md` and regenerates `CHANGELOG.md`.
 
 ## Layout
 

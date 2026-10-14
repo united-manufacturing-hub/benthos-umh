@@ -54,6 +54,7 @@ jobs:
       classic_to_core: ${{ steps.filter.outputs.classic_to_core }}
       snowflake_put: ${{ steps.filter.outputs.snowflake_put }}
       historian: ${{ steps.filter.outputs.historian }}
+      ads: ${{ steps.filter.outputs.ads }}
       pkg: ${{ steps.filter.outputs.pkg }}
       cmd: ${{ steps.filter.outputs.cmd }}
       gomod: ${{ steps.filter.outputs.gomod }}
@@ -118,6 +119,9 @@ jobs:
             historian:
               - 'historian_plugin/**'
               - '!historian_plugin/**/*.md'
+            ads:
+              - 'beckhoff_ads_plugin/**'
+              - '!beckhoff_ads_plugin/**/*.md'
             pkg:
               - 'pkg/**'
             cmd:
@@ -374,6 +378,27 @@ jobs:
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-historian.yml
 
+  test-ads:
+    needs: [detect-changes, lint]
+    if: |
+      always() &&
+      needs.lint.result == 'success' &&
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.ads == 'true' ||
+       needs.detect-changes.outputs.gomod == 'true' ||
+       needs.detect-changes.outputs.cmd == 'true')
+    uses: ./.github/workflows/test-ads.yml
+
+  test-pkg:
+    needs: [detect-changes, lint]
+    if: |
+      always() &&
+      needs.lint.result == 'success' &&
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.pkg == 'true' ||
+       needs.detect-changes.outputs.gomod == 'true')
+    uses: ./.github/workflows/test-pkg.yml
+
   result:
     name: Check Required Steps
     needs:
@@ -396,6 +421,8 @@ jobs:
       - test-classic-to-core
       - test-snowflake-put
       - test-historian
+      - test-ads
+      - test-pkg
     if: always()
     runs-on: ubuntu-latest
     steps:
