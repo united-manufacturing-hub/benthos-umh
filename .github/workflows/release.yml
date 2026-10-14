@@ -58,7 +58,7 @@ jobs:
             failed=1
           fi
           if [ ! -f ".changelog/$TAG.md" ]; then
-            echo "::error::.changelog/$TAG.md is missing. Run the Changelog workflow and merge its PR first."
+            echo "::error::.changelog/$TAG.md is missing. Run make changelog-merge VERSION=$TAG and merge it into staging first."
             failed=1
           fi
           exit "$failed"
