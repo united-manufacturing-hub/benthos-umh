@@ -19,6 +19,13 @@ on:
   pull_request:
     branches: [staging]
   merge_group:
+  # release.yml calls this with full_run to test the release commit.
+  workflow_call:
+    inputs:
+      full_run:
+        description: Run every plugin's tests, PLC tests included, ignoring the path filter
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -31,6 +38,7 @@ jobs:
       pull-requests: read
     outputs:
       test_plc: ${{ steps.plc-check.outputs.test_plc }}
+      all: ${{ inputs.full_run == true }}
       opcua: ${{ steps.filter.outputs.opcua }}
       modbus: ${{ steps.filter.outputs.modbus }}
       s7: ${{ steps.filter.outputs.s7 }}
@@ -56,8 +64,9 @@ jobs:
           persist-credentials: false
       - name: Check if PLC tests should run
         id: plc-check
-        run: echo "test_plc=${{ github.event_name == 'merge_group' }}" >> "$GITHUB_OUTPUT"
+        run: echo "test_plc=${{ github.event_name == 'merge_group' || inputs.full_run == true }}" >> "$GITHUB_OUTPUT"
       - name: Detect changes
+        if: inputs.full_run != true
         uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4
         id: filter
         with:
@@ -179,7 +188,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.opcua == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.opcua == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-opcua.yml
@@ -192,7 +202,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.modbus == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.modbus == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-modbus.yml
@@ -205,7 +216,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.s7 == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.s7 == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-s7.yml
@@ -218,7 +230,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.sparkplug == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.sparkplug == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true' ||
        needs.detect-changes.outputs.pkg == 'true')
@@ -230,7 +243,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.eip == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.eip == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-eip.yml
@@ -241,7 +255,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.sensorconnect == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.sensorconnect == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-sensorconnect.yml
@@ -254,7 +269,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.tag_processor == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.tag_processor == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true' ||
        needs.detect-changes.outputs.pkg == 'true')
@@ -266,7 +282,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.topic_browser == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.topic_browser == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true' ||
        needs.detect-changes.outputs.pkg == 'true')
@@ -278,7 +295,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.uns == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.uns == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true' ||
        needs.detect-changes.outputs.pkg == 'true')
@@ -290,7 +308,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.nodered_js == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.nodered_js == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-nodered-js.yml
@@ -301,7 +320,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.stream_processor == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.stream_processor == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-stream-processor.yml
@@ -312,7 +332,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.downsampler == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.downsampler == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-downsampler.yml
@@ -323,7 +344,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.classic_to_core == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.classic_to_core == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-classic-to-core.yml
@@ -334,7 +356,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.snowflake_put == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.snowflake_put == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-snowflake-put.yml
@@ -345,7 +368,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.historian == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.historian == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-historian.yml

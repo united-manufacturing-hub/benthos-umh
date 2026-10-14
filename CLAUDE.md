@@ -5,7 +5,11 @@ benthos-umh extends Benthos (Redpanda Connect) with industrial protocol inputs, 
 ## Branches and pull requests
 
 - PRs target `staging`, the default branch.
-- Releases are cut from `staging`; `main` is no longer used. First run Actions > Changelog > Run workflow with the version (`v0.17.0`) and merge the changelog PR it opens. Then push a lightweight tag on the `staging` tip (`git tag vX.Y.Z origin/staging && git push origin vX.Y.Z`). Do not create the GitHub Release by hand: `release.yml` creates it with the changelog as its body, and it keeps the body of a release that already exists. The tag also triggers the umh-core and ManagementConsole version bumps.
+- Releases are cut from `staging`; `main` is no longer used. A release works like the ManagementConsole release:
+  1. Run Actions > Changelog > Run workflow with the version (`v0.17.0`). Merge the changelog PR it opens.
+  2. Publish a release on the `staging` tip, titled with the version: `gh release create vX.Y.Z --target staging --title vX.Y.Z --notes ""`.
+  3. `release.yml` checks that the tag is the `staging` tip, that the title equals the tag, and that `.changelog/vX.Y.Z.md` exists. It then runs every plugin's tests, PLC tests included. Only then does it build the image and binaries, write the changelog into the release body, and open the umh-core version bump.
+  4. If the check fails, the release turns back into a draft. Delete the draft and its tag, fix `staging`, and publish again. If the tests fail, the release stays published but nothing is built. Delete the release and its tag, fix `staging`, and publish again.
 - Every source file needs the Apache 2.0 license header (`make license-check`, `make license-fix`).
 
 ## Changelog (changie)

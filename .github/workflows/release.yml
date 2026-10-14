@@ -15,12 +15,73 @@
 ---
 name: Release
 
+# A published GitHub release on staging runs validate -> test -> build -> release
+# -> update-umh-core. Nothing is built or published until validate and the full
+# test suite pass. CLAUDE.md "Branches and pull requests" lists how to cut one.
 on:
-  push:
-    tags: [v*]
+  release:
+    types: [published]
+
+# One release at a time. Never cancel a running release halfway.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
+  validate:
+    if: startsWith(github.event.release.tag_name, 'v')
+    runs-on: ubuntu-latest
+    permissions:
+      # Needed to turn a failed release back into a draft.
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Check tag, title and changelog
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          TITLE: ${{ github.event.release.name }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/staging:refs/remotes/origin/staging
+          failed=0
+          if [ "$(git rev-parse "$TAG^{commit}")" != "$(git rev-parse origin/staging)" ]; then
+            echo "::error::Tag $TAG is not on the staging tip. Create the release with --target staging."
+            failed=1
+          fi
+          if [ "$TITLE" != "$TAG" ]; then
+            echo "::error::Release title '$TITLE' must equal the tag '$TAG'."
+            failed=1
+          fi
+          if [ ! -f ".changelog/$TAG.md" ]; then
+            echo "::error::.changelog/$TAG.md is missing. Run the Changelog workflow and merge its PR first."
+            failed=1
+          fi
+          exit "$failed"
+
+      - name: Turn the release back into a draft
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft
+
+  test:
+    needs: validate
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/ci.yml
+    with:
+      full_run: true
+    secrets: inherit
+
   build-docker:
+    needs: test
     permissions:
       packages: write
       contents: read
@@ -40,6 +101,7 @@ jobs:
           depot-token: ${{ secrets.DEPOT_TOKEN }}
 
   build-binaries:
+    needs: test
     timeout-minutes: 20
     strategy:
       matrix:
@@ -99,8 +161,7 @@ jobs:
           path: ./dist/${{ env.OUTPUT_NAME }}
 
   release:
-    needs: build-binaries
-    if: needs.build-binaries.result == 'success'
+    needs: [build-binaries, build-docker]
     permissions:
       contents: write
     runs-on: depot-ubuntu-24.04
@@ -109,15 +170,13 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
-      - name: Setup Go
-        uses: ./.github/actions/setup-go
-
       - name: Extract release notes
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
-          BODY=$(make changelog-diff 2>/dev/null || true)
-          if [ -z "$BODY" ]; then
-            BODY="No changelog entries for this release."
-          fi
+          set -euo pipefail
+          # Drop the "## [vX.Y.Z]" heading; the release title already shows it.
+          BODY=$(tail -n +2 ".changelog/$TAG.md")
           {
             echo "RELEASE_BODY<<EOF"
             echo "$BODY"
@@ -137,7 +196,6 @@ jobs:
           artifacts: "./artifacts/artifact-*-${{ github.run_id }}-${{ github.run_attempt }}/*"
           token: ${{ secrets.GITHUB_TOKEN }}
           allowUpdates: true
-          omitBodyDuringUpdate: true
           body: ${{ env.RELEASE_BODY }}
           prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'alpha') }}
 
