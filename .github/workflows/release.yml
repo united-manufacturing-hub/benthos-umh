@@ -29,7 +29,11 @@ concurrency:
 
 jobs:
   validate:
-    if: startsWith(github.event.release.tag_name, 'v')
+    # Prereleases are skipped, as in ManagementConsole. CI already pushes a
+    # per-PR image for testing.
+    if: >-
+      startsWith(github.event.release.tag_name, 'v') &&
+      !github.event.release.prerelease
     runs-on: ubuntu-latest
     permissions:
       # Needed to turn a failed release back into a draft.
@@ -204,7 +208,6 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           allowUpdates: true
           body: ${{ env.RELEASE_BODY }}
-          prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'alpha') }}
 
   # A failed test or build leaves a published release with no image or binaries.
   # Turn it back into a draft, as validate does for its own failures.
