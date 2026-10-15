@@ -17,8 +17,9 @@ name: main
 
 on:
   push:
-    branches: [main, staging]
+    branches: [staging]
   pull_request:
+    branches: [staging]
 
 jobs:
   build-docker:
