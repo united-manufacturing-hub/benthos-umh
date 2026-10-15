@@ -34,42 +34,58 @@ jobs:
     if: >-
       startsWith(github.event.release.tag_name, 'v') &&
       !github.event.release.prerelease
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     permissions:
       # Needed to turn a failed release back into a draft.
       contents: write
     steps:
+      # The release event checks out the tag, so GITHUB_SHA is the tagged commit.
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
-          fetch-depth: 0
 
-      - name: Check tag, title and changelog
+      # The checks after this one also run when it fails, so one run reports every problem.
+      - name: Check the tag is the staging tip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          staging="$(gh api "repos/$GITHUB_REPOSITORY/commits/staging" --jq .sha)"
+          if [ "$GITHUB_SHA" != "$staging" ]; then
+            echo "::error::Tag $TAG ($GITHUB_SHA) is not the staging tip ($staging). Create the release with --target staging."
+            exit 1
+          fi
+
+      - name: Check the title equals the tag
+        if: ${{ !cancelled() }}
         env:
           TAG: ${{ github.event.release.tag_name }}
           TITLE: ${{ github.event.release.name }}
         run: |
-          set -euo pipefail
-          git fetch --no-tags origin +refs/heads/staging:refs/remotes/origin/staging
-          failed=0
-          if [ "$(git rev-parse "$TAG^{commit}")" != "$(git rev-parse origin/staging)" ]; then
-            echo "::error::Tag $TAG is not on the staging tip. Create the release with --target staging."
-            failed=1
-          fi
           if [ "$TITLE" != "$TAG" ]; then
             echo "::error::Release title '$TITLE' must equal the tag '$TAG'."
-            failed=1
+            exit 1
           fi
+
+      - name: Check the changelog is cut
+        if: ${{ !cancelled() }}
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          failed=0
           # The first line is the "## [vX.Y.Z]" heading; the entries follow it.
-          if [ ! -f ".changelog/$TAG.md" ] || ! tail -n +2 ".changelog/$TAG.md" | grep -q '[^[:space:]]'; then
+          if [ ! -f ".changelog/$TAG.md" ] || ! awk 'NR > 1 && NF { found = 1; exit } END { exit !found }' ".changelog/$TAG.md"; then
             echo "::error::.changelog/$TAG.md is missing or empty. Run make release-changelog VERSION=$TAG and merge it into staging first."
             failed=1
           fi
           # A fragment left here belongs to a PR merged after the changelog PR.
           # Its change would ship without appearing in these release notes.
+          # changie batch cannot add it: it refuses an existing version file, and --force overwrites the file.
           if [ -n "$(find .changelog/unreleased -type f ! -name .gitkeep)" ]; then
-            echo "::error::.changelog/unreleased/ is not empty. Run make release-changelog VERSION=$TAG again and merge it into staging first."
+            echo "::error::.changelog/unreleased/ is not empty. Copy each fragment's entry into .changelog/$TAG.md by hand, delete the fragments, run ./.tools/changie merge, and merge that into staging first."
             failed=1
           fi
           exit "$failed"
