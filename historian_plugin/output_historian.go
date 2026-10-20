@@ -30,6 +30,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/fieldrule"
 )
 
 func historianConfig() *service.ConfigSpec {
@@ -51,13 +53,13 @@ func historianConfig() *service.ConfigSpec {
 		Field(service.NewBoolField("metadata_keys_all").Description("Store all metadata keys except blacklists.").Default(true).Examples(true, false).Advanced()).
 		Field(service.NewStringListField("metadata_keys").Description("Allowlist when metadata_keys_all=false.").Default([]any{}).Advanced()).
 		Field(service.NewStringListField("metadata_keys_exclude").Description("Blacklist applied only when metadata_keys_all=true: drop these metadata keys on top of the built-in structural/high-churn exclusions. Each entry is an exact key name or a trailing-* prefix (e.g. \"opcua_*\"). Ignored in allowlist mode.").Default([]any{}).Examples([]any{"serialNumber"}, []any{"opcua_*", "spb_*"}).Advanced()).
-		Field(service.NewStringField("compress_after").Description("Compress chunks older than this, written in hours, minutes or seconds, like \"168h\". Days are not a unit.").Default("168h").Advanced()).
-		Field(service.NewStringField("retention").Description("Drop chunks older than this, written in hours, minutes or seconds, like \"720h\". Days are not a unit. Empty keeps every chunk.").Default("").Advanced()).
-		Field(service.NewStringField("value_chunk_interval").Description("How wide a chunk of the value hypertable is, like \"168h\". Set when the table is created; changing it later needs set_chunk_time_interval on the database and affects only new chunks.").Default("168h").Advanced()).
-		Field(service.NewStringField("attribute_chunk_interval").Description("How wide a chunk of the attribute hypertable is, like \"168h\". Attribute rows are written only when a tag's metadata changes, so this table is much sparser than the value table. Set when the table is created.").Default("168h").Advanced()).
+		Field(fieldrule.Duration("compress_after").Min(time.Second).WholeSeconds().Field().Description("Compress chunks older than this, written in hours, minutes or seconds, like \"168h\". Days are not a unit.").Default("168h").Advanced()).
+		Field(fieldrule.Duration("retention").AllowEmpty().Min(time.Second).WholeSeconds().Field().Description("Drop chunks older than this, written in hours, minutes or seconds, like \"720h\". Days are not a unit. Empty keeps every chunk.").Default("").Advanced()).
+		Field(fieldrule.Duration("value_chunk_interval").Min(time.Second).WholeSeconds().Field().Description("How wide a chunk of the value hypertable is, like \"168h\". Set when the table is created; changing it later needs set_chunk_time_interval on the database and affects only new chunks.").Default("168h").Advanced()).
+		Field(fieldrule.Duration("attribute_chunk_interval").Min(time.Second).WholeSeconds().Field().Description("How wide a chunk of the attribute hypertable is, like \"168h\". Attribute rows are written only when a tag's metadata changes, so this table is much sparser than the value table. Set when the table is created.").Default("168h").Advanced()).
 		Field(service.NewBatchPolicyField("batching").Advanced()).
 		Field(service.NewIntField("max_in_flight").Description("Max parallel batches in flight.").Default(8).Advanced()).
-		Field(service.NewStringField("write_timeout").Description("Per-batch write timeout as a Go duration (e.g. \"30s\"). Empty or \"0s\" = no timeout (a write that hangs on a lock or half-open connection blocks until the context is cancelled). When set, a timed-out batch is held for retry (NACK), never dropped. Set it above the largest expected batch commit time.").Default("").Advanced())
+		Field(fieldrule.Duration("write_timeout").AllowEmpty().Min(0).Field().Description("Per-batch write timeout as a Go duration (e.g. \"30s\"). Empty or \"0s\" = no timeout (a write that hangs on a lock or half-open connection blocks until the context is cancelled). When set, a timed-out batch is held for retry (NACK), never dropped. Set it above the largest expected batch commit time.").Default("").Advanced())
 }
 
 type historianOutput struct {
