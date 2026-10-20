@@ -51,7 +51,7 @@ func (r *DurationRule) WholeSeconds() *DurationRule {
 }
 
 func (r *DurationRule) Field() *service.ConfigField {
-	return service.NewStringField(r.name).LintRule(r.lintRule())
+	return service.NewDurationField(r.name).LintRule(r.lintRule())
 }
 
 func (r *DurationRule) lintRule() string {
