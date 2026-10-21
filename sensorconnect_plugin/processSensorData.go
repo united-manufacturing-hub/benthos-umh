@@ -44,9 +44,15 @@ func (s *SensorConnectInput) ProcessSensorData(_ context.Context, connectedDevic
 		case 1: // Digital Input
 			s.logger.Debugf("Processing sensor data for port %v, mode %v", device.Uri, device.Mode)
 			key := device.Uri + "/pin2in"
-			dataPin2In, err := s.extractByteArrayFromSensorDataMap(key, "data", sensorDataMap)
+			pin2InValue, err := s.extractValueFromSensorDataMap(key, "data", sensorDataMap)
 			if err != nil {
 				s.logger.Debugf("Error extracting dataPin2In from sensorDataMap: %v for key %s", err, key)
+				continue
+			}
+			// tag_processor parses the payload as JSON, so an unquoted numeric string becomes a number
+			dataPin2In, err := json.Marshal(pin2InValue)
+			if err != nil {
+				s.logger.Errorf("Failed to encode the value of port %v as JSON: %v", device.Uri, err)
 				continue
 			}
 
@@ -192,6 +198,17 @@ func (s *SensorConnectInput) GetProcessedSensorDataFromRawSensorOutput(rawSensor
 }
 
 func (s *SensorConnectInput) extractByteArrayFromSensorDataMap(key string, tag string, sensorDataMap map[string]interface{}) ([]byte, error) {
+	dataValue, err := s.extractValueFromSensorDataMap(key, tag, sensorDataMap)
+	if err != nil {
+		return nil, err
+	}
+	returnValue := fmt.Sprintf("%v", dataValue)
+	return []byte(returnValue), nil
+}
+
+// extractValueFromSensorDataMap returns the value as encoding/json decoded it
+// from the IO-Link master's response.
+func (s *SensorConnectInput) extractValueFromSensorDataMap(key string, tag string, sensorDataMap map[string]interface{}) (any, error) {
 	element, ok := sensorDataMap[key]
 	if !ok {
 		return nil, fmt.Errorf("key %s not in sensorDataMap", key)
@@ -204,8 +221,7 @@ func (s *SensorConnectInput) extractByteArrayFromSensorDataMap(key string, tag s
 	if !ok {
 		return nil, fmt.Errorf("tag %s not found in element map", tag)
 	}
-	returnValue := fmt.Sprintf("%v", dataValue)
-	return []byte(returnValue), nil
+	return dataValue, nil
 }
 
 func (s *SensorConnectInput) extractIntFromSensorDataMap(key string, tag string, sensorDataMap map[string]interface{}) (int, error) {
