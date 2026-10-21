@@ -187,7 +187,7 @@ jobs:
       - name: Lint
         run: make lint
 
-  startup:
+  smoke-test-binary:
     needs: license-eye
     runs-on: depot-ubuntu-24.04-4
     timeout-minutes: 15
@@ -422,7 +422,7 @@ jobs:
       - fossa
       - license-eye
       - lint
-      - startup
+      - smoke-test-binary
       - test-opcua
       - test-modbus
       - test-s7
