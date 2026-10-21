@@ -1,0 +1,3 @@
+kind: fixes
+body: 'The Snowflake output uses version 2 of the Snowflake Go driver, the same version Redpanda Connect uses, so benthos no longer exits at startup with "sql: Register called twice for driver snowflake" (ENG-7114)'
+time: 2026-10-21T10:54:53.62072+02:00
