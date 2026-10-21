@@ -47,7 +47,7 @@ import (
 	"github.com/gofrs/uuid/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/redpanda-data/benthos/v4/public/service"
-	"github.com/snowflakedb/gosnowflake"
+	"github.com/snowflakedb/gosnowflake/v2"
 	"github.com/youmark/pkcs8"
 	"golang.org/x/crypto/ssh"
 )
@@ -950,10 +950,10 @@ func (s *snowflakeWriter) WriteBatch(ctx context.Context, batch service.MessageB
 
 		filePath := path.Join(f.stagePath, fileName+"."+f.fileExtension)
 
-		_, err := s.db.ExecContext(gosnowflake.WithFileStream(
-			gosnowflake.WithFileTransferOptions(ctx, &gosnowflake.SnowflakeFileTransferOptions{RaisePutGetError: true}), //nolint:staticcheck // deprecated but still required on v1, see above
-			bytes.NewReader(fBytes),
-		), fmt.Sprintf(s.putQueryFormat, filePath, path.Join(f.stage, f.stagePath)))
+		_, err := s.db.ExecContext(
+			gosnowflake.WithFilePutStream(ctx, bytes.NewReader(fBytes)),
+			fmt.Sprintf(s.putQueryFormat, filePath, path.Join(f.stage, f.stagePath)),
+		)
 		if err != nil {
 			return fmt.Errorf("failed to run query: %w", err)
 		}

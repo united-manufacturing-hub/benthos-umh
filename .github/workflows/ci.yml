@@ -187,6 +187,22 @@ jobs:
       - name: Lint
         run: make lint
 
+  smoke-test-binary:
+    needs: detect-changes
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
+      - name: Build
+        run: make build
+      - name: Start the binary
+        run: tmp/bin/benthos --version
+
   test-opcua:
     needs: [detect-changes, lint]
     if: |
@@ -406,6 +422,7 @@ jobs:
       - fossa
       - license-eye
       - lint
+      - smoke-test-binary
       - test-opcua
       - test-modbus
       - test-s7
