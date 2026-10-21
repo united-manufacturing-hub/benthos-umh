@@ -189,7 +189,7 @@ jobs:
 
   smoke-test-binary:
     needs: detect-changes
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: depot-ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout
