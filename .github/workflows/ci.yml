@@ -415,6 +415,65 @@ jobs:
        needs.detect-changes.outputs.gomod == 'true')
     uses: ./.github/workflows/test-pkg.yml
 
+  # Posts the JUnit reports of all test jobs as one comment on the pull request.
+  # Not part of the required checks: a failure to post must not block a merge.
+  test-report:
+    name: Test Report
+    needs:
+      - test-opcua
+      - test-modbus
+      - test-s7
+      - test-sparkplug
+      - test-eip
+      - test-sensorconnect
+      - test-tag-processor
+      - test-topic-browser
+      - test-uns
+      - test-nodered-js
+      - test-stream-processor
+      - test-downsampler
+      - test-classic-to-core
+      - test-snowflake-put
+      - test-historian
+      - test-ads
+      - test-pkg
+    if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+    # Using ubuntu-latest here on purpose, since it is faster for artifacts related interactions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Download test reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: test-report-*
+          path: test-reports
+          merge-multiple: true
+      - name: Post test report
+        uses: ctrf-io/github-test-reporter@dbb08957b5b2af918b39136ab2c5532002c7649b # v1.3.2
+        with:
+          report-path: test-reports/*.xml
+          title: benthos-umh Test Results
+          summary-report: true
+          failed-folded-report: true
+          pull-request: true
+          overwrite-comment: true
+          integrations-config: |
+            {
+              "junit-to-ctrf": {
+                "enabled": true,
+                "action": "convert",
+                "options": {
+                  "output": "./ctrf-reports/ctrf-report.json",
+                  "toolname": "junit-to-ctrf",
+                  "useSuiteName": true
+                }
+              }
+            }
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
   result:
     name: Check Required Steps
     needs:
