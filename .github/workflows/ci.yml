@@ -450,7 +450,10 @@ jobs:
           pattern: test-report-*
           path: test-reports
           merge-multiple: true
+      # No reports exist when the path filter skipped every test job. The JUnit
+      # conversion fails on an empty glob, whatever exit-on-no-files says.
       - name: Post test report
+        if: ${{ hashFiles('test-reports/*.xml') != '' }}
         uses: ctrf-io/github-test-reporter@dbb08957b5b2af918b39136ab2c5532002c7649b # v1.3.2
         with:
           report-path: test-reports/*.xml
