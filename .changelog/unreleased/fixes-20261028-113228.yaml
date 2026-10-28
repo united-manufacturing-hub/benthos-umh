@@ -1,0 +1,3 @@
+kind: fixes
+body: Beckhoff ADS symbol names are cut at the first NUL byte, so padding after the name no longer ends up in the symbol name
+time: 2026-10-28T11:32:28.585686+01:00
