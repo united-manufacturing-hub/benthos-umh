@@ -13,11 +13,17 @@
 # limitations under the License.
 include ./Makefile.Common
 
+# In CI, each test target writes a JUnit report named after the target.
+# ci.yml collects the reports and posts them as a comment on the pull request.
+ifeq ($(CI), true)
+JUNIT_REPORT = test-reports/$@.xml
+endif
+
 GINKGO_CMD=go run github.com/onsi/ginkgo/v2/ginkgo
-GINKGO_FLAGS=-r --output-interceptor-mode=none -trace -p --randomize-all --cover --coverprofile=cover.profile
+GINKGO_FLAGS=-r --output-interceptor-mode=none -trace -p --randomize-all --cover --coverprofile=cover.profile $(if $(JUNIT_REPORT),--junit-report=$(JUNIT_REPORT))
 GINKGO_SERIAL_FLAGS=$(GINKGO_FLAGS) --procs=1
 
-GOTESTSUM_FLAGS=--format pkgname -- -race -coverprofile=cover.profile
+GOTESTSUM_FLAGS=--format pkgname $(if $(JUNIT_REPORT),--junitfile $(JUNIT_REPORT)) -- -race -coverprofile=cover.profile
 
 BENTHOS_BIN := tmp/bin/benthos
 LOG_LEVEL ?= INFO
