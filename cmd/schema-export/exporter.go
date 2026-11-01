@@ -150,6 +150,7 @@ func extractFields(configObj map[string]interface{}) (map[string]FieldSpec, []st
 			Required:    !getBool(fieldMap, "is_optional") && !hasDefault(fieldMap),
 			Advanced:    getBool(fieldMap, "is_advanced"),
 			Deprecated:  getBool(fieldMap, "is_deprecated"),
+			Secret:      getBool(fieldMap, "is_secret"),
 		}
 
 		// Skip fields with empty names to avoid map key collision
@@ -211,6 +212,7 @@ func extractFieldsArray(childFields []interface{}) []FieldSpec {
 			Required:    !getBool(fieldMap, "is_optional") && !hasDefault(fieldMap),
 			Advanced:    getBool(fieldMap, "is_advanced"),
 			Deprecated:  getBool(fieldMap, "is_deprecated"),
+			Secret:      getBool(fieldMap, "is_secret"),
 		}
 
 		// Handle default value

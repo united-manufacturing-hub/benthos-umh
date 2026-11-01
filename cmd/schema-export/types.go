@@ -102,7 +102,10 @@ type FieldSpec struct {
 	Examples []interface{} `json:"examples,omitempty"`
 	Options  []string      `json:"options,omitempty"`
 	// Advanced hides the field behind the form's advanced toggle.
-	Advanced   bool        `json:"advanced,omitempty"`
-	Deprecated bool        `json:"deprecated,omitempty"`
-	Children   []FieldSpec `json:"children,omitempty"` // For nested objects/arrays
+	Advanced   bool `json:"advanced,omitempty"`
+	Deprecated bool `json:"deprecated,omitempty"`
+	// Secret makes the Management Console mask the value in the form.
+	// A field gets it from .Secret() in the plugin spec.
+	Secret   bool        `json:"secret,omitempty"`
+	Children []FieldSpec `json:"children,omitempty"` // For nested objects/arrays
 }
