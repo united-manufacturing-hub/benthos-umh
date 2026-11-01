@@ -389,7 +389,9 @@ var _ = Describe("extractFields secret flag", func() {
 		Expect(fields["password"].Secret).To(BeTrue())
 		Expect(fields["username"].Secret).To(BeFalse())
 	})
+})
 
+var _ = Describe("generateSchemas secret flag", func() {
 	It("should flag secret fields in the generated schema of the registered plugins", func() {
 		schema, err := generateSchemas()
 		Expect(err).NotTo(HaveOccurred())
@@ -407,7 +409,9 @@ var _ = Describe("extractFields secret flag", func() {
 
 		Expect(secrets).To(BeNumerically(">", 0))
 	})
+})
 
+var _ = Describe("FieldSpec JSON secret key", func() {
 	It("should write secret into the benthos-format JSON only for secret fields", func() {
 		secret, err := json.Marshal(FieldSpec{Name: "password", Secret: true})
 		Expect(err).NotTo(HaveOccurred())

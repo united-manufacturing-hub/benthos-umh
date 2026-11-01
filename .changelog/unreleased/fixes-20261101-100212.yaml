@@ -1,3 +1,3 @@
 kind: fixes
-body: The schema export now flags secret fields such as passwords, so the Management Console can hide them in the visual configuration (ENG-6590)
+body: The Management Console now masks passwords and other secret fields in the visual bridge configuration (ENG-6590)
 time: 2026-11-01T10:02:12.3925+01:00
