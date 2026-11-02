@@ -246,6 +246,17 @@ var _ = Describe("OT write engine", func() {
 		Expect(device.closes).To(Equal(0))
 	})
 
+	It("reports a request the device cannot take as invalid_value and keeps the session", func() {
+		device.writeErr = fmt.Errorf("%w: request exceeds the PDU size", ErrInvalidValue)
+		output := newFakeOutput(twoMappings, device)
+		Expect(output.Connect(ctx)).To(Succeed())
+
+		err := output.Write(ctx, message(`{"recipe": {"speed": 42}, "ready": 1}`))
+
+		Expect(reasonOf(err)).To(Equal(ReasonInvalidValue), "got %v", err)
+		Expect(device.closes).To(Equal(0))
+	})
+
 	It("drops the session on a transport error and reconnects on Connect", func() {
 		device.writeErr = fmt.Errorf("%w: connection reset", ErrConnectionLost)
 		output := newFakeOutput(twoMappings, device)

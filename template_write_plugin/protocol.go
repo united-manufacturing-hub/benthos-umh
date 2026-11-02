@@ -83,9 +83,11 @@ type Dialer[P any] interface {
 
 // Session is one open connection, used for writing.
 //
-// Write must wrap transport failures with ErrConnectionLost and device-side
-// refusals with ErrRejected. Any other error counts as a lost connection, so
-// an unclassified library error never leaves a broken session in use.
+// Write must wrap transport failures with ErrConnectionLost, device-side
+// refusals with ErrRejected, and a request the session knows the device cannot
+// take, such as one larger than the negotiated PDU, with ErrInvalidValue. Any
+// other error counts as a lost connection, so an unclassified library error
+// never leaves a broken session in use.
 type Session[P any] interface {
 	Write(ctx context.Context, points []P) error
 	Close() error

@@ -235,11 +235,12 @@ func (o *output[P]) writeBatch(ctx context.Context, batch []P) error {
 	return nil
 }
 
-// classify keeps device refusals as WriteErrors and turns everything else
-// into a reconnect, so an unclassified library error never leaves a broken
-// session in use.
+// classify keeps device refusals and requests the device cannot take as
+// WriteErrors, and turns everything else into a reconnect, so an unclassified
+// library error never leaves a broken session in use. A request that can never
+// fit must not loop through reconnects.
 func (o *output[P]) classify(operation string, address string, err error) error {
-	if errors.Is(err, ErrRejected) {
+	if errors.Is(err, ErrRejected) || errors.Is(err, ErrInvalidValue) {
 		return newWriteError(address, err)
 	}
 	o.log.Errorf("Device %s failed, reconnecting: %v", operation, err)
