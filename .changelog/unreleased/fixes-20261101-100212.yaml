@@ -1,3 +1,0 @@
-kind: fixes
-body: The Management Console now masks passwords and other secret fields in the visual bridge configuration (ENG-6590)
-time: 2026-11-01T10:02:12.3925+01:00
