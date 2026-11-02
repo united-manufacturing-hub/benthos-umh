@@ -99,9 +99,12 @@ jobs:
 
   test:
     needs: validate
+    # A called workflow gets at most the permissions granted here, checked before
+    # any job runs. ci.yml's test-report job declares pull-requests: write, so it
+    # must be granted even though test-report only runs on pull requests.
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write
     uses: ./.github/workflows/ci.yml
     with:
       full_run: true
@@ -129,6 +132,8 @@ jobs:
 
   build-binaries:
     needs: test
+    permissions:
+      contents: read
     timeout-minutes: 20
     strategy:
       matrix:
@@ -246,6 +251,10 @@ jobs:
   update-umh-core:
     needs: release
     if: needs.release.result == 'success'
+    # Reads the release notes with github.token. Writes to umh-core and
+    # ManagementConsole go through a GitHub App token.
+    permissions:
+      contents: read
     uses: ./.github/workflows/update-umh-core-version.yml
     with:
       tag: ${{ github.ref_name }}
