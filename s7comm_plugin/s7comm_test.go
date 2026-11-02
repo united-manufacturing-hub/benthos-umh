@@ -26,6 +26,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/robinson/gos7"
 
 	"github.com/united-manufacturing-hub/benthos-umh/s7comm_plugin"
 )
@@ -172,7 +173,49 @@ var _ = Describe("S7Comm Plugin Unittests", func() {
 			Expect(err.Error()).To(ContainSubstring("exceeds PDU size"))
 		})
 	})
+
+	Describe("Reading a batch with an address the PLC rejects", func() {
+		It("emits only the addresses the PLC answered", func() {
+			parsedAddresses, err := s7comm_plugin.ParseAddresses([]string{"DB1.W0", "DB999.W0"})
+			Expect(err).NotTo(HaveOccurred())
+			input := &s7comm_plugin.S7CommInput{
+				Client:  &rejectingS7Client{rejectedDBNumber: 999, answeredBytes: wordFortyTwo},
+				Batches: [][]s7comm_plugin.S7DataItemWithAddressAndConverter{parsedAddresses},
+			}
+
+			batch, _, err := input.ReadBatch(context.Background())
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(batch).To(HaveLen(1))
+			address, _ := batch[0].MetaGet("s7_address")
+			Expect(address).To(Equal("DB1.W0"))
+			payload, err := batch[0].AsBytes()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(payload)).To(Equal("42"))
+		})
+	})
 })
+
+var wordFortyTwo = []byte{0x00, 0x2A}
+
+// rejectingS7Client answers AGReadMulti the way gos7 does when the PLC
+// rejects single items: it sets Error on those items and returns nil.
+type rejectingS7Client struct {
+	gos7.Client
+	rejectedDBNumber int
+	answeredBytes    []byte
+}
+
+func (c *rejectingS7Client) AGReadMulti(dataItems []gos7.S7DataItem, _ int) error {
+	for index := range dataItems {
+		if dataItems[index].DBNumber == c.rejectedDBNumber {
+			dataItems[index].Error = "CPU : Address out of range"
+			continue
+		}
+		copy(dataItems[index].Data, c.answeredBytes)
+	}
+	return nil
+}
 
 var _ = Describe("S7Comm Test Against Local PLC", Serial, func() {
 	Describe("Communication with a Remote S7 Instance", func() {
