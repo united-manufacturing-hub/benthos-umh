@@ -150,8 +150,8 @@ func escapeString(data string) string {
 	var builder strings.Builder
 	builder.Grow(len(data) + 2 + len(data)/5) // string length + 2 slots for quotes + 20% headroom for escaped characters to avoid additional allocation
 	builder.WriteByte('\'')
-	for _, rune := range data {
-		switch rune {
+	for _, r := range data {
+		switch r {
 		case '\'':
 			builder.WriteString(`\'`)
 		case '\\':
@@ -167,7 +167,7 @@ func escapeString(data string) string {
 		case '\f':
 			builder.WriteString(`\f`)
 		default:
-			builder.WriteRune(rune)
+			builder.WriteRune(r)
 		}
 	}
 	builder.WriteByte('\'')
