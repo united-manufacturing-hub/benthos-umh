@@ -55,6 +55,7 @@ jobs:
       snowflake_put: ${{ steps.filter.outputs.snowflake_put }}
       historian: ${{ steps.filter.outputs.historian }}
       ads: ${{ steps.filter.outputs.ads }}
+      template_write: ${{ steps.filter.outputs.template_write }}
       pkg: ${{ steps.filter.outputs.pkg }}
       cmd: ${{ steps.filter.outputs.cmd }}
       gomod: ${{ steps.filter.outputs.gomod }}
@@ -122,6 +123,9 @@ jobs:
             ads:
               - 'beckhoff_ads_plugin/**'
               - '!beckhoff_ads_plugin/**/*.md'
+            template_write:
+              - 'template_write_plugin/**'
+              - '!template_write_plugin/**/*.md'
             pkg:
               - 'pkg/**'
             cmd:
@@ -405,6 +409,17 @@ jobs:
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-ads.yml
 
+  test-template-write:
+    needs: [detect-changes, lint]
+    if: |
+      always() &&
+      needs.lint.result == 'success' &&
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.template_write == 'true' ||
+       needs.detect-changes.outputs.gomod == 'true' ||
+       needs.detect-changes.outputs.cmd == 'true')
+    uses: ./.github/workflows/test-template-write.yml
+
   test-pkg:
     needs: [detect-changes, lint]
     if: |
@@ -436,6 +451,7 @@ jobs:
       - test-snowflake-put
       - test-historian
       - test-ads
+      - test-template-write
       - test-pkg
     if: ${{ !cancelled() && github.event_name == 'pull_request' }}
     # Using ubuntu-latest here on purpose, since it is faster for artifacts related interactions
@@ -501,6 +517,7 @@ jobs:
       - test-snowflake-put
       - test-historian
       - test-ads
+      - test-template-write
       - test-pkg
     if: always()
     runs-on: ubuntu-latest
