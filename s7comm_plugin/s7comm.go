@@ -410,7 +410,16 @@ func (s *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 		}
 
 		// Read the data from the batch and convert it using the converter function
-		for _, item := range b {
+		for itemIndex, item := range b {
+			// gos7 sets Error on each item the PLC rejects and leaves its Data
+			// unchanged, so the bytes from an earlier read would go out as its value
+			readError := batchToRead[itemIndex].Error
+			if readError != "" {
+				// non-fatal: the PLC answered the other items of this batch
+				s.Log.Warnf("Skipping %s: %s", item.Address, readError)
+				continue
+			}
+
 			// Execute the converter function to get the converted data
 			convertedData := item.ConverterFunc(item.Item.Data)
 
