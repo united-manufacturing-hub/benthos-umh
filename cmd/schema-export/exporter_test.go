@@ -364,7 +364,84 @@ var _ = Describe("extractFields", func() {
 	})
 })
 
+var _ = Describe("extractFields secret flag", func() {
+	It("should keep is_secret and leave other fields unflagged", func() {
+		configObj := map[string]interface{}{
+			"children": []interface{}{
+				map[string]interface{}{
+					"name":        "username",
+					"type":        "string",
+					"kind":        "scalar",
+					"is_optional": true,
+				},
+				map[string]interface{}{
+					"name":        "password",
+					"type":        "string",
+					"kind":        "scalar",
+					"is_optional": true,
+					"is_secret":   true,
+				},
+			},
+		}
+
+		fields, _ := extractFields(configObj)
+
+		Expect(fields["password"].Secret).To(BeTrue())
+		Expect(fields["username"].Secret).To(BeFalse())
+	})
+})
+
+var _ = Describe("generateSchemas secret flag", func() {
+	It("should flag secret fields in the generated schema of the registered plugins", func() {
+		schema, err := generateSchemas()
+		Expect(err).NotTo(HaveOccurred())
+
+		var secrets int
+		for _, plugins := range []map[string]PluginSpec{schema.Inputs, schema.Processors, schema.Outputs} {
+			for _, plugin := range plugins {
+				for _, field := range plugin.Config {
+					if field.Secret {
+						secrets++
+					}
+				}
+			}
+		}
+
+		Expect(secrets).To(BeNumerically(">", 0))
+	})
+})
+
+var _ = Describe("FieldSpec JSON secret key", func() {
+	It("should write secret into the benthos-format JSON only for secret fields", func() {
+		secret, err := json.Marshal(FieldSpec{Name: "password", Secret: true})
+		Expect(err).NotTo(HaveOccurred())
+		plain, err := json.Marshal(FieldSpec{Name: "username"})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(string(secret)).To(ContainSubstring(`"secret":true`))
+		Expect(string(plain)).NotTo(ContainSubstring("secret"))
+	})
+})
+
 var _ = Describe("extractFieldsArray", func() {
+	Context("when a child field is secret", func() {
+		It("should keep is_secret on the child", func() {
+			childFields := []interface{}{
+				map[string]interface{}{
+					"name":      "token",
+					"type":      "string",
+					"kind":      "scalar",
+					"is_secret": true,
+				},
+			}
+
+			result := extractFieldsArray(childFields)
+
+			Expect(result).To(HaveLen(1))
+			Expect(result[0].Secret).To(BeTrue())
+		})
+	})
+
 	Context("when given an array of field definitions", func() {
 		It("should convert to FieldSpec slice", func() {
 			childFields := []interface{}{

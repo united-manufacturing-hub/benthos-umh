@@ -110,6 +110,27 @@ var _ = Describe("JSON Schema Generator", func() {
 					Expect(result["x-advanced"]).To(BeTrue())
 				},
 			),
+			Entry("marks secret fields with x-secret",
+				FieldSpec{
+					Name:   "password",
+					Type:   "string",
+					Secret: true,
+				},
+				"string",
+				func(result map[string]interface{}) {
+					Expect(result).To(HaveKeyWithValue("x-secret", true))
+				},
+			),
+			Entry("leaves x-secret off fields that are not secret",
+				FieldSpec{
+					Name: "username",
+					Type: "string",
+				},
+				"string",
+				func(result map[string]interface{}) {
+					Expect(result).NotTo(HaveKey("x-secret"))
+				},
+			),
 			Entry("adds enum for fields with options",
 				FieldSpec{
 					Name:        "mode",
