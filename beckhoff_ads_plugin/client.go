@@ -72,6 +72,10 @@ type SessionConfig struct {
 
 	// OnSessionEvent runs on a library goroutine: must not block.
 	OnSessionEvent func(ev SessionEvent, reason string)
+
+	// OnResubscribeFailed runs on a library goroutine each time a heartbeat
+	// re-subscribe fails to restore delivery: must not block.
+	OnResubscribeFailed func()
 }
 
 type NotifyConfig struct {
@@ -90,8 +94,8 @@ type SymbolInfo struct {
 // NotifyResult normalises per-symbol registration outcome.
 type NotifyResult struct {
 	SymbolName string
-	Registered bool   // Skipped==false && Error==NoErrors
-	Skipped    bool   // symbol not resolvable (bad name)
+	Registered bool   // Skipped==nil && Error==NoErrors
+	Skipped    error  // the library did not send this symbol; the cause, for classify
 	Code       uint32 // raw ADS return code; 0 when Registered
 }
 
@@ -100,7 +104,7 @@ type NotifyResult struct {
 // bad name costs that one tag rather than the whole poll.
 type BatchReadError struct {
 	Requested int
-	Failed    []NotifyResult // same three-state shape: Skipped, else Code
+	Failed    []NotifyResult // same three-state shape: Skipped != nil, else Code
 }
 
 func (e *BatchReadError) Error() string {

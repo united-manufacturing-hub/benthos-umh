@@ -1351,7 +1351,8 @@ var _ = Describe("logConnectFailure", func() {
 
 var _ = Describe("connect retry gate", func() {
 	routeErr := fmt.Errorf("connect: %w", adsLib.ErrRouteNotServed)
-	activationErr := errors.New(`route "benthosADS-1.2.3.4" was registered but the PLC did not serve it within 10s (3 redials): timeout`)
+	// Connect returns an activation timeout wrapped like this (go-ads session.go:770).
+	activationErr := errors.New(`route registration during connect: route "benthosADS-1.2.3.4" was registered but the PLC did not serve it within 10s (3 redials): timeout`)
 
 	newInput := func() (*AdsCommInput, *[]capturedLog) {
 		log, recs := capturingLogger()
@@ -1364,7 +1365,10 @@ var _ = Describe("connect retry gate", func() {
 		},
 		Entry("the drop verdict", routeErr, true),
 		Entry("activation gave up", activationErr, true),
-		Entry("registration wrapped", errors.New("route registration during connect: boom"), true),
+		Entry("registration refused", errors.New("route registration failed during connect: route registration failed with error code: 1796"), true),
+		Entry("a registration wrapper alone is not a route fault", errors.New("route registration during connect: boom"), false),
+		Entry("a failed redial after registration is not a route fault",
+			fmt.Errorf("TCP reconnect after route registration failed: %w", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}), false),
 		Entry("a refused session is not a route fault", errors.New("ADS error 0x706"), false),
 		Entry("a dropped transport is not a route fault", adsLib.ErrTransportClosed, false),
 	)
@@ -1618,8 +1622,8 @@ var _ = Describe("setupNotifications", func() {
 		// go-ads reports this per symbol rather than as an error, so an
 		// all-skipped batch would otherwise look like a successful connect.
 		a := newInput(&fakeClient{notifyResults: []NotifyResult{
-			{SymbolName: "MAIN.a", Skipped: true},
-			{SymbolName: "MAIN.b", Skipped: true},
+			{SymbolName: "MAIN.a", Skipped: adsLib.ErrBatchSymbolUnresolved},
+			{SymbolName: "MAIN.b", Skipped: adsLib.ErrBatchSymbolUnresolved},
 		}})
 
 		Expect(a.setupNotifications(context.Background())).To(MatchError(ContainSubstring("no symbols registered")))
@@ -1639,7 +1643,7 @@ var _ = Describe("setupNotifications partial success", func() {
 			Symbols:          []PlcSymbol{{Name: "MAIN.ok"}, {Name: "MAIN.typo"}, {Name: "MAIN.refused"}},
 			client: &fakeClient{notifyResults: []NotifyResult{
 				{SymbolName: "MAIN.ok", Registered: true},
-				{SymbolName: "MAIN.typo", Skipped: true},
+				{SymbolName: "MAIN.typo", Skipped: adsLib.ErrBatchSymbolUnresolved},
 				{SymbolName: "MAIN.refused", Code: 0x70A},
 			}},
 		}
@@ -1695,7 +1699,7 @@ var _ = Describe("ReadBatch dispatch", func() {
 var _ = Describe("BatchReadError", func() {
 	It("counts the failures against the batch size", func() {
 		err := &BatchReadError{Requested: 40, Failed: []NotifyResult{
-			{SymbolName: "MAIN.typo", Skipped: true},
+			{SymbolName: "MAIN.typo", Skipped: adsLib.ErrBatchSymbolUnresolved},
 			{SymbolName: "MAIN.gone", Code: 0x710},
 		}}
 		Expect(err.Error()).To(Equal("2 of 40 symbols failed"))
@@ -2403,7 +2407,7 @@ var _ = Describe("waitForInitialSamples", func() {
 		err := a.waitForInitialSamples(context.Background(), []NotifyResult{
 			{SymbolName: "MAIN.a", Registered: true},
 			{SymbolName: "MAIN.b", Registered: true},
-		})
+		}, time.Minute)
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(a.pendingInitial).To(HaveLen(2), "both samples are held for the first ReadBatch")
@@ -2419,7 +2423,7 @@ var _ = Describe("waitForInitialSamples", func() {
 
 		Expect(a.waitForInitialSamples(context.Background(), []NotifyResult{
 			{SymbolName: ".nMasterCycleCounter", Registered: true},
-		})).To(Succeed())
+		}, time.Minute)).To(Succeed())
 		Expect(a.pendingInitial).To(HaveLen(1))
 	})
 
@@ -2429,8 +2433,8 @@ var _ = Describe("waitForInitialSamples", func() {
 
 		Expect(a.waitForInitialSamples(context.Background(), []NotifyResult{
 			{SymbolName: "MAIN.ok", Registered: true},
-			{SymbolName: "MAIN.rejected", Skipped: true},
-		})).To(Succeed())
+			{SymbolName: "MAIN.rejected", Skipped: adsLib.ErrBatchSymbolUnresolved},
+		}, time.Minute)).To(Succeed())
 		Expect(a.pendingInitial).To(HaveLen(1), "a rejected symbol never sends a sample")
 	})
 
@@ -2442,7 +2446,7 @@ var _ = Describe("waitForInitialSamples", func() {
 
 		Expect(a.waitForInitialSamples(context.Background(), []NotifyResult{
 			{SymbolName: "MAIN.a", Registered: true},
-		})).To(Succeed())
+		}, time.Minute)).To(Succeed())
 		Expect(a.pendingInitial).To(HaveLen(1))
 	})
 
@@ -2450,7 +2454,7 @@ var _ = Describe("waitForInitialSamples", func() {
 		a, _ := newInput()
 		a.pendingInitial = []*Update{{Variable: "MAIN.stale", Value: "1"}}
 
-		Expect(a.waitForInitialSamples(context.Background(), nil)).To(Succeed())
+		Expect(a.waitForInitialSamples(context.Background(), nil, time.Minute)).To(Succeed())
 		Expect(a.pendingInitial).To(BeEmpty(), "a reconnect must not replay the previous session")
 	})
 
@@ -2460,23 +2464,22 @@ var _ = Describe("waitForInitialSamples", func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		err := a.waitForInitialSamples(ctx, []NotifyResult{{SymbolName: "MAIN.silent", Registered: true}})
+		err := a.waitForInitialSamples(ctx, []NotifyResult{{SymbolName: "MAIN.silent", Registered: true}}, time.Minute)
 
 		Expect(err).To(MatchError(context.Canceled))
 		Expect(levelsOf(recs, slog.LevelWarn)).To(BeEmpty())
 	})
 
 	It("warns and lets the connect succeed when a registered symbol never sends", func() {
-		// Costs initialSampleWait: the timeout is floored there, so a real wait is
-		// the only way into this branch. Worth the wall clock -- this warn is what
-		// made the go-ads TC2 notification regression visible in the field.
+		// This warn is what made the go-ads TC2 notification regression visible
+		// in the field.
 		a, recs := newInput()
 		a.NotificationChan <- &Update{Variable: "MAIN.a", Value: "1"}
 
 		err := a.waitForInitialSamples(context.Background(), []NotifyResult{
 			{SymbolName: "MAIN.a", Registered: true},
 			{SymbolName: "MAIN.silent", Registered: true},
-		})
+		}, 50*time.Millisecond)
 
 		Expect(err).NotTo(HaveOccurred(), "a missing first sample must not fail the connect")
 		Expect(a.pendingInitial).To(HaveLen(1), "the sample that did arrive is still delivered")
@@ -2485,6 +2488,8 @@ var _ = Describe("waitForInitialSamples", func() {
 		Expect(*recs).To(ContainElement(SatisfyAll(
 			HaveField("Level", slog.LevelWarn),
 			HaveField("Msg", ContainSubstring("main.silent")),
+			HaveField("Attrs", HaveKeyWithValue("error_id", "ads::no_initial_samples")),
+			HaveField("Attrs", HaveKeyWithValue("error_class", "bug")),
 		)), "the warn has to name the symbols still missing")
 		Expect(*recs).NotTo(ContainElement(HaveField("Msg", ContainSubstring("main.a"))),
 			"a symbol that did report must not be listed as missing")

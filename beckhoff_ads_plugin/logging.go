@@ -23,9 +23,14 @@ import (
 
 // benthosLogHandler bridges go-ads slog records to a Benthos service.Logger.
 // Levels are taken as go-ads sets them; a second level policy here would drift.
+// Records at Warn and above get error_id and error_class (see error_class.go).
 type benthosLogHandler struct {
 	logger *service.Logger
 	attrs  []slog.Attr
+
+	// onResubscribeFailed runs on a go-ads goroutine for each failed heartbeat
+	// re-subscribe; nil when nobody tracks them.
+	onResubscribeFailed func()
 }
 
 func (h *benthosLogHandler) Enabled(_ context.Context, level slog.Level) bool {
@@ -35,14 +40,22 @@ func (h *benthosLogHandler) Enabled(_ context.Context, level slog.Level) bool {
 }
 
 func (h *benthosLogHandler) Handle(_ context.Context, r slog.Record) error {
-	var kvs []any
-	for _, a := range h.attrs {
-		kvs = append(kvs, a.Key, a.Value.Any())
-	}
+	attrs := append([]slog.Attr(nil), h.attrs...)
 	r.Attrs(func(a slog.Attr) bool {
-		kvs = append(kvs, a.Key, a.Value.Any())
+		attrs = append(attrs, a)
 		return true
 	})
+	kvs := make([]any, 0, 2*len(attrs)+4)
+	for _, a := range attrs {
+		kvs = append(kvs, a.Key, a.Value.Any())
+	}
+	if r.Level >= slog.LevelWarn {
+		c := classifyRecord(r.Message, attrs)
+		kvs = append(kvs, "error_id", c.ID, "error_class", c.Class)
+		if c == errResubscribeFailed && h.onResubscribeFailed != nil {
+			h.onResubscribeFailed()
+		}
+	}
 
 	l := h.logger
 	if len(kvs) > 0 {
@@ -67,7 +80,7 @@ func (h *benthosLogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	// parent overwrite each other's attributes via the shared backing array.
 	merged := make([]slog.Attr, 0, len(h.attrs)+len(attrs))
 	merged = append(append(merged, h.attrs...), attrs...)
-	return &benthosLogHandler{logger: h.logger, attrs: merged}
+	return &benthosLogHandler{logger: h.logger, attrs: merged, onResubscribeFailed: h.onResubscribeFailed}
 }
 
 func (h *benthosLogHandler) WithGroup(_ string) slog.Handler { return h }

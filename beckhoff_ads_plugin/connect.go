@@ -40,7 +40,7 @@ func (a *AdsCommInput) initSymbolIndex(ctx context.Context) {
 		}
 		info, err := a.client.GetSymbol(ctx, sym.Name)
 		if err != nil {
-			a.Log.Warnf("Failed to resolve metadata for ADS symbol %q: %v", sym.Name, err)
+			classifyOr(err, errSymbolConfig).on(a.Log).Warnf("Failed to resolve metadata for ADS symbol %q: %v", sym.Name, err)
 			continue
 		}
 		sym.DataType = info.DataType
@@ -94,20 +94,20 @@ func (a *AdsCommInput) setupNotifications(ctx context.Context) error {
 		failed = append(failed, r)
 	}
 	if registered == 0 && len(cfgs) > 0 {
-		return fmt.Errorf("no symbols registered for notifications (%d symbols all failed to resolve)", len(cfgs))
+		return fmt.Errorf("%w (%d symbols all failed to resolve)", errNoSymbolsRegistered, len(cfgs))
 	}
 	for _, r := range failed {
-		if r.Skipped {
-			a.Log.Warnf("Notification symbol %q skipped (check symbol name)", r.SymbolName)
+		if r.Skipped != nil {
+			classifyOr(r.Skipped, errSymbolConfig).on(a.Log).Warnf("Notification symbol %q skipped (check symbol name)", r.SymbolName)
 			continue
 		}
-		a.Log.Warnf("Notification symbol %q rejected by PLC: ADS error 0x%X", r.SymbolName, r.Code)
+		errSymbolConfig.on(a.Log).Warnf("Notification symbol %q rejected by PLC: ADS error 0x%X", r.SymbolName, r.Code)
 	}
 	// Same message text the library logs after a reconnect re-subscribe, so the
 	// first connect and a recovery read identically.
 	a.Log.Infof("Registering notifications succeeded for %d/%d symbols", registered, len(cfgs))
 
-	return a.waitForInitialSamples(ctx, results)
+	return a.waitForInitialSamples(ctx, results, a.initialSampleTimeout())
 }
 
 // waitForInitialSamples buffers the initial sample from each registered symbol
@@ -125,7 +125,7 @@ func (a *AdsCommInput) initialSampleTimeout() time.Duration {
 	return timeout
 }
 
-func (a *AdsCommInput) waitForInitialSamples(ctx context.Context, results []NotifyResult) error {
+func (a *AdsCommInput) waitForInitialSamples(ctx context.Context, results []NotifyResult, timeout time.Duration) error {
 	a.pendingInitial = nil
 	needed := make(map[string]bool, len(results))
 	for _, r := range results {
@@ -133,7 +133,7 @@ func (a *AdsCommInput) waitForInitialSamples(ctx context.Context, results []Noti
 			needed[strings.ToLower(r.SymbolName)] = true
 		}
 	}
-	initialCtx, initialCancel := context.WithTimeout(context.Background(), a.initialSampleTimeout())
+	initialCtx, initialCancel := context.WithTimeout(context.Background(), timeout)
 	defer initialCancel()
 	for len(needed) > 0 {
 		select {
@@ -147,7 +147,7 @@ func (a *AdsCommInput) waitForInitialSamples(ctx context.Context, results []Noti
 			if shuttingDown(ctx) {
 				return ctx.Err()
 			}
-			a.Log.Warnf("Timed out waiting for initial samples; %d symbols not yet received: %v", len(needed), needed)
+			errNoInitialSamples.on(a.Log).Warnf("Timed out waiting for initial samples; %d symbols not yet received: %v", len(needed), needed)
 			return nil
 		case <-ctx.Done():
 			return ctx.Err()
