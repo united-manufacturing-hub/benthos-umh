@@ -1,0 +1,3 @@
+kind: improvements
+body: ADS warnings and errors now carry error_id and error_class in the log, and a failed connect carries both in its error text, so umh-core can report only the faults that UMH has to fix (ENG-7561)
+time: 2026-11-04T09:14:53.374199+01:00
