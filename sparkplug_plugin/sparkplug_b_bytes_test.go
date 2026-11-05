@@ -111,4 +111,48 @@ var _ = Describe("Sparkplug B datatypes beyond the scalar types", func() {
 		datatypeName, _ := batch[0].MetaGet("spb_datatype")
 		Expect(datatypeName).To(Equal("Bytes"))
 	})
+
+	DescribeTable("counts a value the UNS conversion cannot represent as a drop",
+		func(datatype uint32, value any) {
+			metric := &sparkplugb.Payload_Metric{
+				Name:     stringPtr("structured"),
+				Alias:    uint64Ptr(1),
+				Datatype: uint32Ptr(datatype),
+			}
+			switch typedValue := value.(type) {
+			case *sparkplugb.Payload_Metric_DatasetValue:
+				metric.Value = typedValue
+			case *sparkplugb.Payload_Metric_TemplateValue:
+				metric.Value = typedValue
+			default:
+				Fail("unsupported value type in test entry")
+			}
+
+			firstMessage := birthMessage(metric)
+			secondMessage := birthMessage(metric)
+
+			Expect(wrapper.GetUnsupportedValueDropsCount()).To(Equal(int64(2)))
+			firstStatus, _ := firstMessage.MetaGet("umh_conversion_status")
+			secondStatus, _ := secondMessage.MetaGet("umh_conversion_status")
+			Expect(firstStatus).To(Equal("failed_unsupported_type"))
+			Expect(secondStatus).To(Equal("failed_unsupported_type"))
+		},
+		Entry("DataSet", sparkplugplugin.SparkplugDataTypeDataSet,
+			&sparkplugb.Payload_Metric_DatasetValue{DatasetValue: &sparkplugb.Payload_DataSet{}}),
+		Entry("Template", sparkplugplugin.SparkplugDataTypeTemplate,
+			&sparkplugb.Payload_Metric_TemplateValue{TemplateValue: &sparkplugb.Payload_Template{}}),
+	)
+
+	It("does not count a metric marked is_null as a drop", func() {
+		msg := birthMessage(&sparkplugb.Payload_Metric{
+			Name:     stringPtr("payload"),
+			Alias:    uint64Ptr(1),
+			Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeBytes),
+			IsNull:   boolPtr(true),
+		})
+
+		Expect(wrapper.GetUnsupportedValueDropsCount()).To(BeZero())
+		conversionStatus, _ := msg.MetaGet("umh_conversion_status")
+		Expect(conversionStatus).To(Equal("failed_no_value"))
+	})
 })

@@ -219,6 +219,10 @@ type sparkplugInput struct {
 	discoveryRebirths       *service.MetricCounter // REBIRTH requests sent for discovery
 	sequenceGapRebirths     *service.MetricCounter // REBIRTH requests sent because of a sequence number gap
 	aliasRebirths           Counter                // REBIRTH requests sent because DATA aliases were unresolved
+	unsupportedValueDrops   Counter
+
+	unsupportedValueWarnedMu sync.Mutex
+	unsupportedValueWarned   map[string]struct{}
 
 	// Extension decoding (ENG-5229); nil when decode_extensions is unset.
 	extDecoder            *extensionDecoder
@@ -479,6 +483,8 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 		discoveryRebirths:       mgr.Metrics().NewCounter("discovery_rebirths"),
 		sequenceGapRebirths:     mgr.Metrics().NewCounter("sequence_gap_rebirths"),
 		aliasRebirths:           mgr.Metrics().NewCounter("alias_rebirths"),
+		unsupportedValueDrops:   mgr.Metrics().NewCounter("unsupported_value_drops"),
+		unsupportedValueWarned:  make(map[string]struct{}),
 		extDecoder:              extDecoder,
 		extensionDecodeErrors:   mgr.Metrics().NewCounter("extension_decode_errors"),
 	}
@@ -1591,6 +1597,11 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 
 	// Extract raw value for conversion
 	rawValue := s.extractMetricValueRaw(metric)
+	if rawValue == nil && hasUnsupportedValue(metric) {
+		msg.MetaSet("umh_conversion_status", "failed_unsupported_type")
+		s.noteUnsupportedValueDrop(metric)
+		return
+	}
 	if rawValue == nil {
 		msg.MetaSet("umh_conversion_status", "failed_no_value")
 		s.logger.Debugf("UMH conversion failed: no extractable value from metric")
@@ -1684,6 +1695,39 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 	}
 
 	s.logger.Debugf("Successfully added UMH metadata for metric %s -> %s", sparkplugMsg.MetricName, umhMsg.Topic.String())
+}
+
+func hasUnsupportedValue(metric *sparkplugb.Payload_Metric) bool {
+	if metric.IsNull != nil && *metric.IsNull {
+		return false
+	}
+	switch metric.GetValue().(type) {
+	case *sparkplugb.Payload_Metric_DatasetValue,
+		*sparkplugb.Payload_Metric_TemplateValue,
+		*sparkplugb.Payload_Metric_ExtensionValue:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *sparkplugInput) noteUnsupportedValueDrop(metric *sparkplugb.Payload_Metric) {
+	s.unsupportedValueDrops.Incr(1)
+
+	metricName := metric.GetName()
+	s.unsupportedValueWarnedMu.Lock()
+	_, alreadyWarned := s.unsupportedValueWarned[metricName]
+	s.unsupportedValueWarned[metricName] = struct{}{}
+	s.unsupportedValueWarnedMu.Unlock()
+	if alreadyWarned {
+		return
+	}
+
+	datatypeName := "Unknown"
+	if metric.Datatype != nil {
+		datatypeName = s.getDataTypeName(*metric.Datatype)
+	}
+	s.logger.Warnf("Sparkplug B metric %q has datatype %s, which cannot be written to the UNS: its values are dropped and counted in unsupported_value_drops. This warning is logged once per metric.", metricName, datatypeName)
 }
 
 // extractMetricValueRaw extracts the raw value from a Sparkplug metric without JSON wrapping
