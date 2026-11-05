@@ -45,6 +45,11 @@ const (
 	SparkplugDataTypeString   = uint32(12)
 	SparkplugDataTypeDateTime = uint32(13)
 	SparkplugDataTypeText     = uint32(14)
+	SparkplugDataTypeUUID     = uint32(15)
+	SparkplugDataTypeDataSet  = uint32(16)
+	SparkplugDataTypeBytes    = uint32(17)
+	SparkplugDataTypeFile     = uint32(18)
+	SparkplugDataTypeTemplate = uint32(19)
 )
 
 func init() {
@@ -1354,6 +1359,16 @@ func (s *sparkplugInput) getDataTypeName(datatype uint32) string {
 		return "DateTime"
 	case SparkplugDataTypeText:
 		return "Text"
+	case SparkplugDataTypeUUID:
+		return "UUID"
+	case SparkplugDataTypeDataSet:
+		return "DataSet"
+	case SparkplugDataTypeBytes:
+		return "Bytes"
+	case SparkplugDataTypeFile:
+		return "File"
+	case SparkplugDataTypeTemplate:
+		return "Template"
 	default:
 		return "Unknown"
 	}
