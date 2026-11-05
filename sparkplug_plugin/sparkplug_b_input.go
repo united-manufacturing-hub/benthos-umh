@@ -16,6 +16,7 @@ package sparkplug_plugin
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -1286,6 +1287,8 @@ func (s *sparkplugInput) extractMetricValue(metric *sparkplugb.Payload_Metric) [
 			result["value"] = v.BooleanValue
 		case *sparkplugb.Payload_Metric_StringValue:
 			result["value"] = v.StringValue
+		case *sparkplugb.Payload_Metric_BytesValue:
+			result["value"] = base64.StdEncoding.EncodeToString(v.BytesValue)
 		default:
 			result["value"] = nil
 		}
@@ -1705,6 +1708,8 @@ func (s *sparkplugInput) extractMetricValueRaw(metric *sparkplugb.Payload_Metric
 			return v.BooleanValue
 		case *sparkplugb.Payload_Metric_StringValue:
 			return v.StringValue
+		case *sparkplugb.Payload_Metric_BytesValue:
+			return base64.StdEncoding.EncodeToString(v.BytesValue)
 		default:
 			return nil
 		}

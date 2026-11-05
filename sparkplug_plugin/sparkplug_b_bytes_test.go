@@ -17,6 +17,8 @@
 package sparkplug_plugin_test
 
 import (
+	"encoding/json"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -44,6 +46,14 @@ var _ = Describe("Sparkplug B datatypes beyond the scalar types", func() {
 		return batch[0]
 	}
 
+	messageBody := func(msg *service.Message) map[string]any {
+		raw, err := msg.AsBytes()
+		Expect(err).NotTo(HaveOccurred())
+		var body map[string]any
+		Expect(json.Unmarshal(raw, &body)).To(Succeed())
+		return body
+	}
+
 	DescribeTable("names the datatype in spb_datatype",
 		func(datatype uint32, expectedName string) {
 			msg := birthMessage(&sparkplugb.Payload_Metric{
@@ -62,4 +72,43 @@ var _ = Describe("Sparkplug B datatypes beyond the scalar types", func() {
 		Entry("File", sparkplugplugin.SparkplugDataTypeFile, "File"),
 		Entry("Template", sparkplugplugin.SparkplugDataTypeTemplate, "Template"),
 	)
+
+	DescribeTable("decodes a bytes_value as a base64 string",
+		func(datatype uint32, bytesValue []byte, expectedBase64 string) {
+			msg := birthMessage(&sparkplugb.Payload_Metric{
+				Name:     stringPtr("payload"),
+				Alias:    uint64Ptr(1),
+				Datatype: uint32Ptr(datatype),
+				Value:    &sparkplugb.Payload_Metric_BytesValue{BytesValue: bytesValue},
+			})
+
+			Expect(messageBody(msg)).To(HaveKeyWithValue("value", expectedBase64))
+			conversionStatus, _ := msg.MetaGet("umh_conversion_status")
+			Expect(conversionStatus).To(Equal("success"))
+		},
+		Entry("Bytes", sparkplugplugin.SparkplugDataTypeBytes, []byte{0x00, 0x01, 0xff}, "AAH/"),
+		Entry("File", sparkplugplugin.SparkplugDataTypeFile, []byte("line one\n"), "bGluZSBvbmUK"),
+		Entry("empty Bytes stays an empty string, not null", sparkplugplugin.SparkplugDataTypeBytes, []byte{}, ""),
+	)
+
+	It("decodes a Bytes value on an alias-only NDATA using the datatype from NBIRTH", func() {
+		birthMessage(&sparkplugb.Payload_Metric{
+			Name:     stringPtr("payload"),
+			Alias:    uint64Ptr(1),
+			Datatype: uint32Ptr(sparkplugplugin.SparkplugDataTypeBytes),
+			Value:    &sparkplugb.Payload_Metric_BytesValue{BytesValue: []byte{0x00}},
+		})
+
+		dataPayload := &sparkplugb.Payload{Seq: uint64Ptr(1), Metrics: []*sparkplugb.Payload_Metric{{
+			Alias: uint64Ptr(1),
+			Value: &sparkplugb.Payload_Metric_BytesValue{BytesValue: []byte{0x00, 0x01, 0xff}},
+		}}}
+		wrapper.ProcessDataMessage(sparkplugplugin.MessageTypeNDATA, dataPayload, topicInfo)
+		batch := wrapper.CreateSplitMessages(dataPayload, sparkplugplugin.MessageTypeNDATA, topicInfo, "spBv1.0/Factory/NDATA/Line1")
+		Expect(batch).To(HaveLen(1))
+
+		Expect(messageBody(batch[0])).To(HaveKeyWithValue("value", "AAH/"))
+		datatypeName, _ := batch[0].MetaGet("spb_datatype")
+		Expect(datatypeName).To(Equal("Bytes"))
+	})
 })
