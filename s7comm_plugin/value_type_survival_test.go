@@ -34,9 +34,19 @@ type fakeS7Client struct {
 }
 
 func (c *fakeS7Client) AGReadMulti(dataItems []gos7.S7DataItem, _ int) error {
-	copy(dataItems[0].Data, c.plcBytes)
+	plcAnswer := c.plcBytes
+	requestedByteCount := dataItems[0].Amount
+	// gos7 requests Amount units of WordLen and copies only the bytes the PLC
+	// returns; bit, byte and char units are one byte each
+	if dataItems[0].WordLen <= s7CharWordLen && requestedByteCount < len(plcAnswer) {
+		plcAnswer = plcAnswer[:requestedByteCount]
+	}
+	copy(dataItems[0].Data, plcAnswer)
 	return nil
 }
+
+// s7CharWordLen is the gos7 word length of a char read (s7wlChar).
+const s7CharWordLen = 0x03
 
 // s7String prepends the S7 STRING header: maximum length, then actual length.
 func s7String(value string) []byte {

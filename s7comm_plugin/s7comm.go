@@ -16,6 +16,7 @@ package s7comm_plugin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -240,6 +241,16 @@ func deprecatedAddressWarning(address string) string {
 		address, suggestion, groups["area"])
 }
 
+// encodePayload quotes string values as JSON, because tag_processor parses the
+// payload as JSON and turns an unquoted numeric string into a number.
+func encodePayload(value any) ([]byte, error) {
+	text, isString := value.(string)
+	if !isString {
+		return []byte(fmt.Sprintf("%v", value)), nil
+	}
+	return json.Marshal(text)
+}
+
 func ParseAddresses(addresses []string) ([]S7DataItemWithAddressAndConverter, error) {
 	parsedAddresses := make([]S7DataItemWithAddressAndConverter, 0, len(addresses))
 
@@ -399,16 +410,24 @@ func (s *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 		}
 
 		// Read the data from the batch and convert it using the converter function
-		for _, item := range b {
+		for itemIndex, item := range b {
+			// gos7 sets Error on each item the PLC rejects and leaves its Data
+			// unchanged, so the bytes from an earlier read would go out as its value
+			readError := batchToRead[itemIndex].Error
+			if readError != "" {
+				// non-fatal: the PLC answered the other items of this batch
+				s.Log.Warnf("Skipping %s: %s", item.Address, readError)
+				continue
+			}
+
 			// Execute the converter function to get the converted data
 			convertedData := item.ConverterFunc(item.Item.Data)
 
-			// Convert any type of convertedData to a string.
-			// The fmt.Sprintf function is used here for its ability to handle various types gracefully.
-			dataAsString := fmt.Sprintf("%v", convertedData)
-
-			// Convert the string representation to a []byte
-			dataAsBytes := []byte(dataAsString)
+			dataAsBytes, err := encodePayload(convertedData)
+			if err != nil {
+				s.Log.Errorf("Failed to encode value of address %s: %v", item.Address, err)
+				continue
+			}
 
 			// Create a new message with the current state of the buffer
 			// Note: Depending on your requirements, you may want to reset the buffer
@@ -555,10 +574,10 @@ func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error)
 	case "DT": // 8-byte
 		buflen = 8
 	case "S":
-		amount = extra
-		// Extra bytes as the first byte is the max-length of the string and
-		// the second byte is the actual length of the string.
+		// The PLC stores a STRING as max length, actual length, then the
+		// characters, and gos7 reads only Amount bytes, so both cover the header.
 		buflen = extra + 2
+		amount = buflen
 	default:
 		return nil, nil, errors.New("invalid data type")
 	}
