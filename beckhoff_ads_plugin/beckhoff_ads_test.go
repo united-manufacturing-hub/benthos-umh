@@ -31,6 +31,7 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 
 	ads "github.com/united-manufacturing-hub/benthos-umh/beckhoff_ads_plugin"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/errclass"
 )
 
 // plcTestSymbols holds all PLC symbol names used by integration tests.
@@ -263,9 +264,9 @@ func loadADSConfig(ipEnv string, amsEnv string, portEnv string, defaultPort int,
 	}, true
 }
 
-// testLogger returns a Benthos logger suitable for use in hardware tests.
-func testLogger() *service.Logger {
-	return service.MockResources().Logger()
+// testLogger returns a logger suitable for use in hardware tests.
+func testLogger() errclass.Logger {
+	return ads.NewLogger(service.MockResources().Logger())
 }
 
 // createTestInput builds an AdsCommInput configured for testing.

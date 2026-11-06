@@ -18,14 +18,15 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/errclass"
 )
 
 // benthosLogHandler bridges go-ads slog records to a Benthos service.Logger.
 // Levels are taken as go-ads sets them; a second level policy here would drift.
-// Records at Warn and above get error_id and error_class (see error_class.go).
+// Records at Warn and above are classified by goADSMessages, then by the
+// record's error (see error_class.go).
 type benthosLogHandler struct {
-	logger *service.Logger
+	logger errclass.Logger
 	attrs  []slog.Attr
 }
 
@@ -41,28 +42,29 @@ func (h *benthosLogHandler) Handle(_ context.Context, r slog.Record) error {
 		attrs = append(attrs, a)
 		return true
 	})
-	kvs := make([]any, 0, 2*len(attrs)+4)
+	kvs := make([]any, 0, 2*len(attrs))
 	for _, a := range attrs {
 		kvs = append(kvs, a.Key, a.Value.Any())
 	}
-	if r.Level >= slog.LevelWarn {
-		c, ok := goADSMessages[r.Message]
-		if !ok {
-			c = classify(recordError(attrs), goADSMessageFallbacks[r.Message])
-		}
-		kvs = append(kvs, "error_id", c.ID, "error_class", c.Class)
-	}
-
 	l := h.logger
 	if len(kvs) > 0 {
 		l = l.With(kvs...)
 	}
 
+	// A message in goADSMessages decides on its own, whatever the error says.
+	class, ok := goADSMessages[r.Message]
+	err := recordError(attrs)
+	if ok {
+		err = nil
+	} else {
+		class = goADSMessageFallbacks[r.Message]
+	}
+
 	switch {
 	case r.Level >= slog.LevelError:
-		l.Errorf("%s", r.Message)
+		l.Errorf(err, class, "%s", r.Message)
 	case r.Level >= slog.LevelWarn:
-		l.Warnf("%s", r.Message)
+		l.Warnf(err, class, "%s", r.Message)
 	case r.Level >= slog.LevelInfo:
 		l.Infof("%s", r.Message)
 	default:

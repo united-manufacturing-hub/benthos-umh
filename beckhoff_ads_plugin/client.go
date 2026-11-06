@@ -91,7 +91,7 @@ type SymbolInfo struct {
 type NotifyResult struct {
 	SymbolName string
 	Registered bool   // Skipped==nil && Error==NoErrors
-	Skipped    error  // the library did not send this symbol; the cause, for classify
+	Skipped    error  // the library did not send this symbol; the cause, for the classifier
 	Code       uint32 // raw ADS return code; 0 when Registered
 }
 

@@ -34,6 +34,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/errclass"
 )
 
 // udpTimeout is what an unanswered identify or route-registration exchange on
@@ -43,12 +45,12 @@ var udpTimeout = &net.OpError{Op: "read", Net: "udp4", Err: os.ErrDeadlineExceed
 // goADSRecord sends one record through the go-ads log bridge, as go-ads would.
 func goADSRecord(level slog.Level, msg string, args ...any) capturedLog {
 	log, recs := capturingLogger()
-	slog.New(&benthosLogHandler{logger: log}).Log(context.Background(), level, msg, args...)
+	slog.New(&benthosLogHandler{logger: classifier.Logger(log)}).Log(context.Background(), level, msg, args...)
 	Expect(*recs).To(HaveLen(1))
 	return (*recs)[0]
 }
 
-func haveClass(c errClass) OmegaMatcher {
+func haveClass(c errclass.Class) OmegaMatcher {
 	return HaveField("Attrs", SatisfyAll(
 		HaveKeyWithValue("error_id", c.ID),
 		HaveKeyWithValue("error_class", c.Class),
@@ -58,7 +60,7 @@ func haveClass(c errClass) OmegaMatcher {
 var _ = Describe("error classes", func() {
 	It("uses IDs and classes the umh-core scanner accepts", func() {
 		idPattern := regexp.MustCompile(`^[a-z][a-z0-9_]*(::[a-z][a-z0-9_]*)+$`)
-		all := []errClass{
+		all := []errclass.Class{
 			errConnectionDropped, errSessionDisconnected, errHeartbeatResubscribe, errResubscribeFailed,
 			errHeartbeatObserveOnly, errTargetUnreachable, errTargetPortNotFound, errReconnectFailing,
 			errRouteFault, errPLCNotRunning, errSymbolConfig, errSymbolCacheMiss, errNoInitialSamples,
@@ -67,15 +69,15 @@ var _ = Describe("error classes", func() {
 		}
 		for _, c := range all {
 			Expect(c.ID).To(MatchRegexp(idPattern.String()))
-			Expect(c.Class).To(BeElementOf(classBug, classUnknown, classKnown, classOperational))
+			Expect(c.Class).To(BeElementOf(errclass.Bug, errclass.Unknown, errclass.Known, errclass.Operational))
 		}
 	})
 })
 
-var _ = Describe("classify", func() {
+var _ = Describe("classifier", func() {
 	DescribeTable("maps an error onto the contract by type",
-		func(err error, want errClass) {
-			Expect(classify(err, errUnclassified)).To(Equal(want))
+		func(err error, want errclass.Class) {
+			Expect(classifier.Classify(err, errUnclassified)).To(Equal(want))
 		},
 		Entry("no error", nil, errUnclassified),
 		Entry("every notification symbol failed", fmt.Errorf("%w (2 symbols all failed to resolve)", errNoSymbolsRegistered), errSymbolConfig),
@@ -99,18 +101,18 @@ var _ = Describe("classify", func() {
 	)
 
 	It("falls back to the call site's class only when no type matches", func() {
-		Expect(classify(nil, errSymbolConfig)).To(Equal(errSymbolConfig))
-		Expect(classify(errors.New("boom"), errSymbolConfig)).To(Equal(errSymbolConfig))
-		Expect(classify(adsLib.ErrTransportClosed, errSymbolConfig)).To(Equal(errConnectionDropped))
+		Expect(classifier.Classify(nil, errSymbolConfig)).To(Equal(errSymbolConfig))
+		Expect(classifier.Classify(errors.New("boom"), errSymbolConfig)).To(Equal(errSymbolConfig))
+		Expect(classifier.Classify(adsLib.ErrTransportClosed, errSymbolConfig)).To(Equal(errConnectionDropped))
 	})
 
 	It("treats a zero fallback, such as a missed table lookup, as unclassified", func() {
-		Expect(classify(nil, reasonClasses["no-such-reason"])).To(Equal(errUnclassified))
+		Expect(classifier.Classify(nil, reasonClasses["no-such-reason"])).To(Equal(errUnclassified))
 	})
 
 	DescribeTable("matches the route faults go-ads returns untyped by their text, and only those",
-		func(err error, want errClass) {
-			Expect(classify(err, errUnclassified)).To(Equal(want))
+		func(err error, want errclass.Class) {
+			Expect(classifier.Classify(err, errUnclassified)).To(Equal(want))
 		},
 		Entry("PLC refused the registration", errors.New("route registration failed during connect: route registration failed with error code: 1796"), errRouteFault),
 		Entry("route registered but never served, though the probe saw a closed transport",
@@ -126,8 +128,8 @@ var _ = Describe("classify", func() {
 	)
 
 	DescribeTable("reasonClasses maps go-ads session-event reasons",
-		func(reason adsLib.Reason, want errClass) {
-			Expect(classify(nil, reasonClasses[string(reason)])).To(Equal(want))
+		func(reason adsLib.Reason, want errclass.Class) {
+			Expect(classifier.Classify(nil, reasonClasses[string(reason)])).To(Equal(want))
 		},
 		Entry("symbol not found", adsLib.ReasonSymbolNotFound, errSymbolConfig),
 		Entry("symbol not active", adsLib.ReasonSymbolNotActive, errSymbolConfig),
@@ -160,7 +162,7 @@ var _ = Describe("benthosLogHandler classification", func() {
 
 	It("finds the error among the attributes a logger was built with", func() {
 		log, recs := capturingLogger()
-		slog.New(&benthosLogHandler{logger: log}).With("err", adsLib.ErrTransportClosed).Warn("some go-ads warning")
+		slog.New(&benthosLogHandler{logger: classifier.Logger(log)}).With("err", adsLib.ErrTransportClosed).Warn("some go-ads warning")
 		Expect((*recs)[0]).To(haveClass(errConnectionDropped))
 	})
 
@@ -201,7 +203,7 @@ var _ = Describe("go-ads message table guard", func() {
 		}
 
 		var missing []string
-		for _, table := range []map[string]errClass{goADSMessages, goADSMessageFallbacks} {
+		for _, table := range []map[string]errclass.Class{goADSMessages, goADSMessageFallbacks} {
 			for msg := range table {
 				if !strings.Contains(src.String(), strconv.Quote(msg)) {
 					missing = append(missing, msg)
@@ -215,7 +217,7 @@ var _ = Describe("go-ads message table guard", func() {
 var _ = Describe("plugin log lines carry their class", func() {
 	It("tags a symbol go-ads skipped in a batch read as a read gap", func() {
 		log, recs := capturingLogger()
-		a := &AdsCommInput{Log: log}
+		a := &AdsCommInput{Log: classifier.Logger(log)}
 
 		a.logBatchFailures(&BatchReadError{Requested: 3, Failed: []NotifyResult{
 			{SymbolName: "MAIN.gap", Skipped: adsLib.ErrBatchNoResult},
@@ -230,7 +232,7 @@ var _ = Describe("plugin log lines carry their class", func() {
 
 	It("tags a batch-read symbol go-ads could not resolve as symbol configuration, not a read gap", func() {
 		log, recs := capturingLogger()
-		a := &AdsCommInput{Log: log}
+		a := &AdsCommInput{Log: classifier.Logger(log)}
 
 		a.logBatchFailures(&BatchReadError{Requested: 2, Failed: []NotifyResult{{
 			SymbolName: "MAIN.typo",
@@ -243,7 +245,7 @@ var _ = Describe("plugin log lines carry their class", func() {
 	It("tags a notification stranded by a cache reload as a bug, with the message unchanged", func() {
 		log, recs := capturingLogger()
 		a := &AdsCommInput{
-			Log:              log,
+			Log:              classifier.Logger(log),
 			Symbols:          []PlcSymbol{{Name: "MAIN.ok"}, {Name: "MAIN.a"}},
 			NotificationChan: make(chan *Update, 8),
 			client: &fakeClient{notifyResults: []NotifyResult{
@@ -262,9 +264,9 @@ var _ = Describe("plugin log lines carry their class", func() {
 	})
 
 	DescribeTable("logReadFailure",
-		func(closed bool, err error, want errClass) {
+		func(closed bool, err error, want errclass.Class) {
 			log, recs := capturingLogger()
-			a := &AdsCommInput{Log: log, client: &fakeClient{closed: closed}}
+			a := &AdsCommInput{Log: classifier.Logger(log), client: &fakeClient{closed: closed}}
 
 			a.logReadFailure(context.Background(), 2, err)
 
@@ -277,9 +279,9 @@ var _ = Describe("plugin log lines carry their class", func() {
 	)
 
 	DescribeTable("logConnectFailure",
-		func(err error, want errClass) {
+		func(err error, want errclass.Class) {
 			log, recs := capturingLogger()
-			a := &AdsCommInput{Log: log, TargetIP: "1.2.3.4", TargetPort: 48898, RuntimePort: 851}
+			a := &AdsCommInput{Log: classifier.Logger(log), TargetIP: "1.2.3.4", TargetPort: 48898, RuntimePort: 851}
 
 			Expect(a.logConnectFailure(context.Background(), "Connecting to PLC failed", err)).To(MatchError(err))
 
@@ -295,10 +297,10 @@ var _ = Describe("plugin log lines carry their class", func() {
 
 	It("gives the plugin line and the returned error the same error_id", func() {
 		log, recs := capturingLogger()
-		a := &AdsCommInput{Log: log, TargetIP: "1.2.3.4", TargetPort: 48898, RuntimePort: 851}
+		a := &AdsCommInput{Log: classifier.Logger(log), TargetIP: "1.2.3.4", TargetPort: 48898, RuntimePort: 851}
 		err := fmt.Errorf("%w: %w", adsLib.ErrTransportClosed, adsLib.ErrRuntimeNotRunning)
 
-		returned := withClassPrefix(a.logConnectFailure(context.Background(), "Connecting to PLC failed", err))
+		returned := classifier.WithPrefix(a.logConnectFailure(context.Background(), "Connecting to PLC failed", err))
 
 		Expect(*recs).To(ConsistOf(haveClass(errPLCNotRunning)))
 		Expect(returned.Error()).To(HavePrefix("[error_id=ads::plc_not_running error_class=known] "))
@@ -307,7 +309,7 @@ var _ = Describe("plugin log lines carry their class", func() {
 	It("tags notification symbols the PLC did not register as symbol configuration", func() {
 		log, recs := capturingLogger()
 		a := &AdsCommInput{
-			Log:              log,
+			Log:              classifier.Logger(log),
 			Symbols:          []PlcSymbol{{Name: "MAIN.ok"}, {Name: "MAIN.typo"}, {Name: "MAIN.refused"}},
 			NotificationChan: make(chan *Update, 8),
 			client: &fakeClient{notifyResults: []NotifyResult{
@@ -332,12 +334,12 @@ var _ = Describe("plugin log lines carry their class", func() {
 
 	It("fails the connect as symbol configuration when no notification symbol registered", func() {
 		a := &AdsCommInput{
-			Log:     testLog(),
+			Log:     classifier.Logger(testLog()),
 			Symbols: []PlcSymbol{{Name: "MAIN.typo"}},
 			client:  &fakeClient{notifyResults: []NotifyResult{{SymbolName: "MAIN.typo", Skipped: fmt.Errorf("resolve symbol %q: %w", "MAIN.typo", adsLib.ReturnCodeDeviceSymbolNoFound)}}},
 		}
 
-		err := withClassPrefix(a.setupNotifications(context.Background()))
+		err := classifier.WithPrefix(a.setupNotifications(context.Background()))
 
 		Expect(err).To(MatchError(errNoSymbolsRegistered))
 		Expect(err.Error()).To(HavePrefix("[error_id=ads::symbol_config error_class=known] "))
@@ -345,7 +347,7 @@ var _ = Describe("plugin log lines carry their class", func() {
 
 	It("tags a symbol whose metadata did not resolve, by its error when it has a type", func() {
 		log, recs := capturingLogger()
-		a := &AdsCommInput{Log: log, Symbols: []PlcSymbol{{Name: "MAIN.typo"}}, client: &fakeClient{}}
+		a := &AdsCommInput{Log: classifier.Logger(log), Symbols: []PlcSymbol{{Name: "MAIN.typo"}}, client: &fakeClient{}}
 
 		a.initSymbolIndex(context.Background())
 
@@ -354,7 +356,7 @@ var _ = Describe("plugin log lines carry their class", func() {
 
 	It("tags the rebuild line with the class of the go-ads reason", func() {
 		log, recs := capturingLogger()
-		a := &AdsCommInput{Log: log}
+		a := &AdsCommInput{Log: classifier.Logger(log)}
 
 		a.onSessionEvent(SessionEventSubscriptionsDead, string(adsLib.ReasonHeartbeatSilent))
 
@@ -366,7 +368,7 @@ var _ = Describe("plugin log lines carry their class", func() {
 
 	It("tags an unhandled session event as an internal bug", func() {
 		log, recs := capturingLogger()
-		a := &AdsCommInput{Log: log}
+		a := &AdsCommInput{Log: classifier.Logger(log)}
 
 		a.onSessionEvent(SessionEvent(99), "new-reason")
 
@@ -375,7 +377,7 @@ var _ = Describe("plugin log lines carry their class", func() {
 
 	It("tags a failed close", func() {
 		log, recs := capturingLogger()
-		a := &AdsCommInput{Log: log, client: &fakeClient{closeErr: errors.New("boom")}}
+		a := &AdsCommInput{Log: classifier.Logger(log), client: &fakeClient{closeErr: errors.New("boom")}}
 
 		Expect(a.Close(context.Background())).To(HaveOccurred())
 
@@ -385,7 +387,7 @@ var _ = Describe("plugin log lines carry their class", func() {
 	It("prefixes a failed Connect with its class for the Benthos core line", func() {
 		// Port 1 on loopback refuses at once, so this needs no PLC.
 		a := &AdsCommInput{
-			Log: testLog(), TargetIP: "127.0.0.1", TargetPort: 1, TargetAMS: "127.0.0.1.1.1",
+			Log: classifier.Logger(testLog()), TargetIP: "127.0.0.1", TargetPort: 1, TargetAMS: "127.0.0.1.1.1",
 			RuntimePort: 851, HostAMS: "auto", HostIP: "auto", RequestTimeout: time.Second,
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -399,7 +401,7 @@ var _ = Describe("plugin log lines carry their class", func() {
 	})
 
 	It("prefixes a Connect error only once", func() {
-		err := withClassPrefix(withClassPrefix(adsLib.ErrTransportClosed))
+		err := classifier.WithPrefix(classifier.WithPrefix(adsLib.ErrTransportClosed))
 		Expect(strings.Count(err.Error(), "[error_id=")).To(Equal(1))
 		Expect(err).To(MatchError(adsLib.ErrTransportClosed))
 	})
@@ -408,10 +410,10 @@ var _ = Describe("plugin log lines carry their class", func() {
 // The eight message forms of Sentry issue UMH-CORE-45M, rebuilt from the raw
 // lines. None is a fault only UMH can fix, so none may be bug or unknown.
 var _ = Describe("UMH-CORE-45M message forms", func() {
-	notReported := HaveField("Attrs", HaveKeyWithValue("error_class", BeElementOf(classKnown, classOperational)))
+	notReported := HaveField("Attrs", HaveKeyWithValue("error_class", BeElementOf(errclass.Known, errclass.Operational)))
 
 	It("discovery timeout: Failed to connect to ads (identify got no answer)", func() {
-		err := withClassPrefix(fmt.Errorf("creating the ADS session failed: %w",
+		err := classifier.WithPrefix(fmt.Errorf("creating the ADS session failed: %w",
 			fmt.Errorf("ads: NewSession: target AMS address incomplete and discovery failed "+
 				"(set remote.AMS explicitly if the device does not answer the identify service): %w",
 				fmt.Errorf("identify 10.13.37.52: no answer after 3 attempts: %w", udpTimeout))))
@@ -457,10 +459,10 @@ var _ = Describe("UMH-CORE-45M message forms", func() {
 
 	It("route registration", func() {
 		log, recs := capturingLogger()
-		a := &AdsCommInput{Log: log, TargetIP: "192.168.40.25", TargetPort: 48898, RuntimePort: 801}
+		a := &AdsCommInput{Log: classifier.Logger(log), TargetIP: "192.168.40.25", TargetPort: 48898, RuntimePort: 801}
 		err := errors.New("route registration failed during connect: route registration failed with error code: 1796")
 
-		returned := withClassPrefix(a.logConnectFailure(context.Background(), "Connecting to PLC failed", err))
+		returned := classifier.WithPrefix(a.logConnectFailure(context.Background(), "Connecting to PLC failed", err))
 
 		Expect(*recs).To(ConsistOf(SatisfyAll(notReported, haveClass(errRouteFault))))
 		Expect(returned.Error()).To(HavePrefix("[error_id=ads::route_fault error_class=known] "))

@@ -24,7 +24,8 @@ import (
 	"time"
 
 	adsLib "github.com/RuneRoven/go-ads/v2"
-	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/errclass"
 )
 
 // goADSClient is the go-ads adapter. Besides client.go, only this file and
@@ -57,7 +58,7 @@ func resolveRouteHostIP(ctx context.Context, cfg SessionConfig) (string, error) 
 
 // buildSessionOptions assembles the go-ads SessionOptions: logger bridge,
 // route registration, local AMS override, and request timeout.
-func buildSessionOptions(ctx context.Context, cfg SessionConfig, log *service.Logger) ([]adsLib.SessionOption, error) {
+func buildSessionOptions(ctx context.Context, cfg SessionConfig, log errclass.Logger) ([]adsLib.SessionOption, error) {
 	// go-ads verbosity follows the benthos pipeline log level via this bridge;
 	// no global SetDefaultLogger (last-input-wins across multiple ADS inputs).
 	opts := []adsLib.SessionOption{adsLib.WithLogger(slog.New(&benthosLogHandler{logger: log}))}
@@ -148,7 +149,7 @@ func cappedBackoff(limit time.Duration) adsLib.BackoffConfig {
 
 // newGoADSClient builds session options and the go-ads session from
 // SessionConfig. It does not call Connect; the caller drives that.
-func newGoADSClient(ctx context.Context, cfg SessionConfig, log *service.Logger) (Client, error) {
+func newGoADSClient(ctx context.Context, cfg SessionConfig, log errclass.Logger) (Client, error) {
 	opts, err := buildSessionOptions(ctx, cfg, log)
 	if err != nil {
 		return nil, err
@@ -279,7 +280,7 @@ func connectDropKind(err error) dropKind {
 // our route — a configuration fault that a retry cannot fix. It is the same
 // verdict as the error_id, so the backoff and the log cannot disagree.
 func isRouteFault(err error) bool {
-	return classify(err, errUnclassified) == errRouteFault
+	return classifier.Classify(err, errUnclassified) == errRouteFault
 }
 
 // isTransportGone reports whether the ADS transport went away mid-operation.
