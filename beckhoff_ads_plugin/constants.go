@@ -76,9 +76,4 @@ const (
 	heartbeatRecoveryImmediate = "immediate"
 	heartbeatRecoveryConfirm   = "confirm"
 	heartbeatRecoveryRebuild   = "rebuild"
-
-	// How long heartbeat re-subscribes may keep failing before the episode is
-	// logged as a bug. go-ads retries on its own, and a PLC restart or CONFIG
-	// toggle recovers well inside this; 10 minutes is the agreed contract value.
-	resubscribeEscalateAfter = 10 * time.Minute
 )

@@ -147,10 +147,6 @@ func (a *AdsCommInput) makeNotificationMessage(u *Update) *service.Message {
 
 func (a *AdsCommInput) ReadBatchNotification(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
 	a.Log.Debugf("ReadBatchNotification called")
-	// Checked here as well as on each failure: this loop wakes at least every
-	// notificationWait, while go-ads spaces its re-subscribe attempts further
-	// apart the longer they fail.
-	a.escalateStuckResubscribe()
 
 	// Flush any initial samples captured during Connect before blocking on the channel,
 	// so the first values (e.g. static serverOnChange symbols) are delivered.
@@ -162,7 +158,6 @@ func (a *AdsCommInput) ReadBatchNotification(ctx context.Context) (service.Messa
 			}
 		}
 		a.pendingInitial = nil
-		a.resubscribe.recovered()
 		return msgs, func(_ context.Context, _ error) error { return nil }, nil
 	}
 
@@ -187,7 +182,6 @@ func (a *AdsCommInput) ReadBatchNotification(ctx context.Context) (service.Messa
 		return nil, func(_ context.Context, _ error) error { return nil }, nil
 	}
 
-	a.resubscribe.recovered()
 	msgs := service.MessageBatch{a.makeNotificationMessage(first)}
 
 	// Drain buffered notifications, bounded to a channel-depth snapshot so a sustained

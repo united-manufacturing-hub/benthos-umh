@@ -72,10 +72,6 @@ type SessionConfig struct {
 
 	// OnSessionEvent runs on a library goroutine: must not block.
 	OnSessionEvent func(ev SessionEvent, reason string)
-
-	// OnResubscribeFailed runs on a library goroutine each time a heartbeat
-	// re-subscribe fails to restore delivery: must not block.
-	OnResubscribeFailed func()
 }
 
 type NotifyConfig struct {

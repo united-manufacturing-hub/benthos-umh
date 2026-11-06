@@ -60,10 +60,7 @@ func resolveRouteHostIP(ctx context.Context, cfg SessionConfig) (string, error) 
 func buildSessionOptions(ctx context.Context, cfg SessionConfig, log *service.Logger) ([]adsLib.SessionOption, error) {
 	// go-ads verbosity follows the benthos pipeline log level via this bridge;
 	// no global SetDefaultLogger (last-input-wins across multiple ADS inputs).
-	opts := []adsLib.SessionOption{adsLib.WithLogger(slog.New(&benthosLogHandler{
-		logger:              log,
-		onResubscribeFailed: cfg.OnResubscribeFailed,
-	}))}
+	opts := []adsLib.SessionOption{adsLib.WithLogger(slog.New(&benthosLogHandler{logger: log}))}
 
 	if cfg.Username != "" && cfg.Password != "" {
 		hostAddr, err := resolveRouteHostIP(ctx, cfg)

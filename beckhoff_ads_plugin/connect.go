@@ -107,7 +107,7 @@ func (a *AdsCommInput) setupNotifications(ctx context.Context) error {
 	// first connect and a recovery read identically.
 	a.Log.Infof("Registering notifications succeeded for %d/%d symbols", registered, len(cfgs))
 
-	return a.waitForInitialSamples(ctx, results, a.initialSampleTimeout())
+	return a.waitForInitialSamples(ctx, results)
 }
 
 // waitForInitialSamples buffers the initial sample from each registered symbol
@@ -125,7 +125,7 @@ func (a *AdsCommInput) initialSampleTimeout() time.Duration {
 	return timeout
 }
 
-func (a *AdsCommInput) waitForInitialSamples(ctx context.Context, results []NotifyResult, timeout time.Duration) error {
+func (a *AdsCommInput) waitForInitialSamples(ctx context.Context, results []NotifyResult) error {
 	a.pendingInitial = nil
 	needed := make(map[string]bool, len(results))
 	for _, r := range results {
@@ -133,7 +133,7 @@ func (a *AdsCommInput) waitForInitialSamples(ctx context.Context, results []Noti
 			needed[strings.ToLower(r.SymbolName)] = true
 		}
 	}
-	initialCtx, initialCancel := context.WithTimeout(context.Background(), timeout)
+	initialCtx, initialCancel := context.WithTimeout(context.Background(), a.initialSampleTimeout())
 	defer initialCancel()
 	for len(needed) > 0 {
 		select {

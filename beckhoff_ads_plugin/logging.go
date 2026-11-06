@@ -27,10 +27,6 @@ import (
 type benthosLogHandler struct {
 	logger *service.Logger
 	attrs  []slog.Attr
-
-	// onResubscribeFailed runs on a go-ads goroutine for each failed heartbeat
-	// re-subscribe; nil when nobody tracks them.
-	onResubscribeFailed func()
 }
 
 func (h *benthosLogHandler) Enabled(_ context.Context, level slog.Level) bool {
@@ -52,9 +48,6 @@ func (h *benthosLogHandler) Handle(_ context.Context, r slog.Record) error {
 	if r.Level >= slog.LevelWarn {
 		c := classifyRecord(r.Message, attrs)
 		kvs = append(kvs, "error_id", c.ID, "error_class", c.Class)
-		if c == errResubscribeFailed && h.onResubscribeFailed != nil {
-			h.onResubscribeFailed()
-		}
 	}
 
 	l := h.logger
@@ -80,7 +73,7 @@ func (h *benthosLogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	// parent overwrite each other's attributes via the shared backing array.
 	merged := make([]slog.Attr, 0, len(h.attrs)+len(attrs))
 	merged = append(append(merged, h.attrs...), attrs...)
-	return &benthosLogHandler{logger: h.logger, attrs: merged, onResubscribeFailed: h.onResubscribeFailed}
+	return &benthosLogHandler{logger: h.logger, attrs: merged}
 }
 
 func (h *benthosLogHandler) WithGroup(_ string) slog.Handler { return h }

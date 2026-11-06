@@ -73,10 +73,6 @@ type AdsCommInput struct {
 	// warnedBatchFailures dedupes per-symbol batch-read warnings for one session.
 	warnedBatchFailures map[string]bool
 
-	// resubscribe tracks failing heartbeat re-subscribes across session rebuilds;
-	// notification data arriving ends the episode.
-	resubscribe resubscribeWatch
-
 	// degradedReason is written by a go-ads goroutine and read by the Benthos read
 	// goroutine, which consumes it and rebuilds. nil means healthy.
 	degradedReason atomic.Pointer[string]
@@ -327,7 +323,6 @@ func (a *AdsCommInput) sessionConfig() SessionConfig {
 		HeartbeatRecovery:          a.HeartbeatRecovery,
 		SkipRouteRegistration:      time.Now().Before(a.skipRouteUntil),
 		OnSessionEvent:             a.onSessionEvent,
-		OnResubscribeFailed:        a.onResubscribeFailed,
 	}
 }
 
@@ -361,22 +356,6 @@ func (a *AdsCommInput) markDegraded(reason string, detail string) {
 	if a.degradedReason.CompareAndSwap(nil, &reason) {
 		classifyReason(reason).on(a.Log).With("reason", reason, "detail", detail).
 			Error("ADS session can no longer deliver; rebuilding it on the next read")
-	}
-}
-
-// onResubscribeFailed records a failed heartbeat re-subscribe; go-ads has
-// already logged it as operational and keeps retrying.
-func (a *AdsCommInput) onResubscribeFailed() {
-	a.resubscribe.failed()
-	a.escalateStuckResubscribe()
-}
-
-// escalateStuckResubscribe logs once per episode when re-subscribing has kept
-// failing for resubscribeEscalateAfter with no notification data arriving.
-func (a *AdsCommInput) escalateStuckResubscribe() {
-	if a.resubscribe.due() {
-		errResubscribeStuck.on(a.Log).
-			Error("Re-subscribing has failed for 10 minutes; no notification data is arriving")
 	}
 }
 

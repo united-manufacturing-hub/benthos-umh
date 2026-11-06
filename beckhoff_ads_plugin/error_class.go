@@ -22,8 +22,6 @@ import (
 	"net"
 	"os"
 	"strings"
-	"sync"
-	"time"
 
 	adsLib "github.com/RuneRoven/go-ads/v2"
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -72,11 +70,6 @@ var (
 	errProtocolDecode       = errClass{"ads::protocol_decode", classBug}
 	errInternalBug          = errClass{"ads::internal_bug", classBug}
 	errUnclassified         = errClass{"ads::unclassified", classUnknown}
-
-	// errResubscribeStuck is errResubscribeFailed once it has outlasted
-	// resubscribeEscalateAfter. Same ID, so every occurrence lands in one Sentry
-	// issue; only the class says a retry is no longer expected to fix it.
-	errResubscribeStuck = errClass{errResubscribeFailed.ID, classBug}
 )
 
 // errNoSymbolsRegistered: every configured symbol failed to register for
@@ -238,16 +231,9 @@ var goADSMessages = map[string]errClass{
 	"no notification heartbeat within the allowed window; treating this session's subscriptions as dead and re-subscribing": errHeartbeatResubscribe,
 	"connected, but the PLC runtime is not in RUN: symbol and subscription calls will refuse until it returns":              errPLCNotRunning,
 	"route is active but the PLC runtime is not in RUN; connecting anyway and waiting for it":                               errPLCNotRunning,
-	goADSResubscribeFailed:  errResubscribeFailed,
-	goADSResubscribeUnbound: errResubscribeFailed,
+	"re-subscribe after a heartbeat timeout failed; keeping the subscriptions on file and retrying in the next window":      errResubscribeFailed,
+	"re-subscribe bound nothing (PLC not serving yet); keeping the subscriptions on file and retrying in the next window":   errResubscribeFailed,
 }
-
-// The two go-ads messages that mean a heartbeat re-subscribe did not recover
-// delivery; they start the escalation clock.
-const (
-	goADSResubscribeFailed  = "re-subscribe after a heartbeat timeout failed; keeping the subscriptions on file and retrying in the next window"
-	goADSResubscribeUnbound = "re-subscribe bound nothing (PLC not serving yet); keeping the subscriptions on file and retrying in the next window"
-)
 
 // goADSMessageDefaults classify go-ads records whose error value is the better
 // signal: the message applies only when classify finds nothing in the error.
@@ -299,52 +285,4 @@ func withConnectClass(err error) error {
 		return err
 	}
 	return &classifiedError{class: classifyConnect(err), err: err}
-}
-
-// resubscribeWatch tracks one episode of failing heartbeat re-subscribes. go-ads
-// keeps retrying on its own, so each failure is operational; only a failure
-// that outlasts resubscribeEscalateAfter without data arriving is escalated,
-// once per episode.
-type resubscribeWatch struct {
-	mu        sync.Mutex
-	now       func() time.Time // nil means time.Now; tests inject a clock
-	since     time.Time        // first failure of the episode; zero when healthy
-	escalated bool
-}
-
-func (w *resubscribeWatch) clock() time.Time {
-	if w.now != nil {
-		return w.now()
-	}
-	return time.Now()
-}
-
-// failed marks a failed re-subscribe. Only the first one of an episode starts
-// the clock.
-func (w *resubscribeWatch) failed() {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.since.IsZero() {
-		w.since = w.clock()
-	}
-}
-
-// recovered ends the episode: notification data is arriving again.
-func (w *resubscribeWatch) recovered() {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.since = time.Time{}
-	w.escalated = false
-}
-
-// due reports true exactly once per episode, when it has lasted
-// resubscribeEscalateAfter.
-func (w *resubscribeWatch) due() bool {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.since.IsZero() || w.escalated || w.clock().Sub(w.since) < resubscribeEscalateAfter {
-		return false
-	}
-	w.escalated = true
-	return true
 }

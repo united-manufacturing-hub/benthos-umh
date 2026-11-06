@@ -63,7 +63,7 @@ var _ = Describe("error classes", func() {
 			errHeartbeatObserveOnly, errTargetUnreachable, errTargetPortNotFound, errReconnectFailing,
 			errRouteFault, errPLCNotRunning, errSymbolConfig, errSymbolCacheMiss, errNoInitialSamples,
 			errReadGap, errBatchReadFallback, errReadTimeout, errCloseFailed, errProtocolDecode,
-			errInternalBug, errUnclassified, errResubscribeStuck,
+			errInternalBug, errUnclassified,
 		}
 		for _, c := range all {
 			Expect(c.ID).To(MatchRegexp(idPattern.String()))
@@ -170,18 +170,6 @@ var _ = Describe("benthosLogHandler classification", func() {
 			Expect(rec.Attrs).NotTo(HaveKey("error_id"))
 			Expect(rec.Attrs).NotTo(HaveKey("error_class"))
 		}
-	})
-
-	It("reports each failed re-subscribe, and nothing else, to the escalation watch", func() {
-		log, _ := capturingLogger()
-		calls := 0
-		logger := slog.New(&benthosLogHandler{logger: log, onResubscribeFailed: func() { calls++ }}).With("k", "v")
-
-		logger.Error(goADSResubscribeFailed, "error", errors.New("boom"))
-		logger.Error(goADSResubscribeUnbound)
-		logger.Error("session disconnected, reconnecting; no data is read until it succeeds")
-
-		Expect(calls).To(Equal(2))
 	})
 })
 
@@ -409,90 +397,6 @@ var _ = Describe("plugin log lines carry their class", func() {
 		err := withConnectClass(withConnectClass(adsLib.ErrTransportClosed))
 		Expect(strings.Count(err.Error(), "[error_id=")).To(Equal(1))
 		Expect(err).To(MatchError(adsLib.ErrTransportClosed))
-	})
-})
-
-var _ = Describe("re-subscribe escalation", func() {
-	var (
-		a    *AdsCommInput
-		recs *[]capturedLog
-		now  time.Time
-	)
-
-	BeforeEach(func() {
-		var log *service.Logger
-		log, recs = capturingLogger()
-		now = time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
-		a = &AdsCommInput{Log: log, NotificationChan: make(chan *Update, 8)}
-		a.resubscribe.now = func() time.Time { return now }
-	})
-
-	escalations := func() []capturedLog {
-		var out []capturedLog
-		for _, r := range *recs {
-			if r.Attrs["error_id"] == errResubscribeFailed.ID && r.Attrs["error_class"] == classBug {
-				out = append(out, r)
-			}
-		}
-		return out
-	}
-
-	It("stays quiet for the first 10 minutes", func() {
-		a.onResubscribeFailed()
-		now = now.Add(resubscribeEscalateAfter - time.Second)
-		a.onResubscribeFailed()
-		a.escalateStuckResubscribe()
-
-		Expect(escalations()).To(BeEmpty())
-	})
-
-	It("logs exactly one bug line once the episode reaches 10 minutes", func() {
-		a.onResubscribeFailed()
-		now = now.Add(resubscribeEscalateAfter)
-		a.escalateStuckResubscribe()
-		now = now.Add(time.Hour)
-		a.onResubscribeFailed()
-		a.escalateStuckResubscribe()
-
-		Expect(escalations()).To(ConsistOf(SatisfyAll(
-			HaveField("Level", slog.LevelError),
-			HaveField("Msg", "Re-subscribing has failed for 10 minutes; no notification data is arriving"),
-		)))
-	})
-
-	It("is checked on every notification read, not only on the next failure", func() {
-		a.onResubscribeFailed()
-		now = now.Add(resubscribeEscalateAfter)
-
-		_, _, _ = a.ReadBatchNotification(context.Background())
-
-		Expect(escalations()).To(HaveLen(1))
-	})
-
-	It("logs nothing when notification data arrives before 10 minutes", func() {
-		a.onResubscribeFailed()
-		now = now.Add(5 * time.Minute)
-		a.NotificationChan <- &Update{Variable: "MAIN.a", Value: "1"}
-		_, _, err := a.ReadBatchNotification(context.Background())
-		Expect(err).NotTo(HaveOccurred())
-
-		now = now.Add(time.Hour)
-		a.escalateStuckResubscribe()
-
-		Expect(escalations()).To(BeEmpty())
-	})
-
-	It("starts a new episode after recovery", func() {
-		a.onResubscribeFailed()
-		now = now.Add(resubscribeEscalateAfter)
-		a.escalateStuckResubscribe()
-		a.resubscribe.recovered()
-
-		a.onResubscribeFailed()
-		now = now.Add(resubscribeEscalateAfter)
-		a.escalateStuckResubscribe()
-
-		Expect(escalations()).To(HaveLen(2))
 	})
 })
 
