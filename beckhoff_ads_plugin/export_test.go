@@ -17,3 +17,7 @@ package beckhoff_ads_plugin
 // SanitizeSymbolName exposes the plugin's own tag-name sanitizer to the external
 // test package, which asserted against a hand-rolled copy that could drift.
 var SanitizeSymbolName = sanitize
+
+// NewLogger wraps a Benthos logger the way the plugin does, for tests that
+// build an AdsCommInput by hand.
+var NewLogger = classifier.Logger
