@@ -46,7 +46,10 @@ func (h *benthosLogHandler) Handle(_ context.Context, r slog.Record) error {
 		kvs = append(kvs, a.Key, a.Value.Any())
 	}
 	if r.Level >= slog.LevelWarn {
-		c := classifyRecord(r.Message, attrs)
+		c, ok := goADSMessages[r.Message]
+		if !ok {
+			c = classify(recordError(attrs), goADSMessageFallbacks[r.Message])
+		}
 		kvs = append(kvs, "error_id", c.ID, "error_class", c.Class)
 	}
 
@@ -64,6 +67,17 @@ func (h *benthosLogHandler) Handle(_ context.Context, r slog.Record) error {
 		l.Infof("%s", r.Message)
 	default:
 		l.Debugf("%s", r.Message)
+	}
+	return nil
+}
+
+// recordError returns the first attribute that holds an error value; go-ads
+// logs its errors as slog.Any("error", err), not as strings.
+func recordError(attrs []slog.Attr) error {
+	for _, a := range attrs {
+		if err, ok := a.Value.Any().(error); ok {
+			return err
+		}
 	}
 	return nil
 }

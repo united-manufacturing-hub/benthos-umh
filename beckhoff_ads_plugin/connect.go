@@ -40,7 +40,7 @@ func (a *AdsCommInput) initSymbolIndex(ctx context.Context) {
 		}
 		info, err := a.client.GetSymbol(ctx, sym.Name)
 		if err != nil {
-			classifyOr(err, errSymbolConfig).on(a.Log).Warnf("Failed to resolve metadata for ADS symbol %q: %v", sym.Name, err)
+			classify(err, errSymbolConfig).on(a.Log).Warnf("Failed to resolve metadata for ADS symbol %q: %v", sym.Name, err)
 			continue
 		}
 		sym.DataType = info.DataType
@@ -98,10 +98,10 @@ func (a *AdsCommInput) setupNotifications(ctx context.Context) error {
 	}
 	for _, r := range failed {
 		if r.Skipped != nil {
-			classifyOr(r.Skipped, errSymbolConfig).on(a.Log).Warnf("Notification symbol %q skipped (check symbol name)", r.SymbolName)
+			classify(r.Skipped, errSymbolConfig).on(a.Log).Warnf("Notification symbol %q skipped (check symbol name)", r.SymbolName)
 			continue
 		}
-		errSymbolConfig.on(a.Log).Warnf("Notification symbol %q rejected by PLC: ADS error 0x%X", r.SymbolName, r.Code)
+		classify(nil, errSymbolConfig).on(a.Log).Warnf("Notification symbol %q rejected by PLC: ADS error 0x%X", r.SymbolName, r.Code)
 	}
 	// Same message text the library logs after a reconnect re-subscribe, so the
 	// first connect and a recovery read identically.
@@ -147,7 +147,7 @@ func (a *AdsCommInput) waitForInitialSamples(ctx context.Context, results []Noti
 			if shuttingDown(ctx) {
 				return ctx.Err()
 			}
-			errNoInitialSamples.on(a.Log).Warnf("Timed out waiting for initial samples; %d symbols not yet received: %v", len(needed), needed)
+			classify(nil, errNoInitialSamples).on(a.Log).Warnf("Timed out waiting for initial samples; %d symbols not yet received: %v", len(needed), needed)
 			return nil
 		case <-ctx.Done():
 			return ctx.Err()

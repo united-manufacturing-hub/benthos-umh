@@ -75,7 +75,7 @@ var _ = Describe("error classes", func() {
 var _ = Describe("classify", func() {
 	DescribeTable("maps an error onto the contract by type",
 		func(err error, want errClass) {
-			Expect(classify(err)).To(Equal(want))
+			Expect(classify(err, errUnclassified)).To(Equal(want))
 		},
 		Entry("no error", nil, errUnclassified),
 		Entry("every notification symbol failed", fmt.Errorf("%w (2 symbols all failed to resolve)", errNoSymbolsRegistered), errSymbolConfig),
@@ -99,13 +99,18 @@ var _ = Describe("classify", func() {
 	)
 
 	It("falls back to the call site's class only when no type matches", func() {
-		Expect(classifyOr(errors.New("boom"), errSymbolConfig)).To(Equal(errSymbolConfig))
-		Expect(classifyOr(adsLib.ErrTransportClosed, errSymbolConfig)).To(Equal(errConnectionDropped))
+		Expect(classify(nil, errSymbolConfig)).To(Equal(errSymbolConfig))
+		Expect(classify(errors.New("boom"), errSymbolConfig)).To(Equal(errSymbolConfig))
+		Expect(classify(adsLib.ErrTransportClosed, errSymbolConfig)).To(Equal(errConnectionDropped))
 	})
 
-	DescribeTable("classifyConnect adds the untyped route faults",
+	It("treats a zero fallback, such as a missed table lookup, as unclassified", func() {
+		Expect(classify(nil, reasonClasses["no-such-reason"])).To(Equal(errUnclassified))
+	})
+
+	DescribeTable("matches the route faults go-ads returns untyped by their text, and only those",
 		func(err error, want errClass) {
-			Expect(classifyConnect(err)).To(Equal(want))
+			Expect(classify(err, errUnclassified)).To(Equal(want))
 		},
 		Entry("PLC refused the registration", errors.New("route registration failed during connect: route registration failed with error code: 1796"), errRouteFault),
 		Entry("route registered but never served, though the probe saw a closed transport",
@@ -120,9 +125,9 @@ var _ = Describe("classify", func() {
 		Entry("typed errors still classify", fmt.Errorf("connect: %w", adsLib.ErrRuntimeNotRunning), errPLCNotRunning),
 	)
 
-	DescribeTable("classifyReason maps go-ads session-event reasons",
+	DescribeTable("reasonClasses maps go-ads session-event reasons",
 		func(reason adsLib.Reason, want errClass) {
-			Expect(classifyReason(string(reason))).To(Equal(want))
+			Expect(classify(nil, reasonClasses[string(reason)])).To(Equal(want))
 		},
 		Entry("symbol not found", adsLib.ReasonSymbolNotFound, errSymbolConfig),
 		Entry("symbol not active", adsLib.ReasonSymbolNotActive, errSymbolConfig),
@@ -140,7 +145,7 @@ var _ = Describe("benthosLogHandler classification", func() {
 		})
 	}
 
-	for msg, want := range goADSMessageDefaults {
+	for msg, want := range goADSMessageFallbacks {
 		It("tags "+strconv.Quote(msg)+" by its error first, then by its message", func() {
 			Expect(goADSRecord(slog.LevelError, msg, "error", adsLib.ErrRuntimeNotRunning)).To(haveClass(errPLCNotRunning))
 			Expect(goADSRecord(slog.LevelError, msg, "error", errors.New("boom"))).To(haveClass(want))
@@ -196,7 +201,7 @@ var _ = Describe("go-ads message table guard", func() {
 		}
 
 		var missing []string
-		for _, table := range []map[string]errClass{goADSMessages, goADSMessageDefaults} {
+		for _, table := range []map[string]errClass{goADSMessages, goADSMessageFallbacks} {
 			for msg := range table {
 				if !strings.Contains(src.String(), strconv.Quote(msg)) {
 					missing = append(missing, msg)
@@ -293,7 +298,7 @@ var _ = Describe("plugin log lines carry their class", func() {
 		a := &AdsCommInput{Log: log, TargetIP: "1.2.3.4", TargetPort: 48898, RuntimePort: 851}
 		err := fmt.Errorf("%w: %w", adsLib.ErrTransportClosed, adsLib.ErrRuntimeNotRunning)
 
-		returned := withConnectClass(a.logConnectFailure(context.Background(), "Connecting to PLC failed", err))
+		returned := withClassPrefix(a.logConnectFailure(context.Background(), "Connecting to PLC failed", err))
 
 		Expect(*recs).To(ConsistOf(haveClass(errPLCNotRunning)))
 		Expect(returned.Error()).To(HavePrefix("[error_id=ads::plc_not_running error_class=known] "))
@@ -332,7 +337,7 @@ var _ = Describe("plugin log lines carry their class", func() {
 			client:  &fakeClient{notifyResults: []NotifyResult{{SymbolName: "MAIN.typo", Skipped: fmt.Errorf("resolve symbol %q: %w", "MAIN.typo", adsLib.ReturnCodeDeviceSymbolNoFound)}}},
 		}
 
-		err := withConnectClass(a.setupNotifications(context.Background()))
+		err := withClassPrefix(a.setupNotifications(context.Background()))
 
 		Expect(err).To(MatchError(errNoSymbolsRegistered))
 		Expect(err.Error()).To(HavePrefix("[error_id=ads::symbol_config error_class=known] "))
@@ -394,7 +399,7 @@ var _ = Describe("plugin log lines carry their class", func() {
 	})
 
 	It("prefixes a Connect error only once", func() {
-		err := withConnectClass(withConnectClass(adsLib.ErrTransportClosed))
+		err := withClassPrefix(withClassPrefix(adsLib.ErrTransportClosed))
 		Expect(strings.Count(err.Error(), "[error_id=")).To(Equal(1))
 		Expect(err).To(MatchError(adsLib.ErrTransportClosed))
 	})
@@ -406,7 +411,7 @@ var _ = Describe("UMH-CORE-45M message forms", func() {
 	notReported := HaveField("Attrs", HaveKeyWithValue("error_class", BeElementOf(classKnown, classOperational)))
 
 	It("discovery timeout: Failed to connect to ads (identify got no answer)", func() {
-		err := withConnectClass(fmt.Errorf("creating the ADS session failed: %w",
+		err := withClassPrefix(fmt.Errorf("creating the ADS session failed: %w",
 			fmt.Errorf("ads: NewSession: target AMS address incomplete and discovery failed "+
 				"(set remote.AMS explicitly if the device does not answer the identify service): %w",
 				fmt.Errorf("identify 10.13.37.52: no answer after 3 attempts: %w", udpTimeout))))
@@ -455,7 +460,7 @@ var _ = Describe("UMH-CORE-45M message forms", func() {
 		a := &AdsCommInput{Log: log, TargetIP: "192.168.40.25", TargetPort: 48898, RuntimePort: 801}
 		err := errors.New("route registration failed during connect: route registration failed with error code: 1796")
 
-		returned := withConnectClass(a.logConnectFailure(context.Background(), "Connecting to PLC failed", err))
+		returned := withClassPrefix(a.logConnectFailure(context.Background(), "Connecting to PLC failed", err))
 
 		Expect(*recs).To(ConsistOf(SatisfyAll(notReported, haveClass(errRouteFault))))
 		Expect(returned.Error()).To(HavePrefix("[error_id=ads::route_fault error_class=known] "))
