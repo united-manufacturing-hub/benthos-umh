@@ -1,0 +1,3 @@
+kind: fixes
+body: The MongoDB components use version 2.9.3 of the MongoDB Go driver, so a malformed BSON document no longer crashes benthos (CVE-2026-107324, CVE-2026-107325). The same version closes the GridFS and `Client.BulkWrite` advisories CVE-2026-88031 and CVE-2026-81521 (ENG-7559)
+time: 2026-11-08T19:41:14.001068657Z
