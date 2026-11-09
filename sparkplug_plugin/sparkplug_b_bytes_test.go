@@ -71,6 +71,21 @@ var _ = Describe("Sparkplug B datatypes beyond the scalar types", func() {
 		Entry("Bytes", sparkplugplugin.SparkplugDataTypeBytes, "Bytes"),
 		Entry("File", sparkplugplugin.SparkplugDataTypeFile, "File"),
 		Entry("Template", sparkplugplugin.SparkplugDataTypeTemplate, "Template"),
+		Entry("PropertySet", sparkplugplugin.SparkplugDataTypePropertySet, "PropertySet"),
+		Entry("PropertySetList", sparkplugplugin.SparkplugDataTypePropertySetList, "PropertySetList"),
+		Entry("Int8Array", sparkplugplugin.SparkplugDataTypeInt8Array, "Int8Array"),
+		Entry("Int16Array", sparkplugplugin.SparkplugDataTypeInt16Array, "Int16Array"),
+		Entry("Int32Array", sparkplugplugin.SparkplugDataTypeInt32Array, "Int32Array"),
+		Entry("Int64Array", sparkplugplugin.SparkplugDataTypeInt64Array, "Int64Array"),
+		Entry("UInt8Array", sparkplugplugin.SparkplugDataTypeUInt8Array, "UInt8Array"),
+		Entry("UInt16Array", sparkplugplugin.SparkplugDataTypeUInt16Array, "UInt16Array"),
+		Entry("UInt32Array", sparkplugplugin.SparkplugDataTypeUInt32Array, "UInt32Array"),
+		Entry("UInt64Array", sparkplugplugin.SparkplugDataTypeUInt64Array, "UInt64Array"),
+		Entry("FloatArray", sparkplugplugin.SparkplugDataTypeFloatArray, "FloatArray"),
+		Entry("DoubleArray", sparkplugplugin.SparkplugDataTypeDoubleArray, "DoubleArray"),
+		Entry("BooleanArray", sparkplugplugin.SparkplugDataTypeBooleanArray, "BooleanArray"),
+		Entry("StringArray", sparkplugplugin.SparkplugDataTypeStringArray, "StringArray"),
+		Entry("DateTimeArray", sparkplugplugin.SparkplugDataTypeDateTimeArray, "DateTimeArray"),
 	)
 
 	DescribeTable("decodes a bytes_value as a base64 string",
@@ -89,6 +104,8 @@ var _ = Describe("Sparkplug B datatypes beyond the scalar types", func() {
 		Entry("Bytes", sparkplugplugin.SparkplugDataTypeBytes, []byte{0x00, 0x01, 0xff}, "AAH/"),
 		Entry("File", sparkplugplugin.SparkplugDataTypeFile, []byte("line one\n"), "bGluZSBvbmUK"),
 		Entry("empty Bytes stays an empty string, not null", sparkplugplugin.SparkplugDataTypeBytes, []byte{}, ""),
+		Entry("UInt64Array [1] as packed little-endian bytes", sparkplugplugin.SparkplugDataTypeUInt64Array,
+			[]byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, "AQAAAAAAAAA="),
 	)
 
 	It("decodes a Bytes value on an alias-only NDATA using the datatype from NBIRTH", func() {

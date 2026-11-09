@@ -51,6 +51,23 @@ const (
 	SparkplugDataTypeBytes    = uint32(17)
 	SparkplugDataTypeFile     = uint32(18)
 	SparkplugDataTypeTemplate = uint32(19)
+
+	SparkplugDataTypePropertySet     = uint32(20)
+	SparkplugDataTypePropertySetList = uint32(21)
+
+	SparkplugDataTypeInt8Array     = uint32(22)
+	SparkplugDataTypeInt16Array    = uint32(23)
+	SparkplugDataTypeInt32Array    = uint32(24)
+	SparkplugDataTypeInt64Array    = uint32(25)
+	SparkplugDataTypeUInt8Array    = uint32(26)
+	SparkplugDataTypeUInt16Array   = uint32(27)
+	SparkplugDataTypeUInt32Array   = uint32(28)
+	SparkplugDataTypeUInt64Array   = uint32(29)
+	SparkplugDataTypeFloatArray    = uint32(30)
+	SparkplugDataTypeDoubleArray   = uint32(31)
+	SparkplugDataTypeBooleanArray  = uint32(32)
+	SparkplugDataTypeStringArray   = uint32(33)
+	SparkplugDataTypeDateTimeArray = uint32(34)
 )
 
 func init() {
@@ -1378,6 +1395,36 @@ func (s *sparkplugInput) getDataTypeName(datatype uint32) string {
 		return "File"
 	case SparkplugDataTypeTemplate:
 		return "Template"
+	case SparkplugDataTypePropertySet:
+		return "PropertySet"
+	case SparkplugDataTypePropertySetList:
+		return "PropertySetList"
+	case SparkplugDataTypeInt8Array:
+		return "Int8Array"
+	case SparkplugDataTypeInt16Array:
+		return "Int16Array"
+	case SparkplugDataTypeInt32Array:
+		return "Int32Array"
+	case SparkplugDataTypeInt64Array:
+		return "Int64Array"
+	case SparkplugDataTypeUInt8Array:
+		return "UInt8Array"
+	case SparkplugDataTypeUInt16Array:
+		return "UInt16Array"
+	case SparkplugDataTypeUInt32Array:
+		return "UInt32Array"
+	case SparkplugDataTypeUInt64Array:
+		return "UInt64Array"
+	case SparkplugDataTypeFloatArray:
+		return "FloatArray"
+	case SparkplugDataTypeDoubleArray:
+		return "DoubleArray"
+	case SparkplugDataTypeBooleanArray:
+		return "BooleanArray"
+	case SparkplugDataTypeStringArray:
+		return "StringArray"
+	case SparkplugDataTypeDateTimeArray:
+		return "DateTimeArray"
 	default:
 		return "Unknown"
 	}
