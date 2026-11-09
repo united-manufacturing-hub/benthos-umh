@@ -1,0 +1,3 @@
+kind: fixes
+body: Updated the JOSE library (go-jose v4.1.4 to v4.1.9), so maliciously crafted JSON Web Keys can no longer consume excessive CPU while being parsed, and seven further go-jose advisories are fixed (ENG-7668)
+time: 2026-11-09T15:00:00.000000+01:00
