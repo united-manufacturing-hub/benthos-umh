@@ -549,7 +549,7 @@ The Sparkplug B input plugin **always splits metrics** into individual messages 
 
 #### Value Types
 
-Numeric, Boolean, String, Text, UUID and DateTime values are written as they arrive. Bytes and File values are written as base64 strings. DataSet, Template and extension values cannot be written to the UNS: the plugin drops them, sets `umh_conversion_status` to `failed_unsupported_type`, counts each drop in the `unsupported_value_drops` metric, and logs one warning per metric name.
+Numeric, Boolean, String, Text, UUID and DateTime values are written as they arrive. Bytes and File values are written as base64 strings. Array values (Int8Array to DateTimeArray) are written as base64 strings of their packed little-endian bytes, the encoding the Sparkplug 3.0 specification defines for arrays. DataSet, Template and extension values cannot be written to the UNS: the plugin drops them, sets `umh_conversion_status` to `failed_unsupported_type`, counts each drop in the `unsupported_value_drops` metric, and logs one warning per metric name.
 
 ## Stateless Architecture Considerations
 
