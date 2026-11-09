@@ -26,9 +26,26 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/robinson/gos7"
 
 	"github.com/united-manufacturing-hub/benthos-umh/s7comm_plugin"
 )
+
+// plcMemoryWithString1234 is a STRING[254] that holds "1234": max length,
+// actual length, then the characters.
+var plcMemoryWithString1234 = []byte{254, 4, '1', '2', '3', '4', 0, 0}
+
+// requestSizedS7Client answers AGReadMulti like a PLC: gos7 requests Amount
+// bytes for a byte or char read and copies only the bytes the PLC returns.
+type requestSizedS7Client struct {
+	gos7.Client
+	plcMemory []byte
+}
+
+func (c *requestSizedS7Client) AGReadMulti(dataItems []gos7.S7DataItem, _ int) error {
+	copy(dataItems[0].Data, c.plcMemory[:dataItems[0].Amount])
+	return nil
+}
 
 var _ = Describe("S7Comm Plugin Unittests", func() {
 	BeforeEach(func() {
@@ -76,6 +93,25 @@ var _ = Describe("S7Comm Plugin Unittests", func() {
 					Expect(actualConversionResult).To(Equal(tc.expectedConversion))
 				})
 			}
+		})
+	})
+
+	Describe("Reading an S7 STRING", func() {
+		It("emits every character when the PLC returns only the requested bytes", func() {
+			parsedAddresses, err := s7comm_plugin.ParseAddresses([]string{"DB1.S0.4"})
+			Expect(err).NotTo(HaveOccurred())
+			input := &s7comm_plugin.S7CommInput{
+				Client:  &requestSizedS7Client{plcMemory: plcMemoryWithString1234},
+				Batches: [][]s7comm_plugin.S7DataItemWithAddressAndConverter{parsedAddresses},
+			}
+
+			batch, _, err := input.ReadBatch(context.Background())
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(batch).To(HaveLen(1))
+			payload, err := batch[0].AsBytes()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(payload)).To(Equal(`"1234"`))
 		})
 	})
 

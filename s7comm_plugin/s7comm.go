@@ -565,10 +565,10 @@ func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error)
 	case "DT": // 8-byte
 		buflen = 8
 	case "S":
-		amount = extra
-		// Extra bytes as the first byte is the max-length of the string and
-		// the second byte is the actual length of the string.
+		// The PLC stores a STRING as max length, actual length, then the
+		// characters, and gos7 reads only Amount bytes, so both cover the header.
 		buflen = extra + 2
+		amount = buflen
 	default:
 		return nil, nil, errors.New("invalid data type")
 	}
