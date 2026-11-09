@@ -25,21 +25,21 @@ require (
 	github.com/danomagnum/gologix v0.35.1-beta
 	github.com/dop251/goja v0.0.0-20260723142020-b4aef50fa347
 	github.com/eclipse/paho.mqtt.golang v1.5.1
-	github.com/goccy/go-json v0.11.2
+	github.com/goccy/go-json v0.12.0
 	github.com/gofrs/uuid/v5 v5.5.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/gopcua/opcua v0.9.1
 	github.com/grid-x/modbus v1.5.1
 	github.com/hashicorp/golang-lru/v2 v2.0.7
-	github.com/jackc/pgx/v5 v5.11.0
+	github.com/jackc/pgx/v5 v5.12.0
 	github.com/kaptinlin/jsonschema v0.9.10
 	github.com/onsi/ginkgo/v2 v2.33.1
 	github.com/onsi/gomega v1.44.0
 	github.com/prometheus/client_golang v1.25.0
 	github.com/redpanda-data/benthos/v4 v4.84.0
-	github.com/redpanda-data/connect/public/bundle/free/v4 v4.115.0
-	github.com/robinson/gos7 v0.0.0-20260924061028-c54e650665ba
+	github.com/redpanda-data/connect/public/bundle/free/v4 v4.116.1
+	github.com/robinson/gos7 v0.0.0-20261030170303-153d631d8881
 	github.com/snowflakedb/gosnowflake/v2 v2.3.0
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.44.0
@@ -53,7 +53,7 @@ require (
 	golang.org/x/sys v0.49.0
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
-	k8s.io/apimachinery v0.37.1
+	k8s.io/apimachinery v0.37.2
 )
 
 require (
@@ -294,7 +294,7 @@ require (
 	github.com/jackc/pgio v1.0.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/jackc/puddle/v2 v2.2.3 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
 	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect
@@ -401,7 +401,7 @@ require (
 	github.com/redpanda-data/common-go/authz v0.2.1-0.20260319205134-242ab3c168b8 // indirect
 	github.com/redpanda-data/common-go/license v0.0.0-20260318014216-2bbd72bde0a0 // indirect
 	github.com/redpanda-data/common-go/redpanda-otel-exporter v0.4.0 // indirect
-	github.com/redpanda-data/connect/v4 v4.115.0 // indirect
+	github.com/redpanda-data/connect/v4 v4.116.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rickb777/period v1.0.32 // indirect
 	github.com/rickb777/plural/v2 v2.1.1 // indirect
@@ -488,7 +488,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/exp v0.0.0-20260603202125-055de637280b // indirect
 	golang.org/x/mod v0.41.0 // indirect
-	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260924152758-ed294f943157 // indirect
