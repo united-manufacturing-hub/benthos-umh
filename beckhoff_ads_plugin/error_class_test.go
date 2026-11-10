@@ -49,10 +49,12 @@ func goADSRecord(level slog.Level, msg string, args ...any) capturedLog {
 	return (*recs)[0]
 }
 
+// haveID checks the error_id. The errclass tests check that a line carries the
+// class its ID was declared with.
 func haveID(id errclass.ID) OmegaMatcher {
 	return HaveField("Attrs", SatisfyAll(
 		HaveKeyWithValue("error_id", id.String()),
-		HaveKeyWithValue("error_class", string(id.Class())),
+		HaveKey("error_class"),
 	))
 }
 
@@ -69,6 +71,8 @@ var _ = Describe("classifier", func() {
 		Entry("router answered nothing", fmt.Errorf("connect: %w", adsLib.ErrRouterUnresponsive), idTargetUnreachable),
 		Entry("TCP dial failed", fmt.Errorf("connect: %w", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}), idTargetUnreachable),
 		Entry("UDP exchange timed out", fmt.Errorf("identify: %w", udpTimeout), idTargetUnreachable),
+		Entry("target discovery timed out while creating the session",
+			fmt.Errorf("%w: %w", errSessionCreate, fmt.Errorf("discovery failed: identify: %w", udpTimeout)), idTargetUnreachable),
 		Entry("TCP socket timed out on a live session", &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}, idReadTimeout),
 		Entry("subscribe stranded by a cache reload", fmt.Errorf("symbol %q: %w", "MAIN.a", adsLib.ErrNotificationStrandedByReload), idInternalBug),
 		Entry("route not served, though the transport closed too", fmt.Errorf("%w: %w", adsLib.ErrRouteNotServed, adsLib.ErrTransportClosed), idRouteFault),
@@ -196,6 +200,12 @@ var _ = Describe("go-ads message table guard", func() {
 			}
 		}
 		Expect(missing).To(BeEmpty(), "messages not found as string literals in go-ads %s", mod.Version)
+
+		// The untyped route faults are matched by a fragment of a format string,
+		// not by a whole literal.
+		for _, text := range untypedRouteFaults {
+			Expect(src.String()).To(ContainSubstring(text), "route fault text not found in go-ads %s", mod.Version)
+		}
 	})
 })
 
@@ -395,7 +405,7 @@ var _ = Describe("plugin log lines carry their class", func() {
 // The eight message forms of Sentry issue UMH-CORE-45M, rebuilt from the raw
 // lines. None is a fault only UMH can fix, so none may be bug or unknown.
 var _ = Describe("UMH-CORE-45M message forms", func() {
-	notReported := HaveField("Attrs", HaveKeyWithValue("error_class", BeElementOf(string(errclass.Known), string(errclass.Operational))))
+	notReported := HaveField("Attrs", HaveKeyWithValue("error_class", string(errclass.Known)))
 
 	It("discovery timeout: Failed to connect to ads (identify got no answer)", func() {
 		err := classifier.WithPrefix(fmt.Errorf("creating the ADS session failed: %w",

@@ -27,15 +27,15 @@ import (
 )
 
 // The IDs this input logs under. Which line gets which ID is part of the
-// contract with umh-core, the Linear document "Plugin error classes: contract
-// between benthos-umh and umh-core", section ADS.
+// contract with umh-core, section ADS:
+// https://linear.app/united-manufacturing-hub/document/plugin-error-classes-contract-between-benthos-umh-and-umh-core-e51f0744258b
 var (
 	ads = errclass.NewNamespace("ads")
 
-	idConnectionDropped    = ads.ID("connection_dropped", errclass.Operational)
-	idSessionDisconnected  = ads.ID("session_disconnected", errclass.Operational)
-	idHeartbeatResubscribe = ads.ID("heartbeat_resubscribe", errclass.Operational)
-	idResubscribeFailed    = ads.ID("resubscribe_failed", errclass.Operational)
+	idConnectionDropped    = ads.ID("connection_dropped", errclass.Known)
+	idSessionDisconnected  = ads.ID("session_disconnected", errclass.Known)
+	idHeartbeatResubscribe = ads.ID("heartbeat_resubscribe", errclass.Known)
+	idResubscribeFailed    = ads.ID("resubscribe_failed", errclass.Known)
 	idHeartbeatObserveOnly = ads.ID("heartbeat_observe_only", errclass.Known)
 	idTargetUnreachable    = ads.ID("target_unreachable", errclass.Known)
 	idTargetPortNotFound   = ads.ID("target_port_not_found", errclass.Known)
@@ -49,9 +49,9 @@ var (
 	idSymbolCacheMiss      = ads.ID("symbol_cache_miss", errclass.Bug)
 	idNoInitialSamples     = ads.ID("no_initial_samples", errclass.Bug)
 	idReadGap              = ads.ID("read_gap", errclass.Bug)
-	idBatchReadFallback    = ads.ID("batch_read_fallback", errclass.Operational)
-	idReadTimeout          = ads.ID("read_timeout", errclass.Operational)
-	idCloseFailed          = ads.ID("close_failed", errclass.Operational)
+	idBatchReadFallback    = ads.ID("batch_read_fallback", errclass.Known)
+	idReadTimeout          = ads.ID("read_timeout", errclass.Known)
+	idCloseFailed          = ads.ID("close_failed", errclass.Known)
 	idProtocolDecode       = ads.ID("protocol_decode", errclass.Bug)
 	idInternalBug          = ads.ID("internal_bug", errclass.Bug)
 	idUnclassified         = ads.ID("unclassified", errclass.Unknown)
@@ -68,9 +68,11 @@ var (
 	errInvalidTargetAMS = errors.New("targetAMS is not a valid AMS NetID")
 )
 
-// errSessionCreate: go-ads rejected the session options. Config parsing
-// validates everything go-ads checks there, so reaching it is a bug in that
-// validation.
+// errSessionCreate: go-ads could not create the session. Without a targetAMS,
+// NewSession first discovers the target over UDP, and a discovery the device
+// does not answer matches the network rules before this one. What is left is
+// go-ads rejecting the session options. Config parsing validates everything
+// go-ads checks there, so reaching it is a bug in that validation.
 var errSessionCreate = errors.New("creating the ADS session failed")
 
 // classifier is where every Warn and Error line of this input gets its ID:
@@ -87,13 +89,13 @@ var errorRules = []errclass.Rule{
 	{Matches: errclass.Is(errNoSymbolsRegistered), ID: idSymbolConfig},
 	{Matches: errclass.Is(errInvalidHostAMS), ID: idInvalidHostAMS},
 	{Matches: errclass.Is(errInvalidTargetAMS), ID: idInvalidTargetAMS},
-	{Matches: errclass.Is(errSessionCreate), ID: idSessionCreateFailed},
 	// A deaf router is unreachable for a moment, not misconfigured, whatever
 	// route-registration text it is wrapped in. Before isUntypedRouteFault.
 	{Matches: errclass.Is(adsLib.ErrRouterUnresponsive), ID: idTargetUnreachable},
 	{Matches: isUntypedRouteFault, ID: idRouteFault},
-	{Matches: errclass.IsDialFailure, ID: idTargetUnreachable},
+	{Matches: isDialFailure, ID: idTargetUnreachable},
 	{Matches: isUDPTimeout, ID: idTargetUnreachable},
+	{Matches: errclass.Is(errSessionCreate), ID: idSessionCreateFailed},
 	{Matches: errclass.Is(adsLib.ErrRouteNotServed), ID: idRouteFault},
 	{Matches: errclass.Is(adsLib.ErrRuntimeNotRunning), ID: idPLCNotRunning},
 	// errors.Is matches both an ADS device verdict (ReturnCode) and an AMS router
@@ -164,17 +166,27 @@ var reasonIDs = map[string]errclass.ID{
 	string(adsLib.ReasonHeartbeatSilent): idHeartbeatObserveOnly,
 }
 
-// isUntypedRouteFault matches the route faults go-ads v2.3.4 returns without a
-// sentinel, by the text of the one call that creates each:
-//   - route.go:319, the PLC refused the registration:
-//     fmt.Errorf("route registration failed with error code: %d", ...)
-//   - session.go:1287, the route was registered but never served within the
-//     activation budget. It wraps the last probe error, typically
-//     ErrTransportClosed, so this rule has to come before isTransportGone.
+// untypedRouteFaults are the texts of the route faults go-ads v2.3.4 returns
+// without a sentinel, one per call that creates each:
+//   - the PLC refused the registration:
+//     https://github.com/RuneRoven/go-ads/blob/v2.3.4/route.go#L319
+//   - the route was registered but never served within the activation budget:
+//     https://github.com/RuneRoven/go-ads/blob/v2.3.4/session.go#L1287
+//     It wraps the last probe error, typically ErrTransportClosed, so its rule
+//     has to come before isTransportGone.
+var untypedRouteFaults = []string{
+	"route registration failed with error code",
+	"was registered but the PLC did not serve it",
+}
+
 func isUntypedRouteFault(err error) bool {
 	msg := err.Error()
-	return strings.Contains(msg, "route registration failed with error code") ||
-		strings.Contains(msg, "was registered but the PLC did not serve it")
+	for _, text := range untypedRouteFaults {
+		if strings.Contains(msg, text) {
+			return true
+		}
+	}
+	return false
 }
 
 // isUDPTimeout reports an unanswered UDP exchange. ADS uses UDP 48899 only for
@@ -183,4 +195,10 @@ func isUntypedRouteFault(err error) bool {
 func isUDPTimeout(err error) bool {
 	var opErr *net.OpError
 	return errors.As(err, &opErr) && strings.HasPrefix(opErr.Net, "udp") && opErr.Timeout()
+}
+
+// isDialFailure reports a TCP or UDP connection that could not be opened.
+func isDialFailure(err error) bool {
+	var opErr *net.OpError
+	return errors.As(err, &opErr) && opErr.Op == "dial"
 }

@@ -380,7 +380,7 @@ func shuttingDown(ctx context.Context) bool { return ctx.Err() != nil }
 // connectHint names the likely cause: a failed dial, one of go-ads' two drop
 // verdicts, or a session the PLC rejected at the AMS layer.
 func connectHint(err error) string {
-	if errclass.IsDialFailure(err) {
+	if isDialFailure(err) {
 		return "the PLC did not accept a TCP connection - check targetAddress, that the PLC is powered and reachable, and that no firewall blocks the ADS port"
 	}
 	switch connectDropKind(err) {

@@ -15,8 +15,8 @@
 // Package errclass tags every Warn and Error line a plugin emits with
 // error_id and error_class. umh-core reads only those two fields to decide what
 // reaches Sentry, so an ID is part of the Sentry fingerprint and must not change
-// once shipped. The contract, with each plugin's IDs, is the Linear document
-// "Plugin error classes: contract between benthos-umh and umh-core".
+// once shipped. The contract, with each plugin's IDs:
+// https://linear.app/united-manufacturing-hub/document/plugin-error-classes-contract-between-benthos-umh-and-umh-core-e51f0744258b
 //
 // A plugin declares its IDs with a Namespace, its Rules and a Classifier, and
 // logs through the Logger that Classifier returns. Every Warn and Error method
@@ -28,7 +28,6 @@ package errclass
 import (
 	"errors"
 	"fmt"
-	"net"
 	"regexp"
 	"sync"
 
@@ -42,10 +41,10 @@ type Class string
 const (
 	// Bug: only UMH can fix it.
 	Bug Class = "bug"
-	// Known: the customer can fix it (configuration, device state, network).
+	// Known: the cause is outside UMH's code: the customer's configuration,
+	// device or network. That includes faults that recover by themselves, such
+	// as a dropped connection.
 	Known Class = "known"
-	// Operational: transient, a retry fixes it.
-	Operational Class = "operational"
 	// Unknown: nothing matched, so it is reported until it gets an ID.
 	Unknown Class = "unknown"
 )
@@ -60,9 +59,6 @@ type ID struct {
 // String is the error_id, e.g. "ads::route_fault".
 func (id ID) String() string { return id.name }
 
-// Class is the error_class of the ID.
-func (id ID) Class() Class { return id.class }
-
 var namePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
 // prefixes holds every prefix a Namespace was created for: two plugins under
@@ -73,7 +69,8 @@ var prefixes = struct {
 }{seen: map[string]bool{}}
 
 // Namespace builds the IDs of one plugin under its prefix, e.g. "ads", so the
-// same cause in two plugins gets two Sentry fingerprints. Declare a plugin's
+// same cause in two plugins gets two Sentry fingerprints. The prefix is not the
+// Sentry feature tag; umh-core sets that per plugin. Declare a plugin's
 // Namespace and IDs as package variables: a malformed or duplicate prefix or
 // name then panics when the package loads, so any test of the plugin fails on
 // it.
@@ -104,7 +101,7 @@ func (n *Namespace) ID(name string, class Class) ID {
 		panic(fmt.Sprintf("errclass: name %q under %q is not lowercase snake_case", name, n.prefix))
 	}
 	switch class {
-	case Bug, Known, Operational, Unknown:
+	case Bug, Known, Unknown:
 	default:
 		panic(fmt.Sprintf("errclass: %s::%s has unknown class %q", n.prefix, name, class))
 	}
@@ -237,10 +234,4 @@ func withErr(err error, format string, args []any) string {
 // Is matches target and anything wrapping it, by errors.Is.
 func Is(target error) func(error) bool {
 	return func(err error) bool { return errors.Is(err, target) }
-}
-
-// IsDialFailure reports a TCP or UDP connection that could not be opened.
-func IsDialFailure(err error) bool {
-	var opErr *net.OpError
-	return errors.As(err, &opErr) && opErr.Op == "dial"
 }

@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -33,8 +32,8 @@ var (
 	errClosed  = errors.New("closed")
 
 	ns             = errclass.NewNamespace("test")
-	idTimedOut     = ns.ID("timed_out", errclass.Operational)
-	idClosed       = ns.ID("closed", errclass.Operational)
+	idTimedOut     = ns.ID("timed_out", errclass.Known)
+	idClosed       = ns.ID("closed", errclass.Known)
 	idBadConfig    = ns.ID("bad_config", errclass.Known)
 	idUnclassified = ns.ID("unclassified", errclass.Unknown)
 
@@ -126,7 +125,7 @@ var _ = Describe("Logger", func() {
 		Expect((*recs)[0].msg).To(Equal("reading a failed: read: timeout"))
 		Expect((*recs)[0].attrs).To(SatisfyAll(
 			HaveKeyWithValue("error_id", "test::timed_out"),
-			HaveKeyWithValue("error_class", "operational"),
+			HaveKeyWithValue("error_class", "known"),
 		))
 		Expect((*recs)[1].level).To(Equal(slog.LevelError))
 		Expect((*recs)[1].msg).To(Equal("reading b failed: boom"))
@@ -161,7 +160,7 @@ var _ = Describe("Classifier.WithPrefix", func() {
 	It("puts the ID and class in front of the text once and keeps the chain", func() {
 		err := classifier.WithPrefix(classifier.WithPrefix(fmt.Errorf("connect: %w", errClosed)))
 
-		Expect(err.Error()).To(Equal("[error_id=test::closed error_class=operational] connect: closed"))
+		Expect(err.Error()).To(Equal("[error_id=test::closed error_class=known] connect: closed"))
 		Expect(err).To(MatchError(errClosed))
 	})
 
@@ -173,9 +172,12 @@ var _ = Describe("Classifier.WithPrefix", func() {
 var _ = Describe("Namespace", func() {
 	It("builds the ID under its prefix with its class", func() {
 		id := errclass.NewNamespace("ns_build").ID("bad_config", errclass.Known)
+		log, recs := capture()
+
+		log.Warnf(id, "bad config")
 
 		Expect(id.String()).To(Equal("ns_build::bad_config"))
-		Expect(id.Class()).To(Equal(errclass.Known))
+		Expect((*recs)[0].attrs).To(HaveKeyWithValue("error_class", "known"))
 	})
 
 	names := errclass.NewNamespace("ns_name")
@@ -190,7 +192,7 @@ var _ = Describe("Namespace", func() {
 		Entry("dash", "bad-config"),
 	)
 
-	It("panics on a class that is not one of the four", func() {
+	It("panics on a class that is not one of the three", func() {
 		n := errclass.NewNamespace("ns_class")
 		Expect(func() { n.ID("bad_config", errclass.Class("fatal")) }).To(Panic())
 	})
@@ -198,7 +200,7 @@ var _ = Describe("Namespace", func() {
 	It("panics on a name declared twice, whatever its class", func() {
 		n := errclass.NewNamespace("ns_twice")
 		n.ID("dropped", errclass.Known)
-		Expect(func() { n.ID("dropped", errclass.Operational) }).To(Panic())
+		Expect(func() { n.ID("dropped", errclass.Bug) }).To(Panic())
 	})
 
 	It("panics on a malformed prefix", func() {
@@ -209,12 +211,5 @@ var _ = Describe("Namespace", func() {
 	It("panics on a prefix declared twice, so two plugins cannot share fingerprints", func() {
 		errclass.NewNamespace("ns_prefix")
 		Expect(func() { errclass.NewNamespace("ns_prefix") }).To(Panic())
-	})
-})
-
-var _ = Describe("IsDialFailure", func() {
-	It("matches a refused dial, not a failed read", func() {
-		Expect(errclass.IsDialFailure(fmt.Errorf("x: %w", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("refused")}))).To(BeTrue())
-		Expect(errclass.IsDialFailure(&net.OpError{Op: "read", Net: "tcp", Err: errors.New("reset")})).To(BeFalse())
 	})
 })

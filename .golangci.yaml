@@ -79,6 +79,7 @@ linters:
         text: "shadow"
       # Plugins that do not log through errclass.Logger yet. Delete a plugin's
       # line once it does; a new plugin is checked from the start.
+      # Tech debt: https://linear.app/united-manufacturing-hub/issue/ENG-7720
       - { linters: [forbidigo], path: ^classic_to_core_plugin/ }
       - { linters: [forbidigo], path: ^downsampler_plugin/ }
       - { linters: [forbidigo], path: ^eip_plugin/ }
