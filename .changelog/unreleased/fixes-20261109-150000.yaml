@@ -1,3 +1,0 @@
-kind: fixes
-body: Updated the JOSE library (go-jose v4.1.4 to v4.1.9), so maliciously crafted JSON Web Keys can no longer consume excessive CPU while being parsed (CVE-2026-116587). The same upgrade closes the two further advisories that applied at v4.1.4, CVE-2026-116585 and CVE-2026-116586 (ENG-7668)
-time: 2026-11-09T15:00:00.000000+01:00

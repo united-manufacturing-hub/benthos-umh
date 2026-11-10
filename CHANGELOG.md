@@ -1,5 +1,16 @@
 # Changelog
 
+## [v0.16.2]
+
+### Improvements
+
+- The Historian output reports a retention, compress_after, value_chunk_interval, attribute_chunk_interval or write_timeout it cannot use, such as `168` without a unit, as a config lint error that names the field, before it starts (ENG-5693)
+
+### Fixes
+
+- The mongodb input, output, processor and cache use version 2.9.3 of the MongoDB Go driver, so a malformed BSON document no longer crashes benthos. A pipeline was exposed only if it used one of those four components (CVE-2026-107324, CVE-2026-107325); the same version closes the GridFS and `Client.BulkWrite` advisories CVE-2026-88031 and CVE-2026-81521 (ENG-7559)
+- Updated the JOSE library (go-jose v4.1.4 to v4.1.9), so maliciously crafted JSON Web Keys can no longer consume excessive CPU while being parsed (CVE-2026-116587). The same upgrade closes the two further advisories that applied at v4.1.4, CVE-2026-116585 and CVE-2026-116586 (ENG-7668)
+
 ## [v0.16.1]
 
 ### Improvements
