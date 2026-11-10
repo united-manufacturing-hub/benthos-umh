@@ -415,10 +415,10 @@ func (a *AdsCommInput) connLogger() errclass.Logger {
 // is returned with its error_id and error_class in the text, because Benthos
 // core logs it again as "Failed to connect to ads: ..." with no fields.
 func (a *AdsCommInput) Connect(ctx context.Context) error {
-	return classifier.WithPrefix(a.connect(ctx))
+	return classifier.WithPrefix(a.initConnect(ctx))
 }
 
-func (a *AdsCommInput) connect(ctx context.Context) error {
+func (a *AdsCommInput) initConnect(ctx context.Context) error {
 	if a.client != nil {
 		return nil
 	}
