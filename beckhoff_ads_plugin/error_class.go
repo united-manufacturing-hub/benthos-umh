@@ -43,6 +43,9 @@ var (
 	idRouteFault           = ads.ID("route_fault", errclass.Known)
 	idPLCNotRunning        = ads.ID("plc_not_running", errclass.Known)
 	idSymbolConfig         = ads.ID("symbol_config", errclass.Known)
+	idInvalidHostAMS       = ads.ID("invalid_host_ams", errclass.Known)
+	idInvalidTargetAMS     = ads.ID("invalid_target_ams", errclass.Known)
+	idSessionCreateFailed  = ads.ID("session_create_failed", errclass.Bug)
 	idSymbolCacheMiss      = ads.ID("symbol_cache_miss", errclass.Bug)
 	idNoInitialSamples     = ads.ID("no_initial_samples", errclass.Bug)
 	idReadGap              = ads.ID("read_gap", errclass.Bug)
@@ -58,6 +61,18 @@ var (
 // notifications, which is a symbol name or PLC program problem.
 var errNoSymbolsRegistered = errors.New("no symbols registered for notifications")
 
+// errInvalidHostAMS and errInvalidTargetAMS: the configured NetID does not
+// parse, which the customer fixes in the config.
+var (
+	errInvalidHostAMS   = errors.New("hostAMS is not a valid AMS NetID")
+	errInvalidTargetAMS = errors.New("targetAMS is not a valid AMS NetID")
+)
+
+// errSessionCreate: go-ads rejected the session options. Config parsing
+// validates everything go-ads checks there, so reaching it is a bug in that
+// validation.
+var errSessionCreate = errors.New("creating the ADS session failed")
+
 // classifier is where every Warn and Error line of this input gets its ID:
 // the Logger it returns (a.Log) applies it. Call Classify directly only where
 // the ID decides what the code does next, or where the line's error decides
@@ -70,6 +85,9 @@ var classifier = &errclass.Classifier{Rules: errorRules, Unclassified: idUnclass
 // for example, also wraps a closed transport.
 var errorRules = []errclass.Rule{
 	{Matches: errclass.Is(errNoSymbolsRegistered), ID: idSymbolConfig},
+	{Matches: errclass.Is(errInvalidHostAMS), ID: idInvalidHostAMS},
+	{Matches: errclass.Is(errInvalidTargetAMS), ID: idInvalidTargetAMS},
+	{Matches: errclass.Is(errSessionCreate), ID: idSessionCreateFailed},
 	// A deaf router is unreachable for a moment, not misconfigured, whatever
 	// route-registration text it is wrapped in. Before isUntypedRouteFault.
 	{Matches: errclass.Is(adsLib.ErrRouterUnresponsive), ID: idTargetUnreachable},

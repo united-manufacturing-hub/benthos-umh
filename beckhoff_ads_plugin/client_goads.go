@@ -80,7 +80,7 @@ func buildSessionOptions(ctx context.Context, cfg SessionConfig, log errclass.Lo
 	if !isAuto(cfg.HostAMS) {
 		localAMS, err := adsLib.NewAMSAddress(cfg.HostAMS, uint16(cfg.HostPort))
 		if err != nil {
-			return nil, fmt.Errorf("hostAMS %q is not a valid AMS NetID: %w", cfg.HostAMS, err)
+			return nil, fmt.Errorf("%w (%q): %w", errInvalidHostAMS, cfg.HostAMS, err)
 		}
 		opts = append(opts, adsLib.WithLocalAMS(localAMS))
 	}
@@ -160,7 +160,7 @@ func newGoADSClient(ctx context.Context, cfg SessionConfig, log errclass.Logger)
 	if cfg.TargetAMS != "" {
 		targetAMS, err = adsLib.NewAMSAddress(cfg.TargetAMS, uint16(cfg.RuntimePort))
 		if err != nil {
-			return nil, fmt.Errorf("targetAMS %q is not a valid AMS NetID: %w", cfg.TargetAMS, err)
+			return nil, fmt.Errorf("%w (%q): %w", errInvalidTargetAMS, cfg.TargetAMS, err)
 		}
 	}
 	// Background ctx: session lifetime is driven by Close, not the per-call
@@ -169,7 +169,7 @@ func newGoADSClient(ctx context.Context, cfg SessionConfig, log errclass.Logger)
 		IP: cfg.TargetIP, Port: cfg.TargetPort, AMS: targetAMS,
 	}, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("creating the ADS session failed: %w", err)
+		return nil, fmt.Errorf("%w: %w", errSessionCreate, err)
 	}
 	return &goADSClient{session: sess}, nil
 }
