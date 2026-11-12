@@ -41,6 +41,8 @@ import (
 )
 
 // Point is one prepared write: where to write and the already-encoded value.
+// The engine only needs the two methods below. Everything else (area, offset,
+// bytes) is the plugin's own and stays inside its session.
 type Point[P any] interface {
 	// Address returns the address as the user wrote it, for errors.
 	Address() string
@@ -49,7 +51,12 @@ type Point[P any] interface {
 	SameValue(other P) bool
 }
 
-// Codec turns one mapping into a point. It must not do I/O.
+// Codec turns one mapping (an address and the value taken from the message)
+// into a point. The engine calls it once per mapping, before anything is
+// sent, so a bad value or address fails the message with nothing written.
+// It must not do I/O, which keeps it testable without a device. Wrap failures
+// with ErrInvalidValue or ErrNotWritable so they become a WriteError with the
+// matching reason.
 type Codec[P any] interface {
 	Prepare(address string, value any) (P, error)
 }
@@ -76,12 +83,15 @@ type ResolvingCodec[P any] interface {
 	PrepareResolved(address string, resolved Resolved, value any) (P, error)
 }
 
-// Dialer opens a session to the device.
+// Dialer opens a session to the device. The engine calls Dial from Connect,
+// which Benthos calls again after Write returns service.ErrNotConnected.
 type Dialer[P any] interface {
 	Dial(ctx context.Context) (Session[P], error)
 }
 
-// Session is one open connection, used for writing.
+// Session is one open connection, used for writing. The engine keeps at most
+// one session and calls Write for one message at a time. Close is called on
+// shutdown and whenever the session is dropped.
 //
 // Write must wrap transport failures with ErrConnectionLost, device-side
 // refusals with ErrRejected, and a request the session knows the device cannot
@@ -94,6 +104,8 @@ type Session[P any] interface {
 }
 
 // ReadBacker is implemented by sessions that can read written points back.
+// The engine uses it only when readBack is on, and refuses that setting at
+// Connect when the session does not implement it.
 // ReadBack returns one point per input point, in order, holding the device's
 // current value.
 type ReadBacker[P any] interface {
@@ -102,7 +114,9 @@ type ReadBacker[P any] interface {
 
 // Batcher is implemented by sessions that must split a write into several
 // requests (item count, PDU size). Without it, all points of a message go to
-// Write at once.
+// Write at once. Batch must keep the order of the points and must never split
+// one point across requests. Splitting makes a message non-atomic: an earlier
+// batch stays written when a later one fails.
 type Batcher[P any] interface {
 	Batch(points []P) [][]P
 }
