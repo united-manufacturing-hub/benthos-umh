@@ -44,13 +44,13 @@ No JavaScript processor or hand-written `sql_raw` is needed.
 ### Duration values
 
 `retention`, `compress_after`, `value_chunk_interval` and `attribute_chunk_interval` take a
-duration written in hours, minutes or seconds, always with a unit: `168h`, `30m`, `45s`. The value
-must be at least `1s` and a whole number of seconds, so `1h30m` and `1.5h` are valid but `500ms`
-and `1500ms` are not. `retention` may also be empty, which keeps every chunk; the other three
-cannot be empty.
+duration written with a unit (`ns`, `us` or `µs`, `ms`, `s`, `m` or `h`), like `168h`, `30m` or
+`45s`. The value must be at least `1s` and a whole number of seconds, so `1h30m`, `1.5h` and
+`1000ms` are valid but `500ms` and `1500ms` are not. `retention` may also be empty, which keeps
+every chunk; the other three cannot be empty.
 
 Days are not a unit. Write `168h` for 7 days and `720h` for 30 days, not `7d` or `30d`. A value
-without a unit, such as `168`, is rejected too.
+without a unit, such as `"168"`, is rejected too.
 
 A value that breaks these rules fails config lint (`benthos lint`) before the output starts, with
 a message that names the field:
@@ -61,8 +61,9 @@ retention must be a duration with a unit, like "168h", "30m" or "45s"
 
 Other violations read `<field> must be at least 1s` and `<field> must be a whole number of seconds`.
 There is no separate message for days: `7d` gets the same "must be a duration with a unit" error as
-`168`. `write_timeout` is more lenient: empty or `0s` mean no timeout, sub-second values are
-accepted, and only a negative value or one without a unit is rejected.
+`"168"`. An unquoted YAML number such as `168` is rejected with a type error that also names the
+field. `write_timeout` is more lenient: empty, `0` or `0s` mean no timeout, sub-second values are
+accepted, and a negative value or a value that does not parse as a duration is rejected.
 
 These checks exist since benthos-umh 0.16.2.
 
