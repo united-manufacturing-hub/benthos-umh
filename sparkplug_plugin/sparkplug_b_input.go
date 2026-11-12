@@ -16,6 +16,7 @@ package sparkplug_plugin
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -45,6 +46,28 @@ const (
 	SparkplugDataTypeString   = uint32(12)
 	SparkplugDataTypeDateTime = uint32(13)
 	SparkplugDataTypeText     = uint32(14)
+	SparkplugDataTypeUUID     = uint32(15)
+	SparkplugDataTypeDataSet  = uint32(16)
+	SparkplugDataTypeBytes    = uint32(17)
+	SparkplugDataTypeFile     = uint32(18)
+	SparkplugDataTypeTemplate = uint32(19)
+
+	SparkplugDataTypePropertySet     = uint32(20)
+	SparkplugDataTypePropertySetList = uint32(21)
+
+	SparkplugDataTypeInt8Array     = uint32(22)
+	SparkplugDataTypeInt16Array    = uint32(23)
+	SparkplugDataTypeInt32Array    = uint32(24)
+	SparkplugDataTypeInt64Array    = uint32(25)
+	SparkplugDataTypeUInt8Array    = uint32(26)
+	SparkplugDataTypeUInt16Array   = uint32(27)
+	SparkplugDataTypeUInt32Array   = uint32(28)
+	SparkplugDataTypeUInt64Array   = uint32(29)
+	SparkplugDataTypeFloatArray    = uint32(30)
+	SparkplugDataTypeDoubleArray   = uint32(31)
+	SparkplugDataTypeBooleanArray  = uint32(32)
+	SparkplugDataTypeStringArray   = uint32(33)
+	SparkplugDataTypeDateTimeArray = uint32(34)
 )
 
 func init() {
@@ -213,6 +236,10 @@ type sparkplugInput struct {
 	discoveryRebirths       *service.MetricCounter // REBIRTH requests sent for discovery
 	sequenceGapRebirths     *service.MetricCounter // REBIRTH requests sent because of a sequence number gap
 	aliasRebirths           Counter                // REBIRTH requests sent because DATA aliases were unresolved
+	unsupportedValueDrops   Counter
+
+	unsupportedValueWarnedMu sync.Mutex
+	unsupportedValueWarned   map[string]struct{}
 
 	// Extension decoding (ENG-5229); nil when decode_extensions is unset.
 	extDecoder            *extensionDecoder
@@ -473,6 +500,8 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 		discoveryRebirths:       mgr.Metrics().NewCounter("discovery_rebirths"),
 		sequenceGapRebirths:     mgr.Metrics().NewCounter("sequence_gap_rebirths"),
 		aliasRebirths:           mgr.Metrics().NewCounter("alias_rebirths"),
+		unsupportedValueDrops:   mgr.Metrics().NewCounter("unsupported_value_drops"),
+		unsupportedValueWarned:  make(map[string]struct{}),
 		extDecoder:              extDecoder,
 		extensionDecodeErrors:   mgr.Metrics().NewCounter("extension_decode_errors"),
 	}
@@ -1281,6 +1310,8 @@ func (s *sparkplugInput) extractMetricValue(metric *sparkplugb.Payload_Metric) [
 			result["value"] = v.BooleanValue
 		case *sparkplugb.Payload_Metric_StringValue:
 			result["value"] = v.StringValue
+		case *sparkplugb.Payload_Metric_BytesValue:
+			result["value"] = base64.StdEncoding.EncodeToString(v.BytesValue)
 		default:
 			result["value"] = nil
 		}
@@ -1354,6 +1385,46 @@ func (s *sparkplugInput) getDataTypeName(datatype uint32) string {
 		return "DateTime"
 	case SparkplugDataTypeText:
 		return "Text"
+	case SparkplugDataTypeUUID:
+		return "UUID"
+	case SparkplugDataTypeDataSet:
+		return "DataSet"
+	case SparkplugDataTypeBytes:
+		return "Bytes"
+	case SparkplugDataTypeFile:
+		return "File"
+	case SparkplugDataTypeTemplate:
+		return "Template"
+	case SparkplugDataTypePropertySet:
+		return "PropertySet"
+	case SparkplugDataTypePropertySetList:
+		return "PropertySetList"
+	case SparkplugDataTypeInt8Array:
+		return "Int8Array"
+	case SparkplugDataTypeInt16Array:
+		return "Int16Array"
+	case SparkplugDataTypeInt32Array:
+		return "Int32Array"
+	case SparkplugDataTypeInt64Array:
+		return "Int64Array"
+	case SparkplugDataTypeUInt8Array:
+		return "UInt8Array"
+	case SparkplugDataTypeUInt16Array:
+		return "UInt16Array"
+	case SparkplugDataTypeUInt32Array:
+		return "UInt32Array"
+	case SparkplugDataTypeUInt64Array:
+		return "UInt64Array"
+	case SparkplugDataTypeFloatArray:
+		return "FloatArray"
+	case SparkplugDataTypeDoubleArray:
+		return "DoubleArray"
+	case SparkplugDataTypeBooleanArray:
+		return "BooleanArray"
+	case SparkplugDataTypeStringArray:
+		return "StringArray"
+	case SparkplugDataTypeDateTimeArray:
+		return "DateTimeArray"
 	default:
 		return "Unknown"
 	}
@@ -1573,6 +1644,11 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 
 	// Extract raw value for conversion
 	rawValue := s.extractMetricValueRaw(metric)
+	if rawValue == nil && hasUnsupportedValue(metric) {
+		msg.MetaSet("umh_conversion_status", "failed_unsupported_type")
+		s.noteUnsupportedValueDrop(metric)
+		return
+	}
 	if rawValue == nil {
 		msg.MetaSet("umh_conversion_status", "failed_no_value")
 		s.logger.Debugf("UMH conversion failed: no extractable value from metric")
@@ -1668,6 +1744,39 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 	s.logger.Debugf("Successfully added UMH metadata for metric %s -> %s", sparkplugMsg.MetricName, umhMsg.Topic.String())
 }
 
+func hasUnsupportedValue(metric *sparkplugb.Payload_Metric) bool {
+	if metric.IsNull != nil && *metric.IsNull {
+		return false
+	}
+	switch metric.GetValue().(type) {
+	case *sparkplugb.Payload_Metric_DatasetValue,
+		*sparkplugb.Payload_Metric_TemplateValue,
+		*sparkplugb.Payload_Metric_ExtensionValue:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *sparkplugInput) noteUnsupportedValueDrop(metric *sparkplugb.Payload_Metric) {
+	s.unsupportedValueDrops.Incr(1)
+
+	metricName := metric.GetName()
+	s.unsupportedValueWarnedMu.Lock()
+	_, alreadyWarned := s.unsupportedValueWarned[metricName]
+	s.unsupportedValueWarned[metricName] = struct{}{}
+	s.unsupportedValueWarnedMu.Unlock()
+	if alreadyWarned {
+		return
+	}
+
+	datatypeName := "Unknown"
+	if metric.Datatype != nil {
+		datatypeName = s.getDataTypeName(*metric.Datatype)
+	}
+	s.logger.Warnf("Sparkplug B metric %q has datatype %s, which cannot be written to the UNS: its values are dropped and counted in unsupported_value_drops. This warning is logged once per metric.", metricName, datatypeName)
+}
+
 // extractMetricValueRaw extracts the raw value from a Sparkplug metric without JSON wrapping
 func (s *sparkplugInput) extractMetricValueRaw(metric *sparkplugb.Payload_Metric) interface{} {
 	// Check for null value
@@ -1690,6 +1799,8 @@ func (s *sparkplugInput) extractMetricValueRaw(metric *sparkplugb.Payload_Metric
 			return v.BooleanValue
 		case *sparkplugb.Payload_Metric_StringValue:
 			return v.StringValue
+		case *sparkplugb.Payload_Metric_BytesValue:
+			return base64.StdEncoding.EncodeToString(v.BytesValue)
 		default:
 			return nil
 		}

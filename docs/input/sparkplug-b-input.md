@@ -497,7 +497,7 @@ For NDEATH/DDEATH messages, the plugin sets:
 
 When UMH conversion is successful, additional metadata is added:
 
-* `umh_conversion_status`: "success", "failed", "skipped_insufficient_data", or "failed_no_value"
+* `umh_conversion_status`: "success", "failed", "skipped_insufficient_data", "failed_no_value", or "failed_unsupported_type"
 * `umh_location_path`: Converted UMH location path (dots format, sanitized)
 * `umh_tag_name`: UMH tag name extracted from metric name (sanitized)
 * `umh_data_contract`: UMH data contract (e.g., "_raw", "_historian")
@@ -546,6 +546,10 @@ This ensures that messages with non-compliant Sparkplug names are automatically 
 The Sparkplug B input plugin **always splits metrics** into individual messages to ensure UMH-Core format compliance. Each Sparkplug metric becomes a separate Benthos message for downstream processing.
 
 *Note: This behavior is required for UMH-Core format and cannot be disabled.*
+
+#### Value Types
+
+Numeric, Boolean, String, Text, UUID and DateTime values are written as they arrive. Bytes and File values are written as base64 strings. Array values (Int8Array to DateTimeArray) are written as base64 strings of their packed little-endian bytes, the encoding the Sparkplug 3.0 specification defines for arrays. DataSet, Template and extension values cannot be written to the UNS: the plugin drops them, sets `umh_conversion_status` to `failed_unsupported_type`, counts each drop in the `unsupported_value_drops` metric, and logs one warning per metric name.
 
 ## Stateless Architecture Considerations
 
