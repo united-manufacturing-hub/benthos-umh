@@ -33,13 +33,38 @@ No JavaScript processor or hand-written `sql_raw` is needed.
 | `metadata_keys_all` | no | `true` | Store every metadata key except structural/high-churn keys and any `metadata_keys_exclude` match. |
 | `metadata_keys` | no | `[]` | Allowlist used only when `metadata_keys_all=false`. |
 | `metadata_keys_exclude` | no | `[]` | Blacklist applied only when `metadata_keys_all=true`. Each entry is an exact key name or a trailing-`*` prefix (e.g. `opcua_*`); matches are dropped on top of the built-in exclusions. A bare `*` drops everything. Ignored in allowlist mode. |
-| `compress_after` | no | `168h` | Compress chunks older than this. Applied to each of a contract's hypertables that has no compression policy yet; changing it afterward has no effect, and compression cannot be switched off (see [Changing compression or retention](#changing-compression-or-retention)). |
-| `retention` | no | `""` | Drop chunks older than this; empty keeps data forever. Applied only to a hypertable that has no retention policy yet **and holds no data**; changing it afterward has no effect (see [Changing compression or retention](#changing-compression-or-retention)). |
-| `value_chunk_interval` | no | `168h` | Chunk width of `umh.value_<contract>`. Applied when the table is created; changing it afterward has no effect (see [Changing the chunk interval](#changing-the-chunk-interval)). |
-| `attribute_chunk_interval` | no | `168h` | Chunk width of `umh.attribute_<contract>`. Attribute rows are written only when a tag's metadata changes, so this table is much sparser than the value table. Applied when the table is created. |
+| `compress_after` | no | `168h` | Compress chunks older than this ([duration](#duration-values)). Applied to each of a contract's hypertables that has no compression policy yet; changing it afterward has no effect, and compression cannot be switched off (see [Changing compression or retention](#changing-compression-or-retention)). |
+| `retention` | no | `""` | Drop chunks older than this ([duration](#duration-values), e.g. `720h`; days are not a unit); empty keeps data forever. Applied only to a hypertable that has no retention policy yet **and holds no data**; changing it afterward has no effect (see [Changing compression or retention](#changing-compression-or-retention)). |
+| `value_chunk_interval` | no | `168h` | Chunk width of `umh.value_<contract>` ([duration](#duration-values)). Applied when the table is created; changing it afterward has no effect (see [Changing the chunk interval](#changing-the-chunk-interval)). |
+| `attribute_chunk_interval` | no | `168h` | Chunk width of `umh.attribute_<contract>` ([duration](#duration-values)). Attribute rows are written only when a tag's metadata changes, so this table is much sparser than the value table. Applied when the table is created. |
 | `batching` | no | — | benthos batch policy (`count` / `period` / `byte_size`). The whole batch is written in one transaction, so larger batches raise throughput; e.g. `count: 1000`, `period: 1s`. |
 | `max_in_flight` | no | `8` | Batches written to the database concurrently. Throughput scales with this and with batch size (see Throughput below). |
 | `write_timeout` | no | `""` | Per-batch write timeout as a Go duration (e.g. `30s`). Empty/`0s` means no timeout (a write hung on a lock or half-open connection blocks until the context is cancelled). When set, a timed-out batch is held for retry (NACK), never dropped; set it above the largest expected batch commit time. |
+
+### Duration values
+
+`retention`, `compress_after`, `value_chunk_interval` and `attribute_chunk_interval` take a
+duration written in hours, minutes or seconds, always with a unit: `168h`, `30m`, `45s`. The value
+must be at least `1s` and a whole number of seconds, so `1h30m` and `1.5h` are valid but `500ms`
+and `1500ms` are not. `retention` may also be empty, which keeps every chunk; the other three
+cannot be empty.
+
+Days are not a unit. Write `168h` for 7 days and `720h` for 30 days, not `7d` or `30d`. A value
+without a unit, such as `168`, is rejected too.
+
+A value that breaks these rules fails config lint (`benthos lint`) before the output starts, with
+a message that names the field:
+
+```
+retention must be a duration with a unit, like "168h", "30m" or "45s"
+```
+
+Other violations read `<field> must be at least 1s` and `<field> must be a whole number of seconds`.
+There is no separate message for days: `7d` gets the same "must be a duration with a unit" error as
+`168`. `write_timeout` is more lenient: empty or `0s` mean no timeout, sub-second values are
+accepted, and only a negative value or one without a unit is rejected.
+
+These checks exist since benthos-umh 0.16.2.
 
 ## What it writes
 
