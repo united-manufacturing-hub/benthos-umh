@@ -30,7 +30,7 @@ import (
 // contract with umh-core, section ADS:
 // https://linear.app/united-manufacturing-hub/document/plugin-error-classes-contract-between-benthos-umh-and-umh-core-e51f0744258b
 var (
-	ads = errclass.NewNamespace("ads")
+	ads = errclass.NewPlugin("ads")
 
 	idConnectionDropped    = ads.ID("connection_dropped", errclass.Known)
 	idSessionDisconnected  = ads.ID("session_disconnected", errclass.Known)
