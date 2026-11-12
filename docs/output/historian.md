@@ -51,14 +51,12 @@ least `1s` and a whole number of seconds: `1h30m` is valid, `500ms` and `1500ms`
 **Days are not a unit.** Write `168h` for 7 days, not `7d`. A value without a unit, such as
 `"168"`, is rejected the same way.
 
-Since benthos-umh 0.16.2, an invalid value fails `benthos lint` before the output starts, naming
-the field:
+Since benthos-umh 0.16.2, an invalid value fails `benthos lint` before the output starts, for
+example:
 
 ```
 retention must be a duration with a unit, like "168h", "30m" or "45s"
 ```
-
-The other errors are `<field> must be at least 1s` and `<field> must be a whole number of seconds`.
 
 ## What it writes
 
