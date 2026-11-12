@@ -44,9 +44,9 @@ No JavaScript processor or hand-written `sql_raw` is needed.
 ### Duration values
 
 `retention`, `compress_after`, `value_chunk_interval` and `attribute_chunk_interval` take a
-duration with a unit (`ns`, `us`/`µs`, `ms`, `s`, `m` or `h`), like `168h`, `30m` or `45s`. It must
-be at least `1s` and a whole number of seconds: `1h30m` and `1000ms` are valid, `500ms` and
-`1500ms` are not. Only `retention` may be empty, which keeps every chunk.
+duration in hours, minutes or seconds (`h`, `m`, `s`), like `168h`, `30m` or `45s`. It must be at
+least `1s` and a whole number of seconds: `1h30m` is valid, `500ms` and `1500ms` are not. Only
+`retention` may be empty, which keeps every chunk.
 
 **Days are not a unit.** Write `168h` for 7 days, not `7d`. A value without a unit, such as
 `"168"`, is rejected the same way.
