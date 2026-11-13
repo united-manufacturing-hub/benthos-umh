@@ -1,0 +1,8 @@
+kind: fixes
+body: |
+  Stand-alone Flow binaries and images use Go 1.27.4 to reduce the attack surface of dependencies with known vulnerabilities:
+    - Go toolchain, now 1.27.4 — build-time input validation (CVE-2026-97033, CVE-2026-97034, CVE-2026-97035, CVE-2026-97036, CVE-2026-97037, CVE-2026-97038, CVE-2026-97039, CVE-2026-97040, CVE-2026-97041, CVE-2026-97042, CVE-2026-97043).
+    - Go standard library, now 1.27.4 — customer-configured HTTP/1 server inputs; exploitability in shipped handlers is not established (CVE-2026-97054).
+
+  Update Stand-alone Flow to reduce your attack surface. This entry covers only newly built standalone benthos-umh artifacts, not the older benthos-umh bundled in existing umh-core releases or umh-core's separate Go dependency (ENG-7791).
+time: 2026-11-13T12:00:00.000000+01:00
