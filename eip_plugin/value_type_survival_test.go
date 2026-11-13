@@ -16,6 +16,7 @@ package eip_plugin_test
 
 import (
 	"context"
+	"math"
 	"reflect"
 
 	"github.com/danomagnum/gologix"
@@ -58,5 +59,6 @@ var _ = Describe("Ethernet/IP value type through tag_processor", func() {
 		Entry("INT array", gologix.CIPTypeINT, []int16{tagprocessortest.NegativeInteger, tagprocessortest.PositiveInteger}),
 		Entry("DINT array", gologix.CIPTypeDINT, []int32{tagprocessortest.NegativeInteger, tagprocessortest.PositiveInteger}),
 		Entry("REAL array", gologix.CIPTypeREAL, []float32{tagprocessortest.FractionalNumber, tagprocessortest.NegativeInteger}),
+		Entry("REAL array with NaN", gologix.CIPTypeREAL, []float32{float32(math.NaN()), tagprocessortest.FractionalNumber}),
 	)
 })

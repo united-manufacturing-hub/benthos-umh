@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"strconv"
 
@@ -163,6 +164,12 @@ func expectSameTypeAndValue(decoded any, processed any) {
 		processedNumber := expectNumber(processed)
 		gomega.Expect(strconv.ParseUint(processedNumber, 10, 64)).To(gomega.Equal(decodedValue.Uint()))
 	case reflect.Float32, reflect.Float64:
+		decodedFloat := decodedValue.Float()
+		if math.IsNaN(decodedFloat) || math.IsInf(decodedFloat, 0) {
+			// JSON has no NaN or Inf, so the input plugin writes null for them
+			gomega.Expect(processed).To(gomega.BeNil())
+			return
+		}
 		processedNumber := expectNumber(processed)
 		gomega.Expect(strconv.ParseFloat(processedNumber, 64)).To(gomega.Equal(decodedValue.Float()))
 	case reflect.Slice, reflect.Array:
