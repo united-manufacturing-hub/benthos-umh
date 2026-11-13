@@ -158,6 +158,8 @@ When reading addresses from a TIA Portal project, map them like this:
 
 Similar to the OPC UA input, this outputs for each address a single message with the payload being the value that was read. To distinguish messages, you can use meta("s7\_address") in a following benthos bloblang processor.
 
+The PLC can reject an address, for example when the data block does not exist or the offset is out of range. The input then leaves that address out of the read cycle. It logs a warning with the reason from the PLC. The metric `rejected_address_reads` counts these reads, with the address as a label. The other addresses keep their messages. When the PLC rejects every configured address, the input reports an error on each read cycle.
+
 **Batching Behavior**
 
 Addresses are automatically split into batches based on S7 protocol constraints:
