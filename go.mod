@@ -1,6 +1,6 @@
 module github.com/united-manufacturing-hub/benthos-umh
 
-go 1.27.3
+go 1.27.4
 
 // Set the GODEBUG environment variable to allow parsing of certificates with negative serial numbers.
 // This is necessary for backwards compatibility with some OPC UA servers (e.g., Kepware) that may issue
