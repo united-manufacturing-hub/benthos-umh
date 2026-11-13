@@ -37,6 +37,7 @@ linters:
     - errcheck
     - errorlint
     - exhaustive
+    - forbidigo
     - ginkgolinter
     - govet
     - ineffassign
@@ -76,6 +77,23 @@ linters:
           - govet
         path: _test\.go$
         text: "shadow"
+      # Plugins that do not log through errclass.Logger yet. Delete a plugin's
+      # line once it does; a new plugin is checked from the start.
+      # Tech debt: https://linear.app/united-manufacturing-hub/issue/ENG-7720
+      - { linters: [forbidigo], path: ^classic_to_core_plugin/ }
+      - { linters: [forbidigo], path: ^downsampler_plugin/ }
+      - { linters: [forbidigo], path: ^eip_plugin/ }
+      - { linters: [forbidigo], path: ^historian_plugin/ }
+      - { linters: [forbidigo], path: ^modbus_plugin/ }
+      - { linters: [forbidigo], path: ^nodered_js_plugin/ }
+      - { linters: [forbidigo], path: ^opcua_plugin/ }
+      - { linters: [forbidigo], path: ^s7comm_plugin/ }
+      - { linters: [forbidigo], path: ^sensorconnect_plugin/ }
+      - { linters: [forbidigo], path: ^sparkplug_plugin/ }
+      - { linters: [forbidigo], path: ^stream_processor_plugin/ }
+      - { linters: [forbidigo], path: ^tag_processor_plugin/ }
+      - { linters: [forbidigo], path: ^topic_browser_plugin/ }
+      - { linters: [forbidigo], path: ^uns_plugin/ }
     warn-unused: true
 
   settings:
@@ -92,6 +110,12 @@ linters:
       errorf-multi: true
     exhaustive:
       default-signifies-exhaustive: true
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: ^service\.Logger\.(Warn|Warnf|Error|Errorf)$
+          pkg: ^github\.com/redpanda-data/benthos/v4/public/service$
+          msg: "log Warn and Error lines through an errclass.Logger so they carry error_id and error_class (see pkg/umh/errclass)"
     govet:
       enable-all: true
       disable:

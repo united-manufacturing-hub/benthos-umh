@@ -18,13 +18,15 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/errclass"
 )
 
 // benthosLogHandler bridges go-ads slog records to a Benthos service.Logger.
 // Levels are taken as go-ads sets them; a second level policy here would drift.
+// Records at Warn and above are classified by goADSMessages, then by the
+// record's error (see error_class.go).
 type benthosLogHandler struct {
-	logger *service.Logger
+	logger errclass.Logger
 	attrs  []slog.Attr
 }
 
@@ -35,15 +37,15 @@ func (h *benthosLogHandler) Enabled(_ context.Context, level slog.Level) bool {
 }
 
 func (h *benthosLogHandler) Handle(_ context.Context, r slog.Record) error {
-	var kvs []any
-	for _, a := range h.attrs {
-		kvs = append(kvs, a.Key, a.Value.Any())
-	}
+	attrs := append([]slog.Attr(nil), h.attrs...)
 	r.Attrs(func(a slog.Attr) bool {
-		kvs = append(kvs, a.Key, a.Value.Any())
+		attrs = append(attrs, a)
 		return true
 	})
-
+	kvs := make([]any, 0, 2*len(attrs))
+	for _, a := range attrs {
+		kvs = append(kvs, a.Key, a.Value.Any())
+	}
 	l := h.logger
 	if len(kvs) > 0 {
 		l = l.With(kvs...)
@@ -51,13 +53,35 @@ func (h *benthosLogHandler) Handle(_ context.Context, r slog.Record) error {
 
 	switch {
 	case r.Level >= slog.LevelError:
-		l.Errorf("%s", r.Message)
+		l.Errorf(recordKind(r.Message, attrs), "%s", r.Message)
 	case r.Level >= slog.LevelWarn:
-		l.Warnf("%s", r.Message)
+		l.Warnf(recordKind(r.Message, attrs), "%s", r.Message)
 	case r.Level >= slog.LevelInfo:
 		l.Infof("%s", r.Message)
 	default:
 		l.Debugf("%s", r.Message)
+	}
+	return nil
+}
+
+// recordKind classifies a go-ads record. A message in goADSMessages decides on
+// its own, whatever error the record carries. Otherwise the record's error
+// decides, with goADSMessageFallbacks as the Kind of the message. The error is
+// already a field of the line, so it is not appended to the text.
+func recordKind(msg string, attrs []slog.Attr) errclass.Kind {
+	if kind, ok := goADSMessages[msg]; ok {
+		return kind
+	}
+	return classifier.Classify(recordError(attrs), goADSMessageFallbacks[msg])
+}
+
+// recordError returns the first attribute that holds an error value; go-ads
+// logs its errors as slog.Any("error", err), not as strings.
+func recordError(attrs []slog.Attr) error {
+	for _, a := range attrs {
+		if err, ok := a.Value.Any().(error); ok {
+			return err
+		}
 	}
 	return nil
 }

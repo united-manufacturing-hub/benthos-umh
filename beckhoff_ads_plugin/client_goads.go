@@ -21,15 +21,16 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
-	"strings"
 	"time"
 
 	adsLib "github.com/RuneRoven/go-ads/v2"
-	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/errclass"
 )
 
-// goADSClient is the go-ads adapter — the ONLY file (besides client.go)
-// importing the fork. All WithRoute/NewAMSAddress/type-mapping logic lives here.
+// goADSClient is the go-ads adapter. Besides client.go, only this file and
+// error_class.go (which classifies go-ads errors and log records) import the
+// fork. All WithRoute/NewAMSAddress/type-mapping logic lives here.
 type goADSClient struct {
 	session *adsLib.Session
 }
@@ -57,7 +58,7 @@ func resolveRouteHostIP(ctx context.Context, cfg SessionConfig) (string, error) 
 
 // buildSessionOptions assembles the go-ads SessionOptions: logger bridge,
 // route registration, local AMS override, and request timeout.
-func buildSessionOptions(ctx context.Context, cfg SessionConfig, log *service.Logger) ([]adsLib.SessionOption, error) {
+func buildSessionOptions(ctx context.Context, cfg SessionConfig, log errclass.Logger) ([]adsLib.SessionOption, error) {
 	// go-ads verbosity follows the benthos pipeline log level via this bridge;
 	// no global SetDefaultLogger (last-input-wins across multiple ADS inputs).
 	opts := []adsLib.SessionOption{adsLib.WithLogger(slog.New(&benthosLogHandler{logger: log}))}
@@ -79,7 +80,7 @@ func buildSessionOptions(ctx context.Context, cfg SessionConfig, log *service.Lo
 	if !isAuto(cfg.HostAMS) {
 		localAMS, err := adsLib.NewAMSAddress(cfg.HostAMS, uint16(cfg.HostPort))
 		if err != nil {
-			return nil, fmt.Errorf("hostAMS %q is not a valid AMS NetID: %w", cfg.HostAMS, err)
+			return nil, fmt.Errorf("%w (%q): %w", errInvalidHostAMS, cfg.HostAMS, err)
 		}
 		opts = append(opts, adsLib.WithLocalAMS(localAMS))
 	}
@@ -148,7 +149,7 @@ func cappedBackoff(limit time.Duration) adsLib.BackoffConfig {
 
 // newGoADSClient builds session options and the go-ads session from
 // SessionConfig. It does not call Connect; the caller drives that.
-func newGoADSClient(ctx context.Context, cfg SessionConfig, log *service.Logger) (Client, error) {
+func newGoADSClient(ctx context.Context, cfg SessionConfig, log errclass.Logger) (Client, error) {
 	opts, err := buildSessionOptions(ctx, cfg, log)
 	if err != nil {
 		return nil, err
@@ -159,7 +160,7 @@ func newGoADSClient(ctx context.Context, cfg SessionConfig, log *service.Logger)
 	if cfg.TargetAMS != "" {
 		targetAMS, err = adsLib.NewAMSAddress(cfg.TargetAMS, uint16(cfg.RuntimePort))
 		if err != nil {
-			return nil, fmt.Errorf("targetAMS %q is not a valid AMS NetID: %w", cfg.TargetAMS, err)
+			return nil, fmt.Errorf("%w (%q): %w", errInvalidTargetAMS, cfg.TargetAMS, err)
 		}
 	}
 	// Background ctx: session lifetime is driven by Close, not the per-call
@@ -168,7 +169,7 @@ func newGoADSClient(ctx context.Context, cfg SessionConfig, log *service.Logger)
 		IP: cfg.TargetIP, Port: cfg.TargetPort, AMS: targetAMS,
 	}, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("creating the ADS session failed: %w", err)
+		return nil, fmt.Errorf("%w: %w", errSessionCreate, err)
 	}
 	return &goADSClient{session: sess}, nil
 }
@@ -196,7 +197,7 @@ func (c *goADSClient) ReadMultipleSymbols(ctx context.Context, names []string) (
 		for i, item := range batchErr.Items {
 			failed[i] = NotifyResult{
 				SymbolName: item.Symbol,
-				Skipped:    item.Skipped != nil,
+				Skipped:    item.Skipped,
 				Code:       uint32(item.Error),
 			}
 		}
@@ -243,7 +244,7 @@ func (c *goADSClient) AddNotifications(ctx context.Context, cfgs []NotifyConfig,
 		out[i] = NotifyResult{
 			SymbolName: cfgs[i].SymbolName,
 			Registered: r.Skipped == nil && r.Error == adsLib.ReturnCodeNoErrors,
-			Skipped:    r.Skipped != nil,
+			Skipped:    r.Skipped,
 			Code:       uint32(r.Error),
 		}
 	}
@@ -276,23 +277,10 @@ func connectDropKind(err error) dropKind {
 }
 
 // isRouteFault reports whether a connect failed because the PLC would not serve
-// our route — a configuration fault that a retry cannot fix.
-//
-// Only the drop verdict has a sentinel. Route activation wraps the probe error
-// instead (session.go "was registered but the PLC did not serve it"), so that
-// one is matched on text until go-ads exports a sentinel for it.
+// our route — a configuration fault that a retry cannot fix. It is the same
+// verdict as the error_id, so the backoff and the log cannot disagree.
 func isRouteFault(err error) bool {
-	// Deaf router: unreachable for a moment, nothing to correct. Checked first,
-	// or the "route registration" text match below claims it and the long
-	// route-fault ramp holds the bridge down for minutes over a few seconds.
-	if errors.Is(err, adsLib.ErrRouterUnresponsive) {
-		return false
-	}
-	if errors.Is(err, adsLib.ErrRouteNotServed) {
-		return true
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "did not serve it") || strings.Contains(msg, "route registration")
+	return classifier.Classify(err, kindUnclassified) == kindRouteFault
 }
 
 // isTransportGone reports whether the ADS transport went away mid-operation.
