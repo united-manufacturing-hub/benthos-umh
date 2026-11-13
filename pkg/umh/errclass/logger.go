@@ -44,29 +44,29 @@ func (l Logger) Info(msg string) { l.l.Info(msg) }
 // Infof logs a formatted message at info level, like Info.
 func (l Logger) Infof(format string, args ...any) { l.l.Infof(format, args...) }
 
-// Warnf logs a warning under id, the meaning the call site gives the line.
-func (l Logger) Warnf(id ID, format string, args ...any) {
-	l.tagged(l.c.Classify(nil, id)).Warnf(format, args...) //nolint:forbidigo // the one place a Warn line gets its ID
+// Warnf logs a warning under kind, the meaning the call site gives the line.
+func (l Logger) Warnf(kind Kind, format string, args ...any) {
+	l.tagged(l.c.Classify(nil, kind)).Warnf(format, args...) //nolint:forbidigo // the one place a Warn line gets its Kind
 }
 
-// Errorf logs an error under id, like Warnf.
-func (l Logger) Errorf(id ID, format string, args ...any) {
-	l.tagged(l.c.Classify(nil, id)).Errorf(format, args...) //nolint:forbidigo // the one place an Error line gets its ID
+// Errorf logs an error under kind, like Warnf.
+func (l Logger) Errorf(kind Kind, format string, args ...any) {
+	l.tagged(l.c.Classify(nil, kind)).Errorf(format, args...) //nolint:forbidigo // the one place an Error line gets its Kind
 }
 
 // WarnErr logs a warning that reports err, with ": <err>" appended to the
-// text. A rule that matches err wins over id; id applies when none does.
-func (l Logger) WarnErr(err error, id ID, format string, args ...any) {
-	l.tagged(l.c.Classify(err, id)).Warnf("%s", withErr(err, format, args)) //nolint:forbidigo // the one place a Warn line gets its ID
+// text. A rule that matches err wins over kind; kind applies when none does.
+func (l Logger) WarnErr(err error, kind Kind, format string, args ...any) {
+	l.tagged(l.c.Classify(err, kind)).Warnf("%s", withErr(err, format, args)) //nolint:forbidigo // the one place a Warn line gets its Kind
 }
 
 // ErrorErr logs an error that reports err, like WarnErr.
-func (l Logger) ErrorErr(err error, id ID, format string, args ...any) {
-	l.tagged(l.c.Classify(err, id)).Errorf("%s", withErr(err, format, args)) //nolint:forbidigo // the one place an Error line gets its ID
+func (l Logger) ErrorErr(err error, kind Kind, format string, args ...any) {
+	l.tagged(l.c.Classify(err, kind)).Errorf("%s", withErr(err, format, args)) //nolint:forbidigo // the one place an Error line gets its Kind
 }
 
-func (l Logger) tagged(id ID) *service.Logger {
-	return l.l.With("error_id", id.name, "error_class", string(id.class))
+func (l Logger) tagged(kind Kind) *service.Logger {
+	return l.l.With("error_id", kind.name, "error_class", string(kind.class))
 }
 
 func withErr(err error, format string, args []any) string {

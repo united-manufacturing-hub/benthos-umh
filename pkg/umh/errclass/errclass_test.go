@@ -31,18 +31,18 @@ var (
 	errTimeout = errors.New("timeout")
 	errClosed  = errors.New("closed")
 
-	plugin         = errclass.NewPlugin("test")
-	idTimedOut     = plugin.ID("timed_out", errclass.Known)
-	idClosed       = plugin.ID("closed", errclass.Known)
-	idBadConfig    = plugin.ID("bad_config", errclass.Known)
-	idUnclassified = plugin.ID("unclassified", errclass.Unknown)
+	plugin           = errclass.NewPlugin("test")
+	kindTimedOut     = plugin.Define("timed_out", errclass.Known)
+	kindClosed       = plugin.Define("closed", errclass.Known)
+	kindBadConfig    = plugin.Define("bad_config", errclass.Known)
+	kindUnclassified = plugin.Define("unclassified", errclass.Unknown)
 
 	classifier = &errclass.Classifier{
 		Rules: []errclass.Rule{
-			{Matches: errclass.Is(errTimeout), ID: idTimedOut},
-			{Matches: errclass.Is(errClosed), ID: idClosed},
+			{Matches: errclass.Is(errTimeout), Kind: kindTimedOut},
+			{Matches: errclass.Is(errClosed), Kind: kindClosed},
 		},
-		Unclassified: idUnclassified,
+		Unclassified: kindUnclassified,
 	}
 )
 
@@ -83,27 +83,27 @@ func capture() (errclass.Logger, *[]record) {
 }
 
 var _ = Describe("Classifier.Classify", func() {
-	DescribeTable("picks the ID",
-		func(err error, site, want errclass.ID) {
+	DescribeTable("picks the Kind",
+		func(err error, site, want errclass.Kind) {
 			Expect(classifier.Classify(err, site)).To(Equal(want))
 		},
-		Entry("a matching error wins over the call site", fmt.Errorf("read: %w", errTimeout), idBadConfig, idTimedOut),
-		Entry("the first matching rule wins", fmt.Errorf("%w: %w", errTimeout, errClosed), idBadConfig, idTimedOut),
-		Entry("an unmatched error falls back to the call site", errors.New("boom"), idBadConfig, idBadConfig),
-		Entry("no error falls back to the call site", nil, idBadConfig, idBadConfig),
-		Entry("a zero call-site ID means unclassified", errors.New("boom"), errclass.ID{}, idUnclassified),
+		Entry("a matching error wins over the call site", fmt.Errorf("read: %w", errTimeout), kindBadConfig, kindTimedOut),
+		Entry("the first matching rule wins", fmt.Errorf("%w: %w", errTimeout, errClosed), kindBadConfig, kindTimedOut),
+		Entry("an unmatched error falls back to the call site", errors.New("boom"), kindBadConfig, kindBadConfig),
+		Entry("no error falls back to the call site", nil, kindBadConfig, kindBadConfig),
+		Entry("a zero call-site Kind means unclassified", errors.New("boom"), errclass.Kind{}, kindUnclassified),
 	)
 
 	It("works on a nil Classifier, so a zero Logger does not panic", func() {
 		var c *errclass.Classifier
-		Expect(c.Classify(errTimeout, idBadConfig)).To(Equal(idBadConfig))
+		Expect(c.Classify(errTimeout, kindBadConfig)).To(Equal(kindBadConfig))
 	})
 })
 
 var _ = Describe("Logger", func() {
-	It("tags a Warnf line with the call site's ID", func() {
+	It("tags a Warnf line with the call site's Kind", func() {
 		log, recs := capture()
-		log.With("symbol", "a").Warnf(idBadConfig, "symbol %s is misspelled", "a")
+		log.With("symbol", "a").Warnf(kindBadConfig, "symbol %s is misspelled", "a")
 
 		Expect(*recs).To(HaveLen(1))
 		Expect((*recs)[0].level).To(Equal(slog.LevelWarn))
@@ -117,8 +117,8 @@ var _ = Describe("Logger", func() {
 
 	It("classifies the error of a WarnErr or ErrorErr line and appends it to the text", func() {
 		log, recs := capture()
-		log.WarnErr(fmt.Errorf("read: %w", errTimeout), idBadConfig, "reading %s failed", "a")
-		log.ErrorErr(errors.New("boom"), idBadConfig, "reading %s failed", "b")
+		log.WarnErr(fmt.Errorf("read: %w", errTimeout), kindBadConfig, "reading %s failed", "a")
+		log.ErrorErr(errors.New("boom"), kindBadConfig, "reading %s failed", "b")
 
 		Expect(*recs).To(HaveLen(2))
 		Expect((*recs)[0].level).To(Equal(slog.LevelWarn))
@@ -132,9 +132,9 @@ var _ = Describe("Logger", func() {
 		Expect((*recs)[1].attrs).To(HaveKeyWithValue("error_id", "test::bad_config"))
 	})
 
-	It("tags a line under unclassified when the call site passes a zero ID", func() {
+	It("tags a line under unclassified when the call site passes a zero Kind", func() {
 		log, recs := capture()
-		log.Errorf(errclass.ID{}, "nothing known")
+		log.Errorf(errclass.Kind{}, "nothing known")
 
 		Expect((*recs)[0].attrs).To(HaveKeyWithValue("error_id", "test::unclassified"))
 	})
@@ -152,12 +152,12 @@ var _ = Describe("Logger", func() {
 
 	It("discards everything as a zero value", func() {
 		var log errclass.Logger
-		Expect(func() { log.With("a", 1).ErrorErr(errTimeout, idBadConfig, "x") }).NotTo(Panic())
+		Expect(func() { log.With("a", 1).ErrorErr(errTimeout, kindBadConfig, "x") }).NotTo(Panic())
 	})
 })
 
 var _ = Describe("Classifier.WithPrefix", func() {
-	It("puts the ID and class in front of the text once and keeps the chain", func() {
+	It("puts the error_id and class in front of the text once and keeps the chain", func() {
 		err := classifier.WithPrefix(classifier.WithPrefix(fmt.Errorf("connect: %w", errClosed)))
 
 		Expect(err.Error()).To(Equal("[error_id=test::closed error_class=known] connect: closed"))
@@ -170,20 +170,20 @@ var _ = Describe("Classifier.WithPrefix", func() {
 })
 
 var _ = Describe("Plugin", func() {
-	It("builds the ID under the plugin name with its class", func() {
-		id := errclass.NewPlugin("p_build").ID("bad_config", errclass.Known)
+	It("builds the Kind under the plugin name with its class", func() {
+		kind := errclass.NewPlugin("p_build").Define("bad_config", errclass.Known)
 		log, recs := capture()
 
-		log.Warnf(id, "bad config")
+		log.Warnf(kind, "bad config")
 
-		Expect(id.String()).To(Equal("p_build::bad_config"))
+		Expect(kind.String()).To(Equal("p_build::bad_config"))
 		Expect((*recs)[0].attrs).To(HaveKeyWithValue("error_class", "known"))
 	})
 
 	p := errclass.NewPlugin("p_name")
 	DescribeTable("panics on a malformed name, so the plugin fails as soon as it loads",
 		func(name string) {
-			Expect(func() { p.ID(name, errclass.Known) }).To(Panic())
+			Expect(func() { p.Define(name, errclass.Known) }).To(Panic())
 		},
 		Entry("empty", ""),
 		Entry("upper case", "BadConfig"),
@@ -194,13 +194,13 @@ var _ = Describe("Plugin", func() {
 
 	It("panics on a class that is not one of the three", func() {
 		p := errclass.NewPlugin("p_class")
-		Expect(func() { p.ID("bad_config", errclass.Class("fatal")) }).To(Panic())
+		Expect(func() { p.Define("bad_config", errclass.Class("fatal")) }).To(Panic())
 	})
 
-	It("panics on a name declared twice, whatever its class", func() {
+	It("panics on a name defined twice, whatever its class", func() {
 		p := errclass.NewPlugin("p_twice")
-		p.ID("dropped", errclass.Known)
-		Expect(func() { p.ID("dropped", errclass.Bug) }).To(Panic())
+		p.Define("dropped", errclass.Known)
+		Expect(func() { p.Define("dropped", errclass.Bug) }).To(Panic())
 	})
 
 	It("panics on a malformed plugin name", func() {
@@ -208,7 +208,7 @@ var _ = Describe("Plugin", func() {
 		Expect(func() { errclass.NewPlugin("plc::x") }).To(Panic())
 	})
 
-	It("panics on a plugin name declared twice, so two plugins cannot share an ID", func() {
+	It("panics on a plugin name declared twice, so two plugins cannot share an error_id", func() {
 		errclass.NewPlugin("p_twice_declared")
 		Expect(func() { errclass.NewPlugin("p_twice_declared") }).To(Panic())
 	})

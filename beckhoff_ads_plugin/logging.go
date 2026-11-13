@@ -53,9 +53,9 @@ func (h *benthosLogHandler) Handle(_ context.Context, r slog.Record) error {
 
 	switch {
 	case r.Level >= slog.LevelError:
-		l.Errorf(recordID(r.Message, attrs), "%s", r.Message)
+		l.Errorf(recordKind(r.Message, attrs), "%s", r.Message)
 	case r.Level >= slog.LevelWarn:
-		l.Warnf(recordID(r.Message, attrs), "%s", r.Message)
+		l.Warnf(recordKind(r.Message, attrs), "%s", r.Message)
 	case r.Level >= slog.LevelInfo:
 		l.Infof("%s", r.Message)
 	default:
@@ -64,13 +64,13 @@ func (h *benthosLogHandler) Handle(_ context.Context, r slog.Record) error {
 	return nil
 }
 
-// recordID classifies a go-ads record. A message in goADSMessages decides on
+// recordKind classifies a go-ads record. A message in goADSMessages decides on
 // its own, whatever error the record carries. Otherwise the record's error
-// decides, with goADSMessageFallbacks as the ID of the message. The error is
+// decides, with goADSMessageFallbacks as the Kind of the message. The error is
 // already a field of the line, so it is not appended to the text.
-func recordID(msg string, attrs []slog.Attr) errclass.ID {
-	if id, ok := goADSMessages[msg]; ok {
-		return id
+func recordKind(msg string, attrs []slog.Attr) errclass.Kind {
+	if kind, ok := goADSMessages[msg]; ok {
+		return kind
 	}
 	return classifier.Classify(recordError(attrs), goADSMessageFallbacks[msg])
 }

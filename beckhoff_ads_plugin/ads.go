@@ -259,7 +259,7 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 
 	symbolList, symbolWarnings := CreateSymbolList(unifiedAddress, cycleTime, maxDelay)
 	for _, w := range symbolWarnings {
-		classifier.Logger(mgr.Logger()).Warnf(idSymbolConfig, "%s", w)
+		classifier.Logger(mgr.Logger()).Warnf(kindSymbolConfig, "%s", w)
 	}
 
 	m := &AdsCommInput{
@@ -344,7 +344,7 @@ func (a *AdsCommInput) onSessionEvent(ev SessionEvent, reason string) {
 		// A SessionEvent added to client.go without a case here. Logged rather
 		// than degraded: an unknown severity is not grounds for a rebuild.
 		a.Log.With("event", int(ev), "reason", reason).
-			Warnf(idInternalBug, "ADS session reported an event this input does not handle; treating it as informational")
+			Warnf(kindInternalBug, "ADS session reported an event this input does not handle; treating it as informational")
 	}
 }
 
@@ -357,7 +357,7 @@ func (a *AdsCommInput) onSessionEvent(ev SessionEvent, reason string) {
 func (a *AdsCommInput) markDegraded(reason string, detail string) {
 	if a.degradedReason.CompareAndSwap(nil, &reason) {
 		a.Log.With("reason", reason, "detail", detail).
-			Errorf(reasonIDs[reason], "ADS session can no longer deliver; rebuilding it on the next read")
+			Errorf(reasonKinds[reason], "ADS session can no longer deliver; rebuilding it on the next read")
 	}
 }
 
@@ -474,7 +474,7 @@ func (a *AdsCommInput) noteConnectFailure(err error) {
 		if a.routeFaults >= routeSkipAfter && a.skipRouteUntil.Before(time.Now()) {
 			a.skipRouteUntil = time.Now().Add(routeSkipWindow)
 			a.connLogger().With("routeFaults", a.routeFaults, "for", routeSkipWindow.String()).
-				Warnf(idRouteFault, "Not asking the PLC to register a route on the next attempts; set hostIP to the address the PLC sees (behind a NATing VPN gateway that is the gateway's own LAN address)")
+				Warnf(kindRouteFault, "Not asking the PLC to register a route on the next attempts; set hostIP to the address the PLC sees (behind a NATing VPN gateway that is the gateway's own LAN address)")
 		}
 	} else {
 		a.routeFaults = 0
@@ -529,17 +529,17 @@ func (a *AdsCommInput) finishConnect(ctx context.Context) error {
 // the one Benthos core logs for it agree. A dropped transport heals on the next
 // Connect; a rejected session does not.
 func (a *AdsCommInput) logConnectFailure(ctx context.Context, what string, err error) error {
-	id := classifier.Classify(err, idUnclassified)
+	kind := classifier.Classify(err, kindUnclassified)
 	switch {
 	case shuttingDown(ctx):
 		a.Log.Debugf("%s during shutdown: %v", what, err)
-	case id == idRouteFault:
-		a.connLogger().With("hint", routeFaultHint).ErrorErr(err, id, "%s", what)
-	case id == idConnectionDropped:
+	case kind == kindRouteFault:
+		a.connLogger().With("hint", routeFaultHint).ErrorErr(err, kind, "%s", what)
+	case kind == kindConnectionDropped:
 		// No hint: connectHint's fallback diagnoses a rejected session.
-		a.connLogger().WarnErr(err, id, "%s because the PLC dropped the connection; the next connect attempt retries", what)
+		a.connLogger().WarnErr(err, kind, "%s because the PLC dropped the connection; the next connect attempt retries", what)
 	default:
-		a.connLogger().With("hint", connectHint(err)).ErrorErr(err, id, "%s", what)
+		a.connLogger().With("hint", connectHint(err)).ErrorErr(err, kind, "%s", what)
 	}
 	return err
 }
@@ -565,7 +565,7 @@ func (a *AdsCommInput) Close(_ context.Context) error {
 	err := a.client.Close()
 	a.client = nil
 	if err != nil {
-		a.connLogger().ErrorErr(err, idCloseFailed, "Closing connection to PLC failed")
+		a.connLogger().ErrorErr(err, kindCloseFailed, "Closing connection to PLC failed")
 		return err
 	}
 	a.Log.Debug("Closed connection to PLC")

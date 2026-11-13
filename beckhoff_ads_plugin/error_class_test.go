@@ -49,81 +49,81 @@ func goADSRecord(level slog.Level, msg string, args ...any) capturedLog {
 	return (*recs)[0]
 }
 
-// haveID checks the error_id. The errclass tests check that a line carries the
-// class its ID was declared with.
-func haveID(id errclass.ID) OmegaMatcher {
+// haveKind checks the error_id. The errclass tests check that a line carries
+// the class its Kind was defined with.
+func haveKind(kind errclass.Kind) OmegaMatcher {
 	return HaveField("Attrs", SatisfyAll(
-		HaveKeyWithValue("error_id", id.String()),
+		HaveKeyWithValue("error_id", kind.String()),
 		HaveKey("error_class"),
 	))
 }
 
 var _ = Describe("classifier", func() {
 	DescribeTable("maps an error onto the contract by type",
-		func(err error, want errclass.ID) {
-			Expect(classifier.Classify(err, idUnclassified)).To(Equal(want))
+		func(err error, want errclass.Kind) {
+			Expect(classifier.Classify(err, kindUnclassified)).To(Equal(want))
 		},
-		Entry("no error", nil, idUnclassified),
-		Entry("every notification symbol failed", fmt.Errorf("%w (2 symbols all failed to resolve)", errNoSymbolsRegistered), idSymbolConfig),
-		Entry("hostAMS does not parse", fmt.Errorf("%w (%q): %w", errInvalidHostAMS, "1.2", errors.New("bad")), idInvalidHostAMS),
-		Entry("targetAMS does not parse", fmt.Errorf("%w (%q): %w", errInvalidTargetAMS, "1.2", errors.New("bad")), idInvalidTargetAMS),
-		Entry("go-ads rejected the session options", fmt.Errorf("%w: %w", errSessionCreate, errors.New("remote.IP must be set")), idSessionCreateFailed),
-		Entry("router answered nothing", fmt.Errorf("connect: %w", adsLib.ErrRouterUnresponsive), idTargetUnreachable),
-		Entry("TCP dial failed", fmt.Errorf("connect: %w", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}), idTargetUnreachable),
-		Entry("UDP exchange timed out", fmt.Errorf("identify: %w", udpTimeout), idTargetUnreachable),
+		Entry("no error", nil, kindUnclassified),
+		Entry("every notification symbol failed", fmt.Errorf("%w (2 symbols all failed to resolve)", errNoSymbolsRegistered), kindSymbolConfig),
+		Entry("hostAMS does not parse", fmt.Errorf("%w (%q): %w", errInvalidHostAMS, "1.2", errors.New("bad")), kindInvalidHostAMS),
+		Entry("targetAMS does not parse", fmt.Errorf("%w (%q): %w", errInvalidTargetAMS, "1.2", errors.New("bad")), kindInvalidTargetAMS),
+		Entry("go-ads rejected the session options", fmt.Errorf("%w: %w", errSessionCreate, errors.New("remote.IP must be set")), kindSessionCreateFailed),
+		Entry("router answered nothing", fmt.Errorf("connect: %w", adsLib.ErrRouterUnresponsive), kindTargetUnreachable),
+		Entry("TCP dial failed", fmt.Errorf("connect: %w", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}), kindTargetUnreachable),
+		Entry("UDP exchange timed out", fmt.Errorf("identify: %w", udpTimeout), kindTargetUnreachable),
 		Entry("target discovery timed out while creating the session",
-			fmt.Errorf("%w: %w", errSessionCreate, fmt.Errorf("discovery failed: identify: %w", udpTimeout)), idTargetUnreachable),
-		Entry("TCP socket timed out on a live session", &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}, idReadTimeout),
-		Entry("subscribe stranded by a cache reload", fmt.Errorf("symbol %q: %w", "MAIN.a", adsLib.ErrNotificationStrandedByReload), idInternalBug),
-		Entry("route not served, though the transport closed too", fmt.Errorf("%w: %w", adsLib.ErrRouteNotServed, adsLib.ErrTransportClosed), idRouteFault),
-		Entry("runtime not in RUN", fmt.Errorf("route is served but %w (ADS state 15)", adsLib.ErrRuntimeNotRunning), idPLCNotRunning),
-		Entry("router rejected the port", adsLib.AMSError{Code: adsLib.ReturnCodeGlobalTargetPortNotFound}, idTargetPortNotFound),
-		Entry("device rejected the port", fmt.Errorf("read: %w", adsLib.ReturnCodeGlobalTargetPortNotFound), idTargetPortNotFound),
-		Entry("symbol not found", fmt.Errorf("GetSymbolInfoByName failed: %w", adsLib.ReturnCodeDeviceSymbolNoFound), idSymbolConfig),
-		Entry("batch symbol unresolved", fmt.Errorf("item: %w", adsLib.ErrBatchSymbolUnresolved), idSymbolConfig),
-		Entry("transport closed", fmt.Errorf("read: %w", adsLib.ErrTransportClosed), idConnectionDropped),
-		Entry("established connection dropped", adsLib.ErrEstablishedDropped, idConnectionDropped),
-		Entry("session disconnected", adsLib.ErrDisconnected, idConnectionDropped),
-		Entry("request deadline", fmt.Errorf("read: %w", context.DeadlineExceeded), idReadTimeout),
-		Entry("a socket read that did not time out", &net.OpError{Op: "read", Net: "tcp", Err: io.EOF}, idUnclassified),
-		Entry("anything else", errors.New("boom"), idUnclassified),
+			fmt.Errorf("%w: %w", errSessionCreate, fmt.Errorf("discovery failed: identify: %w", udpTimeout)), kindTargetUnreachable),
+		Entry("TCP socket timed out on a live session", &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}, kindReadTimeout),
+		Entry("subscribe stranded by a cache reload", fmt.Errorf("symbol %q: %w", "MAIN.a", adsLib.ErrNotificationStrandedByReload), kindInternalBug),
+		Entry("route not served, though the transport closed too", fmt.Errorf("%w: %w", adsLib.ErrRouteNotServed, adsLib.ErrTransportClosed), kindRouteFault),
+		Entry("runtime not in RUN", fmt.Errorf("route is served but %w (ADS state 15)", adsLib.ErrRuntimeNotRunning), kindPLCNotRunning),
+		Entry("router rejected the port", adsLib.AMSError{Code: adsLib.ReturnCodeGlobalTargetPortNotFound}, kindTargetPortNotFound),
+		Entry("device rejected the port", fmt.Errorf("read: %w", adsLib.ReturnCodeGlobalTargetPortNotFound), kindTargetPortNotFound),
+		Entry("symbol not found", fmt.Errorf("GetSymbolInfoByName failed: %w", adsLib.ReturnCodeDeviceSymbolNoFound), kindSymbolConfig),
+		Entry("batch symbol unresolved", fmt.Errorf("item: %w", adsLib.ErrBatchSymbolUnresolved), kindSymbolConfig),
+		Entry("transport closed", fmt.Errorf("read: %w", adsLib.ErrTransportClosed), kindConnectionDropped),
+		Entry("established connection dropped", adsLib.ErrEstablishedDropped, kindConnectionDropped),
+		Entry("session disconnected", adsLib.ErrDisconnected, kindConnectionDropped),
+		Entry("request deadline", fmt.Errorf("read: %w", context.DeadlineExceeded), kindReadTimeout),
+		Entry("a socket read that did not time out", &net.OpError{Op: "read", Net: "tcp", Err: io.EOF}, kindUnclassified),
+		Entry("anything else", errors.New("boom"), kindUnclassified),
 	)
 
 	It("falls back to the call site's class only when no type matches", func() {
-		Expect(classifier.Classify(nil, idSymbolConfig)).To(Equal(idSymbolConfig))
-		Expect(classifier.Classify(errors.New("boom"), idSymbolConfig)).To(Equal(idSymbolConfig))
-		Expect(classifier.Classify(adsLib.ErrTransportClosed, idSymbolConfig)).To(Equal(idConnectionDropped))
+		Expect(classifier.Classify(nil, kindSymbolConfig)).To(Equal(kindSymbolConfig))
+		Expect(classifier.Classify(errors.New("boom"), kindSymbolConfig)).To(Equal(kindSymbolConfig))
+		Expect(classifier.Classify(adsLib.ErrTransportClosed, kindSymbolConfig)).To(Equal(kindConnectionDropped))
 	})
 
 	It("treats a zero fallback, such as a missed table lookup, as unclassified", func() {
-		Expect(classifier.Classify(nil, reasonIDs["no-such-reason"])).To(Equal(idUnclassified))
+		Expect(classifier.Classify(nil, reasonKinds["no-such-reason"])).To(Equal(kindUnclassified))
 	})
 
 	DescribeTable("matches the route faults go-ads returns untyped by their text, and only those",
-		func(err error, want errclass.ID) {
-			Expect(classifier.Classify(err, idUnclassified)).To(Equal(want))
+		func(err error, want errclass.Kind) {
+			Expect(classifier.Classify(err, kindUnclassified)).To(Equal(want))
 		},
-		Entry("PLC refused the registration", errors.New("route registration failed during connect: route registration failed with error code: 1796"), idRouteFault),
+		Entry("PLC refused the registration", errors.New("route registration failed during connect: route registration failed with error code: 1796"), kindRouteFault),
 		Entry("route registered but never served, though the probe saw a closed transport",
 			fmt.Errorf("route registration during connect: %w", fmt.Errorf(`route "benthosADS-1.2.3.4" was registered but the PLC did not serve it within 10s (3 redials): %w`, adsLib.ErrTransportClosed)),
-			idRouteFault),
-		Entry("a deaf router is not a route fault", fmt.Errorf("route registration failed during connect: %w", adsLib.ErrRouterUnresponsive), idTargetUnreachable),
+			kindRouteFault),
+		Entry("a deaf router is not a route fault", fmt.Errorf("route registration failed during connect: %w", adsLib.ErrRouterUnresponsive), kindTargetUnreachable),
 		Entry("a redial after registration that was refused",
 			fmt.Errorf("TCP reconnect after route registration failed: %w", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}),
-			idTargetUnreachable),
-		Entry("a registration whose probe connection dropped", fmt.Errorf("route registration failed during connect: %w", adsLib.ErrTransportClosed), idConnectionDropped),
-		Entry("a registration wrapper around nothing typed", errors.New("route registration failed during connect: boom"), idUnclassified),
-		Entry("typed errors still classify", fmt.Errorf("connect: %w", adsLib.ErrRuntimeNotRunning), idPLCNotRunning),
+			kindTargetUnreachable),
+		Entry("a registration whose probe connection dropped", fmt.Errorf("route registration failed during connect: %w", adsLib.ErrTransportClosed), kindConnectionDropped),
+		Entry("a registration wrapper around nothing typed", errors.New("route registration failed during connect: boom"), kindUnclassified),
+		Entry("typed errors still classify", fmt.Errorf("connect: %w", adsLib.ErrRuntimeNotRunning), kindPLCNotRunning),
 	)
 
-	DescribeTable("reasonIDs maps go-ads session-event reasons",
-		func(reason adsLib.Reason, want errclass.ID) {
-			Expect(classifier.Classify(nil, reasonIDs[string(reason)])).To(Equal(want))
+	DescribeTable("reasonKinds maps go-ads session-event reasons",
+		func(reason adsLib.Reason, want errclass.Kind) {
+			Expect(classifier.Classify(nil, reasonKinds[string(reason)])).To(Equal(want))
 		},
-		Entry("symbol not found", adsLib.ReasonSymbolNotFound, idSymbolConfig),
-		Entry("symbol not active", adsLib.ReasonSymbolNotActive, idSymbolConfig),
-		Entry("heartbeat silent", adsLib.ReasonHeartbeatSilent, idHeartbeatObserveOnly),
-		Entry("an unmapped reason", adsLib.ReasonReloadCapExhausted, idUnclassified),
+		Entry("symbol not found", adsLib.ReasonSymbolNotFound, kindSymbolConfig),
+		Entry("symbol not active", adsLib.ReasonSymbolNotActive, kindSymbolConfig),
+		Entry("heartbeat silent", adsLib.ReasonHeartbeatSilent, kindHeartbeatObserveOnly),
+		Entry("an unmapped reason", adsLib.ReasonReloadCapExhausted, kindUnclassified),
 	)
 })
 
@@ -132,32 +132,32 @@ var _ = Describe("benthosLogHandler classification", func() {
 		It("tags go-ads message "+strconv.Quote(msg), func() {
 			// An error that would classify differently must not win over the message.
 			rec := goADSRecord(slog.LevelError, msg, "error", adsLib.ErrRouterUnresponsive)
-			Expect(rec).To(haveID(want))
+			Expect(rec).To(haveKind(want))
 		})
 	}
 
 	for msg, want := range goADSMessageFallbacks {
 		It("tags "+strconv.Quote(msg)+" by its error first, then by its message", func() {
-			Expect(goADSRecord(slog.LevelError, msg, "error", adsLib.ErrRuntimeNotRunning)).To(haveID(idPLCNotRunning))
-			Expect(goADSRecord(slog.LevelError, msg, "error", errors.New("boom"))).To(haveID(want))
+			Expect(goADSRecord(slog.LevelError, msg, "error", adsLib.ErrRuntimeNotRunning)).To(haveKind(kindPLCNotRunning))
+			Expect(goADSRecord(slog.LevelError, msg, "error", errors.New("boom"))).To(haveKind(want))
 		})
 	}
 
 	It("classifies an unlisted record by its error value", func() {
 		rec := goADSRecord(slog.LevelWarn, "send request failed",
 			"error", adsLib.AMSError{Code: adsLib.ReturnCodeGlobalTargetPortNotFound})
-		Expect(rec).To(haveID(idTargetPortNotFound))
+		Expect(rec).To(haveKind(kindTargetPortNotFound))
 	})
 
 	It("finds the error among the attributes a logger was built with", func() {
 		log, recs := capturingLogger()
 		slog.New(&benthosLogHandler{logger: classifier.Logger(log)}).With("err", adsLib.ErrTransportClosed).Warn("some go-ads warning")
-		Expect((*recs)[0]).To(haveID(idConnectionDropped))
+		Expect((*recs)[0]).To(haveKind(kindConnectionDropped))
 	})
 
 	It("tags a record it cannot classify as unclassified", func() {
 		Expect(goADSRecord(slog.LevelWarn, "something go-ads never said before", "count", 3)).
-			To(haveID(idUnclassified))
+			To(haveKind(kindUnclassified))
 	})
 
 	It("leaves info and debug records untagged", func() {
@@ -192,7 +192,7 @@ var _ = Describe("go-ads message table guard", func() {
 		}
 
 		var missing []string
-		for _, table := range []map[string]errclass.ID{goADSMessages, goADSMessageFallbacks} {
+		for _, table := range []map[string]errclass.Kind{goADSMessages, goADSMessageFallbacks} {
 			for msg := range table {
 				if !strings.Contains(src.String(), strconv.Quote(msg)) {
 					missing = append(missing, msg)
@@ -220,8 +220,8 @@ var _ = Describe("plugin log lines carry their class", func() {
 		}})
 
 		Expect(*recs).To(ConsistOf(
-			SatisfyAll(HaveField("Msg", ContainSubstring("MAIN.gap")), haveID(idReadGap)),
-			SatisfyAll(HaveField("Msg", ContainSubstring("MAIN.typo")), haveID(idSymbolConfig)),
+			SatisfyAll(HaveField("Msg", ContainSubstring("MAIN.gap")), haveKind(kindReadGap)),
+			SatisfyAll(HaveField("Msg", ContainSubstring("MAIN.typo")), haveKind(kindSymbolConfig)),
 		))
 	})
 
@@ -234,7 +234,7 @@ var _ = Describe("plugin log lines carry their class", func() {
 			Skipped:    fmt.Errorf("%w: %w", adsLib.ErrBatchSymbolUnresolved, adsLib.ReturnCodeDeviceSymbolNoFound),
 		}}})
 
-		Expect(*recs).To(ConsistOf(haveID(idSymbolConfig)))
+		Expect(*recs).To(ConsistOf(haveKind(kindSymbolConfig)))
 	})
 
 	It("tags a notification stranded by a cache reload as a bug, with the message unchanged", func() {
@@ -254,40 +254,40 @@ var _ = Describe("plugin log lines carry their class", func() {
 
 		Expect(*recs).To(ContainElement(SatisfyAll(
 			HaveField("Msg", `Notification symbol "MAIN.a" skipped (check symbol name)`),
-			haveID(idInternalBug),
+			haveKind(kindInternalBug),
 		)))
 	})
 
 	DescribeTable("logReadFailure",
-		func(closed bool, err error, want errclass.ID) {
+		func(closed bool, err error, want errclass.Kind) {
 			log, recs := capturingLogger()
 			a := &AdsCommInput{Log: classifier.Logger(log), client: &fakeClient{closed: closed}}
 
 			a.logReadFailure(context.Background(), 2, err)
 
-			Expect(*recs).To(ConsistOf(haveID(want)))
+			Expect(*recs).To(ConsistOf(haveKind(want)))
 		},
-		Entry("PLC did not answer in time", false, fmt.Errorf("read: %w", context.DeadlineExceeded), idReadTimeout),
-		Entry("connection dropped", false, adsLib.ErrTransportClosed, idConnectionDropped),
-		Entry("session gone", true, errors.New("closed"), idConnectionDropped),
-		Entry("anything else", false, errors.New("boom"), idUnclassified),
+		Entry("PLC did not answer in time", false, fmt.Errorf("read: %w", context.DeadlineExceeded), kindReadTimeout),
+		Entry("connection dropped", false, adsLib.ErrTransportClosed, kindConnectionDropped),
+		Entry("session gone", true, errors.New("closed"), kindConnectionDropped),
+		Entry("anything else", false, errors.New("boom"), kindUnclassified),
 	)
 
 	DescribeTable("logConnectFailure",
-		func(err error, want errclass.ID) {
+		func(err error, want errclass.Kind) {
 			log, recs := capturingLogger()
 			a := &AdsCommInput{Log: classifier.Logger(log), TargetIP: "1.2.3.4", TargetPort: 48898, RuntimePort: 851}
 
 			Expect(a.logConnectFailure(context.Background(), "Connecting to PLC failed", err)).To(MatchError(err))
 
-			Expect(*recs).To(ConsistOf(haveID(want)))
+			Expect(*recs).To(ConsistOf(haveKind(want)))
 		},
-		Entry("route not served", fmt.Errorf("connect: %w", adsLib.ErrRouteNotServed), idRouteFault),
-		Entry("route registration refused", errors.New("route registration failed during connect: route registration failed with error code: 1796"), idRouteFault),
-		Entry("transport dropped", adsLib.ErrTransportClosed, idConnectionDropped),
-		Entry("dial failed", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}, idTargetUnreachable),
-		Entry("unrecognized", errors.New("ADS error 0x706"), idUnclassified),
-		Entry("a dropped transport around a stopped runtime", fmt.Errorf("%w: %w", adsLib.ErrTransportClosed, adsLib.ErrRuntimeNotRunning), idPLCNotRunning),
+		Entry("route not served", fmt.Errorf("connect: %w", adsLib.ErrRouteNotServed), kindRouteFault),
+		Entry("route registration refused", errors.New("route registration failed during connect: route registration failed with error code: 1796"), kindRouteFault),
+		Entry("transport dropped", adsLib.ErrTransportClosed, kindConnectionDropped),
+		Entry("dial failed", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}, kindTargetUnreachable),
+		Entry("unrecognized", errors.New("ADS error 0x706"), kindUnclassified),
+		Entry("a dropped transport around a stopped runtime", fmt.Errorf("%w: %w", adsLib.ErrTransportClosed, adsLib.ErrRuntimeNotRunning), kindPLCNotRunning),
 	)
 
 	It("gives the plugin line and the returned error the same error_id", func() {
@@ -297,7 +297,7 @@ var _ = Describe("plugin log lines carry their class", func() {
 
 		returned := classifier.WithPrefix(a.logConnectFailure(context.Background(), "Connecting to PLC failed", err))
 
-		Expect(*recs).To(ConsistOf(haveID(idPLCNotRunning)))
+		Expect(*recs).To(ConsistOf(haveKind(kindPLCNotRunning)))
 		Expect(returned.Error()).To(HavePrefix("[error_id=ads::plc_not_running error_class=known] "))
 	})
 
@@ -321,7 +321,7 @@ var _ = Describe("plugin log lines carry their class", func() {
 		for _, r := range *recs {
 			if r.Level >= slog.LevelWarn {
 				warns++
-				Expect(r).To(haveID(idSymbolConfig))
+				Expect(r).To(haveKind(kindSymbolConfig))
 			}
 		}
 		Expect(warns).To(Equal(2))
@@ -346,7 +346,7 @@ var _ = Describe("plugin log lines carry their class", func() {
 
 		a.initSymbolIndex(context.Background())
 
-		Expect(*recs).To(ConsistOf(haveID(idSymbolConfig)))
+		Expect(*recs).To(ConsistOf(haveKind(kindSymbolConfig)))
 	})
 
 	It("tags the rebuild line with the class of the go-ads reason", func() {
@@ -357,7 +357,7 @@ var _ = Describe("plugin log lines carry their class", func() {
 
 		Expect(*recs).To(ConsistOf(SatisfyAll(
 			HaveField("Level", slog.LevelError),
-			haveID(idHeartbeatObserveOnly),
+			haveKind(kindHeartbeatObserveOnly),
 		)))
 	})
 
@@ -367,7 +367,7 @@ var _ = Describe("plugin log lines carry their class", func() {
 
 		a.onSessionEvent(SessionEvent(99), "new-reason")
 
-		Expect(*recs).To(ConsistOf(haveID(idInternalBug)))
+		Expect(*recs).To(ConsistOf(haveKind(kindInternalBug)))
 	})
 
 	It("tags a failed close", func() {
@@ -376,7 +376,7 @@ var _ = Describe("plugin log lines carry their class", func() {
 
 		Expect(a.Close(context.Background())).To(HaveOccurred())
 
-		Expect(*recs).To(ContainElement(SatisfyAll(HaveField("Level", slog.LevelError), haveID(idCloseFailed))))
+		Expect(*recs).To(ContainElement(SatisfyAll(HaveField("Level", slog.LevelError), haveKind(kindCloseFailed))))
 	})
 
 	It("prefixes a failed Connect with its class for the Benthos core line", func() {
@@ -418,23 +418,23 @@ var _ = Describe("UMH-CORE-45M message forms", func() {
 	It("heartbeat", func() {
 		Expect(goADSRecord(slog.LevelError,
 			"no notification heartbeat within the allowed window; treating this session's subscriptions as dead and re-subscribing",
-			"cycle", 2*time.Second, "missedTicks", 5)).To(SatisfyAll(notReported, haveID(idHeartbeatResubscribe)))
+			"cycle", 2*time.Second, "missedTicks", 5)).To(SatisfyAll(notReported, haveKind(kindHeartbeatResubscribe)))
 	})
 
 	It("connection dropped", func() {
 		Expect(goADSRecord(slog.LevelError, "PLC dropped an established connection, transport down",
-			"error", io.EOF, "framesPeer", 0)).To(SatisfyAll(notReported, haveID(idConnectionDropped)))
+			"error", io.EOF, "framesPeer", 0)).To(SatisfyAll(notReported, haveKind(kindConnectionDropped)))
 	})
 
 	It("session disconnected", func() {
 		Expect(goADSRecord(slog.LevelError, "session disconnected, reconnecting; no data is read until it succeeds",
-			"flapCount", 2)).To(SatisfyAll(notReported, haveID(idSessionDisconnected)))
+			"flapCount", 2)).To(SatisfyAll(notReported, haveKind(kindSessionDisconnected)))
 	})
 
 	It("target port not found", func() {
 		Expect(goADSRecord(slog.LevelError, "send request failed",
 			"error", adsLib.AMSError{Code: adsLib.ReturnCodeGlobalTargetPortNotFound})).
-			To(SatisfyAll(notReported, haveID(idTargetPortNotFound)))
+			To(SatisfyAll(notReported, haveKind(kindTargetPortNotFound)))
 	})
 
 	It("reconnect failing", func() {
@@ -449,7 +449,7 @@ var _ = Describe("UMH-CORE-45M message forms", func() {
 			fmt.Errorf("GetSymbolInfoByName(.SCADA.PD.Hubzahl_Soll) failed: ADS error in WriteRead: %w",
 				adsLib.ReturnCodeDeviceSymbolNoFound))
 		Expect(goADSRecord(slog.LevelError, "error getting symbol for batch notification",
-			"error", err, "symbol", ".SCADA.PD.Hubzahl_Soll")).To(SatisfyAll(notReported, haveID(idSymbolConfig)))
+			"error", err, "symbol", ".SCADA.PD.Hubzahl_Soll")).To(SatisfyAll(notReported, haveKind(kindSymbolConfig)))
 	})
 
 	It("route registration", func() {
@@ -459,7 +459,7 @@ var _ = Describe("UMH-CORE-45M message forms", func() {
 
 		returned := classifier.WithPrefix(a.logConnectFailure(context.Background(), "Connecting to PLC failed", err))
 
-		Expect(*recs).To(ConsistOf(SatisfyAll(notReported, haveID(idRouteFault))))
+		Expect(*recs).To(ConsistOf(SatisfyAll(notReported, haveKind(kindRouteFault))))
 		Expect(returned.Error()).To(HavePrefix("[error_id=ads::route_fault error_class=known] "))
 	})
 })

@@ -28,23 +28,23 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/errclass"
 )
 
-// A plugin declares its Plugin, IDs, Rules and Classifier once, as package
+// A plugin declares its Plugin, Kinds, Rules and Classifier once, as package
 // variables.
 var (
 	example = errclass.NewPlugin("example")
 
-	idDeviceUnreachable = example.ID("device_unreachable", errclass.Known)
-	idSymbolConfig      = example.ID("symbol_config", errclass.Known)
-	idReadGap           = example.ID("read_gap", errclass.Bug)
-	idExampleUnknown    = example.ID("unclassified", errclass.Unknown)
+	kindDeviceUnreachable = example.Define("device_unreachable", errclass.Known)
+	kindSymbolConfig      = example.Define("symbol_config", errclass.Known)
+	kindReadGap           = example.Define("read_gap", errclass.Bug)
+	kindExampleUnknown    = example.Define("unclassified", errclass.Unknown)
 
 	errDeviceUnreachable = errors.New("device unreachable")
 
 	exampleClassifier = &errclass.Classifier{
 		Rules: []errclass.Rule{
-			{Matches: errclass.Is(errDeviceUnreachable), ID: idDeviceUnreachable},
+			{Matches: errclass.Is(errDeviceUnreachable), Kind: kindDeviceUnreachable},
 		},
-		Unclassified: idExampleUnknown,
+		Unclassified: kindExampleUnknown,
 	}
 )
 
@@ -81,16 +81,16 @@ func Example() {
 	log := exampleLog()
 
 	// The call site says what the line means.
-	log.Warnf(idSymbolConfig, "Symbol %q not found", "MAIN.speed")
+	log.Warnf(kindSymbolConfig, "Symbol %q not found", "MAIN.speed")
 
 	// The line reports an error, and a rule matches it, so the rule decides.
 	err := fmt.Errorf("connect: %w", errDeviceUnreachable)
-	log.ErrorErr(err, idReadGap, "Read failed")
+	log.ErrorErr(err, kindReadGap, "Read failed")
 
 	// Info and Debug lines carry no fields.
 	log.Info("Connected")
 
-	// The error returned from Connect carries the same ID in its text.
+	// The error returned from Connect carries the same error_id in its text.
 	fmt.Println(exampleClassifier.WithPrefix(err))
 	// Output:
 	// WARN "Symbol \"MAIN.speed\" not found" error_class=known error_id=example::symbol_config
@@ -99,28 +99,28 @@ func Example() {
 	// [error_id=example::device_unreachable error_class=known] connect: device unreachable
 }
 
-// Classify picks the ID in this order: the first rule that matches err, then
-// the ID of the call site, then Unclassified.
+// Classify picks the Kind in this order: the first rule that matches err, then
+// the Kind of the call site, then Unclassified.
 func ExampleClassifier_Classify() {
 	unreachable := fmt.Errorf("connect: %w", errDeviceUnreachable)
 	other := errors.New("boom")
 
-	fmt.Println(exampleClassifier.Classify(unreachable, idReadGap))
-	fmt.Println(exampleClassifier.Classify(other, idReadGap))
-	fmt.Println(exampleClassifier.Classify(other, errclass.ID{}))
+	fmt.Println(exampleClassifier.Classify(unreachable, kindReadGap))
+	fmt.Println(exampleClassifier.Classify(other, kindReadGap))
+	fmt.Println(exampleClassifier.Classify(other, errclass.Kind{}))
 	// Output:
 	// example::device_unreachable
 	// example::read_gap
 	// example::unclassified
 }
 
-// A line whose error decides its ID, but does not belong in its text, passes
+// A line whose error decides its Kind, but does not belong in its text, passes
 // the result of Classify to Warnf.
 func ExampleLogger_Warnf() {
 	log := exampleLog()
 	skipCause := fmt.Errorf("resolve: %w", errDeviceUnreachable)
 
-	log.Warnf(exampleClassifier.Classify(skipCause, idSymbolConfig), "Symbol %q skipped", "MAIN.speed")
+	log.Warnf(exampleClassifier.Classify(skipCause, kindSymbolConfig), "Symbol %q skipped", "MAIN.speed")
 	// Output:
 	// WARN "Symbol \"MAIN.speed\" skipped" error_class=known error_id=example::device_unreachable
 }

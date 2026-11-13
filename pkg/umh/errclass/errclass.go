@@ -14,18 +14,19 @@
 
 // Package errclass gives every Warn and Error log line of a plugin an
 // error_id and an error_class, so that whoever reads the log can tell causes
-// apart without parsing message text. The contract, with each plugin's IDs:
+// apart without parsing message text. The contract, with each plugin's
+// error_ids:
 // https://linear.app/united-manufacturing-hub/document/plugin-error-classes-contract-between-benthos-umh-and-umh-core-e51f0744258b
 //
 // A plugin uses the package in this order:
 //
-//  1. Declare a Plugin and one ID per cause, as package variables.
-//  2. Write Rules that map the errors the plugin sees onto those IDs, and put
+//  1. Declare a Plugin and Define one Kind per cause, as package variables.
+//  2. Write Rules that map the errors the plugin sees onto those Kinds, and put
 //     them in a Classifier.
 //  3. Log through the Logger that Classifier.Logger returns. Every Warn and
-//     Error method takes an ID, so a line cannot be written without one.
+//     Error method takes a Kind, so a line cannot be written without one.
 //  4. Wrap the error the plugin returns from Connect with Classifier.WithPrefix,
-//     so the line Benthos logs for it carries the same ID.
+//     so the line Benthos logs for it carries the same error_id.
 //
 // The forbidigo rule in .golangci.yaml forbids calling Warn and Error on a
 // *service.Logger directly.
@@ -39,6 +40,6 @@ const (
 	Bug Class = "bug"
 	// Known: Something the user can fix themselves e.g. bad config or network issues.
 	Known Class = "known"
-	// Unknown: nothing matched, so it is reported until it gets an ID.
+	// Unknown: nothing matched, so it is reported until it gets a Kind of its own.
 	Unknown Class = "unknown"
 )

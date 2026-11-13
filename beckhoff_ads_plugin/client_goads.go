@@ -280,7 +280,7 @@ func connectDropKind(err error) dropKind {
 // our route — a configuration fault that a retry cannot fix. It is the same
 // verdict as the error_id, so the backoff and the log cannot disagree.
 func isRouteFault(err error) bool {
-	return classifier.Classify(err, idUnclassified) == idRouteFault
+	return classifier.Classify(err, kindUnclassified) == kindRouteFault
 }
 
 // isTransportGone reports whether the ADS transport went away mid-operation.
