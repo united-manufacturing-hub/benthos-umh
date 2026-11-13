@@ -396,7 +396,10 @@ func (s *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 	}
 
 	msgs := make(service.MessageBatch, 0)
+	addressCount := 0
+	rejectedCount := 0
 	for i, b := range s.Batches {
+		addressCount += len(b)
 		// Create a new batch to read
 		batchToRead := make([]gos7.S7DataItem, len(b))
 		for i, item := range b {
@@ -421,6 +424,7 @@ func (s *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 				// non-fatal: the PLC answered the other items of this batch
 				s.Log.Warnf("Skipping %s: %s", item.Address, readError)
 				s.RejectedAddressReads.Incr(1, item.Address)
+				rejectedCount++
 				continue
 			}
 
@@ -442,6 +446,12 @@ func (s *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 			// Append the new message to the msgs slice
 			msgs = append(msgs, msg)
 		}
+	}
+
+	// benthos logs a returned error at error level and calls ReadBatch again
+	// after a backoff of at most 1s, without a reconnect
+	if rejectedCount > 0 && rejectedCount == addressCount {
+		return nil, nil, fmt.Errorf("the PLC rejected all %d configured addresses, check them against the PLC program", rejectedCount)
 	}
 
 	return msgs, func(_ context.Context, _ error) error {

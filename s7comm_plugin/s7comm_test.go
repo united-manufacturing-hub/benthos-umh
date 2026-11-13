@@ -228,6 +228,20 @@ var _ = Describe("S7Comm Plugin Unittests", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(payload)).To(Equal("42"))
 		})
+
+		It("returns an error when the PLC rejects every address", func() {
+			parsedAddresses, err := s7comm_plugin.ParseAddresses([]string{"DB999.W0", "DB999.W2"})
+			Expect(err).NotTo(HaveOccurred())
+			input := &s7comm_plugin.S7CommInput{
+				Client:  &rejectingS7Client{rejectedDBNumber: 999, answeredBytes: wordFortyTwo},
+				Batches: [][]s7comm_plugin.S7DataItemWithAddressAndConverter{parsedAddresses},
+			}
+
+			batch, _, err := input.ReadBatch(context.Background())
+
+			Expect(err).To(MatchError(ContainSubstring("rejected all 2 configured addresses")))
+			Expect(batch).To(BeEmpty())
+		})
 	})
 })
 
