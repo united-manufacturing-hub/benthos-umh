@@ -81,6 +81,8 @@ type S7CommInput struct {
 	ParsedAddresses  []S7DataItemWithAddressAndConverter   // All parsed addresses (before batching)
 	Batches          [][]S7DataItemWithAddressAndConverter // Batches calculated after connect with actual PDU
 	DisableCPUInfo   bool
+	// RejectedAddressReads counts each read of an address the PLC rejected, by address
+	RejectedAddressReads *service.MetricCounter
 }
 
 type converterFunc func([]byte) interface{}
@@ -192,14 +194,15 @@ func newS7CommInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	}
 
 	m := &S7CommInput{
-		TcpDevice:        tcpDevice,
-		Rack:             rack,
-		Slot:             slot,
-		TimeBetweenReads: timeBetweenReads,
-		Log:              mgr.Logger(),
-		ParsedAddresses:  parsedAddresses,
-		Timeout:          time.Duration(timeoutInt) * time.Second,
-		DisableCPUInfo:   disableCPUInfo,
+		TcpDevice:            tcpDevice,
+		Rack:                 rack,
+		Slot:                 slot,
+		TimeBetweenReads:     timeBetweenReads,
+		Log:                  mgr.Logger(),
+		ParsedAddresses:      parsedAddresses,
+		RejectedAddressReads: mgr.Metrics().NewCounter("rejected_address_reads", "address"),
+		Timeout:              time.Duration(timeoutInt) * time.Second,
+		DisableCPUInfo:       disableCPUInfo,
 	}
 
 	return service.AutoRetryNacksBatched(m), nil
@@ -417,6 +420,7 @@ func (s *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 			if readError != "" {
 				// non-fatal: the PLC answered the other items of this batch
 				s.Log.Warnf("Skipping %s: %s", item.Address, readError)
+				s.RejectedAddressReads.Incr(1, item.Address)
 				continue
 			}
 
