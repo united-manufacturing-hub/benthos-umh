@@ -17,6 +17,7 @@ package eip_plugin
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 
 	"github.com/danomagnum/gologix"
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -211,14 +212,14 @@ func (g *EIPInput) readArrayTagValue(item *CIPReadItem) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return encodeArray(arr)
+		return encodeArray(nonFiniteAsNull(arr))
 	case gologix.CIPTypeLREAL:
 		arr := make([]float64, item.ArrayLength)
 		err := g.CIP.Read(item.TagName, arr)
 		if err != nil {
 			return "", err
 		}
-		return encodeArray(arr)
+		return encodeArray(nonFiniteAsNull(arr))
 	case gologix.CIPTypeSTRING:
 		arr := make([]string, item.ArrayLength)
 		err := g.CIP.Read(item.TagName, arr)
@@ -253,6 +254,22 @@ func encodeArray(arr any) (string, error) {
 		return "", fmt.Errorf("encode array as JSON: %w", err)
 	}
 	return string(jsonBytes), nil
+}
+
+// nonFiniteAsNull replaces NaN and ±Inf with nil, which json.Marshal writes as
+// null, because json.Marshal fails on non-finite floats and the whole tag
+// would be skipped.
+func nonFiniteAsNull[Float float32 | float64](values []Float) []any {
+	encodable := make([]any, len(values))
+	for index, value := range values {
+		number := float64(value)
+		if math.IsNaN(number) || math.IsInf(number, 0) {
+			encodable[index] = nil
+			continue
+		}
+		encodable[index] = value
+	}
+	return encodable
 }
 
 // uint8sAsNumbers widens arr, because json.Marshal writes a []uint8 as a

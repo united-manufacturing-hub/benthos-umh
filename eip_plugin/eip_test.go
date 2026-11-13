@@ -16,6 +16,7 @@ package eip_plugin_test
 
 import (
 	"context"
+	"math"
 	"reflect"
 	"unsafe"
 
@@ -281,6 +282,22 @@ var _ = Describe("EIP plugin with mock CIP", func() {
 			cipType:        gologix.CIPTypeLREAL,
 			mockValue:      []float64{10.123, 20.456, 30.789},
 			expectedString: "[10.123,20.456,30.789]",
+			isArray:        true,
+			arrayLength:    3,
+		}),
+		Entry("array of float32 = NaN +Inf 1.5", testCase{
+			name:           "arrayoffloat32nonfinite",
+			cipType:        gologix.CIPTypeREAL,
+			mockValue:      []float32{float32(math.NaN()), float32(math.Inf(1)), 1.5},
+			expectedString: "[null,null,1.5]",
+			isArray:        true,
+			arrayLength:    3,
+		}),
+		Entry("array of float64 = NaN -Inf 1.5", testCase{
+			name:           "arrayoffloat64nonfinite",
+			cipType:        gologix.CIPTypeLREAL,
+			mockValue:      []float64{math.NaN(), math.Inf(-1), 1.5},
+			expectedString: "[null,null,1.5]",
 			isArray:        true,
 			arrayLength:    3,
 		}),
