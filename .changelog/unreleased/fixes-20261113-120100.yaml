@@ -1,0 +1,3 @@
+kind: fixes
+body: 'S7 input: an address the PLC rejects, for example one in a data block that does not exist, no longer sends 0 or its last value on every read. The input leaves the address out and logs a warning with the reason from the PLC. The `rejected_address_reads` metric counts each skipped read. When the PLC rejects every configured address, the input reports an error.'
+time: 2026-11-13T12:01:00.000000+01:00

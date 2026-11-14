@@ -26,9 +26,26 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/robinson/gos7"
 
 	"github.com/united-manufacturing-hub/benthos-umh/s7comm_plugin"
 )
+
+// plcMemoryWithString1234 is a STRING[254] that holds "1234": max length,
+// actual length, then the characters.
+var plcMemoryWithString1234 = []byte{254, 4, '1', '2', '3', '4', 0, 0}
+
+// requestSizedS7Client answers AGReadMulti like a PLC: gos7 requests Amount
+// bytes for a byte or char read and copies only the bytes the PLC returns.
+type requestSizedS7Client struct {
+	gos7.Client
+	plcMemory []byte
+}
+
+func (c *requestSizedS7Client) AGReadMulti(dataItems []gos7.S7DataItem, _ int) error {
+	copy(dataItems[0].Data, c.plcMemory[:dataItems[0].Amount])
+	return nil
+}
 
 var _ = Describe("S7Comm Plugin Unittests", func() {
 	BeforeEach(func() {
@@ -76,6 +93,25 @@ var _ = Describe("S7Comm Plugin Unittests", func() {
 					Expect(actualConversionResult).To(Equal(tc.expectedConversion))
 				})
 			}
+		})
+	})
+
+	Describe("Reading an S7 STRING", func() {
+		It("emits every character when the PLC returns only the requested bytes", func() {
+			parsedAddresses, err := s7comm_plugin.ParseAddresses([]string{"DB1.S0.4"})
+			Expect(err).NotTo(HaveOccurred())
+			input := &s7comm_plugin.S7CommInput{
+				Client:  &requestSizedS7Client{plcMemory: plcMemoryWithString1234},
+				Batches: [][]s7comm_plugin.S7DataItemWithAddressAndConverter{parsedAddresses},
+			}
+
+			batch, _, err := input.ReadBatch(context.Background())
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(batch).To(HaveLen(1))
+			payload, err := batch[0].AsBytes()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(payload)).To(Equal(`"1234"`))
 		})
 	})
 
@@ -172,7 +208,63 @@ var _ = Describe("S7Comm Plugin Unittests", func() {
 			Expect(err.Error()).To(ContainSubstring("exceeds PDU size"))
 		})
 	})
+
+	Describe("Reading a batch with an address the PLC rejects", func() {
+		It("emits only the addresses the PLC answered", func() {
+			parsedAddresses, err := s7comm_plugin.ParseAddresses([]string{"DB1.W0", "DB999.W0"})
+			Expect(err).NotTo(HaveOccurred())
+			input := &s7comm_plugin.S7CommInput{
+				Client:  &rejectingS7Client{rejectedDBNumber: 999, answeredBytes: wordFortyTwo},
+				Batches: [][]s7comm_plugin.S7DataItemWithAddressAndConverter{parsedAddresses},
+			}
+
+			batch, _, err := input.ReadBatch(context.Background())
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(batch).To(HaveLen(1))
+			address, _ := batch[0].MetaGet("s7_address")
+			Expect(address).To(Equal("DB1.W0"))
+			payload, err := batch[0].AsBytes()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(payload)).To(Equal("42"))
+		})
+
+		It("returns an error when the PLC rejects every address", func() {
+			parsedAddresses, err := s7comm_plugin.ParseAddresses([]string{"DB999.W0", "DB999.W2"})
+			Expect(err).NotTo(HaveOccurred())
+			input := &s7comm_plugin.S7CommInput{
+				Client:  &rejectingS7Client{rejectedDBNumber: 999, answeredBytes: wordFortyTwo},
+				Batches: [][]s7comm_plugin.S7DataItemWithAddressAndConverter{parsedAddresses},
+			}
+
+			batch, _, err := input.ReadBatch(context.Background())
+
+			Expect(err).To(MatchError(ContainSubstring("rejected all 2 configured addresses")))
+			Expect(batch).To(BeEmpty())
+		})
+	})
 })
+
+var wordFortyTwo = []byte{0x00, 0x2A}
+
+// rejectingS7Client answers AGReadMulti the way gos7 does when the PLC
+// rejects single items: it sets Error on those items and returns nil.
+type rejectingS7Client struct {
+	gos7.Client
+	rejectedDBNumber int
+	answeredBytes    []byte
+}
+
+func (c *rejectingS7Client) AGReadMulti(dataItems []gos7.S7DataItem, _ int) error {
+	for index := range dataItems {
+		if dataItems[index].DBNumber == c.rejectedDBNumber {
+			dataItems[index].Error = "CPU : Address out of range"
+			continue
+		}
+		copy(dataItems[index].Data, c.answeredBytes)
+	}
+	return nil
+}
 
 var _ = Describe("S7Comm Test Against Local PLC", Serial, func() {
 	Describe("Communication with a Remote S7 Instance", func() {
