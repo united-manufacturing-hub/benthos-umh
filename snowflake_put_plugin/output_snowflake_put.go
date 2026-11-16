@@ -950,8 +950,14 @@ func (s *snowflakeWriter) WriteBatch(ctx context.Context, batch service.MessageB
 
 		filePath := path.Join(f.stagePath, fileName+"."+f.fileExtension)
 
+		// WithFilePutStream is deprecated because it buffers the whole object in
+		// memory; fBytes is already fully buffered, so that does not apply here.
+		// UploadStream cannot express SOURCE_COMPRESSION or PARALLEL and appends
+		// .gz to gzip uploads, which would break the GZIP/DEFLATE/RAW_DEFLATE/ZSTD
+		// modes and the configured file names. Upstream Redpanda Connect's
+		// snowflake_put still uses WithFilePutStream as well.
 		_, err := s.db.ExecContext(
-			gosnowflake.WithFilePutStream(ctx, bytes.NewReader(fBytes)),
+			gosnowflake.WithFilePutStream(ctx, bytes.NewReader(fBytes)), //nolint:staticcheck // SA1019: see comment above
 			fmt.Sprintf(s.putQueryFormat, filePath, path.Join(f.stage, f.stagePath)),
 		)
 		if err != nil {
