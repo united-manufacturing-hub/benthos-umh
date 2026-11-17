@@ -23,8 +23,6 @@ import (
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
-
-	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/errclass"
 )
 
 // PlcSymbol holds the configuration and resolved PLC metadata for a single symbol to read.
@@ -62,7 +60,7 @@ type AdsCommInput struct {
 	HeartbeatRecovery          string
 
 	client           Client
-	Log              errclass.Logger
+	Log              *service.Logger
 	Symbols          []PlcSymbol
 	symbolByName     map[string]*PlcSymbol // configured symbol name → *PlcSymbol, populated in initSymbolIndex (Connect)
 	NotificationChan chan *Update
@@ -257,9 +255,10 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 		hostAMS = hostIP + ".1.1"
 	}
 
+	log := classifier.Logger(mgr)
 	symbolList, symbolWarnings := CreateSymbolList(unifiedAddress, cycleTime, maxDelay)
 	for _, w := range symbolWarnings {
-		classifier.Logger(mgr.Logger()).Warnf(kindSymbolConfig, "%s", w)
+		classifier.With(log, kindSymbolConfig).Warn(w)
 	}
 
 	m := &AdsCommInput{
@@ -273,7 +272,7 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 		MaxDelay:       maxDelay,
 		CycleTime:      cycleTime,
 		Symbols:        symbolList,
-		Log:            classifier.Logger(mgr.Logger()),
+		Log:            log,
 		IntervalTime:   intervalTime,
 		RequestTimeout: requestTimeout,
 
@@ -343,8 +342,8 @@ func (a *AdsCommInput) onSessionEvent(ev SessionEvent, reason string) {
 	default:
 		// A SessionEvent added to client.go without a case here. Logged rather
 		// than degraded: an unknown severity is not grounds for a rebuild.
-		a.Log.With("event", int(ev), "reason", reason).
-			Warnf(kindInternalBug, "ADS session reported an event this input does not handle; treating it as informational")
+		classifier.With(a.Log.With("event", int(ev), "reason", reason), kindInternalBug).
+			Warn("ADS session reported an event this input does not handle; treating it as informational")
 	}
 }
 
@@ -356,8 +355,8 @@ func (a *AdsCommInput) onSessionEvent(ev SessionEvent, reason string) {
 // the samples in that window. The CompareAndSwap keeps it to one line.
 func (a *AdsCommInput) markDegraded(reason string, detail string) {
 	if a.degradedReason.CompareAndSwap(nil, &reason) {
-		a.Log.With("reason", reason, "detail", detail).
-			Errorf(reasonKinds[reason], "ADS session can no longer deliver; rebuilding it on the next read")
+		classifier.With(a.Log.With("reason", reason, "detail", detail), reasonKind(reason)).
+			Error("ADS session can no longer deliver; rebuilding it on the next read")
 	}
 }
 
@@ -395,7 +394,7 @@ func connectHint(err error) string {
 
 // connLogger attaches the connection parameters as structured fields, verbatim;
 // go-ads separately logs what "auto" resolved to.
-func (a *AdsCommInput) connLogger() errclass.Logger {
+func (a *AdsCommInput) connLogger() *service.Logger {
 	hostPort := strconv.Itoa(a.HostPort)
 	if a.HostPort == 0 {
 		hostPort = "random"
@@ -412,10 +411,10 @@ func (a *AdsCommInput) connLogger() errclass.Logger {
 
 // Connect establishes the ADS session, resolves symbol metadata, and (depending
 // on config) loads the full symbol table and registers notifications. A failure
-// is returned with its error_id and error_class in the text, because Benthos
+// is returned with its error_kind and error_class in the text, because Benthos
 // core logs it again as "Failed to connect to ads: ..." with no fields.
 func (a *AdsCommInput) Connect(ctx context.Context) error {
-	return classifier.WithPrefix(a.initConnect(ctx))
+	return classifier.EnrichForLog(a.initConnect(ctx))
 }
 
 func (a *AdsCommInput) initConnect(ctx context.Context) error {
@@ -473,8 +472,8 @@ func (a *AdsCommInput) noteConnectFailure(err error) {
 		first, ceiling = routeFaultRetryFirst, routeFaultRetryMax
 		if a.routeFaults >= routeSkipAfter && a.skipRouteUntil.Before(time.Now()) {
 			a.skipRouteUntil = time.Now().Add(routeSkipWindow)
-			a.connLogger().With("routeFaults", a.routeFaults, "for", routeSkipWindow.String()).
-				Warnf(kindRouteFault, "Not asking the PLC to register a route on the next attempts; set hostIP to the address the PLC sees (behind a NATing VPN gateway that is the gateway's own LAN address)")
+			classifier.With(a.connLogger().With("routeFaults", a.routeFaults, "for", routeSkipWindow.String()), kindRouteFault).
+				Warn("Not asking the PLC to register a route on the next attempts; set hostIP to the address the PLC sees (behind a NATing VPN gateway that is the gateway's own LAN address)")
 		}
 	} else {
 		a.routeFaults = 0
@@ -525,21 +524,21 @@ func (a *AdsCommInput) finishConnect(ctx context.Context) error {
 }
 
 // logConnectFailure logs a failed connect step and returns err unchanged.
-// Connect prefixes the returned error with the same error_id, so this line and
+// Connect prefixes the returned error with the same error_kind, so this line and
 // the one Benthos core logs for it agree. A dropped transport heals on the next
 // Connect; a rejected session does not.
 func (a *AdsCommInput) logConnectFailure(ctx context.Context, what string, err error) error {
-	kind := classifier.Classify(err, kindUnclassified)
+	kind := classifier.Classify(err)
 	switch {
 	case shuttingDown(ctx):
 		a.Log.Debugf("%s during shutdown: %v", what, err)
 	case kind == kindRouteFault:
-		a.connLogger().With("hint", routeFaultHint).ErrorErr(err, kind, "%s", what)
+		classifier.With(a.connLogger().With("hint", routeFaultHint), kind).Errorf("%s: %v", what, err)
 	case kind == kindConnectionDropped:
 		// No hint: connectHint's fallback diagnoses a rejected session.
-		a.connLogger().WarnErr(err, kind, "%s because the PLC dropped the connection; the next connect attempt retries", what)
+		classifier.With(a.connLogger(), kind).Warnf("%s because the PLC dropped the connection; the next connect attempt retries: %v", what, err)
 	default:
-		a.connLogger().With("hint", connectHint(err)).ErrorErr(err, kind, "%s", what)
+		classifier.With(a.connLogger().With("hint", connectHint(err)), kind).Errorf("%s: %v", what, err)
 	}
 	return err
 }
@@ -565,7 +564,7 @@ func (a *AdsCommInput) Close(_ context.Context) error {
 	err := a.client.Close()
 	a.client = nil
 	if err != nil {
-		a.connLogger().ErrorErr(err, kindCloseFailed, "Closing connection to PLC failed")
+		classifier.With(a.connLogger(), kindCloseFailed).Errorf("Closing connection to PLC failed: %v", err)
 		return err
 	}
 	a.Log.Debug("Closed connection to PLC")

@@ -17,81 +17,142 @@ package errclass
 import (
 	"errors"
 	"fmt"
-
-	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
-// Rule maps the errors it matches onto a Kind.
+// Rule gives a Kind to the errors or log messages it matches. Create it with
+// Is, Match or Message.
 type Rule struct {
-	Matches func(error) bool
-	Kind    Kind
+	// msg is the message of a Message rule.
+	msg string
+	// matches is the check of an Is or Match rule.
+	matches func(error) bool
+	kind    *Kind
 }
 
-// Classifier holds one plugin's rules.
-type Classifier struct {
-	// Rules are tried in order and the first match wins, so a more specific
-	// cause has to come before a cause it wraps.
-	Rules []Rule
-	// Unclassified is the plugin's Kind for a line nothing classified. Its class
-	// should be Unknown.
-	Unclassified Kind
+// Is returns the Rule that gives kind to every error for which
+// errors.Is(err, target) holds.
+func Is(target error, kind *Kind) Rule {
+	return Rule{matches: func(err error) bool { return errors.Is(err, target) }, kind: kind}
 }
 
-// Classify returns the Kind for a line that reports err. If a rule matches err,
-// that rule wins: the error knows the cause better than the call site.
-// Otherwise site applies, the Kind the call site stands for. A zero site means
-// Unclassified, so a missed lookup in a map can be passed straight in.
-func (c *Classifier) Classify(err error, site Kind) Kind {
-	if c == nil {
-		return site
+// Match returns the Rule that gives kind to every error matches reports, for
+// errors that need errors.As or a look at their fields.
+func Match(matches func(error) bool, kind *Kind) Rule {
+	return Rule{matches: matches, kind: kind}
+}
+
+// Message returns the Rule that gives kind to every Warn and Error line whose
+// message is exactly msg. It is meant for libraries that log through the
+// *slog.Logger from Classifier.Slog, where the message is often all there is.
+func Message(msg string, kind *Kind) Rule {
+	if msg == "" {
+		panic("errclass: Message rule with an empty message")
 	}
-	if err != nil {
-		for _, r := range c.Rules {
-			if r.Matches(err) {
-				return r.Kind
-			}
+	return Rule{msg: msg, kind: kind}
+}
+
+func (r Rule) matchesError(err error) bool {
+	return r.matches != nil && err != nil && r.matches(err)
+}
+
+func (r Rule) matchesMessage(msg string) bool {
+	return r.matches == nil && r.msg == msg
+}
+
+// Classifier holds one plugin's Rules. Create it with Plugin.Classifier.
+type Classifier struct {
+	plugin *Plugin
+	rules  []Rule
+}
+
+// Classifier returns a Classifier with rules, tried in order. The first match
+// wins, so a rule for a specific cause has to come before a rule for a cause
+// that the specific one wraps.
+func (p *Plugin) Classifier(rules ...Rule) *Classifier {
+	return &Classifier{plugin: p, rules: rules}
+}
+
+// Classify returns the Kind of err, trying in order:
+//  1. the Kind err was created with by Kind.Errorf, if it is one of this
+//     plugin's Kinds,
+//  2. the first Is or Match Rule that matches err,
+//  3. the plugin's Unclassified Kind, also for a nil err.
+//
+// An error nothing knows is reported as unclassified until it gets a Rule of
+// its own; that is how new causes surface.
+//
+// Use it where the Kind decides what the code does next. To give a log line
+// the Kind of its error, use WithErr.
+func (c *Classifier) Classify(err error) *Kind {
+	if kind := c.matchError(err); kind != nil {
+		return kind
+	}
+	return c.plugin.unclassified
+}
+
+// matchError returns the Kind of err, trying the Kind err was created with
+// and then the Is and Match rules, or nil.
+func (c *Classifier) matchError(err error) *Kind {
+	if kind := c.createdKind(err); kind != nil {
+		return kind
+	}
+	for _, r := range c.rules {
+		if r.matchesError(err) {
+			return r.kind
 		}
 	}
-	if site == (Kind{}) {
-		return c.Unclassified
+	return nil
+}
+
+// matchLine returns the Kind of a log line with msg that reports err, trying
+// the Kind err was created with and then every rule in order, or nil.
+func (c *Classifier) matchLine(msg string, err error) *Kind {
+	if kind := c.createdKind(err); kind != nil {
+		return kind
 	}
-	return site
+	for _, r := range c.rules {
+		if r.matchesMessage(msg) || r.matchesError(err) {
+			return r.kind
+		}
+	}
+	return nil
 }
 
-// Logger wraps l so that every Warn and Error line it writes is classified.
-func (c *Classifier) Logger(l *service.Logger) Logger {
-	return Logger{l: l, c: c}
+// createdKind returns the Kind err was created with by Kind.Errorf, if it is
+// one of this plugin's Kinds, or nil.
+func (c *Classifier) createdKind(err error) *Kind {
+	var ke *kindError
+	if errors.As(err, &ke) && c.plugin.owns(ke.kind) {
+		return ke.kind
+	}
+	return nil
 }
 
-// WithPrefix puts err's error_id and error_class in front of its text, once.
-// Use it on errors handed back to Benthos, whose own log line ("Failed to
-// connect to ...: ...") would otherwise carry neither. errors.Is and errors.As
-// still see err.
-func (c *Classifier) WithPrefix(err error) error {
+// EnrichForLog returns err with its error_kind and error_class in front of its
+// text, e.g. "[error_kind=ads::route_fault error_class=known] connect: ...".
+//
+// Use it on errors returned to Benthos, such as from Connect: Benthos logs them
+// itself ("Failed to connect to ...: <err>"), without the fields the Logger
+// adds. Enriching an enriched error changes nothing. errors.Is, errors.As and
+// Classify still see err.
+func (c *Classifier) EnrichForLog(err error) error {
 	if err == nil {
 		return nil
 	}
-	var ce *classifiedError
-	if errors.As(err, &ce) {
+	var ee *enrichedError
+	if errors.As(err, &ee) {
 		return err
 	}
-	return &classifiedError{kind: c.Classify(err, Kind{}), err: err}
+	return &enrichedError{kind: c.Classify(err), err: err}
 }
 
-// classifiedError is an error whose text starts with its error_id and
-// error_class.
-type classifiedError struct {
-	kind Kind
+type enrichedError struct {
+	kind *Kind
 	err  error
 }
 
-func (e *classifiedError) Error() string {
-	return fmt.Sprintf("[error_id=%s error_class=%s] %v", e.kind.name, e.kind.class, e.err)
+func (e *enrichedError) Error() string {
+	return fmt.Sprintf("[error_kind=%s error_class=%s] %v", e.kind.name, e.kind.class, e.err)
 }
 
-func (e *classifiedError) Unwrap() error { return e.err }
-
-// Is matches target and anything wrapping it, by errors.Is.
-func Is(target error) func(error) bool {
-	return func(err error) bool { return errors.Is(err, target) }
-}
+func (e *enrichedError) Unwrap() error { return e.err }

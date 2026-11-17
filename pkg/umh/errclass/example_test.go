@@ -28,30 +28,28 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/errclass"
 )
 
-// A plugin declares its Plugin, Kinds, Rules and Classifier once, as package
+// A plugin declares its Plugin, Kinds and Classifier once, as package
 // variables.
 var (
 	example = errclass.NewPlugin("example")
 
-	kindDeviceUnreachable = example.Define("device_unreachable", errclass.Known)
-	kindSymbolConfig      = example.Define("symbol_config", errclass.Known)
-	kindReadGap           = example.Define("read_gap", errclass.Bug)
-	kindExampleUnknown    = example.Define("unclassified", errclass.Unknown)
+	kindDeviceUnreachable = example.Known("device_unreachable")
+	kindSymbolConfig      = example.Known("symbol_config")
+	kindCloseFailed       = example.Known("close_failed")
 
+	// errDeviceUnreachable stands for a sentinel error of a protocol library.
 	errDeviceUnreachable = errors.New("device unreachable")
 
-	exampleClassifier = &errclass.Classifier{
-		Rules: []errclass.Rule{
-			{Matches: errclass.Is(errDeviceUnreachable), Kind: kindDeviceUnreachable},
-		},
-		Unclassified: kindExampleUnknown,
-	}
+	exampleClassifier = example.Classifier(
+		errclass.Is(errDeviceUnreachable, kindDeviceUnreachable),
+	)
 )
 
-// exampleLog returns a Logger that prints each line as its level, message and
-// fields, with the fields sorted, so the output below is stable.
-func exampleLog() errclass.Logger {
-	return exampleClassifier.Logger(service.NewLoggerFromSlog(slog.New(printHandler{})))
+// exampleLog returns the plugin's logger, printing each line as its level,
+// message and fields, with the fields sorted, so the output below is stable.
+func exampleLog() *service.Logger {
+	out := service.NewLoggerFromSlog(slog.New(printHandler{}))
+	return exampleClassifier.Logger(service.MockResources(service.MockResourcesOptUseLogger(out)))
 }
 
 type printHandler struct{ attrs []slog.Attr }
@@ -81,54 +79,66 @@ func Example() {
 	log := exampleLog()
 
 	// The call site says what the line means.
-	log.Warnf(kindSymbolConfig, "Symbol %q not found", "MAIN.speed")
+	exampleClassifier.With(log, kindSymbolConfig).Warnf("Symbol %q not found", "MAIN.speed")
 
-	// The line reports an error, and a rule matches it, so the rule decides.
+	// The line reports an error, and the error says what it means.
 	err := fmt.Errorf("connect: %w", errDeviceUnreachable)
-	log.ErrorErr(err, kindReadGap, "Read failed")
+	exampleClassifier.WithErr(log, err).Errorf("Connect failed: %v", err)
+
+	// The line is about the call site, whatever the error.
+	closeErr := errors.New("socket busy")
+	exampleClassifier.With(log, kindCloseFailed).Errorf("Close failed: %v", closeErr)
+
+	// Nobody said what it means.
+	log.Warn("Something odd happened")
 
 	// Info and Debug lines carry no fields.
 	log.Info("Connected")
 
-	// The error returned from Connect carries the same error_id in its text.
-	fmt.Println(exampleClassifier.WithPrefix(err))
+	// The error returned from Connect carries the same error_kind in its text.
+	fmt.Println(exampleClassifier.EnrichForLog(err))
 	// Output:
-	// WARN "Symbol \"MAIN.speed\" not found" error_class=known error_id=example::symbol_config
-	// ERROR "Read failed: connect: device unreachable" error_class=known error_id=example::device_unreachable
+	// WARN "Symbol \"MAIN.speed\" not found" error_class=known error_kind=example::symbol_config
+	// ERROR "Connect failed: connect: device unreachable" error_class=known error_kind=example::device_unreachable
+	// ERROR "Close failed: socket busy" error_class=known error_kind=example::close_failed
+	// WARN "Something odd happened" error_class=unknown error_kind=example::unclassified
 	// INFO "Connected"
-	// [error_id=example::device_unreachable error_class=known] connect: device unreachable
+	// [error_kind=example::device_unreachable error_class=known] connect: device unreachable
 }
 
-// Classify picks the Kind in this order: the first rule that matches err, then
-// the Kind of the call site, then Unclassified.
+// Classify picks the Kind in this order: the Kind the error was created with,
+// then the first rule that matches the error, then Unclassified. Compare
+// the result with == or switch on it where the Kind decides what the code does
+// next.
 func ExampleClassifier_Classify() {
-	unreachable := fmt.Errorf("connect: %w", errDeviceUnreachable)
-	other := errors.New("boom")
+	fmt.Println(exampleClassifier.Classify(fmt.Errorf("connect: %w", errDeviceUnreachable)))
+	fmt.Println(exampleClassifier.Classify(kindSymbolConfig.Errorf("symbol %q is not in the PLC", "MAIN.speed")))
+	fmt.Println(exampleClassifier.Classify(errors.New("boom")))
 
-	fmt.Println(exampleClassifier.Classify(unreachable, kindReadGap))
-	fmt.Println(exampleClassifier.Classify(other, kindReadGap))
-	fmt.Println(exampleClassifier.Classify(other, errclass.Kind{}))
+	if exampleClassifier.Classify(errDeviceUnreachable) == kindDeviceUnreachable {
+		fmt.Println("backing off")
+	}
 	// Output:
 	// example::device_unreachable
-	// example::read_gap
+	// example::symbol_config
 	// example::unclassified
+	// backing off
 }
 
-// A line whose error decides its Kind, but does not belong in its text, passes
-// the result of Classify to Warnf.
-func ExampleLogger_Warnf() {
-	log := exampleLog()
-	skipCause := fmt.Errorf("resolve: %w", errDeviceUnreachable)
+// A library that logs through log/slog gets Slog. Its records are classified
+// by the error among their fields.
+func ExampleClassifier_Slog() {
+	lib := exampleClassifier.Slog(exampleLog())
 
-	log.Warnf(exampleClassifier.Classify(skipCause, kindSymbolConfig), "Symbol %q skipped", "MAIN.speed")
+	lib.Error("dial failed", "error", fmt.Errorf("dial: %w", errDeviceUnreachable))
 	// Output:
-	// WARN "Symbol \"MAIN.speed\" skipped" error_class=known error_id=example::device_unreachable
+	// ERROR "dial failed" error=dial: device unreachable error_class=known error_kind=example::device_unreachable
 }
 
-func ExampleClassifier_WithPrefix() {
-	err := exampleClassifier.WithPrefix(errors.New("boom"))
+func ExampleClassifier_EnrichForLog() {
+	err := exampleClassifier.EnrichForLog(errors.New("boom"))
 
 	fmt.Println(err)
 	// Output:
-	// [error_id=example::unclassified error_class=unknown] boom
+	// [error_kind=example::unclassified error_class=unknown] boom
 }

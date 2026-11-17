@@ -18,14 +18,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net"
 	"strconv"
 	"time"
 
 	adsLib "github.com/RuneRoven/go-ads/v2"
-
-	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/errclass"
+	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 // goADSClient is the go-ads adapter. Besides client.go, only this file and
@@ -58,10 +56,10 @@ func resolveRouteHostIP(ctx context.Context, cfg SessionConfig) (string, error) 
 
 // buildSessionOptions assembles the go-ads SessionOptions: logger bridge,
 // route registration, local AMS override, and request timeout.
-func buildSessionOptions(ctx context.Context, cfg SessionConfig, log errclass.Logger) ([]adsLib.SessionOption, error) {
+func buildSessionOptions(ctx context.Context, cfg SessionConfig, log *service.Logger) ([]adsLib.SessionOption, error) {
 	// go-ads verbosity follows the benthos pipeline log level via this bridge;
 	// no global SetDefaultLogger (last-input-wins across multiple ADS inputs).
-	opts := []adsLib.SessionOption{adsLib.WithLogger(slog.New(&benthosLogHandler{logger: log}))}
+	opts := []adsLib.SessionOption{adsLib.WithLogger(classifier.Slog(log))}
 
 	if cfg.Username != "" && cfg.Password != "" {
 		hostAddr, err := resolveRouteHostIP(ctx, cfg)
@@ -80,7 +78,7 @@ func buildSessionOptions(ctx context.Context, cfg SessionConfig, log errclass.Lo
 	if !isAuto(cfg.HostAMS) {
 		localAMS, err := adsLib.NewAMSAddress(cfg.HostAMS, uint16(cfg.HostPort))
 		if err != nil {
-			return nil, fmt.Errorf("%w (%q): %w", errInvalidHostAMS, cfg.HostAMS, err)
+			return nil, kindInvalidHostAMS.Errorf("hostAMS %q is not a valid AMS NetID: %w", cfg.HostAMS, err)
 		}
 		opts = append(opts, adsLib.WithLocalAMS(localAMS))
 	}
@@ -149,7 +147,7 @@ func cappedBackoff(limit time.Duration) adsLib.BackoffConfig {
 
 // newGoADSClient builds session options and the go-ads session from
 // SessionConfig. It does not call Connect; the caller drives that.
-func newGoADSClient(ctx context.Context, cfg SessionConfig, log errclass.Logger) (Client, error) {
+func newGoADSClient(ctx context.Context, cfg SessionConfig, log *service.Logger) (Client, error) {
 	opts, err := buildSessionOptions(ctx, cfg, log)
 	if err != nil {
 		return nil, err
@@ -160,7 +158,7 @@ func newGoADSClient(ctx context.Context, cfg SessionConfig, log errclass.Logger)
 	if cfg.TargetAMS != "" {
 		targetAMS, err = adsLib.NewAMSAddress(cfg.TargetAMS, uint16(cfg.RuntimePort))
 		if err != nil {
-			return nil, fmt.Errorf("%w (%q): %w", errInvalidTargetAMS, cfg.TargetAMS, err)
+			return nil, kindInvalidTargetAMS.Errorf("targetAMS %q is not a valid AMS NetID: %w", cfg.TargetAMS, err)
 		}
 	}
 	// Background ctx: session lifetime is driven by Close, not the per-call
@@ -169,7 +167,7 @@ func newGoADSClient(ctx context.Context, cfg SessionConfig, log errclass.Logger)
 		IP: cfg.TargetIP, Port: cfg.TargetPort, AMS: targetAMS,
 	}, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", errSessionCreate, err)
+		return nil, sessionCreateError(err)
 	}
 	return &goADSClient{session: sess}, nil
 }
@@ -274,21 +272,6 @@ func connectDropKind(err error) dropKind {
 	default:
 		return dropUnknown
 	}
-}
-
-// isRouteFault reports whether a connect failed because the PLC would not serve
-// our route — a configuration fault that a retry cannot fix. It is the same
-// verdict as the error_id, so the backoff and the log cannot disagree.
-func isRouteFault(err error) bool {
-	return classifier.Classify(err, kindUnclassified) == kindRouteFault
-}
-
-// isTransportGone reports whether the ADS transport went away mid-operation.
-// ErrRouteNotServed is excluded: it usually needs credentials or an address fixed.
-func isTransportGone(err error) bool {
-	return errors.Is(err, adsLib.ErrTransportClosed) ||
-		errors.Is(err, adsLib.ErrDisconnected) ||
-		errors.Is(err, adsLib.ErrEstablishedDropped)
 }
 
 // Channel accessors — the one deliberate *adsLib.Update leak. go-ads Update.Value

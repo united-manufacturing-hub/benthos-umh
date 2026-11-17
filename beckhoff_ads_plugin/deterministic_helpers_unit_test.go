@@ -65,7 +65,8 @@ func (f *fakeClient) GetSymbol(_ context.Context, name string) (SymbolInfo, erro
 	if info, ok := f.symbols[name]; ok {
 		return info, nil
 	}
-	return SymbolInfo{}, errors.New("symbol not found: " + name)
+	// The error go-ads returns for a symbol the PLC does not know.
+	return SymbolInfo{}, fmt.Errorf("symbol not found: %s: %w", name, adsLib.ReturnCodeDeviceSymbolNoFound)
 }
 
 func (f *fakeClient) AddNotifications(_ context.Context, cfgs []NotifyConfig, _ chan *Update) ([]NotifyResult, error) {
@@ -439,7 +440,7 @@ var _ = Describe("Plugin Internal Functions", func() {
 		})
 
 		It("carries the unified address into message metadata", func() {
-			a := &AdsCommInput{Log: classifier.Logger(service.MockResources().Logger())}
+			a := &AdsCommInput{Log: classified(service.MockResources().Logger())}
 			syms, _ := CreateSymbolList([]string{"GVL.tuned:cycleTime=50ms"}, time.Second, 100*time.Millisecond)
 			msg := a.newSymbolMessage(&syms[0], "42", time.Time{})
 
@@ -530,7 +531,7 @@ targetAddress: "1.2.3.4"
 		It("emits samples captured during Connect before waiting on the channel", func() {
 			a := &AdsCommInput{
 				ReadType:         "notification",
-				Log:              classifier.Logger(service.MockResources().Logger()),
+				Log:              classified(service.MockResources().Logger()),
 				NotificationChan: make(chan *Update, 8),
 				pendingInitial: []*Update{
 					{Variable: "MAIN.a", Value: "1"},
@@ -547,7 +548,7 @@ targetAddress: "1.2.3.4"
 			knownSym := &PlcSymbol{Name: "MAIN.Known", DataType: "INT", BaseType: "INT", Size: 2}
 			a := &AdsCommInput{
 				ReadType:         "notification",
-				Log:              classifier.Logger(service.MockResources().Logger()),
+				Log:              classified(service.MockResources().Logger()),
 				NotificationChan: make(chan *Update, 8),
 				symbolByName: map[string]*PlcSymbol{
 					strings.ToLower(knownSym.Name): knownSym,
@@ -586,7 +587,7 @@ targetAddress: "1.2.3.4"
 			log, recs := capturingLogger()
 			return &AdsCommInput{
 				ReadType:         "notification",
-				Log:              classifier.Logger(log),
+				Log:              classified(log),
 				client:           client,
 				NotificationChan: make(chan *Update, 8),
 			}, recs
@@ -665,7 +666,7 @@ targetAddress: "1.2.3.4"
 				},
 			}
 			a := &AdsCommInput{
-				Log:    classifier.Logger(service.MockResources().Logger()),
+				Log:    classified(service.MockResources().Logger()),
 				client: client,
 				Symbols: []PlcSymbol{
 					{Name: "MAIN.temp", DataType: "REAL", BaseType: "REAL"},
@@ -713,7 +714,7 @@ targetAddress: "1.2.3.4"
 				},
 			}
 			a := &AdsCommInput{
-				Log:     classifier.Logger(service.MockResources().Logger()),
+				Log:     classified(service.MockResources().Logger()),
 				client:  client,
 				Symbols: []PlcSymbol{{Name: "MAIN.late"}}, // DataType/BaseType unresolved
 			}
@@ -735,7 +736,7 @@ targetAddress: "1.2.3.4"
 				readFromSymbolValue: map[string]string{"MAIN.solo": "true"},
 			}
 			a := &AdsCommInput{
-				Log:     classifier.Logger(service.MockResources().Logger()),
+				Log:     classified(service.MockResources().Logger()),
 				client:  client,
 				Symbols: []PlcSymbol{{Name: "MAIN.solo", DataType: "BOOL", BaseType: "BOOL"}},
 			}
@@ -750,7 +751,7 @@ targetAddress: "1.2.3.4"
 		})
 
 		It("returns ErrNotConnected when the client is nil", func() {
-			a := &AdsCommInput{Log: classifier.Logger(service.MockResources().Logger())}
+			a := &AdsCommInput{Log: classified(service.MockResources().Logger())}
 			_, _, err := a.ReadBatchPull(context.Background())
 			Expect(err).To(Equal(service.ErrNotConnected))
 		})
@@ -758,7 +759,7 @@ targetAddress: "1.2.3.4"
 		It("returns ErrNotConnected and closes the client when the batch read fails on a dead session", func() {
 			client := &fakeClient{multiErr: errors.New("session dead"), closed: true}
 			a := &AdsCommInput{
-				Log:     classifier.Logger(service.MockResources().Logger()),
+				Log:     classified(service.MockResources().Logger()),
 				client:  client,
 				Symbols: []PlcSymbol{{Name: "MAIN.x"}},
 			}
@@ -1137,7 +1138,7 @@ var _ = Describe("Shutdown quiets expected failures", func() {
 	It("stops resolving symbols instead of failing once per remaining symbol", func() {
 		client := &fakeClient{symbols: map[string]SymbolInfo{}}
 		a := &AdsCommInput{
-			Log:    classifier.Logger(service.MockResources().Logger()),
+			Log:    classified(service.MockResources().Logger()),
 			client: client,
 			Symbols: []PlcSymbol{
 				{Name: "MAIN.a"}, {Name: "MAIN.b"}, {Name: "MAIN.c"},
@@ -1156,7 +1157,7 @@ var _ = Describe("Shutdown quiets expected failures", func() {
 	It("returns the context error rather than retrying a pull read", func() {
 		client := &fakeClient{multiErr: context.Canceled}
 		a := &AdsCommInput{
-			Log:     classifier.Logger(service.MockResources().Logger()),
+			Log:     classified(service.MockResources().Logger()),
 			client:  client,
 			Symbols: []PlcSymbol{{Name: "MAIN.a"}},
 		}
@@ -1173,7 +1174,7 @@ var _ = Describe("Shutdown quiets expected failures", func() {
 		// Batch read yields nothing, which normally triggers per-symbol reads.
 		client := &fakeClient{multiValues: map[string]string{}}
 		a := &AdsCommInput{
-			Log:     classifier.Logger(service.MockResources().Logger()),
+			Log:     classified(service.MockResources().Logger()),
 			client:  client,
 			Symbols: []PlcSymbol{{Name: "MAIN.a"}, {Name: "MAIN.b"}},
 		}
@@ -1211,22 +1212,6 @@ var _ = Describe("adsValueBytes value validation", func() {
 		Entry("string stays quoted", "STRING", "hello", `"hello"`, "string"),
 		Entry("numeric-looking string stays quoted", "STRING", "007", `"007"`, "string"),
 	)
-})
-
-var _ = Describe("benthosLogHandler.WithAttrs", func() {
-	It("does not let sibling handlers share a backing array", func() {
-		base := &benthosLogHandler{logger: classifier.Logger(service.MockResources().Logger())}
-		parent := base.WithAttrs([]slog.Attr{slog.String("a", "1")}).(*benthosLogHandler)
-
-		left := parent.WithAttrs([]slog.Attr{slog.String("b", "left")}).(*benthosLogHandler)
-		right := parent.WithAttrs([]slog.Attr{slog.String("b", "right")}).(*benthosLogHandler)
-
-		Expect(left.attrs).To(HaveLen(2))
-		Expect(right.attrs).To(HaveLen(2))
-		Expect(left.attrs[1].Value.String()).To(Equal("left"))
-		Expect(right.attrs[1].Value.String()).To(Equal("right"))
-		Expect(parent.attrs).To(HaveLen(1))
-	})
 })
 
 // capturedLog is one record the plugin logged, flattened for assertions.
@@ -1288,7 +1273,7 @@ func levelsOf(recs *[]capturedLog, floor slog.Level) []slog.Level {
 var _ = Describe("logConnectFailure", func() {
 	newInput := func() (*AdsCommInput, *[]capturedLog) {
 		log, recs := capturingLogger()
-		return &AdsCommInput{Log: classifier.Logger(log), TargetIP: "1.2.3.4", TargetPort: 48898, RuntimePort: 851}, recs
+		return &AdsCommInput{Log: classified(log), TargetIP: "1.2.3.4", TargetPort: 48898, RuntimePort: 851}, recs
 	}
 
 	It("warns and promises a retry when the PLC dropped the transport", func() {
@@ -1356,7 +1341,7 @@ var _ = Describe("connect retry gate", func() {
 
 	newInput := func() (*AdsCommInput, *[]capturedLog) {
 		log, recs := capturingLogger()
-		return &AdsCommInput{Log: classifier.Logger(log), TargetIP: "1.2.3.4", TargetPort: 48898, RuntimePort: 851}, recs
+		return &AdsCommInput{Log: classified(log), TargetIP: "1.2.3.4", TargetPort: 48898, RuntimePort: 851}, recs
 	}
 
 	DescribeTable("classifies what a retry cannot fix",
@@ -1466,7 +1451,7 @@ var _ = Describe("logReadFailure", func() {
 	newInput := func(client Client) (*AdsCommInput, *[]capturedLog) {
 		log, recs := capturingLogger()
 		return &AdsCommInput{
-			Log: classifier.Logger(log), client: client, RequestTimeout: 5 * time.Second,
+			Log: classified(log), client: client, RequestTimeout: 5 * time.Second,
 			Symbols: []PlcSymbol{{Name: "MAIN.a"}, {Name: "MAIN.b"}},
 		}, recs
 	}
@@ -1559,7 +1544,7 @@ var _ = Describe("sessionConfig", func() {
 			RouteActivationTimeout:     20 * time.Second,
 			NotificationSilenceTimeout: 15 * time.Second,
 			HeartbeatRecovery:          heartbeatRecoveryRebuild,
-			Log:                        classifier.Logger(service.MockResources().Logger()),
+			Log:                        classified(service.MockResources().Logger()),
 		}
 
 		cfg := a.sessionConfig()
@@ -1572,7 +1557,7 @@ var _ = Describe("sessionConfig", func() {
 	})
 
 	It("wires OnSessionEvent to the flag the read path consumes", func() {
-		a := &AdsCommInput{Log: classifier.Logger(service.MockResources().Logger())}
+		a := &AdsCommInput{Log: classified(service.MockResources().Logger())}
 
 		cfg := a.sessionConfig()
 		Expect(cfg.OnSessionEvent).NotTo(BeNil())
@@ -1587,7 +1572,7 @@ var _ = Describe("sessionConfig", func() {
 		// Stands in for a SessionEvent added to client.go without a case in
 		// onSessionEvent: it has to be visible, and it must not force a rebuild.
 		logger, recs := capturingLogger()
-		a := &AdsCommInput{Log: classifier.Logger(logger)}
+		a := &AdsCommInput{Log: classified(logger)}
 
 		a.onSessionEvent(SessionEvent(99), "something-new")
 
@@ -1601,7 +1586,7 @@ var _ = Describe("sessionConfig", func() {
 var _ = Describe("setupNotifications", func() {
 	newInput := func(client *fakeClient) *AdsCommInput {
 		return &AdsCommInput{
-			Log:              classifier.Logger(service.MockResources().Logger()),
+			Log:              classified(service.MockResources().Logger()),
 			client:           client,
 			ReadType:         "notification",
 			NotificationChan: make(chan *Update, 4),
@@ -1637,7 +1622,7 @@ var _ = Describe("setupNotifications partial success", func() {
 		// skipped, one the PLC rejected with a code.
 		log, recs := capturingLogger()
 		a := &AdsCommInput{
-			Log:              classifier.Logger(log),
+			Log:              classified(log),
 			ReadType:         "notification",
 			NotificationChan: make(chan *Update, 4),
 			Symbols:          []PlcSymbol{{Name: "MAIN.ok"}, {Name: "MAIN.typo"}, {Name: "MAIN.refused"}},
@@ -1673,7 +1658,7 @@ var _ = Describe("ReadBatch dispatch", func() {
 		// A cancelled context returns from the notification wait at once; the
 		// pull path would have failed on the nil client instead.
 		a := &AdsCommInput{
-			Log:              classifier.Logger(service.MockResources().Logger()),
+			Log:              classified(service.MockResources().Logger()),
 			ReadType:         "notification",
 			NotificationChan: make(chan *Update, 1),
 			client:           &fakeClient{},
@@ -1688,7 +1673,7 @@ var _ = Describe("ReadBatch dispatch", func() {
 	})
 
 	It("routes to the pull path for any other readType", func() {
-		a := &AdsCommInput{Log: classifier.Logger(service.MockResources().Logger()), ReadType: "interval"}
+		a := &AdsCommInput{Log: classified(service.MockResources().Logger()), ReadType: "interval"}
 
 		_, _, err := a.ReadBatch(context.Background())
 
@@ -1706,18 +1691,11 @@ var _ = Describe("BatchReadError", func() {
 	})
 })
 
-var _ = Describe("benthosLogHandler.WithGroup", func() {
-	It("ignores grouping, since benthos logs flat key=value pairs", func() {
-		h := &benthosLogHandler{logger: classifier.Logger(service.MockResources().Logger())}
-		Expect(h.WithGroup("session")).To(BeIdenticalTo(slog.Handler(h)))
-	})
-})
-
 var _ = Describe("finishConnect failure branches", func() {
 	newInput := func(client *fakeClient, readType string) (*AdsCommInput, *[]capturedLog) {
 		log, recs := capturingLogger()
 		return &AdsCommInput{
-			Log: classifier.Logger(log), client: client, ReadType: readType,
+			Log: classified(log), client: client, ReadType: readType,
 			LoadSymbols:      true,
 			NotificationChan: make(chan *Update, 4),
 			Symbols:          []PlcSymbol{{Name: "MAIN.a"}},
@@ -1756,7 +1734,7 @@ var _ = Describe("finishConnect ordering", func() {
 			"MAIN.state": {DataType: "E_MachineState", BaseType: "DINT", Length: 4},
 		}}
 		a := &AdsCommInput{
-			Log:         classifier.Logger(service.MockResources().Logger()),
+			Log:         classified(service.MockResources().Logger()),
 			client:      client,
 			LoadSymbols: true,
 			ReadType:    "interval",
@@ -1776,7 +1754,7 @@ var _ = Describe("Partial batch reads", func() {
 	// good data on every read because one symbol name was wrong.
 	newInput := func(client *fakeClient) *AdsCommInput {
 		return &AdsCommInput{
-			Log:    classifier.Logger(service.MockResources().Logger()),
+			Log:    classified(service.MockResources().Logger()),
 			client: client,
 			Symbols: []PlcSymbol{
 				{Name: "MAIN.ok1", DataType: "DINT", BaseType: "DINT"},
@@ -1918,7 +1896,7 @@ unifiedAddress:
 		base := SessionConfig{TargetIP: "1.2.3.4", TargetPort: 48898, RuntimePort: 851}
 
 		optionCount := func(cfg SessionConfig) int {
-			opts, err := buildSessionOptions(context.Background(), cfg, classifier.Logger(service.MockResources().Logger()))
+			opts, err := buildSessionOptions(context.Background(), cfg, classified(service.MockResources().Logger()))
 			Expect(err).NotTo(HaveOccurred())
 			return len(opts)
 		}
@@ -1959,7 +1937,7 @@ var _ = Describe("session rebuild on a degraded session", func() {
 	newDegradableInput := func(client Client) *AdsCommInput {
 		return &AdsCommInput{
 			ReadType: "notification",
-			Log:      classifier.Logger(service.MockResources().Logger()),
+			Log:      classified(service.MockResources().Logger()),
 			client:   client,
 			Symbols:  []PlcSymbol{{Name: "MAIN.var"}},
 		}
@@ -2041,7 +2019,7 @@ var _ = Describe("session rebuild on a degraded session", func() {
 		base := SessionConfig{TargetIP: "1.2.3.4", TargetPort: 48898, RuntimePort: 851}
 
 		optionCount := func(cfg SessionConfig) int {
-			opts, err := buildSessionOptions(context.Background(), cfg, classifier.Logger(service.MockResources().Logger()))
+			opts, err := buildSessionOptions(context.Background(), cfg, classified(service.MockResources().Logger()))
 			Expect(err).NotTo(HaveOccurred())
 			return len(opts)
 		}
@@ -2106,7 +2084,7 @@ var _ = Describe("session rebuild on a degraded session", func() {
 			bad := base
 			bad.HostAMS = "192.168.3.52"
 
-			_, err := buildSessionOptions(context.Background(), bad, classifier.Logger(service.MockResources().Logger()))
+			_, err := buildSessionOptions(context.Background(), bad, classified(service.MockResources().Logger()))
 
 			Expect(err).To(MatchError(ContainSubstring("hostAMS")))
 			Expect(err).To(MatchError(ContainSubstring("192.168.3.52")), "the rejected value belongs in the message")
@@ -2147,38 +2125,6 @@ unifiedAddress:
 		_, err = NewAdsCommInput(conf, service.MockResources())
 
 		Expect(err).To(MatchError(ContainSubstring("targetAMS")))
-	})
-})
-
-var _ = Describe("benthosLogHandler level mapping", func() {
-	// go-ads owns the level; the bridge only maps slog levels onto benthos ones.
-	rec := func(level slog.Level, msg string, attrs ...slog.Attr) slog.Record {
-		r := slog.NewRecord(time.Time{}, level, msg, 0)
-		r.AddAttrs(attrs...)
-		return r
-	}
-	handle := func(r slog.Record) error {
-		h := &benthosLogHandler{logger: classifier.Logger(service.MockResources().Logger())}
-		return h.Handle(context.Background(), r)
-	}
-
-	DescribeTable("forwards a record at the level go-ads set, attributes and all",
-		func(level slog.Level, attrs []slog.Attr) {
-			r := rec(level, "x", attrs...)
-			Expect(handle(r)).To(Succeed())
-			Expect(r.Level).To(Equal(level))
-		},
-		Entry("connection line", slog.LevelInfo, nil),
-		Entry("per-symbol bookkeeping arrives as debug", slog.LevelDebug, []slog.Attr{slog.String("symbol", "MAIN.a")}),
-		Entry("per-handle bookkeeping arrives as debug", slog.LevelDebug, []slog.Attr{slog.Uint64("handle", 91)}),
-		Entry("a failure carrying a symbol stays a warning", slog.LevelWarn, []slog.Attr{slog.String("symbol", "MAIN.a")}),
-		Entry("error", slog.LevelError, []slog.Attr{slog.String("symbol", "MAIN.a")}),
-	)
-
-	It("suppresses trace records below debug", func() {
-		h := &benthosLogHandler{logger: classifier.Logger(service.MockResources().Logger())}
-		Expect(h.Enabled(context.Background(), slog.Level(-8))).To(BeFalse())
-		Expect(h.Enabled(context.Background(), slog.LevelDebug)).To(BeTrue())
 	})
 })
 
@@ -2311,13 +2257,13 @@ var _ = Describe("resolveRouteHostIP", func() {
 var _ = Describe("Close", func() {
 	It("is a no-op when no session was ever established", func() {
 		// Benthos calls Close even when Connect never succeeded.
-		a := &AdsCommInput{Log: classifier.Logger(service.MockResources().Logger())}
+		a := &AdsCommInput{Log: classified(service.MockResources().Logger())}
 		Expect(a.Close(context.Background())).To(Succeed())
 	})
 
 	It("closes the session and drops the reference", func() {
 		client := &fakeClient{}
-		a := &AdsCommInput{Log: classifier.Logger(service.MockResources().Logger()), client: client}
+		a := &AdsCommInput{Log: classified(service.MockResources().Logger()), client: client}
 
 		Expect(a.Close(context.Background())).To(Succeed())
 
@@ -2331,7 +2277,7 @@ var _ = Describe("Close", func() {
 		client := &fakeClient{closeErr: errors.New("socket already gone")}
 		a, recs := func() (*AdsCommInput, *[]capturedLog) {
 			log, recs := capturingLogger()
-			return &AdsCommInput{Log: classifier.Logger(log), client: client}, recs
+			return &AdsCommInput{Log: classified(log), client: client}, recs
 		}()
 
 		err := a.Close(context.Background())
@@ -2348,7 +2294,7 @@ var _ = Describe("Connect", func() {
 		// call would leave the PLC holding the abandoned one. The rest of Connect
 		// builds a real go-ads session, so it is covered by the hardware suite.
 		client := &fakeClient{}
-		a := &AdsCommInput{Log: classifier.Logger(service.MockResources().Logger()), client: client}
+		a := &AdsCommInput{Log: classified(service.MockResources().Logger()), client: client}
 
 		Expect(a.Connect(context.Background())).To(Succeed())
 
@@ -2394,7 +2340,7 @@ var _ = Describe("initialSampleTimeout", func() {
 var _ = Describe("waitForInitialSamples", func() {
 	newInput := func() (*AdsCommInput, *[]capturedLog) {
 		log, recs := capturingLogger()
-		return &AdsCommInput{Log: classifier.Logger(log), NotificationChan: make(chan *Update, 8)}, recs
+		return &AdsCommInput{Log: classified(log), NotificationChan: make(chan *Update, 8)}, recs
 	}
 
 	It("buffers one sample per registered symbol and returns as soon as the last arrives", func() {
@@ -2489,7 +2435,7 @@ var _ = Describe("waitForInitialSamples", func() {
 		Expect(*recs).To(ContainElement(SatisfyAll(
 			HaveField("Level", slog.LevelWarn),
 			HaveField("Msg", ContainSubstring("main.silent")),
-			HaveField("Attrs", HaveKeyWithValue("error_id", "ads::no_initial_samples")),
+			HaveField("Attrs", HaveKeyWithValue("error_kind", "ads::no_initial_samples")),
 			HaveField("Attrs", HaveKeyWithValue("error_class", "bug")),
 		)), "the warn has to name the symbols still missing")
 		Expect(*recs).NotTo(ContainElement(HaveField("Msg", ContainSubstring("main.a"))),

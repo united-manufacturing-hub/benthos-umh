@@ -17,6 +17,7 @@ package beckhoff_ads_plugin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"strings"
@@ -32,139 +33,152 @@ import (
 var (
 	ads = errclass.NewPlugin("ads")
 
-	kindConnectionDropped    = ads.Define("connection_dropped", errclass.Known)
-	kindSessionDisconnected  = ads.Define("session_disconnected", errclass.Known)
-	kindHeartbeatResubscribe = ads.Define("heartbeat_resubscribe", errclass.Known)
-	kindResubscribeFailed    = ads.Define("resubscribe_failed", errclass.Known)
-	kindHeartbeatObserveOnly = ads.Define("heartbeat_observe_only", errclass.Known)
-	kindTargetUnreachable    = ads.Define("target_unreachable", errclass.Known)
-	kindTargetPortNotFound   = ads.Define("target_port_not_found", errclass.Known)
-	kindReconnectFailing     = ads.Define("reconnect_failing", errclass.Known)
-	kindRouteFault           = ads.Define("route_fault", errclass.Known)
-	kindPLCNotRunning        = ads.Define("plc_not_running", errclass.Known)
-	kindSymbolConfig         = ads.Define("symbol_config", errclass.Known)
-	kindInvalidHostAMS       = ads.Define("invalid_host_ams", errclass.Known)
-	kindInvalidTargetAMS     = ads.Define("invalid_target_ams", errclass.Known)
-	kindSessionCreateFailed  = ads.Define("session_create_failed", errclass.Bug)
-	kindSymbolCacheMiss      = ads.Define("symbol_cache_miss", errclass.Bug)
-	kindNoInitialSamples     = ads.Define("no_initial_samples", errclass.Bug)
-	kindReadGap              = ads.Define("read_gap", errclass.Bug)
-	kindBatchReadFallback    = ads.Define("batch_read_fallback", errclass.Known)
-	kindReadTimeout          = ads.Define("read_timeout", errclass.Known)
-	kindCloseFailed          = ads.Define("close_failed", errclass.Known)
-	kindProtocolDecode       = ads.Define("protocol_decode", errclass.Bug)
-	kindInternalBug          = ads.Define("internal_bug", errclass.Bug)
-	kindUnclassified         = ads.Define("unclassified", errclass.Unknown)
+	kindConnectionDropped    = ads.Known("connection_dropped")
+	kindSessionDisconnected  = ads.Known("session_disconnected")
+	kindHeartbeatResubscribe = ads.Known("heartbeat_resubscribe")
+	kindResubscribeFailed    = ads.Known("resubscribe_failed")
+	kindHeartbeatObserveOnly = ads.Known("heartbeat_observe_only")
+	kindTargetUnreachable    = ads.Known("target_unreachable")
+	kindTargetPortNotFound   = ads.Known("target_port_not_found")
+	kindReconnectFailing     = ads.Known("reconnect_failing")
+	kindRouteFault           = ads.Known("route_fault")
+	kindPLCNotRunning        = ads.Known("plc_not_running")
+	kindSymbolConfig         = ads.Known("symbol_config")
+	kindInvalidHostAMS       = ads.Known("invalid_host_ams")
+	kindInvalidTargetAMS     = ads.Known("invalid_target_ams")
+	kindSessionCreateFailed  = ads.Bug("session_create_failed")
+	kindSymbolCacheMiss      = ads.Bug("symbol_cache_miss")
+	kindNoInitialSamples     = ads.Bug("no_initial_samples")
+	kindReadGap              = ads.Bug("read_gap")
+	kindBatchReadFallback    = ads.Known("batch_read_fallback")
+	kindReadTimeout          = ads.Known("read_timeout")
+	kindCloseFailed          = ads.Known("close_failed")
+	kindProtocolDecode       = ads.Bug("protocol_decode")
+	kindInternalBug          = ads.Bug("internal_bug")
+	kindUnclassified         = ads.Unclassified()
 )
 
-// errNoSymbolsRegistered: every configured symbol failed to register for
-// notifications, which is a symbol name or PLC program problem.
-var errNoSymbolsRegistered = errors.New("no symbols registered for notifications")
+// classifier gives every Warn and Error line of this input its Kind: the
+// Logger and the go-ads *slog.Logger it returns apply it. Which line gets which
+// Kind is part of the contract with umh-core.
+//
+// The first matching rule wins, so the order matters: one error can match
+// several rules, and the earlier rule is the more specific cause. A route the
+// PLC will not serve, for example, also wraps a closed transport.
+//
+// Message rules match the exact text of a go-ads log record. A go-ads bump that
+// rewords one fails the guard test instead of turning it unclassified. Errors
+// this input creates itself carry their Kind (kindX.Errorf) and need no rule.
+var classifier = ads.Classifier(
+	// go-ads records whose message decides, whatever error they carry. Most are
+	// events go-ads only logs, with no error to inspect.
+	errclass.Message("PLC dropped an established connection, transport down", kindConnectionDropped),
+	errclass.Message("PLC closed connection, transport down", kindConnectionDropped),
+	errclass.Message("listen read error, transport down", kindConnectionDropped),
+	errclass.Message("no frame has arrived on either socket; treating the transport as dead and reconnecting", kindConnectionDropped),
+	errclass.Message("session disconnected, reconnecting; no data is read until it succeeds", kindSessionDisconnected),
+	errclass.Message("connection flapping, applying cross-cycle cooldown before reconnect", kindSessionDisconnected),
+	errclass.Message("subscriptions are missing; recovering", kindHeartbeatResubscribe),
+	errclass.Message("heartbeat silent; not re-subscribing (WithHeartbeatRecovery(Observe))", kindHeartbeatObserveOnly),
+	errclass.Message("error getting symbol for batch notification", kindSymbolConfig),
+	errclass.Message("notification target symbol no longer in cache; skipping parse", kindSymbolCacheMiss),
+	errclass.Message("header too short", kindProtocolDecode),
+	errclass.Message("Error parsing header", kindProtocolDecode),
+	errclass.Message("Error parsing body", kindProtocolDecode),
+	errclass.Message("device notification decode failed", kindProtocolDecode),
+	errclass.Message("failed to parse notification response", kindProtocolDecode),
+	errclass.Message("error during parse of notification", kindProtocolDecode),
+	errclass.Message("listen header decode error, transport down", kindProtocolDecode),
+	errclass.Message("AMS packet length exceeds sanity limit, transport down", kindProtocolDecode),
+	errclass.Message("SumRead errored-item declared length exceeds remaining bytes — protocol drift", kindProtocolDecode),
+	errclass.Message("SumRead per-item undersize — protocol drift", kindProtocolDecode),
+	errclass.Message("SumRead per-item oversize — protocol drift or wire corruption", kindProtocolDecode),
+	errclass.Message("SumRead truncated — likely protocol corruption", kindProtocolDecode),
+	errclass.Message("binary.Write failed", kindInternalBug),
+	errclass.Message("notification batch callback got an out-of-range index", kindInternalBug),
+	errclass.Message("notification batch: success with a zero handle", kindInternalBug),
+	errclass.Message("notification send panicked — caller closed the update channel?", kindInternalBug),
+	errclass.Message("orphan delete goroutine panic recovered", kindInternalBug),
+	errclass.Message("no notification heartbeat within the allowed window; treating this session's subscriptions as dead and re-subscribing", kindHeartbeatResubscribe),
+	errclass.Message("connected, but the PLC runtime is not in RUN: symbol and subscription calls will refuse until it returns", kindPLCNotRunning),
+	errclass.Message("route is active but the PLC runtime is not in RUN; connecting anyway and waiting for it", kindPLCNotRunning),
+	errclass.Message("re-subscribe after a heartbeat timeout failed; keeping the subscriptions on file and retrying in the next window", kindResubscribeFailed),
+	errclass.Message("re-subscribe bound nothing (PLC not serving yet); keeping the subscriptions on file and retrying in the next window", kindResubscribeFailed),
 
-// errInvalidHostAMS and errInvalidTargetAMS: the configured NetID does not
-// parse, which the customer fixes in the config.
-var (
-	errInvalidHostAMS   = errors.New("hostAMS is not a valid AMS NetID")
-	errInvalidTargetAMS = errors.New("targetAMS is not a valid AMS NetID")
-)
+	// Errors, wherever they show up: returned, or in a go-ads record.
 
-// errSessionCreate: go-ads could not create the session. Without a targetAMS,
-// NewSession first discovers the target over UDP, and a discovery the device
-// does not answer matches the network rules before this one. What is left is
-// go-ads rejecting the session options. Config parsing validates everything
-// go-ads checks there, so reaching it is a bug in that validation.
-var errSessionCreate = errors.New("creating the ADS session failed")
-
-// classifier is where every Warn and Error line of this input gets its Kind:
-// the Logger it returns (a.Log) applies it. Call Classify directly only where
-// the Kind decides what the code does next, or where the line's error decides
-// its Kind but does not belong in its text.
-var classifier = &errclass.Classifier{Rules: errorRules, Unclassified: kindUnclassified}
-
-// errorRules is the type half of the contract table. The first matching rule
-// wins, so this is a slice, not a map: one error can match several rules, and
-// the earlier rule is the more specific cause. A route the PLC will not serve,
-// for example, also wraps a closed transport.
-var errorRules = []errclass.Rule{
-	{Matches: errclass.Is(errNoSymbolsRegistered), Kind: kindSymbolConfig},
-	{Matches: errclass.Is(errInvalidHostAMS), Kind: kindInvalidHostAMS},
-	{Matches: errclass.Is(errInvalidTargetAMS), Kind: kindInvalidTargetAMS},
 	// A deaf router is unreachable for a moment, not misconfigured, whatever
 	// route-registration text it is wrapped in. Before isUntypedRouteFault.
-	{Matches: errclass.Is(adsLib.ErrRouterUnresponsive), Kind: kindTargetUnreachable},
-	{Matches: isUntypedRouteFault, Kind: kindRouteFault},
-	{Matches: isDialFailure, Kind: kindTargetUnreachable},
-	{Matches: isUDPTimeout, Kind: kindTargetUnreachable},
-	{Matches: errclass.Is(errSessionCreate), Kind: kindSessionCreateFailed},
-	{Matches: errclass.Is(adsLib.ErrRouteNotServed), Kind: kindRouteFault},
-	{Matches: errclass.Is(adsLib.ErrRuntimeNotRunning), Kind: kindPLCNotRunning},
+	errclass.Is(adsLib.ErrRouterUnresponsive, kindTargetUnreachable),
+	errclass.Match(isUntypedRouteFault, kindRouteFault),
+	errclass.Match(isDialFailure, kindTargetUnreachable),
+	errclass.Match(isUDPTimeout, kindTargetUnreachable),
+	errclass.Is(adsLib.ErrRouteNotServed, kindRouteFault),
+	errclass.Is(adsLib.ErrRuntimeNotRunning, kindPLCNotRunning),
 	// errors.Is matches both an ADS device verdict (ReturnCode) and an AMS router
 	// rejection (AMSError) carrying the same code.
-	{Matches: errclass.Is(adsLib.ReturnCodeGlobalTargetPortNotFound), Kind: kindTargetPortNotFound},
-	{Matches: errclass.Is(adsLib.ReturnCodeDeviceSymbolNoFound), Kind: kindSymbolConfig},
-	{Matches: errclass.Is(adsLib.ErrBatchSymbolUnresolved), Kind: kindSymbolConfig},
+	errclass.Is(adsLib.ReturnCodeGlobalTargetPortNotFound, kindTargetPortNotFound),
+	errclass.Is(adsLib.ReturnCodeDeviceSymbolNoFound, kindSymbolConfig),
+	errclass.Is(adsLib.ErrBatchSymbolUnresolved, kindSymbolConfig),
+	// The other reasons go-ads produced no value for an item of a batch read.
+	errclass.Is(adsLib.ErrBatchNoResult, kindReadGap),
+	errclass.Is(adsLib.ErrBatchValueUnparsable, kindReadGap),
+	errclass.Is(adsLib.ErrBatchSymbolVanished, kindReadGap),
+	// The reasons go-ads refused to commit a notification. A symbol configured
+	// twice, or one an online change removed, is the customer's to fix; a
+	// second update channel would be this input's bug.
+	errclass.Is(adsLib.ErrNotificationDuplicate, kindSymbolConfig),
+	errclass.Is(adsLib.ErrNotificationSymbolVanished, kindSymbolConfig),
+	errclass.Is(adsLib.ErrNotificationChannelMismatch, kindInternalBug),
 	// The symbol cache was reloaded while a batch subscribe was in flight. The
 	// symbol name is fine; nothing the customer can change avoids it.
-	{Matches: errclass.Is(adsLib.ErrNotificationStrandedByReload), Kind: kindInternalBug},
-	{Matches: isTransportGone, Kind: kindConnectionDropped},
+	errclass.Is(adsLib.ErrNotificationStrandedByReload, kindInternalBug),
+	errclass.Match(isTransportGone, kindConnectionDropped),
+	// A batch subscribe whose transport failed; the cause, if any, is above.
+	errclass.Is(adsLib.ErrNotificationTransportFailure, kindConnectionDropped),
 	// A request deadline, or a TCP socket deadline on a live session.
-	{Matches: errclass.Is(context.DeadlineExceeded), Kind: kindReadTimeout},
-	{Matches: errclass.Is(os.ErrDeadlineExceeded), Kind: kindReadTimeout},
-}
+	errclass.Is(context.DeadlineExceeded, kindReadTimeout),
+	errclass.Is(os.ErrDeadlineExceeded, kindReadTimeout),
 
-// goADSMessages give go-ads log records their Kind by their exact message,
-// whatever error the record carries. Most are events go-ads only logs, with no
-// error to inspect. A go-ads bump that rewords one fails the guard test instead
-// of turning it unclassified.
-var goADSMessages = map[string]errclass.Kind{
-	"PLC dropped an established connection, transport down":                                  kindConnectionDropped,
-	"PLC closed connection, transport down":                                                  kindConnectionDropped,
-	"listen read error, transport down":                                                      kindConnectionDropped,
-	"no frame has arrived on either socket; treating the transport as dead and reconnecting": kindConnectionDropped,
-	"session disconnected, reconnecting; no data is read until it succeeds":                  kindSessionDisconnected,
-	"connection flapping, applying cross-cycle cooldown before reconnect":                    kindSessionDisconnected,
-	"subscriptions are missing; recovering":                                                  kindHeartbeatResubscribe,
-	"heartbeat silent; not re-subscribing (WithHeartbeatRecovery(Observe))":                  kindHeartbeatObserveOnly,
-	"error getting symbol for batch notification":                                            kindSymbolConfig,
-	"notification target symbol no longer in cache; skipping parse":                          kindSymbolCacheMiss,
-	"header too short":                                       kindProtocolDecode,
-	"Error parsing header":                                   kindProtocolDecode,
-	"Error parsing body":                                     kindProtocolDecode,
-	"device notification decode failed":                      kindProtocolDecode,
-	"failed to parse notification response":                  kindProtocolDecode,
-	"error during parse of notification":                     kindProtocolDecode,
-	"listen header decode error, transport down":             kindProtocolDecode,
-	"AMS packet length exceeds sanity limit, transport down": kindProtocolDecode,
-	"SumRead errored-item declared length exceeds remaining bytes — protocol drift": kindProtocolDecode,
-	"SumRead per-item undersize — protocol drift":                                   kindProtocolDecode,
-	"SumRead per-item oversize — protocol drift or wire corruption":                 kindProtocolDecode,
-	"SumRead truncated — likely protocol corruption":                                kindProtocolDecode,
-	"binary.Write failed": kindInternalBug,
-	"notification batch callback got an out-of-range index":                                                                 kindInternalBug,
-	"notification batch: success with a zero handle":                                                                        kindInternalBug,
-	"notification send panicked — caller closed the update channel?":                                                        kindInternalBug,
-	"orphan delete goroutine panic recovered":                                                                               kindInternalBug,
-	"no notification heartbeat within the allowed window; treating this session's subscriptions as dead and re-subscribing": kindHeartbeatResubscribe,
-	"connected, but the PLC runtime is not in RUN: symbol and subscription calls will refuse until it returns":              kindPLCNotRunning,
-	"route is active but the PLC runtime is not in RUN; connecting anyway and waiting for it":                               kindPLCNotRunning,
-	"re-subscribe after a heartbeat timeout failed; keeping the subscriptions on file and retrying in the next window":      kindResubscribeFailed,
-	"re-subscribe bound nothing (PLC not serving yet); keeping the subscriptions on file and retrying in the next window":   kindResubscribeFailed,
-}
-
-// goADSMessageFallbacks give the Kind of go-ads records whose error is the
-// better signal: the message only applies when no rule matches that error.
-var goADSMessageFallbacks = map[string]errclass.Kind{
-	"reconnect dial/start failed, retrying": kindReconnectFailing,
-	"reconnect step failed, retrying":       kindReconnectFailing,
-}
+	// go-ads records whose error is the better signal: the message only
+	// decides when no rule above matches that error.
+	errclass.Message("reconnect dial/start failed, retrying", kindReconnectFailing),
+	errclass.Message("reconnect step failed, retrying", kindReconnectFailing),
+)
 
 // reasonKinds give the Kind of the go-ads Reason a session event carries. A
 // Reason not listed here is unclassified, so a new one reaches Sentry and gets
 // a row.
-var reasonKinds = map[string]errclass.Kind{
+var reasonKinds = map[string]*errclass.Kind{
 	string(adsLib.ReasonSymbolNotFound):  kindSymbolConfig,
 	string(adsLib.ReasonSymbolNotActive): kindSymbolConfig,
 	string(adsLib.ReasonHeartbeatSilent): kindHeartbeatObserveOnly,
+}
+
+func reasonKind(reason string) *errclass.Kind {
+	if kind, ok := reasonKinds[reason]; ok {
+		return kind
+	}
+	return kindUnclassified
+}
+
+// sessionCreateError wraps an error of adsLib.NewSession. Without a targetAMS,
+// NewSession first discovers the target over UDP, and a classified cause such
+// as an unanswered discovery keeps its own Kind. What is left is go-ads
+// rejecting options that config parsing already validates, which is a bug in
+// that validation.
+func sessionCreateError(err error) error {
+	if classifier.Classify(err) != kindUnclassified {
+		return fmt.Errorf("creating the ADS session failed: %w", err)
+	}
+	return kindSessionCreateFailed.Errorf("creating the ADS session failed: %w", err)
+}
+
+// isRouteFault reports whether a connect failed because the PLC would not serve
+// our route — a configuration fault that a retry cannot fix. It is the same
+// verdict as the error_kind, so the backoff and the log cannot disagree.
+func isRouteFault(err error) bool {
+	return classifier.Classify(err) == kindRouteFault
 }
 
 // untypedRouteFaults are the texts of the route faults go-ads v2.3.4 returns
@@ -202,4 +216,12 @@ func isUDPTimeout(err error) bool {
 func isDialFailure(err error) bool {
 	var opErr *net.OpError
 	return errors.As(err, &opErr) && opErr.Op == "dial"
+}
+
+// isTransportGone reports whether the ADS transport went away mid-operation.
+// ErrRouteNotServed is excluded: it usually needs credentials or an address fixed.
+func isTransportGone(err error) bool {
+	return errors.Is(err, adsLib.ErrTransportClosed) ||
+		errors.Is(err, adsLib.ErrDisconnected) ||
+		errors.Is(err, adsLib.ErrEstablishedDropped)
 }
