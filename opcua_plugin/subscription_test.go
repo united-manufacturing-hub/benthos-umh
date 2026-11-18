@@ -360,7 +360,10 @@ var _ = Describe("OPC UA subscription ClientHandles", func() {
 		// If the failed result were stored, Close would call Cancel on a nil
 		// *opcua.Subscription and panic here.
 		Expect(g.BrowseAndSubscribeIfNeeded(context.Background())).To(HaveOccurred())
-		Expect(g.Subscription).To(BeNil())
+		// Not Expect(...).To(BeNil()): Gomega's BeNil accepts an interface
+		// holding a typed-nil pointer, which is exactly the bug being guarded.
+		Expect(g.Subscription == nil).To(BeTrue(),
+			"a failed Subscribe must leave the field truly nil, not an interface wrapping a nil pointer")
 	})
 
 	// Pending until ENG-7894: the browse goroutine calls Close, which waits for
@@ -417,23 +420,24 @@ var _ = Describe("handleRegistry", func() {
 
 		// A handle that is also a valid index is how ENG-5553 stayed hidden:
 		// reading a handle as a position still found a real node, just the
-		// wrong one. Assert against the list size rather than against
-		// firstHandle, so that lowering firstHandle fails this.
-		const nodes = 64
+		// wrong one. Assert against the largest node list the browser will
+		// ever produce, not against a number that happens to be convenient:
+		// a 200-node server is ordinary, so a spec using 64 would pass while
+		// leaving real deployments unseparated.
+		const nodes = MaxTagsToBrowse
 
-		var handles []uint32
-		for i := 0; i < nodes; i++ {
-			handles = append(handles, r.allocate(NodeDef{NodeID: ua.NewNumericNodeID(1, uint32(i))}))
-		}
+		// Allocating 100k nodes here would only restate the arithmetic; the
+		// property is about where the range starts.
+		first := r.allocate(NodeDef{NodeID: ua.NewStringNodeID(1, "first")})
+		Expect(first).To(BeNumerically(">=", uint32(nodes)),
+			"handle %d is also a valid index into a %d-node list", first, nodes)
 
-		for _, h := range handles {
-			Expect(h).To(BeNumerically(">=", uint32(nodes)),
-				"handle %d is also a valid index into a %d-node list", h, nodes)
-		}
+		second := r.allocate(NodeDef{NodeID: ua.NewStringNodeID(1, "second")})
+		Expect(second).To(BeNumerically(">", first), "handles must keep increasing")
 
 		r.reset()
 		afterReset := r.allocate(NodeDef{NodeID: ua.NewStringNodeID(1, "after-reset")})
-		Expect(afterReset).To(BeNumerically(">", handles[len(handles)-1]),
+		Expect(afterReset).To(BeNumerically(">", second),
 			"reset must not send handles back to the start of the range")
 	})
 
