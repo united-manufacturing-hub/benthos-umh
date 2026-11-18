@@ -31,21 +31,27 @@ type subscription interface {
 
 var _ subscription = (*opcua.Subscription)(nil)
 
-// firstHandle is the lowest ClientHandle the registry hands out. See
-// handleRegistry for why it is not zero.
-const firstHandle uint32 = 100
+// firstHandle is the ClientHandle the registry starts from. It is tied to
+// MaxTagsToBrowse so that it stays above any index into a node list even if
+// that cap changes: a smaller seed would only separate handles from the first
+// few indices, which is no separation at all on a 100k-node server.
+const firstHandle uint32 = MaxTagsToBrowse
 
 // handleRegistry maps the ClientHandle of each monitored item to its node
 // (OPC 10000-4 §7.21). Handles are never reused, so a late value for a
 // cancelled subscription cannot be published under another node. gopcua's
 // monitor package does the same, but drops values when the reader is slow.
 //
-// Handles start at firstHandle rather than zero so that a handle can never
-// also be a valid index into the node list. Reading a handle as a position in
-// that list is what ENG-5553 was: keeping the two value ranges apart means a
-// handle that leaks into an index, or the reverse, is out of range instead of
-// quietly addressing the wrong node. gopcua's monitor package seeds its
-// counter above zero for the same reason.
+// What this guarantees: no two live monitored items share a handle. That holds
+// always, including once the counter wraps, because handles are never reused
+// while the subscription lives.
+//
+// Handles also start past the longest node list we will ever build, so a
+// handle misread as a position in that list is out of range rather than
+// quietly addressing the wrong node. Reading a handle as a position is what
+// ENG-5553 was. That second property is a tripwire, not a guarantee: after
+// 2^32 allocations the counter wraps back through the low numbers, which no
+// single connection reaches.
 //
 // The zero value is ready to use. It is safe for concurrent use.
 type handleRegistry struct {
