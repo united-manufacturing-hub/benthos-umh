@@ -301,8 +301,12 @@ var _ = Describe("OPC UA subscription ClientHandles", func() {
 			}
 			h.expectDropped(handle)
 		},
+		// Handles start at firstHandle, so an index-sized value is never one
+		// the registry handed out. These pin that: the old code read such a
+		// value as a position in the node list.
 		Entry("handle equal to the number of nodes", true, uint32(5)),
-		Entry("handle far beyond the number of nodes", true, uint32(100)),
+		Entry("handle one past the last allocated one", true, firstHandle+uint32(5)),
+		Entry("handle far beyond anything allocated", true, firstHandle+uint32(10000)),
 		Entry("no monitored item created yet", false, uint32(2)),
 	)
 
@@ -406,6 +410,31 @@ var _ = Describe("handleRegistry", func() {
 				Expect(node.BrowseName).To(Equal(fmt.Sprintf("w%d-%d", w, i)))
 			}
 		}
+	})
+
+	It("never hands out a handle that could also be a node list index", func() {
+		var r handleRegistry
+
+		// A handle that is also a valid index is how ENG-5553 stayed hidden:
+		// reading a handle as a position still found a real node, just the
+		// wrong one. Assert against the list size rather than against
+		// firstHandle, so that lowering firstHandle fails this.
+		const nodes = 64
+
+		var handles []uint32
+		for i := 0; i < nodes; i++ {
+			handles = append(handles, r.allocate(NodeDef{NodeID: ua.NewNumericNodeID(1, uint32(i))}))
+		}
+
+		for _, h := range handles {
+			Expect(h).To(BeNumerically(">=", uint32(nodes)),
+				"handle %d is also a valid index into a %d-node list", h, nodes)
+		}
+
+		r.reset()
+		afterReset := r.allocate(NodeDef{NodeID: ua.NewStringNodeID(1, "after-reset")})
+		Expect(afterReset).To(BeNumerically(">", handles[len(handles)-1]),
+			"reset must not send handles back to the start of the range")
 	})
 
 	It("forgets handles on reset and never hands them out again", func() {

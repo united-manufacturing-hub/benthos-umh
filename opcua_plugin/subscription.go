@@ -31,10 +31,21 @@ type subscription interface {
 
 var _ subscription = (*opcua.Subscription)(nil)
 
+// firstHandle is the lowest ClientHandle the registry hands out. See
+// handleRegistry for why it is not zero.
+const firstHandle uint32 = 100
+
 // handleRegistry maps the ClientHandle of each monitored item to its node
 // (OPC 10000-4 §7.21). Handles are never reused, so a late value for a
 // cancelled subscription cannot be published under another node. gopcua's
 // monitor package does the same, but drops values when the reader is slow.
+//
+// Handles start at firstHandle rather than zero so that a handle can never
+// also be a valid index into the node list. Reading a handle as a position in
+// that list is what ENG-5553 was: keeping the two value ranges apart means a
+// handle that leaks into an index, or the reverse, is out of range instead of
+// quietly addressing the wrong node. gopcua's monitor package seeds its
+// counter above zero for the same reason.
 //
 // The zero value is ready to use. It is safe for concurrent use.
 type handleRegistry struct {
@@ -51,7 +62,7 @@ func (r *handleRegistry) allocate(node NodeDef) uint32 {
 	if r.nodes == nil {
 		r.nodes = make(map[uint32]NodeDef)
 	}
-	handle := r.next
+	handle := firstHandle + r.next
 	r.next++
 	r.nodes[handle] = node
 	return handle
