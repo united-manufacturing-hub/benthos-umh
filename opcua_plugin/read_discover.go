@@ -329,11 +329,8 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 	if g.SubscribeEnabled {
 		g.Log.Infof("Subscription is enabled, therefore start subscribing to the selected notes...")
 
-		// Subscribe returns a nil *opcua.Subscription alongside its error.
-		// Assigning that straight into g.Subscription, which is an interface,
-		// would store a typed nil: the interface then tests as non-nil and
-		// cleanup calls Cancel on a nil receiver. Keep it local until it is
-		// known good.
+		// Keep the result local until Subscribe succeeds: the nil *opcua.Subscription
+		// returned with an error would make g.Subscription != nil.
 		sub, err := g.Client.Subscribe(ctx, &opcua.SubscriptionParameters{
 			Interval: opcua.DefaultSubscriptionInterval,
 		}, g.SubNotifyChan)
@@ -343,12 +340,6 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 			return err
 		}
 		g.Subscription = sub
-
-		// A new subscription generation starts here: no handle of a previous
-		// generation may resolve against it. reset drops the old handle map but
-		// keeps the counter monotonic, so stale handles come back as unknown
-		// instead of pointing at a different node (ENG-5553).
-		g.handleRegistry.reset()
 
 		monitoredNodes, err := g.MonitorBatched(ctx, nodeList)
 		if err != nil {
@@ -588,14 +579,7 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 				},
 				MonitoringMode: ua.MonitoringModeReporting,
 				RequestedParameters: &ua.MonitoringParameters{
-					// The handle is allocated from the subscription's handle registry,
-					// not from the position in the batch: the filter-rejection retry
-					// below re-slices the node list, so positions restart and would
-					// collide with the handles of items that are still live
-					// (OPC 10000-4 §7.21, ENG-5553). Registering the node before the
-					// request is sent also makes notifications that arrive before
-					// the response (§5.13.2.1) resolvable.
-					ClientHandle:     g.handleRegistry.allocate(nodeDef),
+					ClientHandle:     g.handles.allocate(nodeDef),
 					DiscardOldest:    true,
 					Filter:           filter,
 					QueueSize:        g.QueueSize,

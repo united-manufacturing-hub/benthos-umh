@@ -17,7 +17,6 @@ package opcua_plugin
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -251,14 +250,9 @@ type OPCUAInput struct {
 	LastMessageReceived          atomic.Uint32
 	HeartbeatManualSubscribed    bool
 	HeartbeatNodeId              *ua.NodeID
-	// Subscription is the live OPC UA subscription, typed as SubscriptionAPI
-	// (see subscription_api.go) so tests can substitute a recording fake.
-	Subscription SubscriptionAPI
-	// handleRegistry maps the ClientHandles of the current subscription's
-	// MonitoredItems to the nodes they were allocated for, so notifications
-	// are attributed to the right node regardless of how the request batches
-	// were sliced (ENG-5553). See subscription_handle_registry.go.
-	handleRegistry     subscriptionHandleRegistry
+	Subscription                 subscription
+	// handles resolves the ClientHandle of each notification to its node.
+	handles            handleRegistry
 	ServerInfo         ServerInfo
 	ServerProfile      ServerProfile
 	PollRate           int
@@ -273,38 +267,18 @@ type OPCUAInput struct {
 	browseErr   error
 }
 
-// isNilSubscription reports whether s holds no usable subscription.
-//
-// A plain s != nil is not enough. Subscription is an interface, and a nil
-// *opcua.Subscription stored in it is a typed nil: the interface is non-nil
-// while the pointer inside it is not, so calling through it panics.
-func isNilSubscription(s SubscriptionAPI) bool {
-	if s == nil {
-		return true
-	}
-	v := reflect.ValueOf(s)
-	return v.Kind() == reflect.Ptr && v.IsNil()
-}
-
 // unsubscribeAndResetHeartbeat unsubscribes from the OPC UA subscription and resets the heartbeat
 // It is used as a cleanup function for the OPC UA connection
 func (g *OPCUAInput) unsubscribeAndResetHeartbeat(ctx context.Context) {
-	if g.SubscribeEnabled {
-		// Only cancel something real. A failed Subscribe can leave a typed nil
-		// here, which is not worth cancelling but must still be cleared.
-		if !isNilSubscription(g.Subscription) {
-			g.Log.Infof("Unsubscribing from OPC UA subscription...")
-			if err := g.Subscription.Cancel(ctx); err != nil {
-				g.Log.Infof("Failed to unsubscribe from OPC UA subscription: %v", err)
-			}
+	if g.SubscribeEnabled && g.Subscription != nil {
+		g.Log.Infof("Unsubscribing from OPC UA subscription...")
+		if err := g.Subscription.Cancel(ctx); err != nil {
+			g.Log.Infof("Failed to unsubscribe from OPC UA subscription: %v", err)
 		}
 		g.Subscription = nil
-		// The subscription generation is over: none of its ClientHandles may
-		// resolve against a later one. The handle counter stays monotonic so
-		// stale handles from this generation come back as unknown, not as a
-		// valid handle of the next generation pointing at a different node.
-		g.handleRegistry.reset()
 	}
+	// Notifications still queued for the cancelled subscription are dropped.
+	g.handles.reset()
 
 	g.LastHeartbeatMessageReceived.Store(uint32(0))
 	g.LastMessageReceived.Store(uint32(0))
@@ -616,20 +590,9 @@ func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBat
 					continue
 				}
 
-				// Resolve the handle through the subscription's handle registry:
-				// a handle identifies exactly one MonitoredItem (OPC 10000-4
-				// §7.21), which the registry recorded when the request was built.
-				// It is not a position in g.NodeList - the filter-rejection retry
-				// re-slices the node list, so positions restart and would point at
-				// the wrong nodes (ENG-5553).
-				handleID := item.ClientHandle
-
-				nodeDef, ok := g.handleRegistry.lookup(handleID)
+				nodeDef, ok := g.handles.lookup(item.ClientHandle)
 				if !ok {
-					// Unknown handle: never attributed to an arbitrary node and
-					// never fatal - dropped, but loudly, so operators can tell
-					// values are being lost.
-					g.Log.Errorf("Dropping notification with unknown ClientHandle %d: it does not identify a MonitoredItem of the current subscription. The value is lost.", handleID)
+					g.Log.Errorf("Dropping a value with unknown ClientHandle %d: it belongs to no monitored item of the current subscription.", item.ClientHandle)
 					continue
 				}
 				message := g.createMessageFromValue(item.Value, nodeDef)
