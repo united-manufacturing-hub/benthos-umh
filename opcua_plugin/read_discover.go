@@ -329,7 +329,12 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 	if g.SubscribeEnabled {
 		g.Log.Infof("Subscription is enabled, therefore start subscribing to the selected notes...")
 
-		g.Subscription, err = g.Client.Subscribe(ctx, &opcua.SubscriptionParameters{
+		// Subscribe returns a nil *opcua.Subscription alongside its error.
+		// Assigning that straight into g.Subscription, which is an interface,
+		// would store a typed nil: the interface then tests as non-nil and
+		// cleanup calls Cancel on a nil receiver. Keep it local until it is
+		// known good.
+		sub, err := g.Client.Subscribe(ctx, &opcua.SubscriptionParameters{
 			Interval: opcua.DefaultSubscriptionInterval,
 		}, g.SubNotifyChan)
 		if err != nil {
@@ -337,6 +342,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 			_ = g.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 			return err
 		}
+		g.Subscription = sub
 
 		// A new subscription generation starts here: no handle of a previous
 		// generation may resolve against it. reset drops the old handle map but
