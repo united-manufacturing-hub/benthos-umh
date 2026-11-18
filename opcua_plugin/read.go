@@ -250,7 +250,9 @@ type OPCUAInput struct {
 	LastMessageReceived          atomic.Uint32
 	HeartbeatManualSubscribed    bool
 	HeartbeatNodeId              *ua.NodeID
-	Subscription                 *opcua.Subscription
+	// Subscription is the live OPC UA subscription, typed as SubscriptionAPI
+	// (see subscription_api.go) so tests can substitute a recording fake.
+	Subscription                 SubscriptionAPI
 	ServerInfo                   ServerInfo
 	ServerProfile                ServerProfile
 	PollRate                     int
