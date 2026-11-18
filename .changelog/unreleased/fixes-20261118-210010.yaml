@@ -1,0 +1,3 @@
+kind: fixes
+body: "OPC UA: the Aes256_Sha256_RsaPss security policy now connects to servers built on the OPC Foundation .NET stack, which rejected it with `Could not validate signature`"
+time: 2026-11-18T21:00:10.000000+01:00

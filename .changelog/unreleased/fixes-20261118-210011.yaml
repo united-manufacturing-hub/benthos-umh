@@ -1,0 +1,3 @@
+kind: fixes
+body: "OPC UA: timestamps outside the years 1601 to 9999 are no longer turned into unrelated dates; they are capped at those limits as the OPC UA specification describes"
+time: 2026-11-18T21:00:11.000000+01:00
