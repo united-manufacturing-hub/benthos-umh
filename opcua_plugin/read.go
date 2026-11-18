@@ -17,6 +17,7 @@ package opcua_plugin
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -272,13 +273,30 @@ type OPCUAInput struct {
 	browseErr   error
 }
 
+// isNilSubscription reports whether s holds no usable subscription.
+//
+// A plain s != nil is not enough. Subscription is an interface, and a nil
+// *opcua.Subscription stored in it is a typed nil: the interface is non-nil
+// while the pointer inside it is not, so calling through it panics.
+func isNilSubscription(s SubscriptionAPI) bool {
+	if s == nil {
+		return true
+	}
+	v := reflect.ValueOf(s)
+	return v.Kind() == reflect.Ptr && v.IsNil()
+}
+
 // unsubscribeAndResetHeartbeat unsubscribes from the OPC UA subscription and resets the heartbeat
 // It is used as a cleanup function for the OPC UA connection
 func (g *OPCUAInput) unsubscribeAndResetHeartbeat(ctx context.Context) {
-	if g.SubscribeEnabled && g.Subscription != nil {
-		g.Log.Infof("Unsubscribing from OPC UA subscription...")
-		if err := g.Subscription.Cancel(ctx); err != nil {
-			g.Log.Infof("Failed to unsubscribe from OPC UA subscription: %v", err)
+	if g.SubscribeEnabled {
+		// Only cancel something real. A failed Subscribe can leave a typed nil
+		// here, which is not worth cancelling but must still be cleared.
+		if !isNilSubscription(g.Subscription) {
+			g.Log.Infof("Unsubscribing from OPC UA subscription...")
+			if err := g.Subscription.Cancel(ctx); err != nil {
+				g.Log.Infof("Failed to unsubscribe from OPC UA subscription: %v", err)
+			}
 		}
 		g.Subscription = nil
 		// The subscription generation is over: none of its ClientHandles may
