@@ -1,0 +1,3 @@
+kind: fixes
+body: "OPC UA: a server rejecting a single read or subscription request, for example with Bad_TooManyOperations or Bad_UserAccessDenied, no longer makes the bridge drop and rebuild the whole connection; only errors that mean the connection or session is gone trigger a reconnect"
+time: 2026-11-18T21:00:05.000000+01:00

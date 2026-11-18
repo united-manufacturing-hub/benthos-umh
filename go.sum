@@ -930,8 +930,8 @@ github.com/googleapis/go-sql-spanner v1.28.0 h1:0ioe1w9eSHCZc6HijlN5Xdtt629Yjf6t
 github.com/googleapis/go-sql-spanner v1.28.0/go.mod h1:newbyUg5na5y184tvS0Z4RRLkLMBP+SB5w3F1Tdsuak=
 github.com/gookit/color v1.6.0 h1:JjJXBTk1ETNyqyilJhkTXJYYigHG24TM9Xa2M1xAhRA=
 github.com/gookit/color v1.6.0/go.mod h1:9ACFc7/1IpHGBW8RwuDm/0YEnhg3dwwXpoMsmtyHfjs=
-github.com/gopcua/opcua v0.9.1 h1:Qp40I5JmiiKXYIWmk7xECYNrXs5unohH24jKWnSRyIE=
-github.com/gopcua/opcua v0.9.1/go.mod h1:Z6aellk0gIzznZd2UX+Syd/hUMBt65gRlTakpGo6se8=
+github.com/gopcua/opcua v0.9.2-rc1 h1:TcP4qH8hr6mZRAvGsDHw8T0lXI/KP8466xb9fyY4mag=
+github.com/gopcua/opcua v0.9.2-rc1/go.mod h1:Z6aellk0gIzznZd2UX+Syd/hUMBt65gRlTakpGo6se8=
 github.com/gorilla/css v1.0.1 h1:ntNaBIghp6JmvWnxbZKANoLyuXTPZ4cAMlo6RyhlbO8=
 github.com/gorilla/css v1.0.1/go.mod h1:BvnYkspnSzMmwRK+b8/xgNPLiIuNZr6vbZBTPQ2A3b0=
 github.com/gorilla/handlers v1.5.2 h1:cLTUSsNkgcwhgRqvCNmdbRWG0A3N4F+M2nWKdScwyEE=
