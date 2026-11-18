@@ -338,6 +338,12 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 			return err
 		}
 
+		// A new subscription generation starts here: no handle of a previous
+		// generation may resolve against it. reset drops the old handle map but
+		// keeps the counter monotonic, so stale handles come back as unknown
+		// instead of pointing at a different node (ENG-5553).
+		g.handleRegistry.reset()
+
 		monitoredNodes, err := g.MonitorBatched(ctx, nodeList)
 		if err != nil {
 			g.Log.Errorf("Monitoring failed: %s", err)
@@ -546,7 +552,7 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		monitoredRequests := make([]*ua.MonitoredItemCreateRequest, 0, len(batch))
 
 		numFilteredNodes := 0
-		for pos, nodeDef := range batch {
+		for _, nodeDef := range batch {
 			var filter *ua.ExtensionObject
 
 			// Only apply deadband filter if:
@@ -576,7 +582,14 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 				},
 				MonitoringMode: ua.MonitoringModeReporting,
 				RequestedParameters: &ua.MonitoringParameters{
-					ClientHandle:     uint32(batchRange.Start + pos),
+					// The handle is allocated from the subscription's handle registry,
+					// not from the position in the batch: the filter-rejection retry
+					// below re-slices the node list, so positions restart and would
+					// collide with the handles of items that are still live
+					// (OPC 10000-4 §7.21, ENG-5553). Registering the node before the
+					// request is sent also makes notifications that arrive before
+					// the response (§5.13.2.1) resolvable.
+					ClientHandle:     g.handleRegistry.allocate(nodeDef),
 					DiscardOldest:    true,
 					Filter:           filter,
 					QueueSize:        g.QueueSize,

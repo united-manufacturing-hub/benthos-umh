@@ -252,15 +252,20 @@ type OPCUAInput struct {
 	HeartbeatNodeId              *ua.NodeID
 	// Subscription is the live OPC UA subscription, typed as SubscriptionAPI
 	// (see subscription_api.go) so tests can substitute a recording fake.
-	Subscription                 SubscriptionAPI
-	ServerInfo                   ServerInfo
-	ServerProfile                ServerProfile
-	PollRate                     int
-	QueueSize                    uint32
-	SamplingInterval             float64
-	DeadbandType                 string
-	DeadbandValue                float64
-	ServerCapabilities           *ServerCapabilities
+	Subscription SubscriptionAPI
+	// handleRegistry maps the ClientHandles of the current subscription's
+	// MonitoredItems to the nodes they were allocated for, so notifications
+	// are attributed to the right node regardless of how the request batches
+	// were sliced (ENG-5553). See subscription_handle_registry.go.
+	handleRegistry     subscriptionHandleRegistry
+	ServerInfo         ServerInfo
+	ServerProfile      ServerProfile
+	PollRate           int
+	QueueSize          uint32
+	SamplingInterval   float64
+	DeadbandType       string
+	DeadbandValue      float64
+	ServerCapabilities *ServerCapabilities
 
 	// browseErr signals async browse failure to ReadBatch (avoids self-Close deadlock).
 	browseErrMu sync.Mutex
@@ -276,6 +281,11 @@ func (g *OPCUAInput) unsubscribeAndResetHeartbeat(ctx context.Context) {
 			g.Log.Infof("Failed to unsubscribe from OPC UA subscription: %v", err)
 		}
 		g.Subscription = nil
+		// The subscription generation is over: none of its ClientHandles may
+		// resolve against a later one. The handle counter stays monotonic so
+		// stale handles from this generation come back as unknown, not as a
+		// valid handle of the next generation pointing at a different node.
+		g.handleRegistry.reset()
 	}
 
 	g.LastHeartbeatMessageReceived.Store(uint32(0))
@@ -588,15 +598,25 @@ func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBat
 					continue
 				}
 
-				// now get the handle id, which is the position in g.Nodelist
-				// see also NewMonitoredItemCreateRequestWithDefaults call in other functions
+				// Resolve the handle through the subscription's handle registry:
+				// a handle identifies exactly one MonitoredItem (OPC 10000-4
+				// §7.21), which the registry recorded when the request was built.
+				// It is not a position in g.NodeList - the filter-rejection retry
+				// re-slices the node list, so positions restart and would point at
+				// the wrong nodes (ENG-5553).
 				handleID := item.ClientHandle
 
-				if uint32(len(g.NodeList)) >= handleID {
-					message := g.createMessageFromValue(item.Value, g.NodeList[handleID])
-					if message != nil {
-						msgs = append(msgs, message)
-					}
+				nodeDef, ok := g.handleRegistry.lookup(handleID)
+				if !ok {
+					// Unknown handle: never attributed to an arbitrary node and
+					// never fatal - dropped, but loudly, so operators can tell
+					// values are being lost.
+					g.Log.Errorf("Dropping notification with unknown ClientHandle %d: it does not identify a MonitoredItem of the current subscription. The value is lost.", handleID)
+					continue
+				}
+				message := g.createMessageFromValue(item.Value, nodeDef)
+				if message != nil {
+					msgs = append(msgs, message)
 				}
 			}
 		default:
