@@ -104,6 +104,20 @@ func (f *fakeSubscription) publish(handle uint32, value float64) {
 	f.notify <- dataChange(handle, value)
 }
 
+// publishMany sends one notification carrying a value for every handle. A
+// real server decides how many items a notification holds, so this is the
+// shape a server uses to send many values at once - including many the
+// client never asked for.
+func (f *fakeSubscription) publishMany(handles []uint32, value float64) {
+	items := make([]*ua.MonitoredItemNotification, 0, len(handles))
+	for _, h := range handles {
+		items = append(items, dataChange(h, value).Value.(*ua.DataChangeNotification).MonitoredItems[0])
+	}
+	f.notify <- &opcua.PublishNotificationData{
+		Value: &ua.DataChangeNotification{MonitoredItems: items},
+	}
+}
+
 func dataChange(handle uint32, value float64) *opcua.PublishNotificationData {
 	return &opcua.PublishNotificationData{
 		Value: &ua.DataChangeNotification{

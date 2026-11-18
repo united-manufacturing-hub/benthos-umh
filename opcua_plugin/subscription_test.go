@@ -22,6 +22,7 @@ import (
 	"math/rand"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -125,7 +126,27 @@ func (h *subscriptionHarness) expectDropped(handle uint32) {
 	before := h.log.Len()
 	h.sub.publish(handle, 42)
 	Expect(h.readQueued()).To(BeEmpty(), "value under handle %d was published", handle)
-	Expect(h.log.String()[before:]).To(ContainSubstring("unknown ClientHandle %d", handle))
+	logged := h.log.String()[before:]
+	Expect(logged).To(ContainSubstring("Dropped 1 of 1 values"),
+		"the drop must be reported, not swallowed")
+	Expect(logged).To(ContainSubstring("first was %d", handle),
+		"the report must name the handle so an operator can tell which values were lost")
+}
+
+// expectDroppedInBulk sends many unknown handles in ONE notification and
+// checks that the report is a single line naming the count, not a line per
+// item. The server decides how many items a notification carries, so a line
+// per item is a log flood it can trigger at will.
+func (h *subscriptionHarness) expectDroppedInBulk(handles []uint32) {
+	GinkgoHelper()
+	before := h.log.Len()
+	h.sub.publishMany(handles, 42)
+	Expect(h.readQueued()).To(BeEmpty(), "values under unknown handles were published")
+
+	logged := h.log.String()[before:]
+	Expect(strings.Count(logged, "\n")).To(Equal(1),
+		"expected one summary line for %d dropped values, got:\n%s", len(handles), logged)
+	Expect(logged).To(ContainSubstring(fmt.Sprintf("Dropped %d of %d values", len(handles), len(handles))))
 }
 
 func testNodes(namespace uint16, prefix string, count int) []NodeDef {
@@ -309,6 +330,20 @@ var _ = Describe("OPC UA subscription ClientHandles", func() {
 		Entry("handle far beyond anything allocated", true, firstHandle+uint32(10000)),
 		Entry("no monitored item created yet", false, uint32(2)),
 	)
+
+	It("reports many unknown handles in one notification as a single line", func() {
+		h := newSubscriptionHarness(testNodes(2, "sensor", 5), 5, FilterSupported)
+		h.monitor()
+
+		// A server that sends handles we never issued decides the item count.
+		// One log line per item would let it fill the disk of the device we
+		// run on, so the report is per notification.
+		handles := make([]uint32, 2000)
+		for i := range handles {
+			handles[i] = firstHandle + uint32(100000+i)
+		}
+		h.expectDroppedInBulk(handles)
+	})
 
 	It("drops values for a cancelled subscription, also after the next one is set up", func() {
 		first := testNodes(2, "sensor", 5)
