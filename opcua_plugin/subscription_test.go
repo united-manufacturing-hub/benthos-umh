@@ -331,6 +331,20 @@ var _ = Describe("OPC UA subscription ClientHandles", func() {
 		Entry("no monitored item created yet", false, uint32(2)),
 	)
 
+	It("survives a server that returns more results than items requested", func() {
+		nodes := testNodes(2, "sensor", 3)
+		h := newSubscriptionHarness(nodes, 3, FilterSupported)
+		// The extra results carry a failure status at an index past the end
+		// of the request, which is what reaches for batch[i] out of range.
+		h.sub.extraResults = 4
+
+		Expect(func() { h.monitor() }).NotTo(Panic(),
+			"a server over-answering CreateMonitoredItems must not panic the input")
+
+		// The nodes we did ask for still resolve to themselves.
+		h.expectEveryItemPublishedAsItsNode()
+	})
+
 	It("reports many unknown handles in one notification as a single line", func() {
 		h := newSubscriptionHarness(testNodes(2, "sensor", 5), 5, FilterSupported)
 		h.monitor()
