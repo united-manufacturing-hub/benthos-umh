@@ -65,7 +65,7 @@ jobs:
           persist-credentials: false
       - name: Check if PLC tests should run
         id: plc-check
-        run: echo "test_plc=${{ github.event_name == 'merge_group' || inputs.full_run == true }}" >> "$GITHUB_OUTPUT"
+        run: echo "test_plc=${{ github.event_name == 'merge_group' || inputs.full_run == true || github.head_ref == 'chore/bump-gopcua-v0.9.2' }}" >> "$GITHUB_OUTPUT"
       - name: Detect changes
         if: inputs.full_run != true
         uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4
