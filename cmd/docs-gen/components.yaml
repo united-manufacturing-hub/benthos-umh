@@ -1,0 +1,35 @@
+# Upstream Redpanda Connect components that get a generated page on
+# docs.umh.app/benthos-umh. Run `make docs-gen` after changing this file.
+#
+# name:     the component name as used in a config, e.g. `mqtt`
+# title:    the page title and the entry in docs/SUMMARY.md
+# hide:     field paths left out of the page, e.g. a field umh-core sets
+#           itself. Use the full path: `tls.enabled`, `topics`.
+#
+# A hand-written section can be added to any page by creating
+# cmd/docs-gen/overlays/<inputs|outputs>/<name>.md. It is inserted after the
+# summary, and its relative links resolve from docs/<input|output>/connect/.
+
+inputs:
+  - name: mqtt
+    title: MQTT
+  - name: http_client
+    title: HTTP Client
+  - name: redpanda
+    title: Kafka / Redpanda
+  - name: sql_select
+    title: SQL Select
+  - name: amqp_0_9
+    title: AMQP 0.9 (RabbitMQ)
+
+outputs:
+  - name: mqtt
+    title: MQTT
+  - name: http_client
+    title: HTTP Client
+  - name: redpanda
+    title: Kafka / Redpanda
+  - name: sql_insert
+    title: SQL Insert
+  - name: amqp_0_9
+    title: AMQP 0.9 (RabbitMQ)
