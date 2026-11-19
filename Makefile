@@ -231,14 +231,14 @@ endif
 changelog: $(CHANGIE)
 	$(CHANGIE) new
 
-# Batches the fragments into .changelog/<version>.md and regenerates CHANGELOG.md.
-# Fails if that version file already exists.
+# Batches the fragments into .changelog/<version>.md, moves them to .changelog/<version>/ and regenerates CHANGELOG.md.
+# The release workflow copies .changelog/<version>/ into umh-core. Fails if that version file already exists.
 .PHONY: release-changelog
 release-changelog: $(CHANGIE)
 ifndef VERSION
 	$(error VERSION is required. Usage: make release-changelog VERSION=v0.17.0)
 endif
-	$(CHANGIE) batch $(VERSION)
+	$(CHANGIE) batch $(VERSION) --move-dir $(VERSION)
 	$(CHANGIE) merge
 
 .PHONY: serve-pprof
