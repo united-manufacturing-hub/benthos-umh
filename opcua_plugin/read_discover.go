@@ -606,7 +606,18 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 			return totalMonitored, errors.New("received nil response from Monitor")
 		}
 
-		for i, result := range response.Results {
+		// The server decides how many results it sends, and nothing between
+		// the wire and here checks that against what we asked for. A longer
+		// response would index batch out of range below and panic the input,
+		// so trust only as many results as we have items for.
+		results := response.Results
+		if len(results) > len(batch) {
+			g.Log.Warnf("Server returned %d monitored item results for %d requested items; ignoring the extra ones.",
+				len(results), len(batch))
+			results = results[:len(batch)]
+		}
+
+		for i, result := range results {
 			if !errors.Is(result.StatusCode, ua.StatusOK) {
 				failedNode := batch[i].NodeID.String()
 
@@ -675,7 +686,8 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 			g.Log.Infof("DataChangeFilter trial succeeded. Server supports filter - capability confirmed and cached for this connection.")
 		}
 
-		monitoredNodes := len(response.Results)
+		// Count what we asked for, not what the server claims to have created.
+		monitoredNodes := len(results)
 		totalMonitored += monitoredNodes
 		g.Log.Infof("Successfully monitored %d nodes in current batch", monitoredNodes)
 		if g.DeadbandType != "none" {

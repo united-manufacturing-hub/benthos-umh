@@ -40,6 +40,11 @@ type fakeItem struct {
 type fakeSubscription struct {
 	// reject returns the status for one requested item; nil accepts all.
 	reject func(item *ua.MonitoredItemCreateRequest) ua.StatusCode
+	// extraResults makes Monitor answer with this many results more than it
+	// was asked for, each failed. A real server should not, but nothing on
+	// the wire or in gopcua stops it, and the client must not index its own
+	// request list with the server's count.
+	extraResults int
 	// onCreate runs for every created item before Monitor returns. A server
 	// may send values that early (OPC 10000-4 §5.13.2.1).
 	onCreate func(item fakeItem)
@@ -74,6 +79,9 @@ func (f *fakeSubscription) Monitor(_ context.Context, _ ua.TimestampsToReturn, i
 		if f.onCreate != nil {
 			f.onCreate(item)
 		}
+	}
+	for i := 0; i < f.extraResults; i++ {
+		resp.Results = append(resp.Results, &ua.MonitoredItemCreateResult{StatusCode: ua.StatusBadNodeIDUnknown})
 	}
 	return resp, nil
 }
