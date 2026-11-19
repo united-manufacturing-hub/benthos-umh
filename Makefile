@@ -102,6 +102,10 @@ test-eip:
 test-modbus:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./modbus_plugin/...
 
+.PHONY: test-template-write
+test-template-write:
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./template_write_plugin/...
+
 .PHONY: test-noderedjs
 test-noderedjs:
 	@TEST_NODERED_JS=true \
