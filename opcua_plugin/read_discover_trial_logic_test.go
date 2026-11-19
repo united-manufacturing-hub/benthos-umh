@@ -21,22 +21,13 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-// This file previously re-implemented decideDataChangeFilterSupport's switch
-// inside the test body and asserted against that copy, so it could not fail
-// when production changed. It now calls the real method,
-// (*OPCUAInput).decideDataChangeFilterSupport (read_discover.go), for every
-// capability state the old file intended to cover.
-//
-// Specs from the old file that described MonitorBatched's response-handling
-// loop (trial retry on StatusBadFilterNotAllowed, error propagation for
-// non-trial failures, UX recommendation messages) asserted only against their
-// own local variables and cannot reach MonitorBatched in a unit test
-// (g.Subscription is the concrete gopcua *opcua.Subscription, which performs a
-// real network round-trip; there is no seam). They were dropped; the states
-// they were really about (cached trial results) are covered by the table
-// below. See CLEANUP-REPORT.md.
+// Which servers get a DataChangeFilter and which ones are tried with one
+// first, as (*OPCUAInput).decideDataChangeFilterSupport (read_discover.go)
+// decides it. A trial means MonitorBatched sends the filter once and falls back
+// if the server rejects it; the trial's outcome is cached on ServerCapabilities
+// for the rest of the connection.
 
-var _ = Describe("decideDataChangeFilterSupport three-way trial logic", func() {
+var _ = Describe("decideDataChangeFilterSupport", func() {
 	BeforeEach(func() {
 		if os.Getenv("TEST_OPCUA_UNIT") == "" {
 			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
@@ -50,10 +41,10 @@ var _ = Describe("decideDataChangeFilterSupport three-way trial logic", func() {
 		expectTrial    bool
 	}
 
-	DescribeTable("returns the filter decision for each capability state",
+	DescribeTable("returns (supportsFilter, shouldTrial) for every capability state",
 		func(c decisionCase) {
-			// OPCUAConnection is set so the embedded pointer is non-nil; the
-			// nil *service.Logger is safe to log through (nil-receiver check).
+			// The embedded OPCUAConnection only has to be non-nil: the branches
+			// that log do so through its nil *service.Logger, which is safe.
 			g := &OPCUAInput{
 				OPCUAConnection:    &OPCUAConnection{},
 				ServerProfile:      c.profile,
@@ -68,15 +59,12 @@ var _ = Describe("decideDataChangeFilterSupport three-way trial logic", func() {
 				"unexpected shouldTrial for FilterCapability=%d", c.profile.FilterCapability)
 		},
 
-		// Decision 1: profile declares support -> trust immediately
-		Entry("FilterSupported (Kepware): filter without trial",
+		Entry("FilterSupported (Kepware): filter, no trial",
 			decisionCase{profile: profileKepware, expectSupports: true, expectTrial: false}),
 
-		// Decision 2: profile declares no support -> never filter, never trial
 		Entry("FilterUnsupported (S7-1200): no filter, no trial",
 			decisionCase{profile: profileS71200, expectSupports: false, expectTrial: false}),
 
-		// Decision 3, no runtime capabilities: fall back to profile default
 		Entry("FilterUnknown with nil ServerCapabilities: profile default true, no trial",
 			decisionCase{
 				profile:        ServerProfile{Name: "test-unknown-true", FilterCapability: FilterUnknown, SupportsDataChangeFilter: true},
@@ -90,8 +78,7 @@ var _ = Describe("decideDataChangeFilterSupport three-way trial logic", func() {
 				expectTrial:    false,
 			}),
 
-		// Decision 3a: unknown support, first batch on this connection -> trial
-		Entry("FilterUnknown, not yet trialed this connection: trial with filter",
+		Entry("FilterUnknown, not yet trialed on this connection: filter, and trial it",
 			decisionCase{
 				profile:        ServerProfile{Name: "test-unknown", FilterCapability: FilterUnknown},
 				caps:           &ServerCapabilities{hasTrialedThisConnection: false, SupportsDataChangeFilter: false},
@@ -99,15 +86,14 @@ var _ = Describe("decideDataChangeFilterSupport three-way trial logic", func() {
 				expectTrial:    true,
 			}),
 
-		// Decision 3b: trial completed, cached result used, no re-trial
-		Entry("FilterUnknown, trialed with cached success: filter, no re-trial",
+		Entry("FilterUnknown, trial succeeded: filter, no re-trial",
 			decisionCase{
 				profile:        ServerProfile{Name: "test-unknown", FilterCapability: FilterUnknown},
 				caps:           &ServerCapabilities{hasTrialedThisConnection: true, SupportsDataChangeFilter: true},
 				expectSupports: true,
 				expectTrial:    false,
 			}),
-		Entry("FilterUnknown, trialed with cached failure: no filter, no re-trial (prevents retry loops)",
+		Entry("FilterUnknown, trial failed: no filter, no re-trial (this is what stops retry loops)",
 			decisionCase{
 				profile:        ServerProfile{Name: "test-unknown", FilterCapability: FilterUnknown},
 				caps:           &ServerCapabilities{hasTrialedThisConnection: true, SupportsDataChangeFilter: false},
@@ -115,9 +101,9 @@ var _ = Describe("decideDataChangeFilterSupport three-way trial logic", func() {
 				expectTrial:    false,
 			}),
 
-		// Defensive fallback for an invalid enum value: the real default branch,
-		// previously only asserted against the test's own switch.
-		Entry("FilterInvalid: defensive fallback to trial mechanism",
+		// FilterInvalid (server_profiles.go) exists only to reach the switch's
+		// default branch, which treats an unknown enum value like FilterUnknown.
+		Entry("FilterInvalid: filter, and trial it",
 			decisionCase{
 				profile:        ServerProfile{Name: "test-invalid", FilterCapability: FilterInvalid},
 				expectSupports: true,

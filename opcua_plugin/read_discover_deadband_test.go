@@ -22,77 +22,67 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-// This file previously re-built the MonitoredItemCreateRequest by hand ("EXACT
-// code pattern from MonitorBatched() line 238-252") and asserted on the struct
-// it had just written. MonitorBatched has no unit-test seam (g.Subscription is
-// the concrete gopcua *opcua.Subscription doing a real network round-trip), but
-// the only production behavior these specs were about is what
-// createDataChangeFilter returns - so they now call that real function
-// directly. Field-level assertions on the filter contents already live in
-// deadband_test.go (createDataChangeFilter is fully covered there; the overlap
-// was left in place deliberately).
+// Whether a monitored node gets a DataChangeFilter at all, as
+// createDataChangeFilter (deadband.go) and isNumericDataType (read_discover.go)
+// decide it. MonitorBatched calls both per node and is itself out of reach from
+// a unit test: g.Subscription is the concrete gopcua *opcua.Subscription, whose
+// Monitor() does a network round-trip.
 
-var _ = Describe("MonitoredItemRequest Creation", func() {
+// The contents of the filter are asserted in deadband_test.go
+// ("DataChangeFilter Creation"); this table only asks whether there is one.
+var _ = Describe("createDataChangeFilter: filter or no filter", func() {
 	BeforeEach(func() {
 		if os.Getenv("TEST_OPCUA_UNIT") == "" {
 			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
 		}
 	})
 
-	DescribeTable("creates correct request with filter based on deadband",
+	DescribeTable("returns a filter only for a configured deadband",
 		func(deadbandType string, deadbandValue float64, expectFilter bool) {
-			// MonitorBatched passes g.DeadbandType/g.DeadbandValue straight
-			// into createDataChangeFilter (read_discover.go); this is the real
-			// production call, not a re-implementation.
 			filter := createDataChangeFilter(deadbandType, deadbandValue)
 
 			if expectFilter {
-				// Filter should be present when deadband is enabled
 				Expect(filter).NotTo(BeNil(),
-					"expected Filter to be set based on deadband config")
+					"expected a filter for deadband %q", deadbandType)
 			} else {
-				// Filter should be nil when deadband is disabled
 				Expect(filter).To(BeNil(),
-					"expected Filter to be nil when deadband disabled")
+					"expected no filter for deadband %q", deadbandType)
 			}
 		},
-		Entry("disabled deadband - filter should be nil",
+		Entry("deadband none: no filter",
 			"none", 0.0, false),
-		Entry("absolute deadband - filter should be present",
+		Entry("deadband absolute: filter",
 			"absolute", 0.5, true),
-		Entry("percent deadband - filter should be present",
+		Entry("deadband percent: filter",
 			"percent", 2.0, true),
 	)
 })
 
-// TestDeadbandTypeChecking verifies filters only applied to numeric types.
-// This table calls the real isNumericDataType and stays as-is.
-var _ = Describe("Deadband Type Checking", func() {
+var _ = Describe("isNumericDataType", func() {
 	BeforeEach(func() {
 		if os.Getenv("TEST_OPCUA_UNIT") == "" {
 			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
 		}
 	})
 
-	DescribeTable("validates numeric data types correctly",
-		func(nodeDataType ua.TypeID, shouldFilter bool) {
-			result := isNumericDataType(nodeDataType)
-			Expect(result).To(Equal(shouldFilter),
-				"isNumericDataType(%v) should return %v", nodeDataType, shouldFilter)
+	DescribeTable("reports which data types can carry a deadband",
+		func(nodeDataType ua.TypeID, isNumeric bool) {
+			Expect(isNumericDataType(nodeDataType)).To(Equal(isNumeric),
+				"isNumericDataType(%v) should return %v", nodeDataType, isNumeric)
 		},
-		Entry("ByteString node - no filter",
+		Entry("ByteString: not numeric, no filter",
 			ua.TypeIDByteString, false),
-		Entry("String node - no filter",
+		Entry("String: not numeric, no filter",
 			ua.TypeIDString, false),
-		Entry("DateTime node - no filter",
+		Entry("DateTime: not numeric, no filter",
 			ua.TypeIDDateTime, false),
-		Entry("Double node - apply filter",
+		Entry("Double: numeric, filter allowed",
 			ua.TypeIDDouble, true),
-		Entry("Float node - apply filter",
+		Entry("Float: numeric, filter allowed",
 			ua.TypeIDFloat, true),
-		Entry("Int32 node - apply filter",
+		Entry("Int32: numeric, filter allowed",
 			ua.TypeIDInt32, true),
-		Entry("UInt32 node - apply filter",
+		Entry("UInt32: numeric, filter allowed",
 			ua.TypeIDUint32, true),
 	)
 })
