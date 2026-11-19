@@ -23,10 +23,8 @@ kindFormat: '### {{.Kind}}'
 changeFormat: '- {{.Body}}'
 body:
   block: true
+# The kind keys match umh-core's, so the release workflow copies these fragments into umh-core unchanged.
 kinds:
-  - key: breaking
-    label: Breaking Changes
-    auto: major
   - key: new
     label: New
     auto: minor
