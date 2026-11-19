@@ -89,54 +89,68 @@ var _ = Describe("whether a node gets a DataChangeFilter", func() {
 		},
 
 		Entry("S7-1200 profile declares no filter support: no filter, although the node is numeric and a deadband is set",
-			filterCase{profile: profileS71200, dataTypeID: ua.TypeIDDouble, deadbandType: "absolute", deadbandValue: 1.0,
-				expectSupports: false, expectFilter: false}),
+			filterCase{
+				profile: profileS71200, dataTypeID: ua.TypeIDDouble, deadbandType: "absolute", deadbandValue: 1.0,
+				expectSupports: false, expectFilter: false,
+			}),
 
 		Entry("Kepware profile declares filter support: filter",
-			filterCase{profile: profileKepware, dataTypeID: ua.TypeIDDouble, deadbandType: "absolute", deadbandValue: 1.0,
-				expectSupports: true, expectFilter: true}),
+			filterCase{
+				profile: profileKepware, dataTypeID: ua.TypeIDDouble, deadbandType: "absolute", deadbandValue: 1.0,
+				expectSupports: true, expectFilter: true,
+			}),
 
 		Entry("unknown profile, trial succeeded against a profile default of false: filter",
 			filterCase{
 				profile:    ServerProfile{Name: "test-unknown", FilterCapability: FilterUnknown, SupportsDataChangeFilter: false},
 				caps:       &ServerCapabilities{hasTrialedThisConnection: true, SupportsDataChangeFilter: true},
 				dataTypeID: ua.TypeIDDouble, deadbandType: "absolute", deadbandValue: 1.0,
-				expectSupports: true, expectFilter: true}),
+				expectSupports: true, expectFilter: true,
+			}),
 
 		Entry("unknown profile, trial failed against a profile default of true: no filter",
 			filterCase{
 				profile:    ServerProfile{Name: "test-unknown", FilterCapability: FilterUnknown, SupportsDataChangeFilter: true},
 				caps:       &ServerCapabilities{hasTrialedThisConnection: true, SupportsDataChangeFilter: false},
 				dataTypeID: ua.TypeIDDouble, deadbandType: "absolute", deadbandValue: 1.0,
-				expectSupports: false, expectFilter: false}),
+				expectSupports: false, expectFilter: false,
+			}),
 
 		Entry("String node: no filter, although the profile supports filters",
-			filterCase{profile: profileKepware, dataTypeID: ua.TypeIDString, deadbandType: "absolute", deadbandValue: 1.0,
-				expectSupports: true, expectFilter: false}),
+			filterCase{
+				profile: profileKepware, dataTypeID: ua.TypeIDString, deadbandType: "absolute", deadbandValue: 1.0,
+				expectSupports: true, expectFilter: false,
+			}),
 
 		// Nothing in the composition tests for deadband "none"; the nil comes
 		// out of createDataChangeFilter itself.
 		Entry("deadband none: no filter, although the profile supports filters and the node is numeric",
-			filterCase{profile: profileKepware, dataTypeID: ua.TypeIDDouble, deadbandType: "none", deadbandValue: 0.0,
-				expectSupports: true, expectFilter: false}),
+			filterCase{
+				profile: profileKepware, dataTypeID: ua.TypeIDDouble, deadbandType: "none", deadbandValue: 0.0,
+				expectSupports: true, expectFilter: false,
+			}),
 
 		Entry("deadband percent: filter",
-			filterCase{profile: profileKepware, dataTypeID: ua.TypeIDFloat, deadbandType: "percent", deadbandValue: 2.0,
-				expectSupports: true, expectFilter: true}),
+			filterCase{
+				profile: profileKepware, dataTypeID: ua.TypeIDFloat, deadbandType: "percent", deadbandValue: 2.0,
+				expectSupports: true, expectFilter: true,
+			}),
 
 		Entry("unknown profile, trial failed and the profile default was false too: no filter",
 			filterCase{
 				profile:    ServerProfile{Name: "test-unknown", FilterCapability: FilterUnknown, SupportsDataChangeFilter: false},
 				caps:       &ServerCapabilities{hasTrialedThisConnection: true, SupportsDataChangeFilter: false},
 				dataTypeID: ua.TypeIDDouble, deadbandType: "absolute", deadbandValue: 1.0,
-				expectSupports: false, expectFilter: false}),
+				expectSupports: false, expectFilter: false,
+			}),
 
 		Entry("unknown profile, trial succeeded and the profile default was true too: filter",
 			filterCase{
 				profile:    ServerProfile{Name: "test-unknown", FilterCapability: FilterUnknown, SupportsDataChangeFilter: true},
 				caps:       &ServerCapabilities{hasTrialedThisConnection: true, SupportsDataChangeFilter: true},
 				dataTypeID: ua.TypeIDDouble, deadbandType: "absolute", deadbandValue: 1.0,
-				expectSupports: true, expectFilter: true}),
+				expectSupports: true, expectFilter: true,
+			}),
 	)
 
 	Context("the trial result against the profile default", func() {
@@ -180,7 +194,7 @@ var _ = Describe("whether a node gets a DataChangeFilter", func() {
 		// The two specs below are what the tests this file replaces asserted
 		// about the capability logic. Against the real
 		// decideDataChangeFilterSupport both fail. Nobody has decided yet which
-		// of the two behaviours is the intended one, so they stay pending until
+		// of the two behaviors is the intended one, so they stay pending until
 		// ENG-5553 settles it; un-mark them to see the failures.
 
 		PIt("before a trial has run, cached capabilities of false suppress the filter", func() {
@@ -188,7 +202,7 @@ var _ = Describe("whether a node gets a DataChangeFilter", func() {
 			// cached value until a trial has run. The state below is a real
 			// connection's first batch, because Connect leaves
 			// SupportsDataChangeFilter at false and nothing has trialed yet, so
-			// the two behaviours differ on every unknown server.
+			// the two behaviors differ on every unknown server.
 			g := &OPCUAInput{
 				OPCUAConnection: &OPCUAConnection{},
 				ServerProfile: ServerProfile{
