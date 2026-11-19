@@ -22,9 +22,16 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-// TestCreateMonitoredItemRequestWithFilter verifies that MonitoredItemCreateRequest
-// construction applies deadband filters correctly based on OPCUAInput configuration.
-// This tests the actual code path used in MonitorBatched().
+// This file previously re-built the MonitoredItemCreateRequest by hand ("EXACT
+// code pattern from MonitorBatched() line 238-252") and asserted on the struct
+// it had just written. MonitorBatched has no unit-test seam (g.Subscription is
+// the concrete gopcua *opcua.Subscription doing a real network round-trip), but
+// the only production behavior these specs were about is what
+// createDataChangeFilter returns - so they now call that real function
+// directly. Field-level assertions on the filter contents already live in
+// deadband_test.go (createDataChangeFilter is fully covered there; the overlap
+// was left in place deliberately).
+
 var _ = Describe("MonitoredItemRequest Creation", func() {
 	BeforeEach(func() {
 		if os.Getenv("TEST_OPCUA_UNIT") == "" {
@@ -34,45 +41,18 @@ var _ = Describe("MonitoredItemRequest Creation", func() {
 
 	DescribeTable("creates correct request with filter based on deadband",
 		func(deadbandType string, deadbandValue float64, expectFilter bool) {
-			// Create test OPCUAInput with deadband configuration
-			g := &OPCUAInput{
-				DeadbandType:     deadbandType,
-				DeadbandValue:    deadbandValue,
-				QueueSize:        1,
-				SamplingInterval: 1000.0,
-			}
+			// MonitorBatched passes g.DeadbandType/g.DeadbandValue straight
+			// into createDataChangeFilter (read_discover.go); this is the real
+			// production call, not a re-implementation.
+			filter := createDataChangeFilter(deadbandType, deadbandValue)
 
-			// Create a test NodeDef (simulating one node from a batch)
-			nodeDef := NodeDef{
-				NodeID: ua.NewNumericNodeID(0, 2258), // CurrentTime node
-			}
-
-			// This is the EXACT code pattern from MonitorBatched() line 238-252
-			// We're testing that THIS code applies the filter correctly
-			request := &ua.MonitoredItemCreateRequest{
-				ItemToMonitor: &ua.ReadValueID{
-					NodeID:       nodeDef.NodeID,
-					AttributeID:  ua.AttributeIDValue,
-					DataEncoding: &ua.QualifiedName{},
-				},
-				MonitoringMode: ua.MonitoringModeReporting,
-				RequestedParameters: &ua.MonitoringParameters{
-					ClientHandle:     0,
-					DiscardOldest:    true,
-					Filter:           createDataChangeFilter(g.DeadbandType, g.DeadbandValue),
-					QueueSize:        g.QueueSize,
-					SamplingInterval: g.SamplingInterval,
-				},
-			}
-
-			// Verify filter application matches expected behavior
 			if expectFilter {
 				// Filter should be present when deadband is enabled
-				Expect(request.RequestedParameters.Filter).NotTo(BeNil(),
+				Expect(filter).NotTo(BeNil(),
 					"expected Filter to be set based on deadband config")
 			} else {
 				// Filter should be nil when deadband is disabled
-				Expect(request.RequestedParameters.Filter).To(BeNil(),
+				Expect(filter).To(BeNil(),
 					"expected Filter to be nil when deadband disabled")
 			}
 		},
@@ -85,7 +65,8 @@ var _ = Describe("MonitoredItemRequest Creation", func() {
 	)
 })
 
-// TestDeadbandTypeChecking verifies filters only applied to numeric types
+// TestDeadbandTypeChecking verifies filters only applied to numeric types.
+// This table calls the real isNumericDataType and stays as-is.
 var _ = Describe("Deadband Type Checking", func() {
 	BeforeEach(func() {
 		if os.Getenv("TEST_OPCUA_UNIT") == "" {

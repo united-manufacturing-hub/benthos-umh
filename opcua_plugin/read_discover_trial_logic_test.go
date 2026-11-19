@@ -21,248 +21,107 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = Describe("MonitorBatched three-way trial logic", func() {
+// This file previously re-implemented decideDataChangeFilterSupport's switch
+// inside the test body and asserted against that copy, so it could not fail
+// when production changed. It now calls the real method,
+// (*OPCUAInput).decideDataChangeFilterSupport (read_discover.go), for every
+// capability state the old file intended to cover.
+//
+// Specs from the old file that described MonitorBatched's response-handling
+// loop (trial retry on StatusBadFilterNotAllowed, error propagation for
+// non-trial failures, UX recommendation messages) asserted only against their
+// own local variables and cannot reach MonitorBatched in a unit test
+// (g.Subscription is the concrete gopcua *opcua.Subscription, which performs a
+// real network round-trip; there is no seam). They were dropped; the states
+// they were really about (cached trial results) are covered by the table
+// below. See CLEANUP-REPORT.md.
+
+var _ = Describe("decideDataChangeFilterSupport three-way trial logic", func() {
 	BeforeEach(func() {
 		if os.Getenv("TEST_OPCUA_UNIT") == "" {
 			Skip("Skipping OPC UA unit tests: TEST_OPCUA_UNIT not set")
 		}
 	})
 
-	Context("Invalid FilterCapability value (defensive fallback)", func() {
-		It("should default to trial mechanism with warning", func() {
-			// Setup: Test profile with invalid FilterCapability value
-			testProfile := ServerProfile{
-				Name:             "test-invalid",
-				FilterCapability: FilterInvalid, // Test constant for invalid enum
+	type decisionCase struct {
+		profile        ServerProfile
+		caps           *ServerCapabilities
+		expectSupports bool
+		expectTrial    bool
+	}
+
+	DescribeTable("returns the filter decision for each capability state",
+		func(c decisionCase) {
+			// OPCUAConnection is set so the embedded pointer is non-nil; the
+			// nil *service.Logger is safe to log through (nil-receiver check).
+			g := &OPCUAInput{
+				OPCUAConnection:    &OPCUAConnection{},
+				ServerProfile:      c.profile,
+				ServerCapabilities: c.caps,
 			}
 
-			// Simulate decideDataChangeFilterSupport logic
-			var supportsFilter, shouldTrial bool
-			switch testProfile.FilterCapability {
-			case FilterSupported:
-				supportsFilter = true
-				shouldTrial = false
-			case FilterUnsupported:
-				supportsFilter = false
-				shouldTrial = false
-			case FilterUnknown:
-				supportsFilter = true
-				shouldTrial = true
-			default:
-				// Defensive fallback
-				supportsFilter = true
-				shouldTrial = true
-			}
+			supportsFilter, shouldTrial := g.decideDataChangeFilterSupport()
 
-			// Assertions
-			Expect(supportsFilter).To(BeTrue(), "Invalid enum should trigger defensive fallback to trial")
-			Expect(shouldTrial).To(BeTrue(), "Invalid enum should trigger trial mechanism")
-		})
-	})
-})
+			Expect(supportsFilter).To(Equal(c.expectSupports),
+				"unexpected supportsFilter for FilterCapability=%d", c.profile.FilterCapability)
+			Expect(shouldTrial).To(Equal(c.expectTrial),
+				"unexpected shouldTrial for FilterCapability=%d", c.profile.FilterCapability)
+		},
 
-var _ = Describe("MonitorBatched trial-and-retry error handling", Label("trial-and-retry"), func() {
-	Context("when trial succeeds with StatusOK", func() {
-		It("should not retry and should update capabilities to true", func() {
-			// Setup: shouldTrial=true, server accepts filter
-			shouldTrial := true
-			hasTrialed := false
-			supportsFilter := false
+		// Decision 1: profile declares support -> trust immediately
+		Entry("FilterSupported (Kepware): filter without trial",
+			decisionCase{profile: profileKepware, expectSupports: true, expectTrial: false}),
 
-			// Mock: Server returns StatusOK for filter request
-			statusCode := "Good (0x00000000)" // ua.StatusOK
+		// Decision 2: profile declares no support -> never filter, never trial
+		Entry("FilterUnsupported (S7-1200): no filter, no trial",
+			decisionCase{profile: profileS71200, expectSupports: false, expectTrial: false}),
 
-			// Expected behavior:
-			// 1. Monitor request with filter succeeds
-			// 2. hasTrialedThisConnection = true
-			// 3. SupportsDataChangeFilter = true
-			// 4. No retry needed
+		// Decision 3, no runtime capabilities: fall back to profile default
+		Entry("FilterUnknown with nil ServerCapabilities: profile default true, no trial",
+			decisionCase{
+				profile:        ServerProfile{Name: "test-unknown-true", FilterCapability: FilterUnknown, SupportsDataChangeFilter: true},
+				expectSupports: true,
+				expectTrial:    false,
+			}),
+		Entry("FilterUnknown with nil ServerCapabilities: profile default false, no trial",
+			decisionCase{
+				profile:        ServerProfile{Name: "test-unknown-false", FilterCapability: FilterUnknown, SupportsDataChangeFilter: false},
+				expectSupports: false,
+				expectTrial:    false,
+			}),
 
-			// Simulate successful trial
-			if shouldTrial {
-				// Trial succeeded
-				hasTrialed = true
-				supportsFilter = true
-			}
+		// Decision 3a: unknown support, first batch on this connection -> trial
+		Entry("FilterUnknown, not yet trialed this connection: trial with filter",
+			decisionCase{
+				profile:        ServerProfile{Name: "test-unknown", FilterCapability: FilterUnknown},
+				caps:           &ServerCapabilities{hasTrialedThisConnection: false, SupportsDataChangeFilter: false},
+				expectSupports: true,
+				expectTrial:    true,
+			}),
 
-			// Assertions
-			Expect(hasTrialed).To(BeTrue(), "hasTrialedThisConnection should be set to true")
-			Expect(supportsFilter).To(BeTrue(), "SupportsDataChangeFilter should be set to true")
-			Expect(statusCode).To(Equal("Good (0x00000000)"), "Status should be OK")
-		})
-	})
+		// Decision 3b: trial completed, cached result used, no re-trial
+		Entry("FilterUnknown, trialed with cached success: filter, no re-trial",
+			decisionCase{
+				profile:        ServerProfile{Name: "test-unknown", FilterCapability: FilterUnknown},
+				caps:           &ServerCapabilities{hasTrialedThisConnection: true, SupportsDataChangeFilter: true},
+				expectSupports: true,
+				expectTrial:    false,
+			}),
+		Entry("FilterUnknown, trialed with cached failure: no filter, no re-trial (prevents retry loops)",
+			decisionCase{
+				profile:        ServerProfile{Name: "test-unknown", FilterCapability: FilterUnknown},
+				caps:           &ServerCapabilities{hasTrialedThisConnection: true, SupportsDataChangeFilter: false},
+				expectSupports: false,
+				expectTrial:    false,
+			}),
 
-	Context("when trial fails with StatusBadFilterNotAllowed", func() {
-		It("should update capabilities and retry without filter", func() {
-			// Setup: shouldTrial=true, server rejects filter
-			shouldTrial := true
-			hasTrialed := false
-			supportsFilter := false
-
-			// Mock: First call returns StatusBadFilterNotAllowed
-			firstStatusCode := "Bad_FilterNotAllowed (0x80440000)"
-
-			// Expected behavior on first attempt:
-			// 1. Detect StatusBadFilterNotAllowed
-			// 2. Set hasTrialedThisConnection = true
-			// 3. Set SupportsDataChangeFilter = false
-			// 4. Retry without filter
-
-			// Simulate first attempt failure
-			if shouldTrial && firstStatusCode == "Bad_FilterNotAllowed (0x80440000)" {
-				// Update capabilities
-				hasTrialed = true
-				supportsFilter = false
-
-				// Retry without filter (mock second attempt)
-				secondStatusCode := "Good (0x00000000)" // Success without filter
-
-				// Assertions for retry
-				Expect(hasTrialed).To(BeTrue(), "hasTrialedThisConnection should be true after trial")
-				Expect(supportsFilter).To(BeFalse(), "SupportsDataChangeFilter should be false")
-				Expect(secondStatusCode).To(Equal("Good (0x00000000)"), "Second attempt should succeed")
-			}
-
-			// Final assertions
-			Expect(hasTrialed).To(BeTrue(), "Trial should have occurred")
-			Expect(supportsFilter).To(BeFalse(), "Filter support should be marked as false")
-		})
-
-		It("should not propagate error to caller after successful retry", func() {
-			// Setup: Trial fails but retry succeeds
-			shouldTrial := true
-			Expect(shouldTrial).To(BeTrue(), "This is a trial scenario")
-
-			// Mock: First StatusBadFilterNotAllowed, second StatusOK
-			firstAttemptFailed := true
-			secondAttemptSucceeded := true
-
-			// Expected: No error returned to caller despite first attempt failure
-			var finalError error = nil
-
-			if firstAttemptFailed && secondAttemptSucceeded {
-				finalError = nil // Retry succeeded, no error propagated
-			}
-
-			// Assertions
-			Expect(finalError).ToNot(HaveOccurred(), "No error should be returned after successful retry")
-		})
-	})
-
-	Context("when non-trial errors occur", func() {
-		It("should propagate StatusBadNodeIdUnknown without retry", func() {
-			// Setup: shouldTrial=false OR different error code
-			shouldTrial := false
-			statusCode := "Bad_NodeIdUnknown (0x80330000)"
-
-			// Expected: Error propagated immediately, no retry
-			shouldRetry := false
-
-			if statusCode != "Bad_FilterNotAllowed (0x80440000)" || !shouldTrial {
-				shouldRetry = false
-			}
-
-			// Assertions
-			Expect(shouldRetry).To(BeFalse(), "Non-trial errors should not trigger retry")
-		})
-
-		It("should propagate StatusBadFilterNotAllowed when shouldTrial is false", func() {
-			// Setup: Not a trial, but still got FilterNotAllowed
-			shouldTrial := false
-			statusCode := "Bad_FilterNotAllowed (0x80440000)"
-			Expect(statusCode).To(Equal("Bad_FilterNotAllowed (0x80440000)"))
-
-			// Expected: Even though it's FilterNotAllowed, don't retry if not trialing
-			shouldRetry := false
-
-			if !shouldTrial {
-				shouldRetry = false // Not a trial, don't retry
-			}
-
-			// Assertions
-			Expect(shouldRetry).To(BeFalse(), "FilterNotAllowed should propagate if not trialing")
-		})
-	})
-
-	Context("when trial rejection triggers capability update", func() {
-		It("should prevent infinite retry loops via hasTrialedThisConnection", func() {
-			// Setup: Trial rejected
-			hasTrialed := false
-
-			// First attempt: Trial
-			shouldTrial := !hasTrialed
-			Expect(shouldTrial).To(BeTrue(), "First attempt should be a trial")
-
-			// Trial fails and updates hasTrialed
-			hasTrialed = true
-
-			// Second attempt: Should use cached result (Decision 3b)
-			shouldTrial = !hasTrialed
-			Expect(shouldTrial).To(BeFalse(), "Second attempt should not trial again")
-
-			// Assertion
-			Expect(hasTrialed).To(BeTrue(), "hasTrialedThisConnection prevents re-trialing")
-		})
-	})
-})
-
-var _ = Describe("MonitorBatched UX recommendation messages", Label("ux-messages"), func() {
-	Context("after trial succeeds", func() {
-		It("should emit recommendation message with supportsDataChangeFilter: true", func() {
-			// Setup: Trial succeeds (StatusOK)
-			shouldTrial := true
-			supportsFilter := shouldTrial
-
-			// Simulate trial success logic
-
-			// Verify trial succeeded and capability was updated
-			Expect(supportsFilter).To(BeTrue(), "Trial should have succeeded")
-
-			// Test documents expected UX message content:
-			// - "Recommendation: To save ~1-2 seconds on future connections"
-			// - "explicitly configure this capability in your server profile"
-			// - "serverProfile:\n    supportsDataChangeFilter: true"
-			// - "See documentation: docs/input/opc-ua-input.md#server-profiles"
-		})
-	})
-
-	Context("after trial fails", func() {
-		It("should emit recommendation message with supportsDataChangeFilter: false", func() {
-			// Setup: Trial fails (StatusBadFilterNotAllowed)
-			shouldTrial := true
-			supportsFilter := !shouldTrial
-
-			// Simulate trial failure logic
-
-			// Verify trial failed and capability was updated
-			Expect(supportsFilter).To(BeFalse(), "Trial should have failed")
-
-			// Test documents expected UX message content:
-			// - "Recommendation: To save ~1-2 seconds on future connections"
-			// - "explicitly configure this capability in your server profile"
-			// - "serverProfile:\n    supportsDataChangeFilter: false"
-			// - "See documentation: docs/input/opc-ua-input.md#server-profiles"
-		})
-	})
-
-	Context("for profiles with FilterCapability=FilterUnsupported (Decision 2)", func() {
-		It("should not trial or emit recommendation message", func() {
-			// Setup: S7-1200 profile has FilterCapability=FilterUnsupported (never trials)
-			profile := profileS71200
-
-			// Verify S7-1200 profile configuration
-			Expect(profile.Name).To(Equal(ProfileS71200))
-			Expect(profile.FilterCapability).To(Equal(FilterUnsupported))
-		})
-	})
-
-	Context("for profiles with FilterCapability=FilterSupported (Decision 1)", func() {
-		It("should not trial or emit recommendation message", func() {
-			// Setup: Kepware profile has FilterCapability=FilterSupported (trusted)
-			profile := profileKepware
-
-			// Verify Kepware profile configuration
-			Expect(profile.FilterCapability).To(Equal(FilterSupported), "Kepware profile should be FilterSupported")
-		})
-	})
+		// Defensive fallback for an invalid enum value: the real default branch,
+		// previously only asserted against the test's own switch.
+		Entry("FilterInvalid: defensive fallback to trial mechanism",
+			decisionCase{
+				profile:        ServerProfile{Name: "test-invalid", FilterCapability: FilterInvalid},
+				expectSupports: true,
+				expectTrial:    true,
+			}),
+	)
 })
