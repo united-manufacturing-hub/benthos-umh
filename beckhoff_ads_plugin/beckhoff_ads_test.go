@@ -263,9 +263,9 @@ func loadADSConfig(ipEnv string, amsEnv string, portEnv string, defaultPort int,
 	}, true
 }
 
-// testLogger returns a Benthos logger suitable for use in hardware tests.
+// testLogger returns a logger suitable for use in hardware tests.
 func testLogger() *service.Logger {
-	return service.MockResources().Logger()
+	return ads.NewLogger(service.MockResources().Logger())
 }
 
 // createTestInput builds an AdsCommInput configured for testing.
