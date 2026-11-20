@@ -227,6 +227,10 @@ endif
 	./tmp/schema-export -version $(VERSION) -format json-schema
 	./tmp/schema-export -version $(VERSION) -format mapping
 
+.PHONY: docs-gen
+docs-gen:
+	go run ./cmd/docs-gen
+
 .PHONY: changelog
 changelog: $(CHANGIE)
 	$(CHANGIE) new
