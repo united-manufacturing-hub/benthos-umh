@@ -52,6 +52,7 @@ type fakeSubscription struct {
 
 	mu        sync.Mutex
 	lastID    uint32
+	requested []*ua.MonitoredItemCreateRequest
 	live      []fakeItem
 	cancelled bool
 }
@@ -62,6 +63,7 @@ func (f *fakeSubscription) Monitor(_ context.Context, _ ua.TimestampsToReturn, i
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	f.requested = append(f.requested, items...)
 	resp := &ua.CreateMonitoredItemsResponse{Results: make([]*ua.MonitoredItemCreateResult, len(items))}
 	for i, req := range items {
 		status := ua.StatusOK
@@ -99,6 +101,14 @@ func (f *fakeSubscription) items() []fakeItem {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]fakeItem(nil), f.live...)
+}
+
+// requests returns every item the client asked to monitor, rejected ones
+// included, in the order they were requested.
+func (f *fakeSubscription) requests() []*ua.MonitoredItemCreateRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]*ua.MonitoredItemCreateRequest(nil), f.requested...)
 }
 
 func (f *fakeSubscription) wasCancelled() bool {

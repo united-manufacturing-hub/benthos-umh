@@ -235,6 +235,42 @@ func filterScenarioEntries() []TableEntry {
 	return entries
 }
 
+// filterState is what MonitorBatched knows about the server's
+// DataChangeFilter support when it builds its requests.
+type filterState struct {
+	name       string
+	capability FilterCapability
+	caps       ServerCapabilities
+	sendFilter bool // whether a numeric node is requested with a filter
+}
+
+// filterRequestEntries crosses every filterState with every deadband type.
+// sendFilter restates decideDataChangeFilterSupport only so the spec can
+// check the requests; its edge cases (nil capabilities, invalid enum value)
+// stay in read_discover_trial_logic_test.go.
+func filterRequestEntries() []TableEntry {
+	states := []filterState{
+		{name: "FilterSupported", capability: FilterSupported, sendFilter: true},
+		{name: "FilterUnsupported", capability: FilterUnsupported},
+		{name: "FilterUnknown before a trial", capability: FilterUnknown, sendFilter: true},
+		{
+			name: "FilterUnknown after a trial the server accepted", capability: FilterUnknown,
+			caps: ServerCapabilities{hasTrialedThisConnection: true, SupportsDataChangeFilter: true}, sendFilter: true,
+		},
+		{
+			name: "FilterUnknown after a trial the server rejected", capability: FilterUnknown,
+			caps: ServerCapabilities{hasTrialedThisConnection: true},
+		},
+	}
+	var entries []TableEntry
+	for _, state := range states {
+		for _, deadband := range []string{"none", "absolute", "percent"} {
+			entries = append(entries, Entry(fmt.Sprintf("%s, deadband %s", state.name, deadband), state, deadband))
+		}
+	}
+	return entries
+}
+
 // newUnconnectedInput builds an input the way Connect does, with a client
 // that was never connected, so Subscribe fails. The cached browse result
 // lets BrowseAndSubscribeIfNeeded skip the browse.
@@ -280,6 +316,44 @@ var _ = Describe("OPC UA subscription ClientHandles", func() {
 			h.expectEveryItemPublishedAsItsNode()
 		},
 		filterScenarioEntries(),
+	)
+
+	DescribeTable("requests a DataChangeFilter only for numeric nodes on a server that takes one, with the configured deadband",
+		func(state filterState, deadband string) {
+			nodes := testNodes(2, "sensor", 2)
+			numeric, text := nodes[0], nodes[1]
+			text.DataType, text.DataTypeID = "String", ua.TypeIDString
+			h := newSubscriptionHarness([]NodeDef{numeric, text}, 2, state.capability)
+			h.g.ServerCapabilities = &state.caps
+			h.g.DeadbandType = deadband
+			h.g.DeadbandValue = 2.5
+
+			deadbandTypes := map[string]ua.DeadbandType{"absolute": ua.DeadbandTypeAbsolute, "percent": ua.DeadbandTypePercent}
+			want := map[string]*ua.DataChangeFilter{numeric.NodeID.String(): nil, text.NodeID.String(): nil}
+			if state.sendFilter && deadband != "none" {
+				want[numeric.NodeID.String()] = &ua.DataChangeFilter{
+					Trigger:       ua.DataChangeTriggerStatusValue,
+					DeadbandType:  uint32(deadbandTypes[deadband]),
+					DeadbandValue: 2.5,
+				}
+			}
+
+			h.monitor()
+
+			requests := h.sub.requests()
+			Expect(requests).To(HaveLen(len(want)), "each node is requested once")
+			got := map[string]*ua.DataChangeFilter{}
+			for _, req := range requests {
+				var filter *ua.DataChangeFilter
+				if ext := req.RequestedParameters.Filter; ext != nil {
+					filter, _ = ext.Value.(*ua.DataChangeFilter)
+					Expect(filter).NotTo(BeNil(), "filter of %s is a %T", req.ItemToMonitor.NodeID, ext.Value)
+				}
+				got[req.ItemToMonitor.NodeID.String()] = filter
+			}
+			Expect(got).To(Equal(want))
+		},
+		filterRequestEntries(),
 	)
 
 	It("publishes values the server sends before it answers CreateMonitoredItems under the right node", func() {
