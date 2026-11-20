@@ -22,6 +22,8 @@ import "github.com/danomagnum/gologix"
 type CIPReader interface {
 	Connect() error
 	Disconnect() error
+	// needed because gologix rejects calls that do not match its connection state
+	Connected() bool
 	Read(tag string, data any) error
 	GetAttrSingle(cls gologix.CIPClass, inst gologix.CIPInstance, attr gologix.CIPAttribute) (*gologix.CIPItem, error)
 }

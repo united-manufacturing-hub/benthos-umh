@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -61,8 +62,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -83,10 +87,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 
 			// Check metadata
 			location_path, exists := msg.MetaGet("location_path")
@@ -113,7 +121,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			value, ok := payload["value"]
@@ -129,6 +137,177 @@ tag_processor:
 
 			_, ok = payload["timestamp_ms"]
 			Expect(ok).To(BeTrue())
+		})
+
+		It("should not emit literal <nil> or Go-syntax garbage for nested-nil or non-scalar meta", func() {
+			// tag_processor's JS-return meta loop (processMessageBatchWithProgram)
+			// used fmt.Sprintf("%v") on every non-nil meta value, so a nested nil
+			// (meta:{sub:null}) or a non-scalar produced literal <nil> / Go-syntax
+			// garbage in Kafka headers. It must share nodered_js's SetMetaFromJS
+			// so non-scalars serialize as JSON.
+			builder := service.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temp";
+    msg.meta.nested = {sub: null};
+    msg.meta.arr = [null, 1];
+    msg.meta.count = 42;
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			go func() {
+				_ = stream.Run(ctx)
+			}()
+
+			testMsg := service.NewMessage([]byte("23.5"))
+			err = msgHandler(ctx, testMsg)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
+				return len(messages)
+			}).Should(Equal(1))
+
+			messagesMutex.Lock()
+			msg := messages[0]
+			messagesMutex.Unlock()
+
+			nested, exists := msg.MetaGet("nested")
+			Expect(exists).To(BeTrue())
+			Expect(nested).NotTo(ContainSubstring("<nil>"))
+			Expect(nested).To(Equal(`{"sub":null}`))
+
+			arr, exists := msg.MetaGet("arr")
+			Expect(exists).To(BeTrue())
+			Expect(arr).NotTo(ContainSubstring("<nil>"))
+			Expect(arr).To(Equal(`[null,1]`))
+
+			count, exists := msg.MetaGet("count")
+			Expect(exists).To(BeTrue())
+			Expect(count).To(Equal("42"))
+		})
+
+		It("should drop a condition-error message loudly, continuing the batch", func() {
+			// A condition `then` that throws drops the message loudly
+			// (absent from output, messages_dropped bumped). The good
+			// message flows through conditions + advanced + construction.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			Expect(builder.AddProcessorYAML(strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temp";
+    return msg;
+  conditions:
+    - if: msg.payload === "throw"
+      then: |
+        throw new Error("cond boom");
+    - if: true
+      then: |
+        msg.meta.cond1 = "ran";
+        return msg;
+  advancedProcessing: |
+    msg.payload = "advanced-" + msg.payload;
+    return msg;
+`))).To(Succeed())
+
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			Expect(builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			msgA := service.NewMessage([]byte("keep"))
+			msgB := service.NewMessage([]byte("throw"))
+			batch := service.MessageBatch{msgA, msgB}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// Only the good message reaches the consumer; the throw is dropped.
+			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
+				return len(messages)
+			}, "2s").Should(Equal(1))
+
+			messagesMutex.Lock()
+			Expect(messages).To(HaveLen(1))
+			ok := messages[0]
+			messagesMutex.Unlock()
+
+			// msgA: passed both conditions + advanced, payload value-wrapped
+			// by construction into {value, timestamp_ms}.
+			Expect(ok).NotTo(BeNil())
+			okStruct, err := ok.AsStructured()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(okStruct).To(BeAssignableToTypeOf(map[string]any{}))
+			Expect(okStruct.(map[string]any)["value"]).To(Equal("advanced-keep"))
+			cond1, exists := ok.MetaGet("cond1")
+			Expect(exists).To(BeTrue())
+			Expect(cond1).To(Equal("ran"))
+
+			// No output message carries an error (no forward-on-error).
+			Expect(ok.GetError()).To(Succeed())
+
+			// messages_dropped{reason=js_throw} == 1 (the condition throw).
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "js_throw")
+			}, "2s").Should(Equal(int64(1)))
 		})
 
 		It("should process conditions", func() {
@@ -155,8 +334,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -178,10 +360,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 
 			// Check metadata
 			location_path, exists := msg.MetaGet("location_path")
@@ -212,7 +398,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			value, ok := payload["value"]
@@ -250,8 +436,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -272,10 +461,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 
 			// Check metadata
 			location_path, exists := msg.MetaGet("location_path")
@@ -302,7 +495,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			value, ok := payload["value"]
@@ -337,8 +530,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -360,6 +556,8 @@ tag_processor:
 
 			// Message should be dropped due to missing required fields
 			Consistently(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}, "500ms").Should(Equal(0))
 		})
@@ -392,8 +590,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -415,10 +616,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 
 			// Check metadata
 			location_path, exists := msg.MetaGet("location_path")
@@ -449,7 +654,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			value, ok := payload["value"]
@@ -491,8 +696,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -508,7 +716,7 @@ tag_processor:
 			}()
 
 			// Create and send test message with work order data
-			testPayload := map[string]interface{}{
+			testPayload := map[string]any{
 				"work_order_id": "WO123",
 			}
 			testMsg := service.NewMessage(nil)
@@ -518,10 +726,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 
 			// Check metadata
 			location_path, exists := msg.MetaGet("location_path")
@@ -540,7 +752,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			workOrderID, ok := payload["work_order_id"]
@@ -576,8 +788,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -598,10 +813,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 
 			// Check metadata
 			location_path, exists := msg.MetaGet("location_path")
@@ -628,7 +847,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			value, ok := payload["value"]
@@ -735,8 +954,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -759,22 +981,28 @@ tag_processor:
 
 			// Should get two messages
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(2))
 
 			// Check first message
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			Expect(payload["value"]).To(Equal(json.Number("23.5")))
 
 			// Check second message
+			messagesMutex.Lock()
 			msg = messages[1]
+			messagesMutex.Unlock()
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			Expect(payload["value"]).To(Equal(json.Number("23.5")))
 		})
@@ -818,8 +1046,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -844,11 +1075,15 @@ tag_processor:
 			// 1. Original historian message
 			// 2. Analytics message with doubled value
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(2))
 
 			// Check historian message
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			data_contract, exists := msg.MetaGet("data_contract")
 			Expect(exists).To(BeTrue())
 			Expect(data_contract).To(Equal("_historian"))
@@ -857,12 +1092,14 @@ tag_processor:
 			Expect(location_path).To(Equal("enterprise.production"))
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			Expect(payload["value"]).To(Equal(json.Number("23.5")))
 
 			// Check analytics message
+			messagesMutex.Lock()
 			msg = messages[1]
+			messagesMutex.Unlock()
 			data_contract, exists = msg.MetaGet("data_contract")
 			Expect(exists).To(BeTrue())
 			Expect(data_contract).To(Equal("_analytics"))
@@ -871,7 +1108,7 @@ tag_processor:
 			Expect(location_path).To(Equal("enterprise.production"))
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			Expect(payload["value"]).To(Equal(json.Number("47")))
 		})
@@ -928,8 +1165,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -952,11 +1192,15 @@ tag_processor:
 
 			// Should get two messages that went through all stages
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(2))
 
 			// Check historian message
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			data_contract, exists := msg.MetaGet("data_contract")
 			Expect(exists).To(BeTrue())
 			Expect(data_contract).To(Equal("_historian"))
@@ -968,12 +1212,14 @@ tag_processor:
 			Expect(virtual_path).To(Equal("processed"))
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			Expect(payload["value"]).To(Equal(json.Number("23.5")))
 
 			// Check analytics message
+			messagesMutex.Lock()
 			msg = messages[1]
+			messagesMutex.Unlock()
 			data_contract, exists = msg.MetaGet("data_contract")
 			Expect(exists).To(BeTrue())
 			Expect(data_contract).To(Equal("_analytics"))
@@ -985,7 +1231,7 @@ tag_processor:
 			Expect(virtual_path).To(Equal("raw_data"))
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			Expect(payload["value"]).To(Equal(json.Number("47")))
 		})
@@ -1008,8 +1254,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1056,31 +1305,31 @@ tag_processor:
 
 			// Test string array (should be JSON serialized)
 			testMsg = service.NewMessage(nil)
-			testMsg.SetStructured([]interface{}{"a", "b", "c"})
+			testMsg.SetStructured([]any{"a", "b", "c"})
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Test integer array (should be JSON serialized)
 			testMsg = service.NewMessage(nil)
-			testMsg.SetStructured([]interface{}{1, 2, 3})
+			testMsg.SetStructured([]any{1, 2, 3})
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Test mixed type array (should be JSON serialized)
 			testMsg = service.NewMessage(nil)
-			testMsg.SetStructured([]interface{}{"text", 42, true})
+			testMsg.SetStructured([]any{"text", 42, true})
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Test float string array
 			testMsg = service.NewMessage(nil)
-			testMsg.SetStructured([]interface{}{"1.23", "2.34", "3.45"})
+			testMsg.SetStructured([]any{"1.23", "2.34", "3.45"})
 			err = msgHandler(ctx, testMsg)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Test object (should be preserved as object)
 			testMsg = service.NewMessage(nil)
-			testMsg.SetStructured(map[string]interface{}{
+			testMsg.SetStructured(map[string]any{
 				"key1": "value1",
 				"key2": 42,
 			})
@@ -1089,14 +1338,18 @@ tag_processor:
 
 			// Should get ten messages
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(10))
 
 			// Check boolean value
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			value, ok := payload["value"]
 			Expect(ok).To(BeTrue())
@@ -1105,10 +1358,12 @@ tag_processor:
 			Expect(boolValue).To(BeTrue())
 
 			// Check string value
+			messagesMutex.Lock()
 			msg = messages[1]
+			messagesMutex.Unlock()
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			value, ok = payload["value"]
 			Expect(ok).To(BeTrue())
@@ -1117,10 +1372,12 @@ tag_processor:
 			Expect(strValue).To(Equal("test string"))
 
 			// Check integer value
+			messagesMutex.Lock()
 			msg = messages[2]
+			messagesMutex.Unlock()
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			value, ok = payload["value"]
 			Expect(ok).To(BeTrue())
@@ -1131,10 +1388,12 @@ tag_processor:
 			Expect(intValue).To(Equal(int64(42)))
 
 			// Check float value
+			messagesMutex.Lock()
 			msg = messages[3]
+			messagesMutex.Unlock()
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			value, ok = payload["value"]
 			Expect(ok).To(BeTrue())
@@ -1144,25 +1403,28 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 			Expect(floatValue).To(BeNumerically("==", 23.5))
 
-			// Check float value of string encoded float
+			// Check string encoded float stays a string (no auto-conversion;
+			// use msg.meta.datatype = "number" for explicit coercion)
+			messagesMutex.Lock()
 			msg = messages[4]
+			messagesMutex.Unlock()
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			value, ok = payload["value"]
 			Expect(ok).To(BeTrue())
-			numValue, ok = value.(json.Number)
+			strValue, ok = value.(string)
 			Expect(ok).To(BeTrue())
-			floatValue, err = numValue.Float64()
-			Expect(err).NotTo(HaveOccurred())
-			Expect(floatValue).To(BeNumerically("==", 23.5))
+			Expect(strValue).To(Equal("23.5"))
 
 			// Check string array value (should be JSON serialized)
+			messagesMutex.Lock()
 			msg = messages[5]
+			messagesMutex.Unlock()
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			value, ok = payload["value"]
 			Expect(ok).To(BeTrue())
@@ -1171,10 +1433,12 @@ tag_processor:
 			Expect(strValue).To(Equal("[\"a\",\"b\",\"c\"]"))
 
 			// Check integer array value (should be JSON serialized)
+			messagesMutex.Lock()
 			msg = messages[6]
+			messagesMutex.Unlock()
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			value, ok = payload["value"]
 			Expect(ok).To(BeTrue())
@@ -1183,10 +1447,12 @@ tag_processor:
 			Expect(strValue).To(Equal("[1,2,3]"))
 
 			// Check mixed type array value (should be JSON serialized)
+			messagesMutex.Lock()
 			msg = messages[7]
+			messagesMutex.Unlock()
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			value, ok = payload["value"]
 			Expect(ok).To(BeTrue())
@@ -1195,10 +1461,12 @@ tag_processor:
 			Expect(strValue).To(Equal("[\"text\",42,true]"))
 
 			// Check float string array value (should be preserved as-is)
+			messagesMutex.Lock()
 			msg = messages[8]
+			messagesMutex.Unlock()
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			value, ok = payload["value"]
 			Expect(ok).To(BeTrue())
@@ -1207,10 +1475,12 @@ tag_processor:
 			Expect(strValue).To(Equal("[\"1.23\",\"2.34\",\"3.45\"]"))
 
 			// Check object value (should be preserved)
+			messagesMutex.Lock()
 			msg = messages[9]
+			messagesMutex.Unlock()
 			structured, err = msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
-			payload, ok = structured.(map[string]interface{})
+			payload, ok = structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 			value, ok = payload["value"]
 			GinkgoWriter.Printf("payload: %v \n", payload)
@@ -1239,8 +1509,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1261,10 +1534,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 
 			// Verify all metadata fields are set correctly
 			location_path, exists := msg.MetaGet("location_path")
@@ -1300,7 +1577,7 @@ tag_processor:
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			value, ok := payload["value"]
@@ -1336,8 +1613,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1358,10 +1638,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 
 			// Verify virtual_path is not set
 			_, exists := msg.MetaGet("virtual_path")
@@ -1398,8 +1682,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1419,10 +1706,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 
 			// virtual_path should be treated as unset
 			_, exists := msg.MetaGet("virtual_path")
@@ -1454,8 +1745,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1476,6 +1770,8 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(0))
 		})
@@ -1498,8 +1794,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1525,14 +1824,18 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -1558,8 +1861,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1584,14 +1890,18 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -1623,8 +1933,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1644,14 +1957,18 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -1679,8 +1996,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1700,14 +2020,18 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -1735,8 +2059,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1756,14 +2083,18 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -1793,8 +2124,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1814,14 +2148,18 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -1849,8 +2187,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1870,14 +2211,18 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -1906,8 +2251,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1927,14 +2275,18 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -1967,8 +2319,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1990,14 +2345,18 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -2027,8 +2386,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -2048,14 +2410,18 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -2086,8 +2452,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -2107,14 +2476,18 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -2144,8 +2517,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -2165,14 +2541,18 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
-			payload, ok := structured.(map[string]interface{})
+			payload, ok := structured.(map[string]any)
 			Expect(ok).To(BeTrue())
 
 			timestamp_ms, ok := payload["timestamp_ms"]
@@ -2217,8 +2597,11 @@ tag_processor:
 				Expect(err).NotTo(HaveOccurred())
 
 				var messages []*service.Message
+				var messagesMutex sync.Mutex
 				err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+					messagesMutex.Lock()
 					messages = append(messages, msg)
+					messagesMutex.Unlock()
 					return nil
 				})
 				Expect(err).NotTo(HaveOccurred())
@@ -2238,14 +2621,18 @@ tag_processor:
 				Expect(err).NotTo(HaveOccurred())
 
 				Eventually(func() int {
+					messagesMutex.Lock()
+					defer messagesMutex.Unlock()
 					return len(messages)
 				}).Should(Equal(1))
 
+				messagesMutex.Lock()
 				msg := messages[0]
+				messagesMutex.Unlock()
 				structured, err := msg.AsStructured()
 				Expect(err).NotTo(HaveOccurred())
 
-				payload, ok := structured.(map[string]interface{})
+				payload, ok := structured.(map[string]any)
 				Expect(ok).To(BeTrue())
 
 				timestamp_ms, ok := payload["timestamp_ms"]
@@ -2253,6 +2640,1723 @@ tag_processor:
 				Expect(timestamp_ms).To(Equal(tc.expectedMs),
 					fmt.Sprintf("Failed for %s precision: %s", tc.precision, tc.rfc3339))
 			}
+		})
+
+		It("should bump messagesDropped once when a defaults function returns null", func() {
+			// A tag_processor stage that yields 0 outputs via an explicit
+			// drop (null return) is a per-message-entering-stage drop: 0
+			// consumer outputs AND messagesDropped incremented exactly
+			// once. tag_processor now increments messagesDropped on a
+			// null-return drop; this test guards that increment against
+			// regression. Default StreamBuilder metrics are no-op, so the
+			// counter is observed via a registered MetricsExporter.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    return null;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			// (a) messagesDropped bumped exactly once for the message
+			// entering the stage that dropped: confirms the drop happened
+			// before asserting no leak, so a slow leak is still caught.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "5s", "50ms").Should(Equal(int64(1)))
+
+			// (b) 0 consumer outputs: the input was dropped and did not
+			// leak to the consumer.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+		})
+
+		It("should bump messagesDropped once when a defaults function returns an empty array", func() {
+			// An empty array return is a per-message-entering-stage drop:
+			// 0 consumer outputs AND messagesDropped incremented exactly once.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    return [];
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			// (a) messagesDropped bumped exactly once for the message
+			// entering the stage that dropped: confirms the drop happened
+			// before asserting no leak, so a slow leak is still caught.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "5s", "50ms").Should(Equal(int64(1)))
+
+			// (b) 0 consumer outputs: the input was dropped and did not
+			// leak to the consumer.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+		})
+
+		It("should bump messagesDropped once when a defaults function returns an all-nil array", func() {
+			// An all-nil array return is a per-message-entering-stage drop:
+			// every element is nil and skipped, yielding 0 consumer outputs
+			// AND messagesDropped incremented exactly once.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    return [null, null];
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			// (a) messagesDropped bumped exactly once for the message
+			// entering the stage that dropped: confirms the drop happened
+			// before asserting no leak, so a slow leak is still caught.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "5s", "50ms").Should(Equal(int64(1)))
+
+			// (b) 0 consumer outputs: every element was nil and dropped,
+			// and nothing leaked to the consumer.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+		})
+
+		It("should bump messagesDropped once per message when a batch of N drops", func() {
+			// messagesDropped is incremented inside the `for _, msg := range batch`
+			// loop, so a single multi-message batch that drops every message must
+			// increment once per dropped message (N), not once per batch or once
+			// total. A single-message drop test cannot distinguish these, so a
+			// 3-message batch pins the per-message semantic.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    return null;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			batch := service.MessageBatch{
+				service.NewMessage(nil),
+				service.NewMessage(nil),
+				service.NewMessage(nil),
+			}
+			for _, m := range batch {
+				m.SetStructured("ignored")
+			}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// (a) messagesDropped bumped once per dropped message (3), not
+			// once per batch or once total.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "5s", "50ms").Should(Equal(int64(3)))
+
+			// (b) 0 consumer outputs: every message dropped, none leaked.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+		})
+
+		It("should not bump messagesDropped when a defaults function returns a partial-nil array", func() {
+			// A partial-nil array (some nil elements, at least one surviving
+			// output) is NOT a drop: the surviving elements fan out and
+			// messagesDropped stays at 0. Guards against an over-broad
+			// regression that treats any-nil-in-array as a drop or increments
+			// once per nil element. Symmetric with the nodered_js partial-nil
+			// fan-out guard.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise.site";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temperature";
+    return [null, msg];
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			// (a) 1 consumer output: the surviving (non-nil) element fanned out.
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "5s", "50ms").Should(Equal(int64(1)))
+
+			// (b) messagesDropped stays at 0: a partial-nil array is not a drop.
+			Consistently(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "500ms").Should(Equal(int64(0)))
+		})
+
+		It("should not bump messagesDropped when a defaults function returns a non-dropping message", func() {
+			// A non-dropping defaults function (return msg) must leave
+			// messagesDropped at 0, guarding against a regression that
+			// increments unconditionally.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise.site";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temperature";
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			// (a) 1 consumer output: the message passed through.
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "5s", "50ms").Should(Equal(int64(1)))
+
+			// (b) messagesDropped stays at 0: no message was dropped.
+			Consistently(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "500ms").Should(Equal(int64(0)))
+		})
+
+		It("should bump messagesDropped exactly once when a condition then returns null (no double-count)", func() {
+			// R6 double-count guard: a condition whose `then` returns null drops
+			// the message. The then-action runs via processMessageBatchWithProgram,
+			// whose len==0 guard (R5) bumps messagesDropped once. The conditions
+			// loop must NOT add a second bump. This pins already-correct behavior
+			// (R5 covered it; R6 was vacuous) so a future refactor introducing a
+			// conditions-loop bump is caught.
+			env := service.NewEnvironment()
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+			builder := env.NewStreamBuilder()
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+			Expect(builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.tag_name = "x";
+    return msg;
+  conditions:
+    - if: 'msg.meta.tag_name === "x"'
+      then: |
+        return null;
+`)).To(Succeed())
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			go func() { _ = stream.Run(ctx) }()
+			Expect(msgHandler(ctx, service.NewMessage(nil))).To(Succeed())
+			// 0 consumer outputs (the then returned null → drop).
+			Consistently(func() int64 { return atomic.LoadInt64(&consumerCount) }, "500ms").Should(Equal(int64(0)))
+			// messagesDropped == 1, NOT 2 (no double-count from the conditions loop).
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "5s", "50ms").Should(Equal(int64(1)))
+		})
+
+		It("should not bump messagesDropped when a condition if is false (pass-through)", func() {
+			// R6 pass-through guard: a false `if` is a pass-through, not a drop.
+			// processConditionForMessageWithProgram returns the original message
+			// unchanged (1 output) when the if is false; messagesDropped must
+			// stay 0. Pins that a non-matching condition is NOT mis-counted as a drop.
+			env := service.NewEnvironment()
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+			builder := env.NewStreamBuilder()
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+			Expect(builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temperature";
+    return msg;
+  conditions:
+    - if: 'msg.meta.tag_name === "nonexistent"'
+      then: |
+        return null;
+`)).To(Succeed())
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			go func() { _ = stream.Run(ctx) }()
+			Expect(msgHandler(ctx, service.NewMessage(nil))).To(Succeed())
+			// 1 consumer output (the false-if condition passes the original
+			// message through unchanged, and the required meta fields are set
+			// so it survives validation/constructFinalMessage).
+			Eventually(func() int64 { return atomic.LoadInt64(&consumerCount) }, "5s", "50ms").Should(Equal(int64(1)))
+			// messagesDropped == 0 (false-if is a pass-through, not a drop).
+			Consistently(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "500ms").Should(Equal(int64(0)))
+		})
+
+		It("should drop a condition then-action throw loudly", func() {
+			// A condition whose then action throws a JS error is dropped
+			// loudly: absent from output, messages_dropped{reason=js_throw}
+			// bumped, no consumer output.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  conditions:
+    - if: 'true'
+      then: |
+        throw new Error("boom");
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			// messages_dropped{reason=js_throw} == 1 (the condition throw).
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "js_throw")
+			}, "5s", "50ms").Should(Equal(int64(1)))
+
+			// No consumer output: the throwing message is dropped, not forwarded.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+			mu.Lock()
+			Expect(counts["messages_processed"]).To(Equal(int64(0)))
+			mu.Unlock()
+		})
+
+		It("should drop a condition if-expression throw loudly", func() {
+			// Triangulates the then-action case: the if-expression throw
+			// drops the message with reason=js_throw, same as the then path.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  conditions:
+    - if: |
+        throw new Error("if boom");
+      then: 'return msg;'
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "js_throw")
+			}, "5s", "50ms").Should(Equal(int64(1)))
+
+			// No consumer output: the throwing message is dropped.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+			mu.Lock()
+			Expect(counts["messages_processed"]).To(Equal(int64(0)))
+			mu.Unlock()
+		})
+
+		It("should drop a defaults-throwing message loudly", func() {
+			// A defaults program that throws drops the message loudly:
+			// messages_dropped{reason=js_throw} bumped, no consumer output.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    throw new Error("defaults boom");
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			// messages_dropped{reason=js_throw} == 1.
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "js_throw")
+			}, "5s", "50ms").Should(Equal(int64(1)))
+
+			// No consumer output: the throwing message is dropped, not forwarded.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+
+			mu.Lock()
+			Expect(counts["messages_processed"]).To(Equal(int64(0)))
+			mu.Unlock()
+		})
+
+		It("should independently drop a deliberate-drop and a later throwing message in defaults", func() {
+			// [drop, throw] in defaults: msg0 returns null (deliberate drop),
+			// msg1 throws (js_throw drop). Both are dropped independently;
+			// no batch-fatal.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    if (msg.payload === "drop") { return null; }
+    if (msg.payload === "throw") { throw new Error("boom"); }
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			msg0 := service.NewMessage(nil)
+			msg0.SetStructured("drop")
+			msg1 := service.NewMessage(nil)
+			msg1.SetStructured("throw")
+			batch := service.MessageBatch{msg0, msg1}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// No consumer output: both messages are dropped.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+
+			// messages_dropped total == 2 (1 deliberate + 1 js_throw).
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "2s").Should(Equal(int64(2)))
+
+			// messages_dropped{reason=js_throw} == 1 (only the throw).
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "js_throw")
+			}, "2s").Should(Equal(int64(1)))
+
+			// messages_dropped{reason=deliberate} == 1 (the null return).
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "deliberate")
+			}, "2s").Should(Equal(int64(1)))
+		})
+
+		It("should drop an advancedProcessing-throwing message loudly", func() {
+			// An advancedProcessing program that throws drops the message:
+			// messages_dropped{reason=js_throw} bumped, no consumer output.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var msgHandler service.MessageHandlerFunc
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    return msg;
+  advancedProcessing: |
+    throw new Error("advanced boom");
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage(nil)
+			testMsg.SetStructured("ignored")
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "js_throw")
+			}, "5s", "50ms").Should(Equal(int64(1)))
+
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+
+			mu.Lock()
+			Expect(counts["messages_processed"]).To(Equal(int64(0)))
+			mu.Unlock()
+		})
+
+		It("should drop condition-errored and advanced-errored messages independently", func() {
+			// [a, b, c]: condition throws on b (dropped), advanced throws on c
+			// (dropped). a flows through. No batch-fatal; both b and c are
+			// dropped independently with reason=js_throw.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			Expect(builder.AddProcessorYAML(strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temp";
+    return msg;
+  conditions:
+    - if: msg.payload === "b"
+      then: |
+        throw new Error("cond boom");
+  advancedProcessing: |
+    if (msg.payload === "c") { throw new Error("adv boom"); }
+    return msg;
+`))).To(Succeed())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			msgA := service.NewMessage([]byte("a"))
+			msgB := service.NewMessage([]byte("b"))
+			msgC := service.NewMessage([]byte("c"))
+			batch := service.MessageBatch{msgA, msgB, msgC}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// Only 1 reaches the consumer (a); b and c are dropped.
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "2s").Should(Equal(int64(1)))
+
+			// messages_dropped{reason=js_throw} == 2 (b from condition, c from advanced).
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "js_throw")
+			}, "2s").Should(Equal(int64(2)))
+		})
+
+		It("should drop every message in a batch where defaults always throws", func() {
+			// 3-msg batch where defaults throws for every message. Under
+			// drop-loudly, each message is dropped independently (no batch-fatal);
+			// messages_dropped{reason=js_throw} == 3, no consumer output.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    throw new Error("defaults boom");
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			const batchSize = 3
+			batch := make(service.MessageBatch, batchSize)
+			for i := range batch {
+				batch[i] = service.NewMessage(nil)
+				batch[i].SetStructured("ignored")
+			}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// messages_dropped{reason=js_throw} == batchSize (each dropped independently).
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "js_throw")
+			}, "5s", "50ms").Should(Equal(int64(batchSize)))
+
+			// No consumer output: all messages dropped.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+
+			mu.Lock()
+			Expect(counts["messages_processed"]).To(Equal(int64(0)))
+			mu.Unlock()
+		})
+
+		It("should bump messages_processed by the output count for a successful fan-out", func() {
+			// Positive guard (I-#5): a valid input that flows through all
+			// stages (defaults returns a 2-message array, conditions and
+			// advancedProcessing each transform successfully) must bump
+			// messages_processed to the OUTPUT count (2), not the input
+			// count (1). Closes the mutation hole where every other
+			// messages_processed assertion in this file is Equal(int64(0))
+			// on a drop path.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			msgHandler, err := builder.AddProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			err = builder.AddProcessorYAML(`
+tag_processor:
+  defaults: |
+    let msg1 = {
+      payload: msg.payload,
+      meta: {
+        location_path: "enterprise",
+        data_contract: "_historian",
+        tag_name: "temperature"
+      }
+    };
+
+    let msg2 = {
+      payload: msg.payload,
+      meta: {
+        location_path: "enterprise",
+        data_contract: "_analytics",
+        tag_name: "temperature_raw"
+      }
+    };
+
+    return [msg1, msg2];
+
+  conditions:
+    - if: msg.meta.data_contract === "_historian"
+      then: |
+        msg.meta.location_path += ".production";
+        return msg;
+    - if: msg.meta.data_contract === "_analytics"
+      then: |
+        msg.meta.location_path += ".analytics";
+        msg.payload = msg.payload * 2;
+        return msg;
+
+  advancedProcessing: |
+    if (msg.meta.data_contract === "_analytics") {
+      msg.meta.virtual_path = "raw_data";
+    } else {
+      msg.meta.virtual_path = "processed";
+    }
+    return msg;
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			testMsg := service.NewMessage([]byte("42"))
+			Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+			// 2 outputs reach the consumer (the array fan-out).
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "2s").Should(Equal(int64(2)))
+
+			// messages_processed == 2 (output count), not 1 (input count).
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_processed"]
+			}, "2s").Should(Equal(int64(2)))
+
+			// No drops on a fully successful flow.
+			Consistently(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "500ms").Should(Equal(int64(0)))
+		})
+	})
+
+	When("drop-loudly error handling", func() {
+		It("should drop a condition-if-throwing message and continue the batch", func() {
+			// [good, throw-if, good]: msg1's condition `if` JS throws.
+			// Under drop-loudly, msg1 is dropped (absent from output),
+			// the two good msgs flow and get constructed with umh_topic,
+			// messages_dropped{reason=js_throw}==1, no output msg has
+			// GetError(), no batchFatalErr (no nack).
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			Expect(builder.AddProcessorYAML(strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temp";
+    return msg;
+  conditions:
+    - if: |
+        (function() {
+          if (msg.payload === "throw-if") { throw new Error("if boom"); }
+          return true;
+        })()
+      then: |
+        msg.meta.cond1 = "ran";
+        return msg;
+`))).To(Succeed())
+
+			var consumerCount int64
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			Expect(builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			msg0 := service.NewMessage([]byte("good1"))
+			msg1 := service.NewMessage([]byte("throw-if"))
+			msg2 := service.NewMessage([]byte("good2"))
+			batch := service.MessageBatch{msg0, msg1, msg2}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// (a) Only 2 reach the consumer: the good messages.
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "2s").Should(Equal(int64(2)))
+
+			// (b) messages_dropped{reason=js_throw} == 1.
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "js_throw")
+			}, "2s").Should(Equal(int64(1)))
+
+			// (c) No output message carries an error (no forward-on-error).
+			messagesMutex.Lock()
+			for _, m := range messages {
+				Expect(m.GetError()).To(Succeed(), "no output message should carry an error")
+			}
+			messagesMutex.Unlock()
+
+			// (d) Both output messages have umh_topic (they were constructed).
+			messagesMutex.Lock()
+			for _, m := range messages {
+				topic, exists := m.MetaGet("umh_topic")
+				Expect(exists).To(BeTrue(), "output message should have umh_topic")
+				Expect(topic).NotTo(BeEmpty(), "umh_topic should not be empty")
+			}
+			messagesMutex.Unlock()
+		})
+
+		It("should drop a condition-then-throwing message and continue the batch", func() {
+			// [good, throw-then, good]: msg1's condition `then` JS throws.
+			// Under drop-loudly, msg1 is dropped, the two good msgs flow.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			Expect(builder.AddProcessorYAML(strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temp";
+    return msg;
+  conditions:
+    - if: msg.payload === "throw-then"
+      then: |
+        throw new Error("then boom");
+    - if: true
+      then: |
+        msg.meta.cond1 = "ran";
+        return msg;
+`))).To(Succeed())
+
+			var consumerCount int64
+			var messages []*service.Message
+			var messagesMutex sync.Mutex
+			Expect(builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				messagesMutex.Lock()
+				messages = append(messages, msg)
+				messagesMutex.Unlock()
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			msg0 := service.NewMessage([]byte("good1"))
+			msg1 := service.NewMessage([]byte("throw-then"))
+			msg2 := service.NewMessage([]byte("good2"))
+			batch := service.MessageBatch{msg0, msg1, msg2}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// (a) Only 2 reach the consumer.
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "2s").Should(Equal(int64(2)))
+
+			// (b) messages_dropped{reason=js_throw} == 1.
+			Eventually(func() int64 {
+				mu.Lock()
+				defer mu.Unlock()
+				return counts["messages_dropped"]
+			}, "2s").Should(Equal(int64(1)), "unlabelled messages_dropped total")
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "js_throw")
+			}, "2s").Should(Equal(int64(1)))
+
+			// (c) No output message carries an error.
+			messagesMutex.Lock()
+			for _, m := range messages {
+				Expect(m.GetError()).To(Succeed(), "no output message should carry an error")
+			}
+			messagesMutex.Unlock()
+
+			// (d) Both output messages have umh_topic.
+			messagesMutex.Lock()
+			for _, m := range messages {
+				topic, exists := m.MetaGet("umh_topic")
+				Expect(exists).To(BeTrue(), "output message should have umh_topic")
+				Expect(topic).NotTo(BeEmpty(), "umh_topic should not be empty")
+			}
+			messagesMutex.Unlock()
+		})
+
+		It("should drop a defaults-throwing message and continue the batch", func() {
+			// 10-msg batch where msg 3's defaults JS throws. Under drop-loudly,
+			// msg 3 is dropped, the other 9 flow and get constructed.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			Expect(builder.AddProcessorYAML(strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    if (msg.payload === "throw") { throw new Error("defaults boom"); }
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temp";
+    return msg;
+`))).To(Succeed())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			var batch service.MessageBatch
+			for i := range 10 {
+				m := service.NewMessage([]byte("good"))
+				if i == 2 {
+					m = service.NewMessage([]byte("throw"))
+				}
+				batch = append(batch, m)
+			}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// 9 reach the consumer (msg 3 dropped).
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "2s").Should(Equal(int64(9)))
+
+			// messages_dropped{reason=js_throw} == 1.
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "js_throw")
+			}, "2s").Should(Equal(int64(1)))
+		})
+
+		It("should drop a bad-return message with reason=bad_return", func() {
+			// [good, bad, good]: msg2's defaults returns a non-object (42).
+			// Under drop-loudly, msg2 is dropped with reason=bad_return.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			Expect(builder.AddProcessorYAML(strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temp";
+    if (msg.payload === "bad") { return 42; }
+    return msg;
+`))).To(Succeed())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			msg0 := service.NewMessage([]byte("good1"))
+			msg1 := service.NewMessage([]byte("bad"))
+			msg2 := service.NewMessage([]byte("good2"))
+			batch := service.MessageBatch{msg0, msg1, msg2}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "2s").Should(Equal(int64(2)))
+
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "bad_return")
+			}, "2s").Should(Equal(int64(1)))
+		})
+
+		It("should drop a bad-array-element message with reason=bad_array_element", func() {
+			// [good, bad, good]: msg2's defaults returns [42] (non-object element).
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			Expect(builder.AddProcessorYAML(strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temp";
+    if (msg.payload === "bad") { return [42]; }
+    return msg;
+`))).To(Succeed())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			msg0 := service.NewMessage([]byte("good1"))
+			msg1 := service.NewMessage([]byte("bad"))
+			msg2 := service.NewMessage([]byte("good2"))
+			batch := service.MessageBatch{msg0, msg1, msg2}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "2s").Should(Equal(int64(2)))
+
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "bad_array_element")
+			}, "2s").Should(Equal(int64(1)))
+		})
+
+		It("should drop a message missing required fields with reason=validation_missing_fields", func() {
+			// A msg whose defaults don't set location_path/data_contract/tag_name
+			// fails validateMessage and is dropped.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			// defaults sets only tag_name, missing location_path and data_contract.
+			Expect(builder.AddProcessorYAML(strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    msg.meta.tag_name = "temp";
+    return msg;
+`))).To(Succeed())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			msg0 := service.NewMessage([]byte("good1"))
+			msg1 := service.NewMessage([]byte("good2"))
+			batch := service.MessageBatch{msg0, msg1}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// No consumer output: both messages missing required fields.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "validation_missing_fields")
+			}, "2s").Should(Equal(int64(2)))
+		})
+
+		It("should drop a message with topic-build failure with reason=topic_build_failed", func() {
+			// A msg whose location_path starts with _ (invalid per ISA-95) fails
+			// constructUMHTopic and is dropped.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			// defaults sets location_path starting with _ (invalid).
+			Expect(builder.AddProcessorYAML(strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "_invalid";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temp";
+    return msg;
+`))).To(Succeed())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			msg0 := service.NewMessage([]byte("good1"))
+			msg1 := service.NewMessage([]byte("good2"))
+			batch := service.MessageBatch{msg0, msg1}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// No consumer output: topic build fails for both.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "topic_build_failed")
+			}, "2s").Should(Equal(int64(2)))
+		})
+
+		It("should drop a message with unconvertable value with reason=value_convert_failed", func() {
+			// A msg whose datatype="number" but payload is a non-numeric
+			// string fails convertValue in constructFinalMessage.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			// defaults sets datatype="number" but payload is a non-numeric string.
+			Expect(builder.AddProcessorYAML(strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temp";
+    msg.meta.datatype = "number";
+    msg.payload = "not_a_number";
+    return msg;
+`))).To(Succeed())
+
+			var consumerCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
+				atomic.AddInt64(&consumerCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			msg0 := service.NewMessage([]byte("good1"))
+			msg1 := service.NewMessage([]byte("good2"))
+			batch := service.MessageBatch{msg0, msg1}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// No consumer output: convertValue fails for both.
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&consumerCount)
+			}, "500ms").Should(Equal(int64(0)))
+
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "value_convert_failed")
+			}, "2s").Should(Equal(int64(2)))
+		})
+
+		It("capstone: [good, poisoned, good] through tag_processor + key-guard stub output", func() {
+			// End-to-end capstone: 3 messages through the full tag_processor
+			// (defaults + condition that throws on the poisoned one) → a key-guard
+			// stub output that mirrors uns_output's mandatory umh_topic check.
+			// Under drop-loudly: the poisoned msg is dropped at the processor
+			// (never reaches the output), the 2 good msgs are written with
+			// umh_topic, 0 nacks, 1 messages_dropped{reason=js_throw}.
+			env := service.NewEnvironment()
+
+			var mu sync.Mutex
+			counts := map[string]int64{}
+			exporter := &counterCaptureMetrics{mu: &mu, counts: counts}
+
+			Expect(env.RegisterMetricsExporter("testmetrics", service.NewConfigSpec(),
+				func(_ *service.ParsedConfig, _ *service.Logger) (service.MetricsExporter, error) {
+					return exporter, nil
+				})).To(Succeed())
+
+			builder := env.NewStreamBuilder()
+
+			var batchHandler service.MessageBatchHandlerFunc
+			batchHandler, err := builder.AddBatchProducerFunc()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(builder.SetMetricsYAML("testmetrics: {}")).To(Succeed())
+
+			// defaults sets required metadata; condition throws on poisoned payload.
+			Expect(builder.AddProcessorYAML(strings.TrimSpace(`
+tag_processor:
+  defaults: |
+    msg.meta.location_path = "enterprise";
+    msg.meta.data_contract = "_raw";
+    msg.meta.tag_name = "temp";
+    return msg;
+  conditions:
+    - if: "msg.payload === 'poison'"
+      then: |
+        throw new Error("poisoned");
+`))).To(Succeed())
+
+			// Key-guard stub output: mirrors uns_output.go:403-404.
+			// Acks messages with umh_topic; counts keyless messages as nacks.
+			var writtenCount int64
+			var keylessCount int64
+			Expect(builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				topic, exists := msg.MetaGet("umh_topic")
+				if !exists || topic == "" || topic == "null" {
+					atomic.AddInt64(&keylessCount, 1)
+					return nil
+				}
+				atomic.AddInt64(&writtenCount, 1)
+				return nil
+			})).To(Succeed())
+
+			stream, err := builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			go func() { _ = stream.Run(ctx) }()
+
+			// [good, poisoned, good]
+			msg0 := service.NewMessage([]byte("good1"))
+			msg1 := service.NewMessage([]byte("poison"))
+			msg2 := service.NewMessage([]byte("good2"))
+			batch := service.MessageBatch{msg0, msg1, msg2}
+			Expect(batchHandler(ctx, batch)).To(Succeed())
+
+			// Exactly 2 messages written (the good ones), both with umh_topic.
+			Eventually(func() int64 {
+				return atomic.LoadInt64(&writtenCount)
+			}, "2s").Should(Equal(int64(2)))
+
+			// 0 keyless messages reached the output (no nack).
+			Consistently(func() int64 {
+				return atomic.LoadInt64(&keylessCount)
+			}, "500ms").Should(Equal(int64(0)))
+
+			// Exactly 1 messages_dropped{reason=js_throw} (the poisoned one).
+			Eventually(func() int64 {
+				return exporter.labeledValue("messages_dropped", "js_throw")
+			}, "2s").Should(Equal(int64(1)))
 		})
 	})
 })
@@ -2297,8 +4401,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -2330,11 +4437,16 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(3))
 
 			// Verify all messages were processed correctly
-			for i, msg := range messages {
+			messagesMutex.Lock()
+			snapshot := append([]*service.Message(nil), messages...)
+			messagesMutex.Unlock()
+			for i, msg := range snapshot {
 				GinkgoWriter.Printf("Processing message %d\n", i+1)
 
 				// All should have defaults applied
@@ -2398,8 +4510,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -2415,18 +4530,23 @@ tag_processor:
 			}()
 
 			// Send multiple messages to test VM reuse with complex operations
-			for i := 0; i < 5; i++ {
+			for range 5 {
 				testMsg := service.NewMessage([]byte("42.5"))
 				err = msgHandler(ctx, testMsg)
 				Expect(err).NotTo(HaveOccurred())
 			}
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(5))
 
 			// Verify all messages were processed with complex calculations
-			for i, msg := range messages {
+			messagesMutex.Lock()
+			snapshot := append([]*service.Message(nil), messages...)
+			messagesMutex.Unlock()
+			for i, msg := range snapshot {
 				GinkgoWriter.Printf("Verifying complex message %d\n", i+1)
 
 				msg.MetaWalk(func(key, value string) error {
@@ -2443,7 +4563,7 @@ tag_processor:
 				complex_result, exists := msg.MetaGet("complex_result")
 				Expect(exists).To(BeTrue())
 
-				var result map[string]interface{}
+				var result map[string]any
 				err := json.Unmarshal([]byte(complex_result), &result)
 				Expect(err).NotTo(HaveOccurred())
 
@@ -2479,9 +4599,12 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			var messageCount int64
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				atomic.AddInt64(&messageCount, 1)
 				return nil
 			})
@@ -2499,7 +4622,7 @@ tag_processor:
 
 			// Send many messages concurrently to stress VM pool
 			const numMessages = 20
-			for i := 0; i < numMessages; i++ {
+			for i := range numMessages {
 				testMsg := service.NewMessage([]byte(`{"test": "data"}`))
 				testMsg.MetaSet("message_id", strings.TrimSpace(string(rune('A'+i))))
 				err = msgHandler(ctx, testMsg)
@@ -2511,9 +4634,14 @@ tag_processor:
 			}).Should(Equal(int64(numMessages)))
 
 			// Verify all messages were processed correctly
+			messagesMutex.Lock()
 			Expect(messages).To(HaveLen(numMessages))
+			messagesMutex.Unlock()
 
-			for i, msg := range messages {
+			messagesMutex.Lock()
+			snapshot := append([]*service.Message(nil), messages...)
+			messagesMutex.Unlock()
+			for i, msg := range snapshot {
 				GinkgoWriter.Printf("Verifying concurrent message %d\n", i+1)
 
 				// All should have basic metadata
@@ -2569,8 +4697,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -2599,12 +4730,17 @@ tag_processor:
 
 			// We should get at least the success message (error message might be dropped)
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(BeNumerically(">=", 1))
 
 			// Find the success message (if any messages were processed)
 			var successProcessed bool
-			for _, msg := range messages {
+			messagesMutex.Lock()
+			snapshot := append([]*service.Message(nil), messages...)
+			messagesMutex.Unlock()
+			for _, msg := range snapshot {
 				if processed, exists := msg.MetaGet("processed"); exists && processed == "success" {
 					successProcessed = true
 					break
@@ -2612,7 +4748,10 @@ tag_processor:
 			}
 
 			// If we got any messages, at least one should be the success message
-			if len(messages) > 0 {
+			messagesMutex.Lock()
+			msgLen := len(messages)
+			messagesMutex.Unlock()
+			if msgLen > 0 {
 				Expect(successProcessed).To(BeTrue(), "Success message should be processed even after JS error")
 			}
 		})
@@ -2637,8 +4776,11 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			var messages []*service.Message
+			var messagesMutex sync.Mutex
 			err = builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+				messagesMutex.Lock()
 				messages = append(messages, msg)
+				messagesMutex.Unlock()
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -2658,10 +4800,14 @@ tag_processor:
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() int {
+				messagesMutex.Lock()
+				defer messagesMutex.Unlock()
 				return len(messages)
 			}).Should(Equal(1))
 
+			messagesMutex.Lock()
 			msg := messages[0]
+			messagesMutex.Unlock()
 			structured, err := msg.AsStructured()
 			Expect(err).NotTo(HaveOccurred())
 
@@ -2675,5 +4821,127 @@ tag_processor:
 			Expect(ok).To(BeTrue(), fmt.Sprintf("expected string but got %T: %v", value, value))
 			Expect(strValue).To(Equal("1.23456789e+09"))
 		})
+	})
+})
+
+// counterCaptureMetrics is a service.MetricsExporter that aggregates integer
+// counter increments by counter name and label values. It is the only public
+// seam (outside the benthos module) to observe processor-level MetricCounter
+// increments such as tag_processor's internal messagesDropped, which is not
+// readable through the default StreamBuilder (its metrics are no-op).
+//
+// counts holds the total per counter name (summed across all label values),
+// preserving backward compatibility with existing assertions. labeledCounts
+// holds per-(counter name, label-values) counts so tests can assert the
+// reason label on messages_dropped.
+type counterCaptureMetrics struct {
+	mu            *sync.Mutex
+	counts        map[string]int64
+	labeledCounts map[string]map[string]int64
+}
+
+func (m *counterCaptureMetrics) NewCounterCtor(name string, _ ...string) service.MetricsExporterCounterCtor {
+	m.mu.Lock()
+	if m.labeledCounts == nil {
+		m.labeledCounts = make(map[string]map[string]int64)
+	}
+	m.mu.Unlock()
+	return func(labelValues ...string) service.MetricsExporterCounter {
+		return &capturedCounter{
+			name:          name,
+			labelValues:   labelValues,
+			mu:            m.mu,
+			counts:        m.counts,
+			labeledCounts: m.labeledCounts,
+		}
+	}
+}
+
+func (m *counterCaptureMetrics) NewTimerCtor(string, ...string) service.MetricsExporterTimerCtor {
+	return func(...string) service.MetricsExporterTimer { return noopTimer{} }
+}
+
+func (m *counterCaptureMetrics) NewGaugeCtor(string, ...string) service.MetricsExporterGaugeCtor {
+	return func(...string) service.MetricsExporterGauge { return noopGauge{} }
+}
+
+func (m *counterCaptureMetrics) Close(context.Context) error { return nil }
+
+// labeledValue returns the captured count for the given counter name and
+// label values. Benthos prepends internal label values (e.g. "",
+// "root.pipeline.processors.0") to the user-provided ones, so the match is a
+// suffix match on the joined key. When no label values are given, the total
+// across all label combinations is returned. Returns 0 if the counter or label
+// combination was never incremented.
+func (m *counterCaptureMetrics) labeledValue(name string, labelValues ...string) int64 {
+	suffix := strings.Join(labelValues, ",")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inner := m.labeledCounts[name]
+	if inner == nil {
+		return 0
+	}
+	if suffix == "" {
+		var total int64
+		for _, v := range inner {
+			total += v
+		}
+		return total
+	}
+	var total int64
+	for k, v := range inner {
+		if k == suffix || strings.HasSuffix(k, ","+suffix) {
+			total += v
+		}
+	}
+	return total
+}
+
+type capturedCounter struct {
+	name          string
+	labelValues   []string
+	mu            *sync.Mutex
+	counts        map[string]int64
+	labeledCounts map[string]map[string]int64
+}
+
+func (c *capturedCounter) Incr(n int64) {
+	key := strings.Join(c.labelValues, ",")
+	c.mu.Lock()
+	c.counts[c.name] += n
+	if c.labeledCounts != nil {
+		if c.labeledCounts[c.name] == nil {
+			c.labeledCounts[c.name] = make(map[string]int64)
+		}
+		c.labeledCounts[c.name][key] += n
+	}
+	c.mu.Unlock()
+}
+
+type noopTimer struct{}
+
+func (noopTimer) Timing(int64) {}
+
+type noopGauge struct{}
+
+func (noopGauge) Set(int64) {}
+
+var _ = Describe("counterCaptureMetrics labeled capture", func() {
+	It("should capture the label value when a labeled counter is incremented", func() {
+		var mu sync.Mutex
+		counts := map[string]int64{}
+		labeledCounts := map[string]map[string]int64{}
+		exporter := &counterCaptureMetrics{
+			mu:            &mu,
+			counts:        counts,
+			labeledCounts: labeledCounts,
+		}
+
+		ctor := exporter.NewCounterCtor("messages_dropped", "reason")
+		counter := ctor("js_throw")
+		counter.Incr(1)
+
+		Expect(counts["messages_dropped"]).To(Equal(int64(1)))
+		Expect(exporter.labeledValue("messages_dropped", "js_throw")).To(Equal(int64(1)))
 	})
 })

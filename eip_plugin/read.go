@@ -305,13 +305,14 @@ func parseTagsIntoMap(items []*CIPReadItem) (map[string]any, error) {
 
 // CreateMessageFromValue is used to set the metadata for the eip-tags and
 // create the message from the rawValue which is read from the tags/attributes
-func CreateMessageFromValue(rawValue []byte, item *CIPReadItem) (*service.Message, error) {
+func CreateMessageFromValue(rawValue []byte, item *CIPReadItem) *service.Message {
 	var tagType string
 	switch item.CIPDatatype {
 	case gologix.CIPTypeBOOL:
 		tagType = "bool"
-	case gologix.CIPTypeBYTE, gologix.CIPTypeSINT, gologix.CIPTypeUINT, gologix.CIPTypeINT,
-		gologix.CIPTypeUDINT, gologix.CIPTypeDINT, gologix.CIPTypeLWORD, gologix.CIPTypeLINT,
+	case gologix.CIPTypeBYTE, gologix.CIPTypeWORD, gologix.CIPTypeDWORD, gologix.CIPTypeLWORD,
+		gologix.CIPTypeSINT, gologix.CIPTypeINT, gologix.CIPTypeDINT, gologix.CIPTypeLINT,
+		gologix.CIPTypeUSINT, gologix.CIPTypeUINT, gologix.CIPTypeUDINT, gologix.CIPTypeULINT,
 		gologix.CIPTypeREAL, gologix.CIPTypeLREAL:
 		tagType = "number"
 	default:
@@ -319,19 +320,16 @@ func CreateMessageFromValue(rawValue []byte, item *CIPReadItem) (*service.Messag
 	}
 
 	msg := service.NewMessage(rawValue)
-	msg.MetaSetMut("eip_tag_name", item.TagName) // tag name
-	msg.MetaSetMut("eip_tag_type", tagType)      // data type - number, bool, or string
-	msg.MetaSetMut("eip_tag_path", item.TagName) // tag path - usually something like `Program:Gologix_Tests.ReadTest`
-
-	if item.IsAttribute {
-		msg.MetaSetMut("eip_tag_name", item.AttributeName) // replace tag name by attribute name
-	}
+	msg.MetaSetMut("eip_tag_name", item.name())
+	msg.MetaSetMut("eip_tag_type", tagType)
+	// the alias may rename the tag below, the path keeps where the value came from
+	msg.MetaSetMut("eip_tag_path", item.name())
 
 	if item.Alias != "" {
 		msg.MetaSet("eip_tag_name", item.Alias) // replace tag name by alias if provided
 	}
 
-	return msg, nil
+	return msg
 }
 
 // readAndConvertAttribute is used to read data from attributes and then use
@@ -339,9 +337,9 @@ func CreateMessageFromValue(rawValue []byte, item *CIPReadItem) (*service.Messag
 func (g *EIPInput) readAndConvertAttribute(item *CIPReadItem) (string, error) {
 	resp, err := g.CIP.GetAttrSingle(item.CIPClass, item.CIPInstance, item.CIPAttribute)
 	if err != nil {
-		g.Log.Errorf("failed to get attribute - class %v, instance %v, attribute %v, err: %v",
+		// %w keeps the socket error reachable for isTransportError
+		return "", fmt.Errorf("failed to get attribute - class %v, instance %v, attribute %v: %w",
 			item.CIPClass, item.CIPInstance, item.CIPAttribute, err)
-		return "", err
 	}
 
 	// convert the CIPItem into the corresponding data

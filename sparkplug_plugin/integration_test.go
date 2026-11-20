@@ -58,7 +58,6 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-	"testing"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -673,6 +672,141 @@ logger:
 			}
 
 			fmt.Printf("✅ Integration test completed - %d messages captured and validated\n", len(messages))
+		})
+
+		It("should surface per-metric timestamps as spb_timestamp end-to-end (ENG-5341)", func() {
+			By("Creating a primary-host stream capturing messages")
+
+			uniqueGroupID := fmt.Sprintf("TSTest-%d-%s", GinkgoParallelProcess(), uuid.New().String()[:8])
+
+			streamBuilder := service.NewStreamBuilder()
+			err := streamBuilder.SetYAML(fmt.Sprintf(`
+input:
+  sparkplug_b:
+    mqtt:
+      urls: ["%s"]
+      client_id: "test-ts-host-%d-%s"
+      qos: 1
+    identity:
+      group_id: "%s"
+      edge_node_id: "CentralHost"
+    role: "primary"
+    subscription:
+      groups: ["%s"]
+
+output:
+  message_capture: {}
+
+logger:
+  level: INFO
+`, brokerURL, GinkgoParallelProcess(), uuid.New().String()[:8], uniqueGroupID, uniqueGroupID))
+			Expect(err).NotTo(HaveOccurred(), "Failed to parse stream configuration")
+
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			stream, err := streamBuilder.Build()
+			Expect(err).NotTo(HaveOccurred(), "Failed to build stream")
+
+			streamDone := make(chan error, 1)
+			go func() {
+				streamDone <- stream.Run(ctx)
+			}()
+
+			time.Sleep(3 * time.Second)
+
+			// Distinct per-metric timestamps, all different from the payload-level timestamp.
+			payloadTS := uint64(time.Now().UnixMilli())
+			tempTS := payloadTS + 111
+			pressureTS := payloadTS + 222
+
+			By("Publishing NBIRTH declaring Temperature (alias 100) and Pressure (alias 101)")
+			nbirth := &sparkplugb.Payload{
+				Timestamp: uint64Ptr(payloadTS),
+				Seq:       uint64Ptr(0),
+				Metrics: []*sparkplugb.Payload_Metric{
+					{Name: stringPtr("bdSeq"), Alias: uint64Ptr(0), Datatype: uint32Ptr(7), Value: &sparkplugb.Payload_Metric_LongValue{LongValue: 12345}},
+					{Name: stringPtr("Temperature"), Alias: uint64Ptr(100), Datatype: uint32Ptr(10), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 25.5}},
+					{Name: stringPtr("Pressure"), Alias: uint64Ptr(101), Datatype: uint32Ptr(10), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 1013.25}},
+				},
+			}
+			birthBytes, err := proto.Marshal(nbirth)
+			Expect(err).NotTo(HaveOccurred())
+			token := mqttClient.Publish(fmt.Sprintf("spBv1.0/%s/NBIRTH/Line1", uniqueGroupID), 1, false, birthBytes)
+			Expect(token.Wait()).To(BeTrue())
+			Expect(token.Error()).NotTo(HaveOccurred())
+
+			time.Sleep(2 * time.Second)
+
+			By("Publishing NDATA with two metrics carrying distinct per-metric timestamps")
+			ndata := &sparkplugb.Payload{
+				Timestamp: uint64Ptr(payloadTS),
+				Seq:       uint64Ptr(1),
+				Metrics: []*sparkplugb.Payload_Metric{
+					{Alias: uint64Ptr(100), Timestamp: uint64Ptr(tempTS), Datatype: uint32Ptr(10), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 26.8}},
+					{Alias: uint64Ptr(101), Timestamp: uint64Ptr(pressureTS), Datatype: uint32Ptr(10), Value: &sparkplugb.Payload_Metric_DoubleValue{DoubleValue: 1015.5}},
+				},
+			}
+			dataBytes, err := proto.Marshal(ndata)
+			Expect(err).NotTo(HaveOccurred())
+			token = mqttClient.Publish(fmt.Sprintf("spBv1.0/%s/NDATA/Line1", uniqueGroupID), 1, false, dataBytes)
+			Expect(token.Wait()).To(BeTrue())
+			Expect(token.Error()).NotTo(HaveOccurred())
+
+			time.Sleep(2 * time.Second)
+			cancel()
+
+			select {
+			case <-streamDone:
+			case <-time.After(5 * time.Second):
+			}
+
+			By("Collecting captured messages")
+			messageCapture := getCurrentTestCapture()
+			Expect(messageCapture).NotTo(BeNil(), "MessageCapture should be available")
+
+			var messages []*service.Message
+			timeout := time.After(2 * time.Second)
+		collectTS:
+			for {
+				select {
+				case msg := <-messageCapture.messages:
+					if msg != nil {
+						messages = append(messages, msg)
+					}
+				case <-timeout:
+					break collectTS
+				default:
+					if len(messages) > 0 {
+						time.Sleep(500 * time.Millisecond)
+						break collectTS
+					}
+					time.Sleep(200 * time.Millisecond)
+				}
+			}
+
+			By("Verifying each NDATA metric kept its own timestamp")
+			tsByMetric := map[string]string{}
+			for _, msg := range messages {
+				msgType, _ := msg.MetaGet("spb_message_type")
+				if msgType != "NDATA" {
+					continue
+				}
+				name, ok := msg.MetaGet("spb_metric_name")
+				Expect(ok).To(BeTrue())
+				ts, ok := msg.MetaGet("spb_timestamp")
+				Expect(ok).To(BeTrue(), "NDATA metric %q should carry spb_timestamp", name)
+				tsByMetric[name] = ts
+			}
+
+			Expect(tsByMetric).To(HaveKeyWithValue("Temperature", fmt.Sprintf("%d", tempTS)),
+				"Temperature must use its own metric timestamp, not the payload timestamp")
+			Expect(tsByMetric).To(HaveKeyWithValue("Pressure", fmt.Sprintf("%d", pressureTS)),
+				"Pressure must use its own metric timestamp, not the payload timestamp")
+			Expect(tsByMetric["Temperature"]).NotTo(Equal(tsByMetric["Pressure"]),
+				"the two metrics must not collapse to a single timestamp")
+
+			fmt.Printf("✅ ENG-5341 end-to-end timestamps: %+v\n", tsByMetric)
 		})
 
 		It("should handle broker disconnection gracefully", func() {

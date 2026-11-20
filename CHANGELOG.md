@@ -1,5 +1,109 @@
 # Changelog
 
+## [v0.16.2]
+
+### Improvements
+
+- The Historian output reports a retention, compress_after, value_chunk_interval, attribute_chunk_interval or write_timeout it cannot use, such as `168` without a unit, as a config lint error that names the field, before it starts (ENG-5693)
+
+### Fixes
+
+- The mongodb input, output, processor and cache use version 2.9.3 of the MongoDB Go driver, so a malformed BSON document no longer crashes benthos. A pipeline was exposed only if it used one of those four components (CVE-2026-107324, CVE-2026-107325); the same version closes the GridFS and `Client.BulkWrite` advisories CVE-2026-88031 and CVE-2026-81521 (ENG-7559)
+- Updated the JOSE library (go-jose v4.1.4 to v4.1.9), so maliciously crafted JSON Web Keys can no longer consume excessive CPU while being parsed (CVE-2026-116587). The same upgrade closes the two further advisories that applied at v4.1.4, CVE-2026-116585 and CVE-2026-116586 (ENG-7668)
+
+## [v0.16.1]
+
+### Improvements
+
+- Wait time between reads on the S7 input is now configurable with `timeBetweenReads`, for example `500ms` or `2s`. The default is unchanged at `1s`, and very short values can overload the PLC (ENG-6196)
+
+### Fixes
+
+- The Snowflake output uses version 2 of the Snowflake Go driver, the same version Redpanda Connect uses, so benthos no longer exits at startup with "sql: Register called twice for driver snowflake" (ENG-7114)
+- Beckhoff ADS symbol names are cut at the first NUL byte, so padding after the name no longer ends up in the symbol name (ENG-6641)
+
+## [v0.16.0]
+
+### Breaking Changes
+
+- Beckhoff ADS input plugin for reading variables from TwinCAT 2 and TwinCAT 3 PLCs over the ADS protocol, with optional automatic route registration. It replaces the community `ads` plugin under the same input name, and a config using the old field names fails to start: `targetIP` and `targetPort` become `targetAddress` (`ip` or `ip:port`), `routeUsername` becomes `username`, `routePassword` becomes `password`, `routeHostAddress` becomes `hostIP`, `logLevel` is removed in favor of `logger.level`, `symbols` is removed in favor of `unifiedAddress`, and the `symbol_name` metadata field is now `ads_symbol_name` (ENG-4538)
+
+### Fixes
+
+- Sparkplug B input: metric datatypes now survive from BIRTH to DATA for devices that repeat the metric name in NDATA/DDATA. The alias cache restored the datatype only when the DATA metric arrived without a name, so devices sending name and alias together kept losing it, leaving `spb_datatype` missing and decoding signed integers as their unsigned wire value (an `Int32` of `-12` surfaced as `4294967284`). Devices sending the alias alone were already correct (ENG-6159)
+
+## [v0.15.2]
+
+### Improvements
+
+- The historian output takes `value_chunk_interval` and `attribute_chunk_interval`, setting how wide a TimescaleDB chunk is for each of its two hypertables. Both default to 168h, the width the tables were previously fixed at. The interval applies when a table is created, so a later edit needs `set_chunk_time_interval` on the database; a restart warns when a configured interval no longer matches its table (ENG-5689)
+
+### Fixes
+
+- The historian output now applies compression and retention to every data contract. Previously it was only applied to the first one. This is backwards-compatible with existing historian-setups. (ENG-5757)
+- The historian no longer stores timestamp_ms as a tag attribute, which previously wrote one attribute row per data point (ENG-5768)
+
+## [v0.15.1]
+
+### Improvements
+
+- A message dropped for a missing `timestamp_ms` says how to supply one, noting that the tag processor sets the field automatically and that any other processing has to carry it in the payload (ENG-5412)
+- The historian output reports dropped messages at error level, one aggregated line per reason per batch, naming the reason, how much of the batch it accounted for, an example topic and the fix. Reporting starts with the first batch rather than after 30 seconds, and `missing_value_or_timestamp` is split into `missing_value` and `missing_timestamp` (ENG-5414)
+- The historian output refuses a whole batch carrying a message for a data contract other than its configured `data_contract_name`, rather than discarding those messages silently, and the batch is not retried. The error names the contracts that arrived and the `umh_topics` pattern to narrow to, so a subscription broader than one contract stores nothing until it is narrowed (ENG-5413)
+- A versioned data contract whose schema was bypassed is rejected by the historian output, because the version claims a schema that was never applied; an unversioned contract such as `_historian` is stored, since it never claimed one. A tag that changes datatype still has its offending rows dropped, and the error names the new `allow_datatype_changes` option that stores both types on it instead. Payloads carrying fields beyond `value` and `timestamp_ms` are rejected as `not_timeseries` (ENG-5419, ENG-5415, ENG-5468)
+- The historian output's drop counter is renamed from `historian_messages_dropped` to `messages_dropped`, matching the metric name every other plugin already uses (ENG-5507)
+- The historian output stores `data_contract_version` as metadata, read as `attribute->>'data_contract_version'`, so a connected application can tell which contract version a reading arrived under. All versions of a contract share one table and one `umh.tag` row, so no column recorded the version and it was previously dropped (ENG-5474)
+
+### Fixes
+
+- The historian output no longer discards tags whose virtual path merely starts with the OPC UA diagnostics prefix, such as `Root.Objects.ServerRoom`; only the `Root.Objects.Server` subtree itself is skipped (ENG-5414)
+
+## [v0.15.0]
+
+### Improvements
+
+- Stopping an EtherNet/IP input no longer waits out the current poll interval (ENG-5401)
+- Connection and session diagnostics from the EtherNet/IP protocol library now surface in the input logs, including failures it previously swallowed (ENG-5401)
+
+### Fixes
+
+- The EtherNet/IP input now reconnects after losing the connection to the controller; it previously kept reporting a healthy connection while delivering no data (ENG-5401)
+- A single unreadable tag or attribute no longer stops the rest of an EtherNet/IP poll; only a poll where nothing at all can be read triggers a reconnect (ENG-5401)
+- `word`, `dword`, `uint8` and `uint64` values from the EtherNet/IP input are now labelled `eip_tag_type` `number` instead of `string`, and `word` and `dword` attributes decode to a number instead of a stringified byte slice (ENG-5401)
+
+## [v0.14.0]
+
+### New
+
+- Node-RED JavaScript processor can return an array of message objects to publish one output message per array element (ENG-5240)
+
+### Fixes
+
+- A Node-RED JavaScript processor function or tag processor condition that throws now drops only the failing message (warn-logged) and lets the rest of the batch continue, instead of the whole batch failing and retrying (ENG-5240)
+- Node-RED JavaScript and tag processor counters now report throws accurately: messages_errored is gone, throws count in messages_dropped{reason=js_throw}, and messages_processed counts produced outputs instead of every input attempt (ENG-5240)
+- Metadata values in Kafka headers are now serialized consistently across the Node-RED JavaScript and tag processors; non-scalar and nested-null values serialize as JSON so a nested null no longer appears as the literal string <nil>, and in the Node-RED JavaScript processor numeric and boolean metadata values that were previously silently dropped now appear as strings (ENG-5240)
+- UNS schema validation now reports a clear datatype mismatch (e.g. sent timeseries-number, tag registered as timeseries-string) instead of a confusing error that listed the tag as both valid and invalid (ENG-5347)
+- Sparkplug B input derives `spb_timestamp` from each metric's own timestamp when present, falling back to the payload timestamp; multi-metric NDATA/DDATA no longer collapse to one timestamp (ENG-5341)
+- The TimescaleDB historian output no longer warns when a batch holds only other contracts' data; it logs once when it stores its first message, and once if data arrives but none matches the configured data contract (ENG-5394)
+- The tag processor no longer converts numeric-looking string values to numbers; a string read from the source stays a string in the UNS, and msg.meta.datatype = "number" remains available for explicit coercion (ENG-5422)
+
+## [v0.13.2]
+
+### New
+
+- TimescaleDB Historian output that saves a UNS data contract into TimescaleDB under a dedicated umh schema. By default every metadata key is stored; `metadata_keys_exclude` drops selected keys by exact name or `prefix_*` while keeping the rest (ENG-5181)
+
+## [v0.13.1]
+
+### New
+
+- Node-RED JS and tag processor expose a `protobuf` namespace (`protobuf.decode` / `protobuf.encode`) to decode and encode protobuf messages inline using an embedded base64 descriptor set, including proto2 extension fields (ENG-5243)
+- Sparkplug B input decodes proto2 extension fields from an inline schema, exposing them per metric as `spb_ext_*` and `spb_metric_decoded` metadata (ENG-5229)
+
+### Fixes
+
+- Sparkplug B input can nest device data under its edge node via include_edge_node_in_location, so identically-named devices on different edge nodes no longer collide at the top of the hierarchy (ENG-5175)
+
 ## [v0.13.0]
 
 ### Improvements

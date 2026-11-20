@@ -17,6 +17,7 @@ package eip_plugin_test
 import (
 	"context"
 	"reflect"
+	"unsafe"
 
 	"github.com/danomagnum/gologix"
 	. "github.com/onsi/ginkgo/v2"
@@ -292,17 +293,19 @@ func GetUnderlyingEIPInputForTest(bi service.BatchInput) *EIPInput {
 	// Use reflection to try to get a field called "Input"
 	v := reflect.ValueOf(bi)
 	// If the wrapper is a pointer, get the element
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		v = v.Elem()
 	}
-	field := v.FieldByName("wrapped")
+	// the wrapped input sits in an unexported field, hence the unsafe read
+	field := v.FieldByName("child")
 	if !field.IsValid() {
 		return nil
 	}
-	// Assert that the underlying type is *EIPInput.
-	wrapped := field.Interface()
+
+	wrapped := reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Interface()
 	if eip, ok := wrapped.(*EIPInput); ok {
 		return eip
 	}
+
 	return nil
 }

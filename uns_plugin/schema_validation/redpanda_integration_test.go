@@ -706,12 +706,14 @@ var _ = Describe("Real Redpanda Integration Tests", Ordered, Label("redpanda"), 
 			Expect(result.SchemaCheckPassed).To(BeTrue())
 			Expect(result.ContractName).To(Equal("_pump_data"))
 
-			// Test that number values fail on string-only virtual paths
+			// Test that number values fail on string-only virtual paths with a clear datatype-mismatch message.
 			numberPayload := []byte(`{"timestamp_ms": 1719859200000, "value": 12345}`)
 			result = validator.Validate(serialTopic, numberPayload)
 			Expect(result.SchemaCheckPassed).To(BeFalse())
 			Expect(result.Error).To(HaveOccurred())
-			Expect(result.Error.Error()).To(ContainSubstring("schema validation failed"))
+			Expect(result.Error.Error()).To(ContainSubstring("datatype mismatch"))
+			Expect(result.Error.Error()).To(ContainSubstring("want timeseries-string"))
+			Expect(result.Error.Error()).To(ContainSubstring("got timeseries-number"))
 		})
 	})
 

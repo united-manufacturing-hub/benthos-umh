@@ -217,7 +217,7 @@ var _ = Describe("Test Against WAGO PLC", FlakeAttempts(3), Serial, func() {
 			return
 		}
 
-		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel = context.WithTimeout(context.Background(), 45*time.Second)
 	})
 
 	AfterEach(func() {

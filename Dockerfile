@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM golang:1.26.4@sha256:792443b89f65105abba56b9bd5e97f680a80074ac62fc844a584212f8c8102c3 AS build
+FROM golang:1.27.4@sha256:5e8afd493a7124a8586e134d9b532731161d4b9becf9dee5a5956b107426f93d AS build
 
 RUN useradd -u 10001 benthos
 
@@ -25,6 +25,7 @@ RUN go mod download
 
 COPY ./pkg ./pkg
 COPY ./cmd ./cmd
+COPY ./beckhoff_ads_plugin ./beckhoff_ads_plugin
 COPY ./downsampler_plugin ./downsampler_plugin
 COPY ./opcua_plugin ./opcua_plugin
 COPY ./s7comm_plugin ./s7comm_plugin
@@ -39,6 +40,7 @@ COPY ./classic_to_core_plugin ./classic_to_core_plugin
 COPY ./sparkplug_plugin ./sparkplug_plugin
 COPY ./stream_processor_plugin ./stream_processor_plugin
 COPY ./snowflake_put_plugin ./snowflake_put_plugin
+COPY ./historian_plugin ./historian_plugin
 
 ENV CGO_ENABLED=0
 RUN go build \

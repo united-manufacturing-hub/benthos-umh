@@ -13,11 +13,17 @@
 # limitations under the License.
 include ./Makefile.Common
 
+# In CI, each test target writes a JUnit report named after the target.
+# ci.yml collects the reports and posts them as a comment on the pull request.
+ifeq ($(CI), true)
+JUNIT_REPORT = test-reports/$@.xml
+endif
+
 GINKGO_CMD=go run github.com/onsi/ginkgo/v2/ginkgo
-GINKGO_FLAGS=-r --output-interceptor-mode=none -trace -p --randomize-all --cover --coverprofile=cover.profile
+GINKGO_FLAGS=-r --output-interceptor-mode=none -trace -p --randomize-all --cover --coverprofile=cover.profile $(if $(JUNIT_REPORT),--junit-report=$(JUNIT_REPORT))
 GINKGO_SERIAL_FLAGS=$(GINKGO_FLAGS) --procs=1
 
-GOTESTSUM_FLAGS=--format pkgname -- -race -coverprofile=cover.profile
+GOTESTSUM_FLAGS=--format pkgname $(if $(JUNIT_REPORT),--junitfile $(JUNIT_REPORT)) -- -race -coverprofile=cover.profile
 
 BENTHOS_BIN := tmp/bin/benthos
 LOG_LEVEL ?= INFO
@@ -190,6 +196,21 @@ test-uns:
 test-uns-redpanda:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='!uns_beta' ./uns_plugin/...
 
+.PHONY: test-historian
+test-historian:
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='!postgres' ./historian_plugin/...
+
+# Functional TimescaleDB integration tests (testcontainers). Excludes the 'load' throughput
+# test, which is too heavy for CI -- run it on demand with test-historian-load.
+.PHONY: test-historian-postgres
+test-historian-postgres:
+	@TEST_HISTORIAN=true $(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='postgres && !load' ./historian_plugin/...
+
+# Heavy throughput test only; run locally when validating write performance, not in CI.
+.PHONY: test-historian-load
+test-historian-load:
+	@TEST_HISTORIAN=true $(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='load' ./historian_plugin/...
+
 .PHONY: test-s7comm
 test-s7comm:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./s7comm_plugin/...
@@ -224,6 +245,16 @@ test-sparkplug:
 test-classic-to-core:
 	@TEST_CLASSIC_TO_CORE=1 \
 		$(GINKGO_CMD) $(GINKGO_FLAGS) ./classic_to_core_plugin/...
+
+# The hardware specs skip themselves unless TEST_ADS_TC2_/TC3_TARGET_IP name a
+# reachable PLC, so this runs the unit specs alone by default.
+.PHONY: test-ads
+test-ads:
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./beckhoff_ads_plugin/...
+
+.PHONY: test-pkg
+test-pkg:
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./pkg/...
 
 .PHONY: test-downsampler
 test-downsampler:
@@ -272,17 +303,15 @@ endif
 changelog: $(CHANGIE)
 	$(CHANGIE) new
 
-.PHONY: changelog-merge
-changelog-merge: $(CHANGIE)
+# Batches the fragments into .changelog/<version>.md, moves them to .changelog/<version>/ and regenerates CHANGELOG.md.
+# The release workflow copies .changelog/<version>/ into umh-core. Fails if that version file already exists.
+.PHONY: release-changelog
+release-changelog: $(CHANGIE)
 ifndef VERSION
-	$(error VERSION is required. Usage: make changelog-merge VERSION=v0.13.0)
+	$(error VERSION is required. Usage: make release-changelog VERSION=v0.17.0)
 endif
-	$(CHANGIE) batch $(VERSION) --force
+	$(CHANGIE) batch $(VERSION) --move-dir $(VERSION)
 	$(CHANGIE) merge
-
-.PHONY: changelog-diff
-changelog-diff: $(CHANGIE)
-	@$(CHANGIE) diff 1 | tail -n +2
 
 .PHONY: serve-pprof
 serve-pprof:

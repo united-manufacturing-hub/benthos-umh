@@ -15,12 +15,104 @@
 ---
 name: Release
 
+# A published GitHub release on staging runs validate -> test -> build -> release
+# -> update-umh-core. Nothing is built or published until validate and the full
+# test suite pass. CLAUDE.md "Branches and pull requests" lists how to cut one.
 on:
-  push:
-    tags: [v*]
+  release:
+    types: [published]
+
+# One release at a time. Never cancel a running release halfway.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
+  validate:
+    # Prereleases are skipped, as in ManagementConsole. CI already pushes a
+    # per-PR image for testing.
+    if: >-
+      startsWith(github.event.release.tag_name, 'v') &&
+      !github.event.release.prerelease
+    runs-on: depot-ubuntu-24.04
+    permissions:
+      # Needed to turn a failed release back into a draft.
+      contents: write
+    steps:
+      # The release event checks out the tag, so GITHUB_SHA is the tagged commit.
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      # The checks after this one also run when it fails, so one run reports every problem.
+      - name: Check the tag is the staging tip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          staging="$(gh api "repos/$GITHUB_REPOSITORY/commits/staging" --jq .sha)"
+          if [ "$GITHUB_SHA" != "$staging" ]; then
+            echo "::error::Tag $TAG ($GITHUB_SHA) is not the staging tip ($staging). Create the release with --target staging."
+            exit 1
+          fi
+
+      - name: Check the title equals the tag
+        if: ${{ !cancelled() }}
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          TITLE: ${{ github.event.release.name }}
+        run: |
+          if [ "$TITLE" != "$TAG" ]; then
+            echo "::error::Release title '$TITLE' must equal the tag '$TAG'."
+            exit 1
+          fi
+
+      - name: Check the changelog is cut
+        if: ${{ !cancelled() }}
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          failed=0
+          # make release-changelog writes .changelog/$TAG.md and moves its fragments to .changelog/$TAG/.
+          # The release body comes from the first, the umh-core bump PR copies the second.
+          if [ ! -f ".changelog/$TAG.md" ] || [ -z "$(find ".changelog/$TAG" -name '*.yaml' 2>/dev/null)" ]; then
+            echo "::error::.changelog/$TAG.md or the fragments in .changelog/$TAG/ are missing. Run make release-changelog VERSION=$TAG and merge it into staging first."
+            failed=1
+          fi
+          # A fragment left here belongs to a PR merged after the changelog PR.
+          # Its change would ship without appearing in these release notes.
+          # changie batch cannot add it: it refuses an existing version file, and --force overwrites the file.
+          if [ -n "$(find .changelog/unreleased -type f ! -name .gitkeep)" ]; then
+            echo "::error::.changelog/unreleased/ is not empty. Copy each fragment's entry into .changelog/$TAG.md by hand, move the fragments to .changelog/$TAG/, run ./.tools/changie merge, and merge that into staging first."
+            failed=1
+          fi
+          exit "$failed"
+
+      - name: Turn the release back into a draft
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft
+
+  test:
+    needs: validate
+    # A called workflow gets at most the permissions granted here, checked before
+    # any job runs. ci.yml's test-report job declares pull-requests: write, so it
+    # must be granted even though test-report only runs on pull requests.
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/ci.yml
+    with:
+      full_run: true
+    secrets: inherit
+
   build-docker:
+    needs: test
     permissions:
       packages: write
       contents: read
@@ -28,8 +120,9 @@ jobs:
     runs-on: depot-ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
       - name: Build and Push Docker Image
         uses: ./.github/actions/build-docker
         with:
@@ -39,6 +132,9 @@ jobs:
           depot-token: ${{ secrets.DEPOT_TOKEN }}
 
   build-binaries:
+    needs: test
+    permissions:
+      contents: read
     timeout-minutes: 20
     strategy:
       matrix:
@@ -58,8 +154,9 @@ jobs:
     runs-on: depot-ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
       - name: Setup Go
         uses: ./.github/actions/setup-go
 
@@ -97,24 +194,22 @@ jobs:
           path: ./dist/${{ env.OUTPUT_NAME }}
 
   release:
-    needs: build-binaries
-    if: needs.build-binaries.result == 'success'
+    needs: [build-binaries, build-docker]
     permissions:
       contents: write
     runs-on: depot-ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-      - name: Setup Go
-        uses: ./.github/actions/setup-go
-
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
       - name: Extract release notes
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
-          BODY=$(make changelog-diff 2>/dev/null || true)
-          if [ -z "$BODY" ]; then
-            BODY="No changelog entries for this release."
-          fi
+          set -euo pipefail
+          # Drop the "## [vX.Y.Z]" heading; the release title already shows it.
+          BODY=$(tail -n +2 ".changelog/$TAG.md")
           {
             echo "RELEASE_BODY<<EOF"
             echo "$BODY"
@@ -134,13 +229,33 @@ jobs:
           artifacts: "./artifacts/artifact-*-${{ github.run_id }}-${{ github.run_attempt }}/*"
           token: ${{ secrets.GITHUB_TOKEN }}
           allowUpdates: true
-          omitBodyDuringUpdate: true
           body: ${{ env.RELEASE_BODY }}
-          prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'alpha') }}
+
+  # A failed test or build leaves a published release with no image or binaries.
+  # Turn it back into a draft, as validate does for its own failures.
+  revert-to-draft:
+    needs: [validate, test, build-docker, build-binaries, release]
+    if: >-
+      always() &&
+      needs.validate.result == 'success' &&
+      (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Turn the release back into a draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft
 
   update-umh-core:
     needs: release
     if: needs.release.result == 'success'
+    # Checks out benthos-umh with github.token. Writes to umh-core and
+    # ManagementConsole go through a GitHub App token.
+    permissions:
+      contents: read
     uses: ./.github/workflows/update-umh-core-version.yml
     with:
       tag: ${{ github.ref_name }}

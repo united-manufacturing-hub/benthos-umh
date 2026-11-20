@@ -17,8 +17,9 @@ name: main
 
 on:
   push:
-    branches: [main, staging]
+    branches: [staging]
   pull_request:
+    branches: [staging]
 
 jobs:
   build-docker:
@@ -29,8 +30,9 @@ jobs:
     runs-on: depot-ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
       - name: Build and Push Docker Image
         uses: ./.github/actions/build-docker
         with:
@@ -60,9 +62,4 @@ jobs:
 
             ```
             ghcr.io/united-manufacturing-hub/benthos-umh:sha-${{ steps.short-sha.outputs.SHORT_SHA }}
-            ```
-
-            Pull with:
-            ```bash
-            docker pull ghcr.io/united-manufacturing-hub/benthos-umh:sha-${{ steps.short-sha.outputs.SHORT_SHA }}
             ```

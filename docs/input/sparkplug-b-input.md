@@ -218,6 +218,51 @@ location path — enabling it there would prepend the edge node and corrupt the 
 > bridge's `tag_processor` by setting `location_path` from `spb_edge_node_id_sanitized` and
 > `virtual_path` from `spb_device_id_sanitized`.
 
+### Extension Decoding
+
+Sparkplug B lets publishers carry custom data in proto2 extensions of two messages:
+`Payload.MetaData` (per-metric metadata) and `Payload.MetricValueExtension` (the metric
+value). The standard decode keeps those bytes but cannot name them, because they are not in
+the built-in schema. Supply the extension definitions and the plugin decodes them per metric.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `decode_extensions.extensions` | `string` | `""` | Inline proto2 schema declaring the extensions to decode. Empty (the default) disables decoding. |
+
+Write only the `package` and `extend` blocks, plus any custom message types or well-known-type
+imports (for example `google/protobuf/timestamp.proto`). The plugin compiles the snippet as
+proto2 and adds the Sparkplug import, so do **not** write a `syntax` line or import the
+Sparkplug schema yourself. The extendees must use these fully-qualified names:
+
+- `org.eclipse.tahu.protobuf.Payload.MetaData`
+- `org.eclipse.tahu.protobuf.Payload.MetricValueExtension`
+
+```yaml
+input:
+  sparkplug_b:
+    mqtt:
+      urls: ["tcp://localhost:1883"]
+    identity:
+      group_id: "DeviceLevelTest"
+    decode_extensions:
+      extensions: |
+        package example;
+        extend org.eclipse.tahu.protobuf.Payload.MetaData {
+          optional int64 extra_value = 9;
+        }
+```
+
+For each metric that carries an extension, the plugin attaches:
+
+- `spb_ext_<field>` — one metadata key per scalar extension (for example, `spb_ext_extra_value`), usable directly in a `tag_processor` with no protobuf handling.
+- `spb_metric_decoded` — the full decoded metric as a JSON string, where extensions appear as `[package.field]` keys. Use it for message-typed extensions: `JSON.parse(msg.meta.spb_metric_decoded)`.
+
+Metrics without an extension are emitted unchanged. The snippet compiles once at startup; an
+unparseable snippet, a snippet with no extensions, or two scalar extensions whose names map to
+the same `spb_ext_*` key fails the bridge at startup with the offending line. Extensions are a
+proto2-only feature, so the snippet must be proto2; the device's own implementation language
+is irrelevant, since the wire format is identical.
+
 ---
 
 ## Technical Details
@@ -434,7 +479,7 @@ These fields provide additional Sparkplug context and are primarily for debuggin
 * `spb_device`: Same as `spb_device_id` (alternative field name)
 * `spb_sequence`: The sequence number of the Sparkplug message
 * `spb_bdseq`: The birth-death sequence number of the session
-* `spb_timestamp`: The timestamp (in epoch ms) provided with the metric
+* `spb_timestamp`: The timestamp (in epoch ms) of the metric. The per-metric timestamp is used when present, falling back to the payload-level timestamp otherwise. This preserves each sample's own capture time — important for buffered or historical metrics that share one payload but were sampled at different moments.
 * `spb_datatype`: The Sparkplug data type of the metric (e.g. "Int32", "Double", "Boolean")
 * `spb_alias`: The alias number of the metric (for debugging alias resolution)
 * `spb_is_historical`: Set to "true" if the metric was flagged as historical
@@ -452,7 +497,7 @@ For NDEATH/DDEATH messages, the plugin sets:
 
 When UMH conversion is successful, additional metadata is added:
 
-* `umh_conversion_status`: "success", "failed", "skipped_insufficient_data", or "failed_no_value"
+* `umh_conversion_status`: "success", "failed", "skipped_insufficient_data", "failed_no_value", or "failed_unsupported_type"
 * `umh_location_path`: Converted UMH location path (dots format, sanitized)
 * `umh_tag_name`: UMH tag name extracted from metric name (sanitized)
 * `umh_data_contract`: UMH data contract (e.g., "_raw", "_historian")
@@ -501,6 +546,10 @@ This ensures that messages with non-compliant Sparkplug names are automatically 
 The Sparkplug B input plugin **always splits metrics** into individual messages to ensure UMH-Core format compliance. Each Sparkplug metric becomes a separate Benthos message for downstream processing.
 
 *Note: This behavior is required for UMH-Core format and cannot be disabled.*
+
+#### Value Types
+
+Numeric, Boolean, String, Text, UUID and DateTime values are written as they arrive. Bytes and File values are written as base64 strings. Array values (Int8Array to DateTimeArray) are written as base64 strings of their packed little-endian bytes, the encoding the Sparkplug 3.0 specification defines for arrays. DataSet, Template and extension values cannot be written to the UNS: the plugin drops them, sets `umh_conversion_status` to `failed_unsupported_type`, counts each drop in the `unsupported_value_drops` metric, and logs one warning per metric name.
 
 ## Stateless Architecture Considerations
 

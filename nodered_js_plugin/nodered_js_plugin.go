@@ -31,6 +31,7 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 
 	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin/cache"
+	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin/protobuf"
 )
 
 // NodeREDJSProcessor defines the processor that wraps the JavaScript processor.
@@ -41,7 +42,6 @@ type NodeREDJSProcessor struct {
 	logger            *service.Logger
 	cache             cache.Cache
 	messagesProcessed *service.MetricCounter
-	messagesErrored   *service.MetricCounter
 	messagesDropped   *service.MetricCounter
 	vmPoolHits        *service.MetricCounter
 	vmPoolMisses      *service.MetricCounter
@@ -62,8 +62,7 @@ func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service
 		logger:            logger,
 		cache:             c,
 		messagesProcessed: metrics.NewCounter("messages_processed"),
-		messagesErrored:   metrics.NewCounter("messages_errored"),
-		messagesDropped:   metrics.NewCounter("messages_dropped"),
+		messagesDropped:   metrics.NewCounter("messages_dropped", "reason"),
 		vmPoolHits:        metrics.NewCounter("vm_pool_hits"),
 		vmPoolMisses:      metrics.NewCounter("vm_pool_misses"),
 	}
@@ -146,15 +145,13 @@ func escapeKey(k string) string {
 	return k
 }
 
-// Escape a given string for printing within logs and optimized
-// for being embedded in JSON by using single quotes rather than
-// double quotes.
+// escapeString escapes a string for log output, using single quotes for JSON embeddability.
 func escapeString(data string) string {
 	var builder strings.Builder
 	builder.Grow(len(data) + 2 + len(data)/5) // string length + 2 slots for quotes + 20% headroom for escaped characters to avoid additional allocation
 	builder.WriteByte('\'')
-	for _, rune := range data {
-		switch rune {
+	for _, r := range data {
+		switch r {
 		case '\'':
 			builder.WriteString(`\'`)
 		case '\\':
@@ -170,16 +167,14 @@ func escapeString(data string) string {
 		case '\f':
 			builder.WriteString(`\f`)
 		default:
-			builder.WriteRune(rune)
+			builder.WriteRune(r)
 		}
 	}
 	builder.WriteByte('\'')
 	return builder.String()
 }
 
-// Prints any object in a string format that is close to how the NodeJS console.log
-// implementation formats objects. This format is optimized to have as few escaped
-// characters as possible when it is embedded within a JSON payload.
+// stringify formats objects like NodeJS console.log, optimized for JSON embedding.
 func stringify(data any, depth uint8) (string, error) {
 	depth++
 	if depth == math.MaxUint8 {
@@ -301,7 +296,7 @@ func stringify(data any, depth uint8) (string, error) {
 }
 
 // SetupJSEnvironment sets up the JavaScript VM environment.
-func (u *NodeREDJSProcessor) SetupJSEnvironment(ctx context.Context, vm *goja.Runtime, jsMsg map[string]interface{}) error {
+func (u *NodeREDJSProcessor) SetupJSEnvironment(ctx context.Context, vm *goja.Runtime, jsMsg map[string]any) error {
 	err := vm.Set("msg", jsMsg)
 	if err != nil {
 		return fmt.Errorf("failed to set message in JS environment: %w", err)
@@ -315,6 +310,11 @@ func (u *NodeREDJSProcessor) SetupJSEnvironment(ctx context.Context, vm *goja.Ru
 	err = u.setupCache(ctx, vm)
 	if err != nil {
 		return fmt.Errorf("failed to set cache in JS environment: %w", err)
+	}
+
+	err = u.setupProtobuf(vm)
+	if err != nil {
+		return fmt.Errorf("failed to set protobuf in JS environment: %w", err)
 	}
 
 	return nil
@@ -361,35 +361,109 @@ func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) e
 	return vm.Set("cache", cacheObj)
 }
 
-// HandleExecutionResult handles JavaScript execution results.
-func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) (*service.Message, bool, error) {
-	// Handle null/undefined returns
+// setupProtobuf exposes protobuf.decode/encode to the JS runtime. The functions
+// decode/encode against an inline base64 FileDescriptorSet and throw on error
+// (goja converts the Go (T, error) return into a throwing JS function). The
+// tag_processor shares this environment, so it gets `protobuf` too (ENG-5243).
+func (u *NodeREDJSProcessor) setupProtobuf(vm *goja.Runtime) error {
+	// Recover any panic into an error: the descriptor set and data are untrusted, and
+	// goja does not recover Go panics from native functions, so a panic here would crash
+	// the whole process rather than throw a catchable JS error.
+	protobufObj := map[string]any{
+		"decode": func(dataB64 string, descriptorSetB64 string, msgName string) (_ map[string]any, err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("protobuf.decode panicked: %v", r)
+				}
+			}()
+			return protobuf.Decode(dataB64, descriptorSetB64, msgName)
+		},
+		"encode": func(obj any, descriptorSetB64 string, msgName string) (_ string, err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("protobuf.encode panicked: %v", r)
+				}
+			}()
+			return protobuf.Encode(obj, descriptorSetB64, msgName)
+		},
+	}
+	return vm.Set("protobuf", protobufObj)
+}
+
+// HandleExecutionResult converts a JS return value into output messages.
+// null/undefined drops; an array fans out (nil elements skipped, all-nil = drop).
+func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*service.Message, string, error) {
+	// Handle null/undefined returns: drop (caller bumps messagesDropped).
 	if result.Equals(goja.Undefined()) || result.Equals(goja.Null()) {
-		u.messagesDropped.Incr(1)
-		u.logger.Debug("Message dropped due to null/undefined return")
-		return service.NewMessage(nil), false, nil
+		return nil, "", nil
 	}
 
-	// Convert return value to message object
-	returnedMsg, ok := result.Export().(map[string]interface{})
+	exported := result.Export()
+
+	if arr, ok := exported.([]any); ok {
+		out := make([]*service.Message, 0, len(arr))
+		for i, el := range arr {
+			if el == nil {
+				continue
+			}
+			msg, err := messageFromReturnValue(el)
+			if err != nil {
+				return nil, "bad_array_element", fmt.Errorf("array element %d: %w", i, err)
+			}
+			out = append(out, msg)
+		}
+		return out, "", nil
+	}
+
+	msg, err := messageFromReturnValue(exported)
+	if err != nil {
+		return nil, "bad_return", err
+	}
+	return []*service.Message{msg}, "", nil
+}
+
+// messageFromReturnValue builds a service.Message from a JS return value (map with payload/meta).
+// NewMessage(nil) is safe: the engine wrapper (v2BatchedToV1Processor) restores input context onto outputs.
+func messageFromReturnValue(v any) (*service.Message, error) {
+	returnedMsg, ok := v.(map[string]any)
 	if !ok {
-		return service.NewMessage(nil), false, fmt.Errorf("function must return a message object or null")
+		return nil, fmt.Errorf("function must return a message object or null")
 	}
 
-	// Create new message with returned content
 	newMsg := service.NewMessage(nil)
 	if payload, exists := returnedMsg["payload"]; exists {
 		newMsg.SetStructured(payload)
 	}
-	if meta, exists := returnedMsg["meta"].(map[string]interface{}); exists {
-		for k, v := range meta {
-			if str, ok := v.(string); ok {
-				newMsg.MetaSet(k, str)
+	if meta, exists := returnedMsg["meta"]; exists && meta != nil {
+		metaMap, ok := meta.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("message meta must be an object, got %T", meta)
+		}
+		SetMetaFromJS(newMsg, metaMap)
+	}
+	return newMsg, nil
+}
+
+// SetMetaFromJS copies JS meta values onto a service.Message, skipping nil top-level values.
+// Maps/slices are JSON-marshaled; other values use fmt %v. Exported for tag_processor reuse.
+func SetMetaFromJS(newMsg *service.Message, meta map[string]any) {
+	for k, val := range meta {
+		if val == nil {
+			continue
+		}
+		switch val.(type) {
+		case map[string]any, []any:
+			b, err := json.Marshal(val)
+			if err != nil {
+				// json.Marshal errors on NaN/+Inf; fall back to %v to avoid an empty Kafka header.
+				newMsg.MetaSet(k, fmt.Sprintf("%v", val))
+				continue
 			}
+			newMsg.MetaSet(k, string(b))
+		default:
+			newMsg.MetaSet(k, fmt.Sprintf("%v", val))
 		}
 	}
-
-	return newMsg, true, nil
 }
 
 func FormatConsoleLogMsg(data []any) string {
@@ -406,21 +480,56 @@ func FormatConsoleLogMsg(data []any) string {
 	return strings.Join(buf, " ")
 }
 
-// ProcessBatch applies the JavaScript code to each message in the batch.
+// RecordDrop drops a poisoned message loudly (bumps messages_dropped + Warn log); never errors or panics.
+// Dropping (not forwarding) is intentional: errored messages lack umh_topic, so forwarding would nack the batch.
+func RecordDrop(counter *service.MetricCounter, logger *service.Logger, reason string, plugin string, stage string, msg *service.Message, err error) {
+	counter.Incr(1, reason)
+
+	topic, exists := msg.MetaGet("umh_topic")
+	if !exists || topic == "" {
+		topic = "<none>"
+	}
+
+	logger.Warnf("%s: dropped message (reason=%s, umh_topic=%s, stage=%s) %v", plugin, reason, topic, stage, err)
+}
+
+// ProcessBatch applies JS to each message. Per-message errors drop via RecordDrop;
+// deliberate drops (null/undefined/empty/all-nil array) bump messages_dropped{reason=deliberate}.
+//
+// The output messages get their context.Context from the engine, not from this code.
+// The context carries the SortGroup tag and the OpenTelemetry trace parent.
+// Benthos wraps every batch processor in v2BatchedToV1Processor
+// (internal/component/processor/auto_observed.go in github.com/redpanda-data/benthos/v4).
+// The wrapper saves each input's context and, after this method returns, sets it on the outputs by index.
+// Output i gets the context of input i, or of input 0 when there are fewer inputs than outputs.
+// A batch where one input fans out or is dropped shifts the later outputs onto
+// the wrong input's context (ENG-6427).
+// A test of context or SortGroup handling needs a full service.NewStreamBuilder pipeline,
+// because ProcessBatch alone runs without the wrapper (ENG-5256).
 func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	var resultBatch service.MessageBatch
+	processedCount := 0
 
 	for _, msg := range batch {
-		u.messagesProcessed.Incr(1)
-
-		processedMsg, shouldKeep, err := u.processSingleMessage(ctx, msg)
+		if msg == nil {
+			continue
+		}
+		processedMsgs, dropped, reason, err := u.processSingleMessage(ctx, msg)
 		if err != nil {
-			return nil, err
+			// Drop-loudly: the poisoned message is absent from the output
+			// batch. The good messages flow.
+			RecordDrop(u.messagesDropped, u.logger, reason, "nodered_js", "processSingleMessage", msg, err)
+			continue
 		}
-		if shouldKeep {
-			resultBatch = append(resultBatch, processedMsg)
+		if dropped {
+			u.messagesDropped.Incr(1, "deliberate")
+			continue
 		}
+		resultBatch = append(resultBatch, processedMsgs...)
+		processedCount += len(processedMsgs)
 	}
+
+	u.messagesProcessed.Incr(int64(processedCount))
 
 	if len(resultBatch) == 0 {
 		return []service.MessageBatch{}, nil
@@ -429,63 +538,68 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 	return []service.MessageBatch{resultBatch}, nil
 }
 
-// processSingleMessage processes a single message using a VM from the pool
-func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *service.Message) (*service.Message, bool, error) {
+// processSingleMessage runs JS on one message. Returns (messages, wasDropped, err, reason).
+// wasDropped=true for null/undefined/empty returns; err non-nil for JS throw/infra/bad-return.
+func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *service.Message) ([]*service.Message, bool, string, error) {
 	vm := u.getVM()
 	defer u.putVM(vm)
 
 	// Convert message to JS object
+	// defensive: AsBytes never errors as of benthos v4.74.0 (TODO upstream); kept for future-proofing
 	jsMsg, err := ConvertMessageToJSObject(msg)
 	if err != nil {
-		u.messagesErrored.Incr(1)
-		u.logger.Errorf("%v\nOriginal message: %v", err, msg)
-		return nil, false, nil
+		u.logger.Warnf("%v\nOriginal message: %v", err, msg)
+		return nil, false, "infra_failed", err
 	}
 
 	// Add metadata to the message wrapper
-	meta := make(map[string]interface{})
+	// defensive: MetaWalkMut callback never errors; kept for future-proofing
+	meta := make(map[string]any)
 	if err = msg.MetaWalkMut(func(key string, value any) error {
 		meta[key] = value
 		return nil
 	}); err != nil {
-		u.messagesErrored.Incr(1)
-		u.logger.Errorf("Failed to walk message metadata: %v\nOriginal message: %v", err, msg)
-		return nil, false, nil
+		u.logger.Warnf("Failed to walk message metadata: %v\nOriginal message: %v", err, msg)
+		return nil, false, "infra_failed", err
 	}
 	jsMsg["meta"] = meta
 
 	// Setup JS environment
+	// defensive: vm.Set unreachable from normal messages; kept for future-proofing
 	if err = u.SetupJSEnvironment(ctx, vm, jsMsg); err != nil {
-		u.messagesErrored.Incr(1)
-		u.logger.Errorf("%v\nMessage content: %v", err, jsMsg)
-		return nil, false, nil
+		u.logger.Warnf("%v\nMessage content: %v", err, jsMsg)
+		return nil, false, "infra_failed", err
 	}
 
 	// Execute the compiled JavaScript program
 	result, err := vm.RunProgram(u.program)
 	if err != nil {
-		u.messagesErrored.Incr(1)
 		u.logJSError(err, jsMsg)
-		return nil, false, nil
+		return nil, false, "js_throw", err
 	}
 
 	// Handle the execution result
-	newMsg, shouldKeep, err := u.HandleExecutionResult(result)
+	newMsgs, reason, err := u.HandleExecutionResult(result)
 	if err != nil {
-		u.messagesErrored.Incr(1)
-		u.logger.Errorf("%v\nMessage content: %v\nReturned value: %v", err, jsMsg, result.Export())
-		return nil, false, err
+		u.logger.Warnf("%v\nMessage content: %v\nReturned value: %v", err, jsMsg, result.Export())
+		return nil, false, reason, err
 	}
 
-	return newMsg, shouldKeep, nil
+	if len(newMsgs) == 0 {
+		return nil, true, "", nil
+	}
+
+	return newMsgs, false, "", nil
 }
 
-// Helper function to log JavaScript errors
-func (u *NodeREDJSProcessor) logJSError(err error, jsMsg interface{}) {
+// logJSError logs JavaScript execution errors with code context at Warn level.
+// Warn (not Error) because umh-core's benthos FSM treats Error-level logs as deploy-blocking;
+// a routine JS throw drops the message (RecordDrop Warns) but must not block the deploy.
+func (u *NodeREDJSProcessor) logJSError(err error, jsMsg any) {
 	jsErr := &goja.Exception{}
 	if errors.As(err, &jsErr) {
 		stack := jsErr.String()
-		u.logger.Errorf(`JavaScript execution failed:
+		u.logger.Warnf(`JavaScript execution failed:
 Error: %v
 Stack: %v
 Code:
@@ -496,7 +610,7 @@ Message content: %v`,
 			u.originalCode,
 			jsMsg)
 	} else {
-		u.logger.Errorf(`JavaScript execution failed:
+		u.logger.Warnf(`JavaScript execution failed:
 Error: %v
 Code:
 %v

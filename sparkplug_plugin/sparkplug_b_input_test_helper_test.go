@@ -54,8 +54,9 @@ func extractNodeKeyForTest(deviceKey string) string {
 
 // SparkplugInputTestWrapper wraps the internal sparkplugInput for external testing
 type SparkplugInputTestWrapper struct {
-	input                *sparkplugInput
-	aliasRebirthsCounter *testCounter
+	input                        *sparkplugInput
+	aliasRebirthsCounter         *testCounter
+	unsupportedValueDropsCounter *testCounter
 }
 
 // NewSparkplugInputForTesting creates a minimal sparkplugInput wrapped for unit testing
@@ -78,6 +79,7 @@ func NewSparkplugInputForTestingWithRole(role Role) *SparkplugInputTestWrapper {
 	metrics := resources.Metrics()
 
 	aliasRebirths := &testCounter{}
+	unsupportedValueDrops := &testCounter{}
 	input := &sparkplugInput{
 		config: Config{
 			Role: role,
@@ -108,9 +110,15 @@ func NewSparkplugInputForTestingWithRole(role Role) *SparkplugInputTestWrapper {
 		discoveryRebirths:       metrics.NewCounter("discovery_rebirths"),
 		sequenceGapRebirths:     metrics.NewCounter("sequence_gap_rebirths"),
 		aliasRebirths:           aliasRebirths,
+		unsupportedValueDrops:   unsupportedValueDrops,
+		unsupportedValueWarned:  make(map[string]struct{}),
 	}
 
-	return &SparkplugInputTestWrapper{input: input, aliasRebirthsCounter: aliasRebirths}
+	return &SparkplugInputTestWrapper{
+		input:                        input,
+		aliasRebirthsCounter:         aliasRebirths,
+		unsupportedValueDropsCounter: unsupportedValueDrops,
+	}
 }
 
 // SetBirthRequestThrottle overrides the BirthRequestThrottle config for tests that need
@@ -150,6 +158,12 @@ func (w *SparkplugInputTestWrapper) GetBirthRequestedAt(nodeKey string) (time.Ti
 // reasons (e.g. discovery, sequence-gap) don't pollute the count.
 func (w *SparkplugInputTestWrapper) GetAliasRebirthsCount() int64 {
 	return w.aliasRebirthsCounter.Value()
+}
+
+// GetUnsupportedValueDropsCount returns how many metric values were dropped because the
+// UNS conversion cannot represent their type.
+func (w *SparkplugInputTestWrapper) GetUnsupportedValueDropsCount() int64 {
+	return w.unsupportedValueDropsCounter.Value()
 }
 
 // GetStateMu returns a pointer to the stateMu lock for lock testing

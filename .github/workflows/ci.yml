@@ -17,8 +17,15 @@ name: CI
 
 on:
   pull_request:
-    branches: [main, staging]
+    branches: [staging]
   merge_group:
+  # release.yml calls this with full_run to test the release commit.
+  workflow_call:
+    inputs:
+      full_run:
+        description: Run every plugin's tests, PLC tests included, ignoring the path filter
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -31,6 +38,7 @@ jobs:
       pull-requests: read
     outputs:
       test_plc: ${{ steps.plc-check.outputs.test_plc }}
+      all: ${{ inputs.full_run == true }}
       opcua: ${{ steps.filter.outputs.opcua }}
       modbus: ${{ steps.filter.outputs.modbus }}
       s7: ${{ steps.filter.outputs.s7 }}
@@ -45,20 +53,26 @@ jobs:
       downsampler: ${{ steps.filter.outputs.downsampler }}
       classic_to_core: ${{ steps.filter.outputs.classic_to_core }}
       snowflake_put: ${{ steps.filter.outputs.snowflake_put }}
+      historian: ${{ steps.filter.outputs.historian }}
+      ads: ${{ steps.filter.outputs.ads }}
       pkg: ${{ steps.filter.outputs.pkg }}
       cmd: ${{ steps.filter.outputs.cmd }}
       gomod: ${{ steps.filter.outputs.gomod }}
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
       - name: Check if PLC tests should run
         id: plc-check
-        run: echo "test_plc=${{ github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.base_ref == 'main') }}" >> "$GITHUB_OUTPUT"
+        run: echo "test_plc=${{ github.event_name == 'merge_group' || inputs.full_run == true }}" >> "$GITHUB_OUTPUT"
       - name: Detect changes
+        if: inputs.full_run != true
         uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4
         id: filter
         with:
           initial-fetch-depth: 30
+          predicate-quantifier: every
           filters: |
             opcua:
               - 'opcua_plugin/**'
@@ -102,6 +116,12 @@ jobs:
             snowflake_put:
               - 'snowflake_put_plugin/**'
               - '!snowflake_put_plugin/**/*.md'
+            historian:
+              - 'historian_plugin/**'
+              - '!historian_plugin/**/*.md'
+            ads:
+              - 'beckhoff_ads_plugin/**'
+              - '!beckhoff_ads_plugin/**/*.md'
             pkg:
               - 'pkg/**'
             cmd:
@@ -116,14 +136,16 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
       - name: FOSSA Analyze
-        uses: fossas/fossa-action@ff70fe9fe17cbd2040648f1c45e8ec4e4884dcf3 # v1
+        uses: fossas/fossa-action@29693cc50323968e039056be419b32989fc5880c # v2
         with:
           api-key: ${{ secrets.FOSSA_API_KEY }}
           project: benthos-umh
       - name: FOSSA Test
-        uses: fossas/fossa-action@ff70fe9fe17cbd2040648f1c45e8ec4e4884dcf3 # v1
+        uses: fossas/fossa-action@29693cc50323968e039056be419b32989fc5880c # v2
         with:
           api-key: ${{ secrets.FOSSA_API_KEY }}
           project: benthos-umh
@@ -135,7 +157,9 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
       - name: Install license-eye
         run: make install-license-eye
       - name: License Eye Header
@@ -147,26 +171,45 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Cache golangci-lint
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cache/golangci-lint
             .tools/
-          key: golangci-lint-${{ runner.os }}-${{ hashFiles('.golangci.yaml', 'go.sum') }}
-          restore-keys: golangci-lint-${{ runner.os }}-
+          key: golangci-lint-${{ runner.os }}-${{ hashFiles('Makefile.Common', 'go.mod') }}-${{ hashFiles('.golangci.yaml', 'go.sum') }}
+          restore-keys: golangci-lint-${{ runner.os }}-${{ hashFiles('Makefile.Common', 'go.mod') }}-
       - name: Lint
         run: make lint
+
+  smoke-test-binary:
+    needs: detect-changes
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
+      - name: Build
+        run: make build
+      - name: Start the binary
+        run: tmp/bin/benthos --version
 
   test-opcua:
     needs: [detect-changes, lint]
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.opcua == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.opcua == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-opcua.yml
@@ -179,7 +222,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.modbus == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.modbus == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-modbus.yml
@@ -192,7 +236,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.s7 == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.s7 == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-s7.yml
@@ -205,7 +250,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.sparkplug == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.sparkplug == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true' ||
        needs.detect-changes.outputs.pkg == 'true')
@@ -217,7 +263,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.eip == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.eip == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-eip.yml
@@ -228,7 +275,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.sensorconnect == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.sensorconnect == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-sensorconnect.yml
@@ -241,7 +289,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.tag_processor == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.tag_processor == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true' ||
        needs.detect-changes.outputs.pkg == 'true')
@@ -253,7 +302,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.topic_browser == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.topic_browser == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true' ||
        needs.detect-changes.outputs.pkg == 'true')
@@ -265,7 +315,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.uns == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.uns == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true' ||
        needs.detect-changes.outputs.pkg == 'true')
@@ -277,7 +328,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.nodered_js == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.nodered_js == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-nodered-js.yml
@@ -288,7 +340,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.stream_processor == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.stream_processor == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-stream-processor.yml
@@ -299,7 +352,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.downsampler == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.downsampler == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-downsampler.yml
@@ -310,7 +364,8 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.classic_to_core == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.classic_to_core == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-classic-to-core.yml
@@ -321,19 +376,50 @@ jobs:
     if: |
       always() &&
       needs.lint.result == 'success' &&
-      (needs.detect-changes.outputs.snowflake_put == 'true' ||
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.snowflake_put == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-snowflake-put.yml
     secrets: inherit
 
-  result:
-    name: Check Required Steps
+  test-historian:
+    needs: [detect-changes, lint]
+    if: |
+      always() &&
+      needs.lint.result == 'success' &&
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.historian == 'true' ||
+       needs.detect-changes.outputs.gomod == 'true' ||
+       needs.detect-changes.outputs.cmd == 'true')
+    uses: ./.github/workflows/test-historian.yml
+
+  test-ads:
+    needs: [detect-changes, lint]
+    if: |
+      always() &&
+      needs.lint.result == 'success' &&
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.ads == 'true' ||
+       needs.detect-changes.outputs.gomod == 'true' ||
+       needs.detect-changes.outputs.cmd == 'true')
+    uses: ./.github/workflows/test-ads.yml
+
+  test-pkg:
+    needs: [detect-changes, lint]
+    if: |
+      always() &&
+      needs.lint.result == 'success' &&
+      (needs.detect-changes.outputs.all == 'true' ||
+       needs.detect-changes.outputs.pkg == 'true' ||
+       needs.detect-changes.outputs.gomod == 'true')
+    uses: ./.github/workflows/test-pkg.yml
+
+  # Posts the JUnit reports of all test jobs as one comment on the pull request.
+  # Not part of the required checks: a failure to post must not block a merge.
+  test-report:
+    name: Test Report
     needs:
-      - detect-changes
-      - fossa
-      - license-eye
-      - lint
       - test-opcua
       - test-modbus
       - test-s7
@@ -348,6 +434,74 @@ jobs:
       - test-downsampler
       - test-classic-to-core
       - test-snowflake-put
+      - test-historian
+      - test-ads
+      - test-pkg
+    if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+    # Using ubuntu-latest here on purpose, since it is faster for artifacts related interactions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Download test reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: test-report-*
+          path: test-reports
+          merge-multiple: true
+      # No reports exist when the path filter skipped every test job. The JUnit
+      # conversion fails on an empty glob, whatever exit-on-no-files says.
+      - name: Post test report
+        if: ${{ hashFiles('test-reports/*.xml') != '' }}
+        uses: ctrf-io/github-test-reporter@dbb08957b5b2af918b39136ab2c5532002c7649b # v1.3.2
+        with:
+          report-path: test-reports/*.xml
+          title: benthos-umh Test Results
+          summary-report: true
+          failed-folded-report: true
+          pull-request: true
+          overwrite-comment: true
+          integrations-config: |
+            {
+              "junit-to-ctrf": {
+                "enabled": true,
+                "action": "convert",
+                "options": {
+                  "output": "./ctrf-reports/ctrf-report.json",
+                  "toolname": "junit-to-ctrf",
+                  "useSuiteName": true
+                }
+              }
+            }
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  result:
+    name: Check Required Steps
+    needs:
+      - detect-changes
+      - fossa
+      - license-eye
+      - lint
+      - smoke-test-binary
+      - test-opcua
+      - test-modbus
+      - test-s7
+      - test-sparkplug
+      - test-eip
+      - test-sensorconnect
+      - test-tag-processor
+      - test-topic-browser
+      - test-uns
+      - test-nodered-js
+      - test-stream-processor
+      - test-downsampler
+      - test-classic-to-core
+      - test-snowflake-put
+      - test-historian
+      - test-ads
+      - test-pkg
     if: always()
     runs-on: ubuntu-latest
     steps:

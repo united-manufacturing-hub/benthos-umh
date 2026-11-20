@@ -366,23 +366,20 @@ func (o *unsOutput) extractHeaders(msg *service.Message) (map[string][]byte, err
 
 // validateAndEnrichMessage validates the message against the schema and enriches it with contract metadata
 func (o *unsOutput) validateAndEnrichMessage(msg *service.Message, unsTopic *topic.UnsTopic, msgAsBytes []byte, messageIndex int) error {
-	// Validate the payload against the schema
-	validationResult := o.validator.Validate(unsTopic, msgAsBytes)
-	if !validationResult.SchemaCheckPassed && !validationResult.SchemaCheckBypassed {
-		return fmt.Errorf("schema validation failed for message %d with topic '%s': %w. Please check your payload format and ensure it matches the registered schema",
-			messageIndex, unsTopic.String(), validationResult.Error)
+	result := o.validator.Validate(unsTopic, msgAsBytes)
+
+	if !result.SchemaCheckPassed && !result.SchemaCheckBypassed {
+		return fmt.Errorf("message %d (topic '%s'): %w", messageIndex, unsTopic.String(), result.Error)
 	}
 
-	if validationResult.SchemaCheckPassed {
-		// Add the contract name and version to the headers
-		msg.MetaSet("data_contract_name", validationResult.ContractName)
-		msg.MetaSet("data_contract_version", strconv.FormatUint(validationResult.ContractVersion, 10))
-	} else if validationResult.SchemaCheckBypassed {
-		// Add bypass information if validation was bypassed
+	if result.SchemaCheckBypassed {
 		msg.MetaSet("data_contract_bypassed", "true")
-		msg.MetaSet("data_contract_bypass_reason", validationResult.BypassReason)
+		msg.MetaSet("data_contract_bypass_reason", result.BypassReason)
+		return nil
 	}
 
+	msg.MetaSet("data_contract_name", result.ContractName)
+	msg.MetaSet("data_contract_version", strconv.FormatUint(result.ContractVersion, 10))
 	return nil
 }
 

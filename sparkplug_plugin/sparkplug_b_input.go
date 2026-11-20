@@ -16,6 +16,7 @@ package sparkplug_plugin
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -45,6 +46,28 @@ const (
 	SparkplugDataTypeString   = uint32(12)
 	SparkplugDataTypeDateTime = uint32(13)
 	SparkplugDataTypeText     = uint32(14)
+	SparkplugDataTypeUUID     = uint32(15)
+	SparkplugDataTypeDataSet  = uint32(16)
+	SparkplugDataTypeBytes    = uint32(17)
+	SparkplugDataTypeFile     = uint32(18)
+	SparkplugDataTypeTemplate = uint32(19)
+
+	SparkplugDataTypePropertySet     = uint32(20)
+	SparkplugDataTypePropertySetList = uint32(21)
+
+	SparkplugDataTypeInt8Array     = uint32(22)
+	SparkplugDataTypeInt16Array    = uint32(23)
+	SparkplugDataTypeInt32Array    = uint32(24)
+	SparkplugDataTypeInt64Array    = uint32(25)
+	SparkplugDataTypeUInt8Array    = uint32(26)
+	SparkplugDataTypeUInt16Array   = uint32(27)
+	SparkplugDataTypeUInt32Array   = uint32(28)
+	SparkplugDataTypeUInt64Array   = uint32(29)
+	SparkplugDataTypeFloatArray    = uint32(30)
+	SparkplugDataTypeDoubleArray   = uint32(31)
+	SparkplugDataTypeBooleanArray  = uint32(32)
+	SparkplugDataTypeStringArray   = uint32(33)
+	SparkplugDataTypeDateTimeArray = uint32(34)
 )
 
 func init() {
@@ -133,6 +156,15 @@ Key features:
 			Default(false).
 			Examples(true, false).
 			Advanced()).
+		// Extension Decoding (opt-in, ENG-5229)
+		Field(service.NewObjectField("decode_extensions",
+			service.NewStringField("extensions").
+				Description("Inline proto2 schema declaring extensions of the Sparkplug `Payload.MetaData` and/or `Payload.MetricValueExtension` messages. Write only `package` + `extend` blocks, plus any custom message types or well-known-type imports; the plugin compiles it as proto2 and adds the Sparkplug import (do not write a `syntax` line or import the Sparkplug schema). Scalar extensions are attached per carrying metric as `spb_ext_<field>`; the full decoded metric (including message-typed extensions) as `spb_metric_decoded` JSON. Metrics without an extension are unaffected.").
+				Default("").
+				Optional()).
+			Description("Opt-in decoding of proto2 Sparkplug extension fields that the standard decode retains but ignores.").
+			Advanced().
+			Optional()).
 		// Subscription Configuration
 		Field(service.NewObjectField("subscription",
 			service.NewStringListField("groups").
@@ -204,6 +236,16 @@ type sparkplugInput struct {
 	discoveryRebirths       *service.MetricCounter // REBIRTH requests sent for discovery
 	sequenceGapRebirths     *service.MetricCounter // REBIRTH requests sent because of a sequence number gap
 	aliasRebirths           Counter                // REBIRTH requests sent because DATA aliases were unresolved
+	unsupportedValueDrops   Counter
+
+	unsupportedValueWarnedMu sync.Mutex
+	unsupportedValueWarned   map[string]struct{}
+
+	// Extension decoding (ENG-5229); nil when decode_extensions is unset.
+	extDecoder            *extensionDecoder
+	extensionDecodeErrors *service.MetricCounter
+	extDecodeLogMu        sync.Mutex
+	extDecodeLogLast      time.Time
 }
 
 type mqttMessage struct {
@@ -397,10 +439,16 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 
 	config.IncludeEdgeNodeInLocation, _ = conf.FieldBool("include_edge_node_in_location")
 
+	// Parse extension decoding (optional)
+	if conf.Contains("decode_extensions") {
+		config.DecodeExtensions, _ = conf.Namespace("decode_extensions").FieldString("extensions")
+	}
+
 	// Parse subscription section using namespace (optional)
 	if conf.Contains("subscription") {
 		subscriptionConf := conf.Namespace("subscription")
-		groups, err := subscriptionConf.FieldStringList("groups")
+		var groups []string
+		groups, err = subscriptionConf.FieldStringList("groups")
 		if err == nil {
 			config.Subscription.Groups = groups
 		}
@@ -413,8 +461,17 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 	// - AutoExtractValues: true (required for UMH-Core format)
 
 	// Validate configuration (this will auto-detect the role)
-	if err := config.Validate(); err != nil {
+	if err = config.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	// Compile the extension schema once at startup (fail fast on a bad snippet).
+	var extDecoder *extensionDecoder
+	if strings.TrimSpace(config.DecodeExtensions) != "" {
+		extDecoder, err = newExtensionDecoder(config.DecodeExtensions)
+		if err != nil {
+			return nil, fmt.Errorf("decode_extensions: %w", err)
+		}
 	}
 
 	si := &sparkplugInput{
@@ -443,6 +500,10 @@ func newSparkplugInput(conf *service.ParsedConfig, mgr *service.Resources) (*spa
 		discoveryRebirths:       mgr.Metrics().NewCounter("discovery_rebirths"),
 		sequenceGapRebirths:     mgr.Metrics().NewCounter("sequence_gap_rebirths"),
 		aliasRebirths:           mgr.Metrics().NewCounter("alias_rebirths"),
+		unsupportedValueDrops:   mgr.Metrics().NewCounter("unsupported_value_drops"),
+		unsupportedValueWarned:  make(map[string]struct{}),
+		extDecoder:              extDecoder,
+		extensionDecodeErrors:   mgr.Metrics().NewCounter("extension_decode_errors"),
 	}
 
 	return si, nil
@@ -1057,6 +1118,16 @@ func (s *sparkplugInput) createSplitMessages(payload *sparkplugb.Payload, msgTyp
 	return batch
 }
 
+// ENG-5341: resolveMetricTimestamp returns the per-metric timestamp (Sparkplug
+// proto field 3) when set so each metric keeps its own sample time, falling back
+// to the payload-level timestamp. It returns nil when neither is present.
+func resolveMetricTimestamp(metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload) *uint64 {
+	if metric.Timestamp != nil {
+		return metric.Timestamp
+	}
+	return payload.Timestamp
+}
+
 func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metric, payload *sparkplugb.Payload, msgType MessageType, topicInfo *TopicInfo, originalTopic string, metricIndex int, totalMetrics int) *service.Message {
 	// Extract metric value as JSON (always preserve Sparkplug B format)
 	value := s.extractMetricValue(metric)
@@ -1106,8 +1177,8 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	msg.MetaSet("spb_metric_index", fmt.Sprintf("%d", metricIndex))
 	msg.MetaSet("spb_metrics_in_payload", fmt.Sprintf("%d", totalMetrics))
 
-	if payload.Timestamp != nil {
-		msg.MetaSet("spb_timestamp", fmt.Sprintf("%d", *payload.Timestamp))
+	if ts := resolveMetricTimestamp(metric, payload); ts != nil {
+		msg.MetaSet("spb_timestamp", fmt.Sprintf("%d", *ts))
 	}
 
 	// Add metric-specific metadata
@@ -1134,7 +1205,35 @@ func (s *sparkplugInput) createMessageFromMetric(metric *sparkplugb.Payload_Metr
 	// Try to add UMH conversion metadata (optional, non-failing)
 	s.tryAddUMHMetadata(msg, metric, payload, topicInfo)
 
+	// Decode proto2 extension fields (opt-in). Additive only: sets new metadata, never the
+	// value or existing keys, and never fails the metric.
+	if s.extDecoder != nil {
+		if flat, decoded, present, err := s.extDecoder.decode(metric); err != nil {
+			s.noteExtDecodeError(metric.GetName(), err)
+		} else if present {
+			for leaf, val := range flat {
+				msg.MetaSet("spb_ext_"+leaf, val)
+			}
+			msg.MetaSet("spb_metric_decoded", decoded)
+		}
+	}
+
 	return msg
+}
+
+// noteExtDecodeError counts the failure and warns at most once per 30s, so a systematic
+// failure (e.g. a mis-declared field type) can't flood the logs.
+func (s *sparkplugInput) noteExtDecodeError(metricName string, err error) {
+	s.extensionDecodeErrors.Incr(1)
+	s.extDecodeLogMu.Lock()
+	now := time.Now()
+	if !s.extDecodeLogLast.IsZero() && now.Sub(s.extDecodeLogLast) < 30*time.Second {
+		s.extDecodeLogMu.Unlock()
+		return
+	}
+	s.extDecodeLogLast = now
+	s.extDecodeLogMu.Unlock()
+	s.logger.Warnf("extension decode failed for metric %q: %v (metric emitted without extension fields; further warnings throttled)", metricName, err)
 }
 
 func (s *sparkplugInput) createDeathEventMessage(msgType MessageType, topicInfo *TopicInfo, originalTopic string) service.MessageBatch {
@@ -1211,13 +1310,15 @@ func (s *sparkplugInput) extractMetricValue(metric *sparkplugb.Payload_Metric) [
 			result["value"] = v.BooleanValue
 		case *sparkplugb.Payload_Metric_StringValue:
 			result["value"] = v.StringValue
+		case *sparkplugb.Payload_Metric_BytesValue:
+			result["value"] = base64.StdEncoding.EncodeToString(v.BytesValue)
 		default:
 			result["value"] = nil
 		}
 	}
 
-	// Note: Individual metrics don't have timestamps in Sparkplug B
-	// Timestamp is at the payload level
+	// Note: the metric timestamp is surfaced as spb_timestamp metadata (see
+	// createMessageFromMetric), not embedded in the value JSON here.
 
 	jsonBytes, err := json.Marshal(result)
 	if err != nil {
@@ -1228,28 +1329,29 @@ func (s *sparkplugInput) extractMetricValue(metric *sparkplugb.Payload_Metric) [
 	return jsonBytes
 }
 
-// sanitizeForTopic sanitizes strings for use in UMH topic paths
-// Replaces all non-alphanumeric characters (except dots) with underscores
+// sanitizeForTopic sanitizes strings for use in UMH topic paths: every rune that is not an
+// ASCII letter, digit, or dot becomes '_'. Dots are kept because they separate topic segments.
 func (s *sparkplugInput) sanitizeForTopic(input string) string {
-	if input == "" {
-		return ""
-	}
+	return sanitizeRunes(input, func(r rune) bool { return isASCIIAlnum(r) || r == '.' })
+}
 
-	var result strings.Builder
-	result.Grow(len(input))
+// isASCIIAlnum reports whether r is an ASCII letter or digit.
+func isASCIIAlnum(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+}
 
-	for _, char := range input {
-		if (char >= 'a' && char <= 'z') ||
-			(char >= 'A' && char <= 'Z') ||
-			(char >= '0' && char <= '9') ||
-			char == '.' {
-			result.WriteRune(char)
+// sanitizeRunes replaces every rune for which keep returns false with '_'.
+func sanitizeRunes(s string, keep func(rune) bool) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if keep(r) {
+			b.WriteRune(r)
 		} else {
-			result.WriteRune('_')
+			b.WriteRune('_')
 		}
 	}
-
-	return result.String()
+	return b.String()
 }
 
 // getDataTypeName converts Sparkplug data type ID to human-readable string
@@ -1283,6 +1385,46 @@ func (s *sparkplugInput) getDataTypeName(datatype uint32) string {
 		return "DateTime"
 	case SparkplugDataTypeText:
 		return "Text"
+	case SparkplugDataTypeUUID:
+		return "UUID"
+	case SparkplugDataTypeDataSet:
+		return "DataSet"
+	case SparkplugDataTypeBytes:
+		return "Bytes"
+	case SparkplugDataTypeFile:
+		return "File"
+	case SparkplugDataTypeTemplate:
+		return "Template"
+	case SparkplugDataTypePropertySet:
+		return "PropertySet"
+	case SparkplugDataTypePropertySetList:
+		return "PropertySetList"
+	case SparkplugDataTypeInt8Array:
+		return "Int8Array"
+	case SparkplugDataTypeInt16Array:
+		return "Int16Array"
+	case SparkplugDataTypeInt32Array:
+		return "Int32Array"
+	case SparkplugDataTypeInt64Array:
+		return "Int64Array"
+	case SparkplugDataTypeUInt8Array:
+		return "UInt8Array"
+	case SparkplugDataTypeUInt16Array:
+		return "UInt16Array"
+	case SparkplugDataTypeUInt32Array:
+		return "UInt32Array"
+	case SparkplugDataTypeUInt64Array:
+		return "UInt64Array"
+	case SparkplugDataTypeFloatArray:
+		return "FloatArray"
+	case SparkplugDataTypeDoubleArray:
+		return "DoubleArray"
+	case SparkplugDataTypeBooleanArray:
+		return "BooleanArray"
+	case SparkplugDataTypeStringArray:
+		return "StringArray"
+	case SparkplugDataTypeDateTimeArray:
+		return "DateTimeArray"
 	default:
 		return "Unknown"
 	}
@@ -1502,6 +1644,11 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 
 	// Extract raw value for conversion
 	rawValue := s.extractMetricValueRaw(metric)
+	if rawValue == nil && hasUnsupportedValue(metric) {
+		msg.MetaSet("umh_conversion_status", "failed_unsupported_type")
+		s.noteUnsupportedValueDrop(metric)
+		return
+	}
 	if rawValue == nil {
 		msg.MetaSet("umh_conversion_status", "failed_no_value")
 		s.logger.Debugf("UMH conversion failed: no extractable value from metric")
@@ -1544,9 +1691,8 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 		sparkplugMsg.MetricName = "unknown_metric"
 	}
 
-	// Set timestamp from payload if available
-	if payload.Timestamp != nil {
-		sparkplugMsg.Timestamp = time.UnixMilli(int64(*payload.Timestamp))
+	if ts := resolveMetricTimestamp(metric, payload); ts != nil {
+		sparkplugMsg.Timestamp = time.UnixMilli(int64(*ts))
 	}
 
 	// Store original values before any sanitization
@@ -1598,6 +1744,39 @@ func (s *sparkplugInput) tryAddUMHMetadata(msg *service.Message, metric *sparkpl
 	s.logger.Debugf("Successfully added UMH metadata for metric %s -> %s", sparkplugMsg.MetricName, umhMsg.Topic.String())
 }
 
+func hasUnsupportedValue(metric *sparkplugb.Payload_Metric) bool {
+	if metric.IsNull != nil && *metric.IsNull {
+		return false
+	}
+	switch metric.GetValue().(type) {
+	case *sparkplugb.Payload_Metric_DatasetValue,
+		*sparkplugb.Payload_Metric_TemplateValue,
+		*sparkplugb.Payload_Metric_ExtensionValue:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *sparkplugInput) noteUnsupportedValueDrop(metric *sparkplugb.Payload_Metric) {
+	s.unsupportedValueDrops.Incr(1)
+
+	metricName := metric.GetName()
+	s.unsupportedValueWarnedMu.Lock()
+	_, alreadyWarned := s.unsupportedValueWarned[metricName]
+	s.unsupportedValueWarned[metricName] = struct{}{}
+	s.unsupportedValueWarnedMu.Unlock()
+	if alreadyWarned {
+		return
+	}
+
+	datatypeName := "Unknown"
+	if metric.Datatype != nil {
+		datatypeName = s.getDataTypeName(*metric.Datatype)
+	}
+	s.logger.Warnf("Sparkplug B metric %q has datatype %s, which cannot be written to the UNS: its values are dropped and counted in unsupported_value_drops. This warning is logged once per metric.", metricName, datatypeName)
+}
+
 // extractMetricValueRaw extracts the raw value from a Sparkplug metric without JSON wrapping
 func (s *sparkplugInput) extractMetricValueRaw(metric *sparkplugb.Payload_Metric) interface{} {
 	// Check for null value
@@ -1620,6 +1799,8 @@ func (s *sparkplugInput) extractMetricValueRaw(metric *sparkplugb.Payload_Metric
 			return v.BooleanValue
 		case *sparkplugb.Payload_Metric_StringValue:
 			return v.StringValue
+		case *sparkplugb.Payload_Metric_BytesValue:
+			return base64.StdEncoding.EncodeToString(v.BytesValue)
 		default:
 			return nil
 		}

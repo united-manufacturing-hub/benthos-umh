@@ -37,8 +37,9 @@ jobs:
           repositories: united-manufacturing-hub
 
       - name: Checkout united-manufacturing-hub Repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          persist-credentials: false
           repository: united-manufacturing-hub/united-manufacturing-hub
           ref: staging
           token: ${{ steps.generate-token.outputs.token }}
@@ -51,28 +52,45 @@ jobs:
           sed -i "s/^BENTHOS_UMH_VERSION = .*/BENTHOS_UMH_VERSION = ${VERSION_WITHOUT_PREFIX}/" Makefile
           grep -q "^BENTHOS_UMH_VERSION = ${VERSION_WITHOUT_PREFIX}$" Makefile || exit 1
 
-      - name: Get Release Notes
-        id: release-notes
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Checkout benthos-umh changelog
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ env.VERSION }}
+          path: benthos-umh
+          sparse-checkout: .changelog
+
+      # umh-core's require-changelog-entry check fails a PR without a fragment.
+      # The kind keys match, so each fragment is copied as is, minus the trailing
+      # Linear id, which means nothing to umh-core readers.
+      - name: Add umh-core changelog fragments
         run: |
-          RELEASE_NOTES=$(gh release view "${VERSION}" --repo united-manufacturing-hub/benthos-umh --json body --jq '.body')
-          {
-            echo 'body<<EOF'
-            echo "$RELEASE_NOTES"
-            echo 'EOF'
-          } >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          shopt -s nullglob
+          fragments=(benthos-umh/.changelog/"${VERSION}"/*.yaml)
+          if [ "${#fragments[@]}" -eq 0 ]; then
+            echo "::error::No fragments in .changelog/${VERSION}/. make release-changelog moves them there."
+            exit 1
+          fi
+          for f in "${fragments[@]}"; do
+            sed -E "s/ \([A-Z]+-[0-9]+\)([\"']?)\$/\1/" "$f" \
+              > "united-manufacturing-hub/umh-core/.changelog/unreleased/$(basename "$f")"
+          done
+
+      # Drops the "## [vX.Y.Z]" heading; the PR title already shows the version.
+      - name: Write PR body
+        run: tail -n +2 "benthos-umh/.changelog/${VERSION}.md" > pr-body.md
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
         with:
           path: united-manufacturing-hub
           token: ${{ steps.generate-token.outputs.token }}
-          commit-message: "chore: bump benthos-umh to ${{ env.VERSION }}"
+          commit-message: 'chore: bump benthos-umh to ${{ env.VERSION }}'
           branch: chore/benthos-umh-${{ env.VERSION }}
           delete-branch: true
-          title: "chore: bump benthos-umh to ${{ env.VERSION }}"
-          body: ${{ steps.release-notes.outputs.body }}
+          title: 'chore: bump benthos-umh to ${{ env.VERSION }}'
+          body-path: pr-body.md
           labels: |
             auto-generated
             dependencies
@@ -92,8 +110,9 @@ jobs:
           repositories: ManagementConsole
 
       - name: Checkout benthos-umh repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          persist-credentials: false
           ref: ${{ env.VERSION }}
 
       - name: Setup Go
@@ -105,8 +124,9 @@ jobs:
           make generate-schema VERSION="${VERSION_CLEAN}"
 
       - name: Checkout ManagementConsole
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          persist-credentials: false
           repository: united-manufacturing-hub/ManagementConsole
           token: ${{ steps.generate-token.outputs.token }}
           path: ManagementConsole
@@ -126,7 +146,7 @@ jobs:
       - name: Update schema discovery test
         run: |
           VERSION_CLEAN="${VERSION#v}"
-          TEST_FILE="ManagementConsole/frontend/src/lib/schemas/loaders/versioned-ui-loader.test.ts"
+          TEST_FILE="ManagementConsole/frontend/src/lib/schemas/loaders/versionedUiLoader.test.ts"
 
           if [ ! -f "$TEST_FILE" ]; then
               echo "Missing test file: $TEST_FILE" >&2
@@ -151,10 +171,10 @@ jobs:
         with:
           path: ManagementConsole
           token: ${{ steps.generate-token.outputs.token }}
-          commit-message: "chore(schemas): add benthos-umh schemas for ${{ env.VERSION }}"
+          commit-message: 'chore(schemas): add benthos-umh schemas for ${{ env.VERSION }}'
           branch: chore/benthos-schemas-${{ env.VERSION }}
           delete-branch: true
-          title: "chore(schemas): add benthos-umh schemas for ${{ env.VERSION }}"
+          title: 'chore(schemas): add benthos-umh schemas for ${{ env.VERSION }}'
           body: |
             ## Summary
             Adds benthos-umh schemas for version ${{ env.VERSION }}.

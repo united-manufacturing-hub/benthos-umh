@@ -128,6 +128,7 @@ func TestRedpandaForwarderConfigFields(t *testing.T) {
 		"key_pattern",
 		"max_yield_batch_bytes",
 		"metadata_max_age",
+		"partition_assignment_strategy",
 		"partition_buffer_bytes",
 		"rack_id",
 		"rebalance_timeout",

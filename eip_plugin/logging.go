@@ -1,0 +1,28 @@
+// Copyright 2025 UMH Systems GmbH
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package eip_plugin
+
+import "github.com/redpanda-data/benthos/v4/public/service"
+
+// cipLogger surfaces the failures gologix logs but never returns.
+type cipLogger struct {
+	log *service.Logger
+}
+
+// demoted to warn because these errors also come back to us and are logged there
+func (l cipLogger) Error(msg string, args ...any) { l.log.Warnf("gologix: %s %v", msg, args) }
+func (l cipLogger) Warn(msg string, args ...any)  { l.log.Warnf("gologix: %s %v", msg, args) }
+func (l cipLogger) Info(msg string, args ...any)  { l.log.Debugf("gologix: %s %v", msg, args) }
+func (l cipLogger) Debug(msg string, args ...any) { l.log.Debugf("gologix: %s %v", msg, args) }
