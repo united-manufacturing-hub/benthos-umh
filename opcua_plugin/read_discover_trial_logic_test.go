@@ -100,6 +100,13 @@ var _ = Describe("decideDataChangeFilterSupport", func() {
 				expectSupports: false,
 				expectTrial:    false,
 			}),
+		Entry("FilterUnknown, trial failed against a profile default of true: the trial result wins, no filter",
+			decisionCase{
+				profile:        ServerProfile{Name: "test-unknown", FilterCapability: FilterUnknown, SupportsDataChangeFilter: true},
+				caps:           &ServerCapabilities{hasTrialedThisConnection: true, SupportsDataChangeFilter: false},
+				expectSupports: false,
+				expectTrial:    false,
+			}),
 
 		// FilterInvalid (server_profiles.go) exists only to reach the switch's
 		// default branch, which treats an unknown enum value like FilterUnknown.
