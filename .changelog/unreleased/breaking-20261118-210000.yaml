@@ -1,0 +1,3 @@
+kind: breaking
+body: 'OPC UA input and output: fixed a vulnerability that let the OPC UA server a bridge connects to, or anyone who can inject into a connection with security mode None, hang the bridge with a crafted 21-byte value. The bridge used full CPU and ever more memory until it was killed ([CWE-835](https://cwe.mitre.org/data/definitions/835.html)). Affects benthos-umh v0.16.2 and earlier, including the version in the current umh-core. Update now; this fix might not be in a umh-core release yet'
+time: 2026-11-18T21:00:00.000000+01:00

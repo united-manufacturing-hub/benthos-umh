@@ -1,3 +1,0 @@
-kind: fixes
-body: "Security: OPC UA connections now reject a message whose sequence number repeats or skips, as the OPC UA specification requires, so a replayed message is no longer accepted. The bridge reconnects, and the error names the sequence number it received and the one it expected. The OPC Foundation .NET stack and open62541 enforce the same rule"
-time: 2026-11-18T21:00:02.000000+01:00

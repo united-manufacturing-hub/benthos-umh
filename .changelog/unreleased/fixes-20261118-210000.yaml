@@ -1,3 +1,0 @@
-kind: fixes
-body: "Security: an OPC UA server, or anyone who can inject into an unencrypted (SecurityMode None) connection, could hang the OPC UA input or output with a crafted 21-byte value: the bridge used full CPU and growing memory until it was restarted. Fixed by updating gopcua to v0.9.2 ([GHSA], [CVE])"
-time: 2026-11-18T21:00:00.000000+01:00
