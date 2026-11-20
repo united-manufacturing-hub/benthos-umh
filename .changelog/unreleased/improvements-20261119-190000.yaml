@@ -1,0 +1,3 @@
+kind: improvements
+body: "OPC UA bridge: a tag whose name also appears earlier in its browse path now publishes to the right topic. Before, its folder was misspelled: element 1 of the array arr in data block DB1 published to DB.arr.1.1 instead of DB1.arr.1. Duplicate nodes that the bridge tells apart by their NodeID lost part of that NodeID the same way, and a tag inside a folder of the same name, such as Temp in Temp, did not publish at all. Breaking: affected tags move to the corrected topic and their earlier history stays under the old one, so update dashboards and queries that read the old topic (ENG-7953)"
+time: 2026-11-19T19:00:00.000000+01:00

@@ -140,9 +140,51 @@ var _ = Describe("createMessageFromValue tag metadata", func() {
 			"DB_00Line.Station.aSensor.0.iValue", "iValue",
 			"DB_00Line.Station.aSensor.0",
 			"DB_00Line.Station.aSensor.0", "iValue"),
+		// The node's name also occurs earlier in its path.
+		Entry("array element whose name also occurs in a parent (Siemens S7-1500 UDT array)",
+			"DB_00Line.Station.aSensor.0", "0",
+			"DB_00Line.Station.aSensor",
+			"DB_00Line.Station.aSensor", "0"),
+		Entry("name that ends a parent segment", "Line.Pump1.1", "1", "Line.Pump1", "Line.Pump1", "1"),
+		Entry("name that starts a parent segment", "Pump1.Pump", "Pump", "Pump1", "Pump1", "Pump"),
+		Entry("parent with the same name as the node", "Temp.Temp", "Temp", "Temp", "Temp", "Temp"),
+		Entry("grandparent with the same name as the node", "Temp.A.Temp", "Temp", "Temp.A", "Temp.A", "Temp"),
 		Entry("node at the root of the browse", "xLifeBit", "xLifeBit", "", "xLifeBit", "xLifeBit"),
 		Entry("node without a browse path", "", "ProductName", "", "ProductName", "ProductName"),
+		// A name that sanitize changes keeps its segment. Known defect (ENG-7956).
 		Entry("browse name that sanitize changes", "Line.Pump_1", "Pump 1", "Line.Pump_1", "Line.Pump_1", "Pump_1"),
 		Entry("root node whose browse name sanitize changes", "Pump_1", "Pump 1", "", "Pump_1", "Pump_1"),
 	)
+
+	It("keeps the NodeID segment of deduplicated nodes whole", func() {
+		// Two nodes with the same browse name under the same parent. Their NodeIDs
+		// contain the browse name, as Siemens and Kepware string NodeIDs do.
+		nodes := []NodeDef{
+			{NodeID: ua.NewStringNodeID(3, "Line.Temp"), BrowseName: "Temp", Path: "Line.Temp"},
+			{NodeID: ua.NewStringNodeID(4, "Line.Temp"), BrowseName: "Temp", Path: "Line.Temp"},
+		}
+		UpdateNodePaths(nodes)
+
+		var topics []string
+		for _, n := range nodes {
+			tagPath, _, tagName := metaOf(n.Path, n.BrowseName, n.NodeID)
+			topics = append(topics, tagPath+"."+tagName)
+		}
+		Expect(topics).To(Equal([]string{"Line.ns_3_s_Line_Temp.Temp", "Line.ns_4_s_Line_Temp.Temp"}))
+	})
+
+	It("keeps the NodeID segment of deduplicated nodes at the root of the browse", func() {
+		nodes := []NodeDef{
+			{NodeID: ua.NewStringNodeID(3, "Temp"), BrowseName: "Temp", Path: "Temp"},
+			{NodeID: ua.NewStringNodeID(4, "Temp"), BrowseName: "Temp", Path: "Temp"},
+		}
+		UpdateNodePaths(nodes)
+
+		var topics []string
+		for _, n := range nodes {
+			tagPath, _, tagName := metaOf(n.Path, n.BrowseName, n.NodeID)
+			topics = append(topics, tagPath+"."+tagName)
+		}
+		Expect(topics).To(Equal([]string{"ns_3_s_Temp.Temp", "ns_4_s_Temp.Temp"}))
+	})
 })
