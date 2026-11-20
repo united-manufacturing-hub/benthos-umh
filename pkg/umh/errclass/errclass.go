@@ -14,19 +14,19 @@
 
 package errclass
 
-// Class says where the cause behind a Kind lies. It is logged as error_class,
-// and umh-core reports only Bug and Unknown to Sentry.
-type Class string
+// Owner says who has to act on the cause behind a Kind. It is logged as
+// error_owner.
+type Owner string
 
 const (
-	// Known: the cause is outside UMH's code, such as configuration, device
-	// state or the network. This includes faults that recover by themselves,
+	// User: the cause is outside UMH's code, such as configuration, device
+	// state or the network. The user can fix it, or it recovers by itself,
 	// such as a dropped connection.
-	Known Class = "known"
-	// Bug: only UMH can fix it.
-	Bug Class = "bug"
-	// Unknown: no Kind matched. Every plugin has exactly one Kind of this class,
-	// Plugin.Unclassified, and such lines are reported until the cause gets a
-	// Kind of its own.
-	Unknown Class = "unknown"
+	User Owner = "user"
+	// UMH: only UMH can fix it, even where a ticket for it exists already.
+	UMH Owner = "umh"
+	// Unknown: no Kind matched. Every plugin has exactly one Kind with this
+	// owner, "<plugin>::unclassified", and such lines are reported until the
+	// cause gets a Kind of its own.
+	Unknown Owner = "unknown"
 )

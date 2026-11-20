@@ -355,8 +355,11 @@ func (a *AdsCommInput) onSessionEvent(ev SessionEvent, reason string) {
 // the samples in that window. The CompareAndSwap keeps it to one line.
 func (a *AdsCommInput) markDegraded(reason string, detail string) {
 	if a.degradedReason.CompareAndSwap(nil, &reason) {
-		classifier.With(a.Log.With("reason", reason, "detail", detail), reasonKind(reason)).
-			Error("ADS session can no longer deliver; rebuilding it on the next read")
+		log := a.Log.With("reason", reason, "detail", detail)
+		if kind, ok := reasonKinds[reason]; ok {
+			log = classifier.With(log, kind)
+		}
+		log.Error("ADS session can no longer deliver; rebuilding it on the next read")
 	}
 }
 
@@ -411,7 +414,7 @@ func (a *AdsCommInput) connLogger() *service.Logger {
 
 // Connect establishes the ADS session, resolves symbol metadata, and (depending
 // on config) loads the full symbol table and registers notifications. A failure
-// is returned with its error_kind and error_class in the text, because Benthos
+// is returned with its error_kind and error_owner in the text, because Benthos
 // core logs it again as "Failed to connect to ads: ..." with no fields.
 func (a *AdsCommInput) Connect(ctx context.Context) error {
 	return classifier.EnrichForLog(a.initConnect(ctx))

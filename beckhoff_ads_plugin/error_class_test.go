@@ -57,16 +57,19 @@ func goADSRecord(level slog.Level, msg string, args ...any) capturedLog {
 func haveKind(kind *errclass.Kind) OmegaMatcher {
 	return HaveField("Attrs", SatisfyAll(
 		HaveKeyWithValue("error_kind", kind.String()),
-		HaveKey("error_class"),
+		HaveKey("error_owner"),
 	))
 }
 
 var _ = Describe("classifier", func() {
+	It("classifies no error as ads::unclassified", func() {
+		Expect(kindUnclassified.String()).To(Equal("ads::unclassified"))
+	})
+
 	DescribeTable("maps an error onto the contract by type",
 		func(err error, want *errclass.Kind) {
 			Expect(classifier.Classify(err)).To(Equal(want))
 		},
-		Entry("no error", nil, kindUnclassified),
 		Entry("every notification symbol failed", kindSymbolConfig.Errorf("no symbols registered for notifications (2 symbols all failed to resolve)"), kindSymbolConfig),
 		Entry("hostAMS does not parse", kindInvalidHostAMS.Errorf("hostAMS %q is not a valid AMS NetID: %w", "1.2", errors.New("bad")), kindInvalidHostAMS),
 		Entry("targetAMS does not parse", kindInvalidTargetAMS.Errorf("targetAMS %q is not a valid AMS NetID: %w", "1.2", errors.New("bad")), kindInvalidTargetAMS),
@@ -123,14 +126,14 @@ var _ = Describe("classifier", func() {
 		Entry("typed errors still classify", fmt.Errorf("connect: %w", adsLib.ErrRuntimeNotRunning), kindPLCNotRunning),
 	)
 
-	DescribeTable("reasonKind maps go-ads session-event reasons",
+	DescribeTable("reasonKinds maps go-ads session-event reasons",
 		func(reason adsLib.Reason, want *errclass.Kind) {
-			Expect(reasonKind(string(reason))).To(Equal(want))
+			Expect(reasonKinds[string(reason)]).To(Equal(want))
 		},
 		Entry("symbol not found", adsLib.ReasonSymbolNotFound, kindSymbolConfig),
 		Entry("symbol not active", adsLib.ReasonSymbolNotActive, kindSymbolConfig),
 		Entry("heartbeat silent", adsLib.ReasonHeartbeatSilent, kindHeartbeatObserveOnly),
-		Entry("an unmapped reason", adsLib.ReasonReloadCapExhausted, kindUnclassified),
+		Entry("an unmapped reason", adsLib.ReasonReloadCapExhausted, nil),
 	)
 })
 
@@ -180,7 +183,7 @@ var _ = Describe("go-ads record classification", func() {
 		for _, level := range []slog.Level{slog.LevelInfo, slog.LevelDebug} {
 			rec := goADSRecord(level, "session disconnected, reconnecting; no data is read until it succeeds")
 			Expect(rec.Attrs).NotTo(HaveKey("error_kind"))
-			Expect(rec.Attrs).NotTo(HaveKey("error_class"))
+			Expect(rec.Attrs).NotTo(HaveKey("error_owner"))
 		}
 	})
 })
@@ -313,7 +316,7 @@ var _ = Describe("plugin log lines carry their class", func() {
 		returned := classifier.EnrichForLog(a.logConnectFailure(context.Background(), "Connecting to PLC failed", err))
 
 		Expect(*recs).To(ConsistOf(haveKind(kindPLCNotRunning)))
-		Expect(returned.Error()).To(HavePrefix("[error_kind=ads::plc_not_running error_class=known] "))
+		Expect(returned.Error()).To(HavePrefix("[error_kind=ads::plc_not_running error_owner=user] "))
 	})
 
 	It("tags notification symbols the PLC did not register as symbol configuration", func() {
@@ -352,7 +355,7 @@ var _ = Describe("plugin log lines carry their class", func() {
 		err := classifier.EnrichForLog(a.setupNotifications(context.Background()))
 
 		Expect(classifier.Classify(err)).To(Equal(kindSymbolConfig))
-		Expect(err.Error()).To(HavePrefix("[error_kind=ads::symbol_config error_class=known] "))
+		Expect(err.Error()).To(HavePrefix("[error_kind=ads::symbol_config error_owner=user] "))
 	})
 
 	It("tags a symbol whose metadata did not resolve by its error", func() {
@@ -406,7 +409,7 @@ var _ = Describe("plugin log lines carry their class", func() {
 		err := a.Connect(ctx)
 
 		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(HavePrefix("[error_kind=ads::target_unreachable error_class=known] "))
+		Expect(err.Error()).To(HavePrefix("[error_kind=ads::target_unreachable error_owner=user] "))
 		Expect(isRouteFault(err)).To(BeFalse(), "the connect gate still sees the wrapped error")
 	})
 
@@ -420,14 +423,14 @@ var _ = Describe("plugin log lines carry their class", func() {
 // The eight message forms of Sentry issue UMH-CORE-45M, rebuilt from the raw
 // lines. None is a fault only UMH can fix, so none may be bug or unknown.
 var _ = Describe("UMH-CORE-45M message forms", func() {
-	notReported := HaveField("Attrs", HaveKeyWithValue("error_class", string(errclass.Known)))
+	notReported := HaveField("Attrs", HaveKeyWithValue("error_owner", string(errclass.User)))
 
 	It("discovery timeout: Failed to connect to ads (identify got no answer)", func() {
 		err := classifier.EnrichForLog(fmt.Errorf("creating the ADS session failed: %w",
 			fmt.Errorf("ads: NewSession: target AMS address incomplete and discovery failed "+
 				"(set remote.AMS explicitly if the device does not answer the identify service): %w",
 				fmt.Errorf("identify 10.13.37.52: no answer after 3 attempts: %w", udpTimeout))))
-		Expect(err.Error()).To(HavePrefix("[error_kind=ads::target_unreachable error_class=known] "))
+		Expect(err.Error()).To(HavePrefix("[error_kind=ads::target_unreachable error_owner=user] "))
 	})
 
 	It("heartbeat", func() {
@@ -475,7 +478,7 @@ var _ = Describe("UMH-CORE-45M message forms", func() {
 		returned := classifier.EnrichForLog(a.logConnectFailure(context.Background(), "Connecting to PLC failed", err))
 
 		Expect(*recs).To(ConsistOf(SatisfyAll(notReported, haveKind(kindRouteFault))))
-		Expect(returned.Error()).To(HavePrefix("[error_kind=ads::route_fault error_class=known] "))
+		Expect(returned.Error()).To(HavePrefix("[error_kind=ads::route_fault error_owner=user] "))
 	})
 })
 

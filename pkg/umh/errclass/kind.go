@@ -21,19 +21,16 @@ import (
 )
 
 // Kind is one cause a plugin can log. It has a name, e.g. "ads::route_fault",
-// logged as error_kind, and a Class, logged as error_class. Create it with
-// Plugin.Known or Plugin.Bug, as a package variable. Each Kind exists once, so
+// logged as error_kind, and an Owner, logged as error_owner. Create it with
+// Plugin.User or Plugin.UMH, as a package variable. Each Kind exists once, so
 // Kinds compare with ==.
 type Kind struct {
 	name  string
-	class Class
+	owner Owner
 }
 
 // String returns the name of k, e.g. "ads::route_fault".
 func (k *Kind) String() string { return k.name }
-
-// Class returns the class of k.
-func (k *Kind) Class() Class { return k.class }
 
 // Errorf is fmt.Errorf for an error the plugin creates itself, tagged with k.
 // Classifier.Classify returns k for it, whatever errors it wraps: the call site
@@ -43,7 +40,7 @@ func (k *Kind) Class() Class { return k.class }
 // Where an error wrapped inside may have a better Kind, ask Classify first and
 // tag only what it does not know:
 //
-//	if classifier.Classify(err) == kindUnclassified {
+//	if !classifier.IsClassified(err) {
 //		return kindSessionCreateFailed.Errorf("creating the session failed: %w", err)
 //	}
 func (k *Kind) Errorf(format string, args ...any) error {
@@ -79,7 +76,9 @@ type Plugin struct {
 	// name is the plugin name, e.g. "ads".
 	name string
 	// kinds holds every Kind declared on this Plugin, by name.
-	kinds        map[string]*Kind
+	kinds map[string]*Kind
+	// unclassified is "<plugin>::unclassified", the Kind of every Warn and
+	// Error line nothing classified.
 	unclassified *Kind
 }
 
@@ -101,22 +100,19 @@ func NewPlugin(name string) *Plugin {
 	return p
 }
 
-// Known declares the Kind "<plugin>::<name>" for a cause outside UMH's code.
-// name must be lowercase snake_case and not declared on p before.
-func (p *Plugin) Known(name string) *Kind { return p.declare(name, Known) }
+// User declares the Kind "<plugin>::<name>" for a cause outside UMH's code,
+// which the user can fix or which recovers by itself. name must be lowercase
+// snake_case and not declared on p before.
+func (p *Plugin) User(name string) *Kind { return p.declare(name, User) }
 
-// Bug declares the Kind "<plugin>::<name>" for a cause only UMH can fix.
+// UMH declares the Kind "<plugin>::<name>" for a cause only UMH can fix.
 // name must be lowercase snake_case and not declared on p before.
-func (p *Plugin) Bug(name string) *Kind { return p.declare(name, Bug) }
-
-// Unclassified returns "<plugin>::unclassified", the Kind of every Warn and
-// Error line nothing else classified. Its class is Unknown.
-func (p *Plugin) Unclassified() *Kind { return p.unclassified }
+func (p *Plugin) UMH(name string) *Kind { return p.declare(name, UMH) }
 
 // owns reports whether k is one of p's Kinds.
 func (p *Plugin) owns(k *Kind) bool { return k != nil && p.kinds[k.name] == k }
 
-func (p *Plugin) declare(name string, class Class) *Kind {
+func (p *Plugin) declare(name string, owner Owner) *Kind {
 	if !namePattern.MatchString(name) {
 		panic(fmt.Sprintf("errclass: kind name %q in plugin %q is not lowercase snake_case", name, p.name))
 	}
@@ -124,7 +120,7 @@ func (p *Plugin) declare(name string, class Class) *Kind {
 	if _, ok := p.kinds[full]; ok {
 		panic(fmt.Sprintf("errclass: %s is declared twice", full))
 	}
-	k := &Kind{name: full, class: class}
+	k := &Kind{name: full, owner: owner}
 	p.kinds[full] = k
 	return k
 }

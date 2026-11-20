@@ -33,29 +33,28 @@ import (
 var (
 	ads = errclass.NewPlugin("ads")
 
-	kindConnectionDropped    = ads.Known("connection_dropped")
-	kindSessionDisconnected  = ads.Known("session_disconnected")
-	kindHeartbeatResubscribe = ads.Known("heartbeat_resubscribe")
-	kindResubscribeFailed    = ads.Known("resubscribe_failed")
-	kindHeartbeatObserveOnly = ads.Known("heartbeat_observe_only")
-	kindTargetUnreachable    = ads.Known("target_unreachable")
-	kindTargetPortNotFound   = ads.Known("target_port_not_found")
-	kindReconnectFailing     = ads.Known("reconnect_failing")
-	kindRouteFault           = ads.Known("route_fault")
-	kindPLCNotRunning        = ads.Known("plc_not_running")
-	kindSymbolConfig         = ads.Known("symbol_config")
-	kindInvalidHostAMS       = ads.Known("invalid_host_ams")
-	kindInvalidTargetAMS     = ads.Known("invalid_target_ams")
-	kindSessionCreateFailed  = ads.Bug("session_create_failed")
-	kindSymbolCacheMiss      = ads.Bug("symbol_cache_miss")
-	kindNoInitialSamples     = ads.Bug("no_initial_samples")
-	kindReadGap              = ads.Bug("read_gap")
-	kindBatchReadFallback    = ads.Known("batch_read_fallback")
-	kindReadTimeout          = ads.Known("read_timeout")
-	kindCloseFailed          = ads.Known("close_failed")
-	kindProtocolDecode       = ads.Bug("protocol_decode")
-	kindInternalBug          = ads.Bug("internal_bug")
-	kindUnclassified         = ads.Unclassified()
+	kindConnectionDropped    = ads.User("connection_dropped")
+	kindSessionDisconnected  = ads.User("session_disconnected")
+	kindHeartbeatResubscribe = ads.User("heartbeat_resubscribe")
+	kindResubscribeFailed    = ads.User("resubscribe_failed")
+	kindHeartbeatObserveOnly = ads.User("heartbeat_observe_only")
+	kindTargetUnreachable    = ads.User("target_unreachable")
+	kindTargetPortNotFound   = ads.User("target_port_not_found")
+	kindReconnectFailing     = ads.User("reconnect_failing")
+	kindRouteFault           = ads.User("route_fault")
+	kindPLCNotRunning        = ads.User("plc_not_running")
+	kindSymbolConfig         = ads.User("symbol_config")
+	kindInvalidHostAMS       = ads.User("invalid_host_ams")
+	kindInvalidTargetAMS     = ads.User("invalid_target_ams")
+	kindSessionCreateFailed  = ads.UMH("session_create_failed")
+	kindSymbolCacheMiss      = ads.UMH("symbol_cache_miss")
+	kindNoInitialSamples     = ads.UMH("no_initial_samples")
+	kindReadGap              = ads.UMH("read_gap")
+	kindBatchReadFallback    = ads.User("batch_read_fallback")
+	kindReadTimeout          = ads.User("read_timeout")
+	kindCloseFailed          = ads.User("close_failed")
+	kindProtocolDecode       = ads.UMH("protocol_decode")
+	kindInternalBug          = ads.UMH("internal_bug")
 )
 
 // classifier gives every Warn and Error line of this input its Kind: the
@@ -133,7 +132,11 @@ var classifier = ads.Classifier(
 	// The symbol cache was reloaded while a batch subscribe was in flight. The
 	// symbol name is fine; nothing the customer can change avoids it.
 	errclass.Is(adsLib.ErrNotificationStrandedByReload, kindInternalBug),
-	errclass.Match(isTransportGone, kindConnectionDropped),
+	// The ADS transport went away mid-operation. ErrRouteNotServed above wraps
+	// one too, but usually needs credentials or an address fixed.
+	errclass.Is(adsLib.ErrTransportClosed, kindConnectionDropped),
+	errclass.Is(adsLib.ErrDisconnected, kindConnectionDropped),
+	errclass.Is(adsLib.ErrEstablishedDropped, kindConnectionDropped),
 	// A batch subscribe whose transport failed; the cause, if any, is above.
 	errclass.Is(adsLib.ErrNotificationTransportFailure, kindConnectionDropped),
 	// A request deadline, or a TCP socket deadline on a live session.
@@ -155,20 +158,13 @@ var reasonKinds = map[string]*errclass.Kind{
 	string(adsLib.ReasonHeartbeatSilent): kindHeartbeatObserveOnly,
 }
 
-func reasonKind(reason string) *errclass.Kind {
-	if kind, ok := reasonKinds[reason]; ok {
-		return kind
-	}
-	return kindUnclassified
-}
-
 // sessionCreateError wraps an error of adsLib.NewSession. Without a targetAMS,
 // NewSession first discovers the target over UDP, and a classified cause such
 // as an unanswered discovery keeps its own Kind. What is left is go-ads
 // rejecting options that config parsing already validates, which is a bug in
 // that validation.
 func sessionCreateError(err error) error {
-	if classifier.Classify(err) != kindUnclassified {
+	if classifier.IsClassified(err) {
 		return fmt.Errorf("creating the ADS session failed: %w", err)
 	}
 	return kindSessionCreateFailed.Errorf("creating the ADS session failed: %w", err)
@@ -178,7 +174,7 @@ func sessionCreateError(err error) error {
 // our route — a configuration fault that a retry cannot fix. It is the same
 // verdict as the error_kind, so the backoff and the log cannot disagree.
 func isRouteFault(err error) bool {
-	return classifier.Classify(err) == kindRouteFault
+	return classifier.IsKind(err, kindRouteFault)
 }
 
 // untypedRouteFaults are the texts of the route faults go-ads v2.3.4 returns
@@ -188,7 +184,7 @@ func isRouteFault(err error) bool {
 //   - the route was registered but never served within the activation budget:
 //     https://github.com/RuneRoven/go-ads/blob/v2.3.4/session.go#L1287
 //     It wraps the last probe error, typically ErrTransportClosed, so its rule
-//     has to come before isTransportGone.
+//     has to come before the ErrTransportClosed rule.
 var untypedRouteFaults = []string{
 	"route registration failed with error code",
 	"was registered but the PLC did not serve it",
@@ -216,12 +212,4 @@ func isUDPTimeout(err error) bool {
 func isDialFailure(err error) bool {
 	var opErr *net.OpError
 	return errors.As(err, &opErr) && opErr.Op == "dial"
-}
-
-// isTransportGone reports whether the ADS transport went away mid-operation.
-// ErrRouteNotServed is excluded: it usually needs credentials or an address fixed.
-func isTransportGone(err error) bool {
-	return errors.Is(err, adsLib.ErrTransportClosed) ||
-		errors.Is(err, adsLib.ErrDisconnected) ||
-		errors.Is(err, adsLib.ErrEstablishedDropped)
 }

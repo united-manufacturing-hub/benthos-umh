@@ -29,3 +29,7 @@ var NewLogger = classified
 func classified(l *service.Logger) *service.Logger {
 	return classifier.Logger(service.MockResources(service.MockResourcesOptUseLogger(l)))
 }
+
+// kindUnclassified is "ads::unclassified", which Classify returns for an error
+// no rule knows, and for no error at all.
+var kindUnclassified = classifier.Classify(nil)

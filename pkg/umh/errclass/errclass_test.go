@@ -35,16 +35,16 @@ var (
 	// other is a second plugin, whose Kinds plugin must not accept.
 	other = errclass.NewPlugin("other")
 
-	foreignKind       = other.Known("foreign")
-	foreignOnlyKind   = other.Known("foreign_only")
-	foreignWithKind   = other.Known("foreign_with")
-	foreignEnrichKind = other.Bug("foreign_enrich")
+	foreignKind       = other.User("foreign")
+	foreignOnlyKind   = other.User("foreign_only")
+	foreignWithKind   = other.User("foreign_with")
+	foreignEnrichKind = other.UMH("foreign_enrich")
 
 	plugin        = errclass.NewPlugin("test")
-	kindTimedOut  = plugin.Known("timed_out")
-	kindClosed    = plugin.Known("closed")
-	kindBadConfig = plugin.Known("bad_config")
-	kindDataLoss  = plugin.Bug("data_loss")
+	kindTimedOut  = plugin.User("timed_out")
+	kindClosed    = plugin.User("closed")
+	kindBadConfig = plugin.User("bad_config")
+	kindDataLoss  = plugin.UMH("data_loss")
 
 	classifier = plugin.Classifier(
 		errclass.Message("socket closed", kindClosed),
@@ -105,10 +105,23 @@ var _ = Describe("Classifier.Classify", func() {
 		Entry("the Kind the error was created with", kindBadConfig.Errorf("bad %q", "x"), kindBadConfig),
 		Entry("the Kind the error was created with, over a rule matching inside it", kindBadConfig.Errorf("x: %w", errClosed), kindBadConfig),
 		Entry("a rule, over a Kind of another plugin", foreignKind.Errorf("x: %w", errClosed), kindClosed),
-		Entry("unclassified, over a Kind of another plugin", foreignOnlyKind.Errorf("x"), plugin.Unclassified()),
-		Entry("an error whose text equals a Message rule", errors.New("socket closed"), plugin.Unclassified()),
-		Entry("nothing known", errors.New("boom"), plugin.Unclassified()),
-		Entry("no error", nil, plugin.Unclassified()),
+		Entry("unclassified, over a Kind of another plugin", foreignOnlyKind.Errorf("x"), errclass.Unclassified(plugin)),
+		Entry("an error whose text equals a Message rule", errors.New("socket closed"), errclass.Unclassified(plugin)),
+		Entry("nothing known", errors.New("boom"), errclass.Unclassified(plugin)),
+		Entry("no error", nil, errclass.Unclassified(plugin)),
+	)
+
+	DescribeTable("IsKind and IsClassified agree with it",
+		func(err error, kind *errclass.Kind, isKind, isClassified bool) {
+			Expect(classifier.IsKind(err, kind)).To(Equal(isKind))
+			Expect(classifier.IsClassified(err)).To(Equal(isClassified))
+		},
+		Entry("a matching rule", fmt.Errorf("read: %w", errTimeout), kindTimedOut, true, true),
+		Entry("another Kind", fmt.Errorf("read: %w", errTimeout), kindClosed, false, true),
+		Entry("the Kind the error was created with", kindBadConfig.Errorf("x"), kindBadConfig, true, true),
+		Entry("only a Kind of another plugin", foreignOnlyKind.Errorf("x"), foreignOnlyKind, false, false),
+		Entry("nothing known", errors.New("boom"), kindTimedOut, false, false),
+		Entry("no error", nil, kindTimedOut, false, false),
 	)
 
 	It("keeps the text and chain of a created error", func() {
@@ -128,7 +141,7 @@ var _ = Describe("Logger", func() {
 		Expect((*recs)[0].msg).To(Equal("symbol a is misspelled"))
 		Expect((*recs)[0].attrs).To(SatisfyAll(
 			HaveKeyWithValue("error_kind", "test::bad_config"),
-			HaveKeyWithValue("error_class", "known"),
+			HaveKeyWithValue("error_owner", "user"),
 			HaveKeyWithValue("symbol", "a"),
 		))
 	})
@@ -139,7 +152,7 @@ var _ = Describe("Logger", func() {
 
 		Expect((*recs)[0].attrs).To(SatisfyAll(
 			HaveKeyWithValue("error_kind", "test::data_loss"),
-			HaveKeyWithValue("error_class", "bug"),
+			HaveKeyWithValue("error_owner", "umh"),
 		))
 	})
 
@@ -149,7 +162,7 @@ var _ = Describe("Logger", func() {
 
 		Expect((*recs)[0].attrs).To(SatisfyAll(
 			HaveKeyWithValue("error_kind", "test::bad_config"),
-			HaveKeyWithValue("error_class", "known"),
+			HaveKeyWithValue("error_owner", "user"),
 		))
 	})
 
@@ -162,7 +175,7 @@ var _ = Describe("Logger", func() {
 		for _, r := range *recs {
 			Expect(r.attrs).To(SatisfyAll(
 				HaveKeyWithValue("error_kind", "test::unclassified"),
-				HaveKeyWithValue("error_class", "unknown"),
+				HaveKeyWithValue("error_owner", "unknown"),
 			))
 		}
 	})
@@ -176,7 +189,7 @@ var _ = Describe("Logger", func() {
 		for _, r := range *recs {
 			Expect(r.attrs).To(SatisfyAll(
 				HaveKeyWithValue("error_kind", "test::unclassified"),
-				HaveKeyWithValue("error_class", "unknown"),
+				HaveKeyWithValue("error_owner", "unknown"),
 			))
 		}
 	})
@@ -207,7 +220,7 @@ var _ = Describe("Logger", func() {
 		Expect((*recs)[1].level).To(Equal(slog.LevelInfo))
 		for _, r := range *recs {
 			Expect(r.attrs).NotTo(HaveKey("error_kind"))
-			Expect(r.attrs).NotTo(HaveKey("error_class"))
+			Expect(r.attrs).NotTo(HaveKey("error_owner"))
 		}
 	})
 })
@@ -233,7 +246,7 @@ var _ = Describe("Slog", func() {
 
 		Expect((*recs)[0].attrs).To(SatisfyAll(
 			HaveKeyWithValue("error_kind", "test::timed_out"),
-			HaveKeyWithValue("error_class", "known"),
+			HaveKeyWithValue("error_owner", "user"),
 		))
 	})
 
@@ -274,7 +287,7 @@ var _ = Describe("Classifier.EnrichForLog", func() {
 	It("puts the error_kind and class in front of the text once and keeps the chain", func() {
 		err := classifier.EnrichForLog(classifier.EnrichForLog(fmt.Errorf("connect: %w", errClosed)))
 
-		Expect(err.Error()).To(Equal("[error_kind=test::closed error_class=known] connect: closed"))
+		Expect(err.Error()).To(Equal("[error_kind=test::closed error_owner=user] connect: closed"))
 		Expect(err).To(MatchError(errClosed))
 		Expect(classifier.Classify(err)).To(BeIdenticalTo(kindClosed))
 	})
@@ -286,7 +299,7 @@ var _ = Describe("Classifier.EnrichForLog", func() {
 	It("ignores a Kind of another plugin", func() {
 		err := classifier.EnrichForLog(foreignEnrichKind.Errorf("x"))
 
-		Expect(err.Error()).To(Equal("[error_kind=test::unclassified error_class=unknown] x"))
+		Expect(err.Error()).To(Equal("[error_kind=test::unclassified error_owner=unknown] x"))
 	})
 })
 
@@ -301,14 +314,14 @@ var _ = Describe("Plugin", func() {
 		name := newPluginName()
 		p := errclass.NewPlugin(name)
 
-		Expect(p.Known("bad_config").String()).To(Equal(name + "::bad_config"))
-		Expect(p.Unclassified().String()).To(Equal(name + "::unclassified"))
+		Expect(p.User("bad_config").String()).To(Equal(name + "::bad_config"))
+		Expect(errclass.Unclassified(p).String()).To(Equal(name + "::unclassified"))
 	})
 
 	p := errclass.NewPlugin("p_name")
 	DescribeTable("panics on a malformed name, so the plugin fails as soon as it loads",
 		func(name string) {
-			Expect(func() { p.Known(name) }).To(Panic())
+			Expect(func() { p.User(name) }).To(Panic())
 		},
 		Entry("empty", ""),
 		Entry("upper case", "BadConfig"),
@@ -317,16 +330,11 @@ var _ = Describe("Plugin", func() {
 		Entry("dash", "bad-config"),
 	)
 
-	It("panics on a name declared twice, whatever its class", func() {
+	It("panics on a name declared twice, whatever its owner", func() {
 		p := errclass.NewPlugin(newPluginName())
-		p.Known("dropped")
-		Expect(func() { p.Bug("dropped") }).To(Panic())
-		Expect(func() { p.Known("unclassified") }).To(Panic())
-	})
-
-	It("returns the class of a Kind", func() {
-		Expect(kindDataLoss.Class()).To(Equal(errclass.Bug))
-		Expect(plugin.Unclassified().Class()).To(Equal(errclass.Unknown))
+		p.User("dropped")
+		Expect(func() { p.UMH("dropped") }).To(Panic())
+		Expect(func() { p.User("unclassified") }).To(Panic())
 	})
 
 	It("panics on a malformed plugin name", func() {

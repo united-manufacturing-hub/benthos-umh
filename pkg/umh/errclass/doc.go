@@ -18,16 +18,17 @@
 //
 //   - error_kind names the cause, e.g. "ads::route_fault": the plugin name,
 //     "::", and the name of the cause within that plugin. In Go it is a Kind.
-//   - error_class says where the cause lies: Known (outside UMH's code, such as
-//     configuration, device state, the network, or a fault that recovers by
-//     itself), Bug (only UMH can fix it) or Unknown (no Kind matched).
+//   - error_owner says who has to act on it: User (the cause is outside UMH's
+//     code, such as configuration, device state or the network, and the user
+//     can fix it or it recovers by itself), UMH (only UMH can fix it) or
+//     Unknown (no Kind matched).
 //
 // The list of every plugin's Kinds is the contract with umh-core:
 // https://linear.app/united-manufacturing-hub/document/plugin-error-classes-contract-between-benthos-umh-and-umh-core-e51f0744258b
 //
-// These classes are separate from the retry classes of the engineering
-// handbook (transient, persistent transient, persistent). They say whether
-// UMH has to act, not whether a retry helps.
+// Owners are separate from the retry classes of the engineering handbook
+// (transient, persistent transient, persistent). They say who has to act, not
+// whether a retry helps.
 //
 // A plugin declares its Plugin, its Kinds and its Classifier once, as package
 // variables:
@@ -35,10 +36,10 @@
 //	var (
 //		ads = errclass.NewPlugin("ads")
 //
-//		kindConnectionDropped = ads.Known("connection_dropped")
-//		kindRouteFault        = ads.Known("route_fault")
-//		kindInvalidHostAMS    = ads.Known("invalid_host_ams")
-//		kindReadGap           = ads.Bug("read_gap")
+//		kindConnectionDropped = ads.User("connection_dropped")
+//		kindRouteFault        = ads.User("route_fault")
+//		kindInvalidHostAMS    = ads.User("invalid_host_ams")
+//		kindReadGap           = ads.UMH("read_gap")
 //
 //		classifier = ads.Classifier(
 //			errclass.Message("PLC closed connection, transport down", kindConnectionDropped),
@@ -48,7 +49,7 @@
 //	)
 //
 // The plugin logs through classifier.Logger(mgr), a plain *service.Logger.
-// Every Warn and Error line it writes carries error_kind and error_class; a
+// Every Warn and Error line it writes carries error_kind and error_owner; a
 // line nothing classified is "<plugin>::unclassified". The call site names the
 // Kind with With, or lets the error decide with WithErr:
 //
@@ -68,7 +69,7 @@
 // are classified by the Message rules and by the error among their fields.
 //
 // An error returned to Benthos is logged again by Benthos itself, without
-// fields. Classifier.EnrichForLog puts error_kind and error_class into its text.
+// fields. Classifier.EnrichForLog puts error_kind and error_owner into its text.
 //
 // The forbidigo rule in .golangci.yaml forbids mgr.Logger() outside this
 // package, so a plugin cannot log through a logger that skips classification.

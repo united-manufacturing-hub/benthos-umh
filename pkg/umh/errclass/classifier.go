@@ -76,18 +76,35 @@ func (p *Plugin) Classifier(rules ...Rule) *Classifier {
 //  1. the Kind err was created with by Kind.Errorf, if it is one of this
 //     plugin's Kinds,
 //  2. the first Is or Match Rule that matches err,
-//  3. the plugin's Unclassified Kind, also for a nil err.
+//  3. the plugin's unclassified Kind, "<plugin>::unclassified", also for a
+//     nil err.
 //
 // An error nothing knows is reported as unclassified until it gets a Rule of
 // its own; that is how new causes surface.
 //
-// Use it where the Kind decides what the code does next. To give a log line
-// the Kind of its error, use WithErr.
+// To give a log line the Kind of its error, use WithErr. Where the Kind decides
+// what the code does next, use IsKind or IsClassified.
 func (c *Classifier) Classify(err error) *Kind {
 	if kind := c.matchError(err); kind != nil {
 		return kind
 	}
 	return c.plugin.unclassified
+}
+
+// IsKind reports whether Classify returns kind for err:
+//
+//	if classifier.IsKind(err, kindRouteFault) {
+//		backoff = routeFaultBackoff
+//	}
+func (c *Classifier) IsKind(err error, kind *Kind) bool {
+	return c.Classify(err) == kind
+}
+
+// IsClassified reports whether err has a Kind other than the plugin's
+// unclassified one: the Kind it was created with, or a matching Is or Match
+// Rule.
+func (c *Classifier) IsClassified(err error) bool {
+	return c.matchError(err) != nil
 }
 
 // matchError returns the Kind of err, trying the Kind err was created with
@@ -128,8 +145,8 @@ func (c *Classifier) createdKind(err error) *Kind {
 	return nil
 }
 
-// EnrichForLog returns err with its error_kind and error_class in front of its
-// text, e.g. "[error_kind=ads::route_fault error_class=known] connect: ...".
+// EnrichForLog returns err with its error_kind and error_owner in front of its
+// text, e.g. "[error_kind=ads::route_fault error_owner=user] connect: ...".
 //
 // Use it on errors returned to Benthos, such as from Connect: Benthos logs them
 // itself ("Failed to connect to ...: <err>"), without the fields the Logger
@@ -152,7 +169,7 @@ type enrichedError struct {
 }
 
 func (e *enrichedError) Error() string {
-	return fmt.Sprintf("[error_kind=%s error_class=%s] %v", e.kind.name, e.kind.class, e.err)
+	return fmt.Sprintf("[error_kind=%s error_owner=%s] %v", e.kind.name, e.kind.owner, e.err)
 }
 
 func (e *enrichedError) Unwrap() error { return e.err }

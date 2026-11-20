@@ -118,7 +118,7 @@ linters:
       forbid:
         - pattern: ^service\.Resources\.Logger$
           pkg: ^github\.com/redpanda-data/benthos/v4/public/service$
-          msg: "get the logger from classifier.Logger(mgr), so every Warn and Error line carries error_kind and error_class (see pkg/umh/errclass)"
+          msg: "get the logger from classifier.Logger(mgr), so every Warn and Error line carries error_kind and error_owner (see pkg/umh/errclass)"
     govet:
       enable-all: true
       disable:

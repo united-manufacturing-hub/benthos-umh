@@ -33,9 +33,9 @@ import (
 var (
 	example = errclass.NewPlugin("example")
 
-	kindDeviceUnreachable = example.Known("device_unreachable")
-	kindSymbolConfig      = example.Known("symbol_config")
-	kindCloseFailed       = example.Known("close_failed")
+	kindDeviceUnreachable = example.User("device_unreachable")
+	kindSymbolConfig      = example.User("symbol_config")
+	kindCloseFailed       = example.User("close_failed")
 
 	// errDeviceUnreachable stands for a sentinel error of a protocol library.
 	errDeviceUnreachable = errors.New("device unreachable")
@@ -98,24 +98,23 @@ func Example() {
 	// The error returned from Connect carries the same error_kind in its text.
 	fmt.Println(exampleClassifier.EnrichForLog(err))
 	// Output:
-	// WARN "Symbol \"MAIN.speed\" not found" error_class=known error_kind=example::symbol_config
-	// ERROR "Connect failed: connect: device unreachable" error_class=known error_kind=example::device_unreachable
-	// ERROR "Close failed: socket busy" error_class=known error_kind=example::close_failed
-	// WARN "Something odd happened" error_class=unknown error_kind=example::unclassified
+	// WARN "Symbol \"MAIN.speed\" not found" error_kind=example::symbol_config error_owner=user
+	// ERROR "Connect failed: connect: device unreachable" error_kind=example::device_unreachable error_owner=user
+	// ERROR "Close failed: socket busy" error_kind=example::close_failed error_owner=user
+	// WARN "Something odd happened" error_kind=example::unclassified error_owner=unknown
 	// INFO "Connected"
-	// [error_kind=example::device_unreachable error_class=known] connect: device unreachable
+	// [error_kind=example::device_unreachable error_owner=user] connect: device unreachable
 }
 
 // Classify picks the Kind in this order: the Kind the error was created with,
-// then the first rule that matches the error, then Unclassified. Compare
-// the result with == or switch on it where the Kind decides what the code does
-// next.
+// then the first rule that matches the error, then "<plugin>::unclassified".
+// Where the Kind decides what the code does next, ask IsKind.
 func ExampleClassifier_Classify() {
 	fmt.Println(exampleClassifier.Classify(fmt.Errorf("connect: %w", errDeviceUnreachable)))
 	fmt.Println(exampleClassifier.Classify(kindSymbolConfig.Errorf("symbol %q is not in the PLC", "MAIN.speed")))
 	fmt.Println(exampleClassifier.Classify(errors.New("boom")))
 
-	if exampleClassifier.Classify(errDeviceUnreachable) == kindDeviceUnreachable {
+	if exampleClassifier.IsKind(errDeviceUnreachable, kindDeviceUnreachable) {
 		fmt.Println("backing off")
 	}
 	// Output:
@@ -132,7 +131,7 @@ func ExampleClassifier_Slog() {
 
 	lib.Error("dial failed", "error", fmt.Errorf("dial: %w", errDeviceUnreachable))
 	// Output:
-	// ERROR "dial failed" error=dial: device unreachable error_class=known error_kind=example::device_unreachable
+	// ERROR "dial failed" error=dial: device unreachable error_kind=example::device_unreachable error_owner=user
 }
 
 func ExampleClassifier_EnrichForLog() {
@@ -140,5 +139,5 @@ func ExampleClassifier_EnrichForLog() {
 
 	fmt.Println(err)
 	// Output:
-	// [error_kind=example::unclassified error_class=unknown] boom
+	// [error_kind=example::unclassified error_owner=unknown] boom
 }

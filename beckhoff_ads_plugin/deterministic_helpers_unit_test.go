@@ -1518,21 +1518,6 @@ var _ = Describe("logReadFailure", func() {
 	})
 })
 
-var _ = Describe("isTransportGone", func() {
-	DescribeTable("separates a transport that went away from a session that was refused",
-		func(err error, want bool) {
-			Expect(isTransportGone(err)).To(Equal(want))
-		},
-		Entry("transport closed, wrapped", fmt.Errorf("upload: %w", adsLib.ErrTransportClosed), true),
-		Entry("disconnected", adsLib.ErrDisconnected, true),
-		Entry("established connection dropped", fmt.Errorf("connect: %w", adsLib.ErrEstablishedDropped), true),
-		// Excluded on purpose: this one usually needs credentials or an address fixed.
-		Entry("route never served", fmt.Errorf("connect: %w", adsLib.ErrRouteNotServed), false),
-		Entry("an ADS return code", errors.New("ADS error 0x706"), false),
-		Entry("no error", nil, false),
-	)
-})
-
 var _ = Describe("sessionConfig", func() {
 	It("carries every tuning field through to the adapter", func() {
 		a := &AdsCommInput{
@@ -2436,7 +2421,7 @@ var _ = Describe("waitForInitialSamples", func() {
 			HaveField("Level", slog.LevelWarn),
 			HaveField("Msg", ContainSubstring("main.silent")),
 			HaveField("Attrs", HaveKeyWithValue("error_kind", "ads::no_initial_samples")),
-			HaveField("Attrs", HaveKeyWithValue("error_class", "bug")),
+			HaveField("Attrs", HaveKeyWithValue("error_owner", "umh")),
 		)), "the warn has to name the symbols still missing")
 		Expect(*recs).NotTo(ContainElement(HaveField("Msg", ContainSubstring("main.a"))),
 			"a symbol that did report must not be listed as missing")

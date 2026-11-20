@@ -27,7 +27,7 @@ import (
 //	classifier.With(log, kindReadGap).Warnf("No value for %q", name)
 //
 // A later With overrides an earlier one. A nil Kind or a Kind of another
-// plugin tags the lines as the plugin's Unclassified Kind, so the mistake
+// plugin tags the lines as the plugin's unclassified Kind, so the mistake
 // shows up as an unclassified line instead of a crash on an error path.
 func (c *Classifier) With(l *service.Logger, kind *Kind) *service.Logger {
 	if !c.plugin.owns(kind) {
@@ -46,16 +46,16 @@ func (c *Classifier) WithErr(l *service.Logger, err error) *service.Logger {
 
 const (
 	errorKind  = "error_kind"
-	errorClass = "error_class"
+	errorOwner = "error_owner"
 )
 
 // Logger returns the logger of mgr, changed so that every Warn and Error line
-// carries error_kind and error_class. Use it in place of mgr.Logger(). A line
+// carries error_kind and error_owner. Use it in place of mgr.Logger(). A line
 // gets its Kind from, in order:
 //  1. With or WithErr,
 //  2. the Classifier's Message rules, and its Is and Match rules applied to an
 //     error value among the fields (see Slog),
-//  3. the plugin's Unclassified Kind.
+//  3. the plugin's unclassified Kind, "<plugin>::unclassified".
 //
 // Debug and Info lines carry neither field. Trace lines are written at debug
 // level: the logger goes through Benthos' slog adapter, which has no trace
@@ -73,7 +73,7 @@ func (c *Classifier) Slog(l *service.Logger) *slog.Logger {
 }
 
 // handler is a slog.Handler that writes to a *service.Logger and adds
-// error_kind and error_class to every record at Warn and above.
+// error_kind and error_owner to every record at Warn and above.
 type handler struct {
 	out   *service.Logger
 	c     *Classifier
@@ -95,9 +95,9 @@ func (h *handler) Handle(_ context.Context, r slog.Record) error {
 	if r.Level >= slog.LevelWarn {
 		kind = h.kind(r.Message, attrs)
 	}
-	attrs = slices.DeleteFunc(attrs, func(a slog.Attr) bool { return a.Key == errorKind || a.Key == errorClass })
+	attrs = slices.DeleteFunc(attrs, func(a slog.Attr) bool { return a.Key == errorKind || a.Key == errorOwner })
 	if kind != nil {
-		attrs = append(attrs, slog.String(errorKind, kind.name), slog.String(errorClass, string(kind.class)))
+		attrs = append(attrs, slog.String(errorKind, kind.name), slog.String(errorOwner, string(kind.owner)))
 	}
 	kvs := make([]any, 0, 2*len(attrs))
 	for _, a := range attrs {
@@ -121,7 +121,7 @@ func (h *handler) Handle(_ context.Context, r slog.Record) error {
 //  1. the last error_kind field, set by With or by a handler this record
 //     already passed. *service.Logger turns it into text, so it is looked up
 //     among the plugin's Kinds; a name the plugin did not declare is ignored.
-//  2. the rules, then Unclassified.
+//  2. the rules, then the plugin's unclassified Kind.
 func (h *handler) kind(msg string, attrs []slog.Attr) *Kind {
 	for _, a := range slices.Backward(attrs) {
 		if a.Key == errorKind {
