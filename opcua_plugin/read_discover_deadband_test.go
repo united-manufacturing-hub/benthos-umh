@@ -24,9 +24,8 @@ import (
 
 // Whether a monitored node gets a DataChangeFilter at all, as
 // createDataChangeFilter (deadband.go) and isNumericDataType (read_discover.go)
-// decide it. MonitorBatched calls both per node and is itself out of reach from
-// a unit test: g.Subscription is the concrete gopcua *opcua.Subscription, whose
-// Monitor() does a network round-trip.
+// decide it. What MonitorBatched actually sends is asserted in
+// subscription_test.go ("requests a DataChangeFilter ...").
 
 // The contents of the filter are asserted in deadband_test.go
 // ("DataChangeFilter Creation"); this table only asks whether there is one.
