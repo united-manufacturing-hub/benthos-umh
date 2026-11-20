@@ -95,19 +95,20 @@ func splitLast(path string) (string, string) {
 	return "", path
 }
 
-// tagMeta is the opcua_tag_path, opcua_tag_name and opcua_tag_group metadata
-// of a node. Tag processor configs map path and name to the virtual path and
-// the name of the UNS topic
+// tagTopicParts holds the values of the opcua_tag_path, opcua_tag_name and
+// opcua_tag_group metadata of a node. They are the keys that place the tag in
+// the UNS topic: tag processor configs map path and name to the virtual path
+// and the name of the topic
 // (https://docs.umh.app/usage/unified-namespace/topic-convention).
-type tagMeta struct {
+type tagTopicParts struct {
 	path  string
 	name  string
 	group string
 }
 
-// tagMetaOf returns the tag metadata of n. The group is the path, or the name
-// where the path is empty.
-func tagMetaOf(n NodeDef) tagMeta {
+// tagTopicPartsOf returns the topic parts of n. The group is the path, or the
+// name where the path is empty.
+func tagTopicPartsOf(n NodeDef) tagTopicParts {
 	name := sanitize(n.BrowseName)
 	group := strings.TrimSuffix(strings.Replace(n.Path, n.BrowseName, "", 1), ".")
 	if group == "" {
@@ -117,7 +118,7 @@ func tagMetaOf(n NodeDef) tagMeta {
 	if group == name {
 		path = ""
 	}
-	return tagMeta{path: path, name: name, group: group}
+	return tagTopicParts{path: path, name: name, group: group}
 }
 
 type Logger interface {

@@ -648,7 +648,7 @@ func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef Nod
 		message.MetaSet("opcua_heartbeat_message", "true")
 	}
 
-	tag := tagMetaOf(nodeDef)
+	tag := tagTopicPartsOf(nodeDef)
 	message.MetaSet("opcua_tag_group", tag.group)
 	message.MetaSet("opcua_tag_name", tag.name)
 	message.MetaSet("opcua_tag_path", tag.path)
