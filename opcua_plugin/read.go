@@ -17,7 +17,6 @@ package opcua_plugin
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -644,33 +643,15 @@ func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef Nod
 	message.MetaSet("opcua_attr_datatype", nodeDef.DataType)
 	message.MetaSet("opcua_attr_statuscode", dataValue.Status.Error())
 
-	tagName := sanitize(nodeDef.BrowseName)
-
-	// Tag Group
-	tagGroup := nodeDef.Path
-	// remove nodeDef.BrowseName from tagGroup
-	tagGroup = strings.Replace(tagGroup, nodeDef.BrowseName, "", 1)
-	// remove trailing dot
-	tagGroup = strings.TrimSuffix(tagGroup, ".")
-
 	// if the node is the CurrentTime node, mark is as a heartbeat message
 	if g.HeartbeatNodeId != nil && nodeDef.NodeID.Namespace() == g.HeartbeatNodeId.Namespace() && nodeDef.NodeID.IntID() == g.HeartbeatNodeId.IntID() && g.UseHeartbeat {
 		message.MetaSet("opcua_heartbeat_message", "true")
 	}
 
-	if tagGroup == "" {
-		tagGroup = tagName
-	}
-
-	message.MetaSet("opcua_tag_group", tagGroup)
-	message.MetaSet("opcua_tag_name", tagName)
-
-	// if the tag group is the same as the tag name ("root"), we don't want to have a tag path
-	if tagGroup == tagName {
-		message.MetaSet("opcua_tag_path", "")
-	} else {
-		message.MetaSet("opcua_tag_path", tagGroup)
-	}
+	tag := tagMetaOf(nodeDef)
+	message.MetaSet("opcua_tag_group", tag.group)
+	message.MetaSet("opcua_tag_name", tag.name)
+	message.MetaSet("opcua_tag_path", tag.path)
 
 	message.MetaSet("opcua_tag_type", tagType)
 

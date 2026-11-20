@@ -112,3 +112,37 @@ tag_processor:
 		Expect(payload["value"]).To(Equal(value))
 	})
 })
+
+var _ = Describe("createMessageFromValue tag metadata", func() {
+	metaOf := func(path, browseName string, nodeID *ua.NodeID) (string, string, string) {
+		input := &OPCUAInput{OPCUAConnection: &OPCUAConnection{}}
+		dv := &ua.DataValue{Value: ua.MustVariant(int16(1)), Status: ua.StatusOK}
+		msg := input.createMessageFromValue(dv, NodeDef{NodeID: nodeID, BrowseName: browseName, Path: path})
+		Expect(msg).NotTo(BeNil())
+		tagPath, _ := msg.MetaGet("opcua_tag_path")
+		tagGroup, _ := msg.MetaGet("opcua_tag_group")
+		tagName, _ := msg.MetaGet("opcua_tag_name")
+		return tagPath, tagGroup, tagName
+	}
+
+	DescribeTable("sets opcua_tag_path, opcua_tag_group and opcua_tag_name",
+		func(path, browseName, wantPath, wantGroup, wantName string) {
+			gotPath, gotGroup, gotName := metaOf(path, browseName, ua.NewNumericNodeID(3, 1))
+			Expect(gotPath).To(Equal(wantPath), "opcua_tag_path")
+			Expect(gotGroup).To(Equal(wantGroup), "opcua_tag_group")
+			Expect(gotName).To(Equal(wantName), "opcua_tag_name")
+		},
+		Entry("array element",
+			"DB_00Line.Station.aSensor.1", "1",
+			"DB_00Line.Station.aSensor",
+			"DB_00Line.Station.aSensor", "1"),
+		Entry("field of an array element",
+			"DB_00Line.Station.aSensor.0.iValue", "iValue",
+			"DB_00Line.Station.aSensor.0",
+			"DB_00Line.Station.aSensor.0", "iValue"),
+		Entry("node at the root of the browse", "xLifeBit", "xLifeBit", "", "xLifeBit", "xLifeBit"),
+		Entry("node without a browse path", "", "ProductName", "", "ProductName", "ProductName"),
+		Entry("browse name that sanitize changes", "Line.Pump_1", "Pump 1", "Line.Pump_1", "Line.Pump_1", "Pump_1"),
+		Entry("root node whose browse name sanitize changes", "Pump_1", "Pump 1", "", "Pump_1", "Pump_1"),
+	)
+})

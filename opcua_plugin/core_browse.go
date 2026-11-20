@@ -16,6 +16,7 @@ package opcua_plugin
 
 import (
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/gopcua/opcua/ua"
@@ -83,6 +84,40 @@ func join(a string, b string) string {
 // ensures consistency when using node names in various parts of the application.
 func sanitize(s string) string {
 	return sanitizeRegex.ReplaceAllString(s, "_")
+}
+
+// splitLast splits path at its last dot into the parent path and the last
+// segment. A path without a dot has an empty parent.
+func splitLast(path string) (string, string) {
+	if i := strings.LastIndex(path, "."); i >= 0 {
+		return path[:i], path[i+1:]
+	}
+	return "", path
+}
+
+// tagMeta is the opcua_tag_path, opcua_tag_name and opcua_tag_group metadata
+// of a node. Tag processor configs map path and name to the virtual path and
+// the name of the UNS topic
+// (https://docs.umh.app/usage/unified-namespace/topic-convention).
+type tagMeta struct {
+	path  string
+	name  string
+	group string
+}
+
+// tagMetaOf returns the tag metadata of n. The group is the path, or the name
+// where the path is empty.
+func tagMetaOf(n NodeDef) tagMeta {
+	name := sanitize(n.BrowseName)
+	group := strings.TrimSuffix(strings.Replace(n.Path, n.BrowseName, "", 1), ".")
+	if group == "" {
+		group = name
+	}
+	path := group
+	if group == name {
+		path = ""
+	}
+	return tagMeta{path: path, name: name, group: group}
 }
 
 type Logger interface {
