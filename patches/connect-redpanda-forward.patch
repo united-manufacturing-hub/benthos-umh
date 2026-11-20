@@ -1,0 +1,103 @@
+diff --git a/internal/impl/kafka/input_redpanda.go b/internal/impl/kafka/input_redpanda.go
+index b2956c6..0f772fb 100644
+--- a/internal/impl/kafka/input_redpanda.go
++++ b/internal/impl/kafka/input_redpanda.go
+@@ -99,6 +99,14 @@ func redpandaInputConfigFields() []*service.ConfigField {
+ 	)
+ }
+ 
++
++// RedpandaInputConfigFields re-exports the redpanda input's config fields so
++// packages outside internal/impl/kafka (the redpandaforward shim) can build a
++// redpanda ConfigSpec without duplicating redpandaInputConfigFields.
++func RedpandaInputConfigFields() []*service.ConfigField {
++	return redpandaInputConfigFields()
++}
++
+ func init() {
+ 	service.MustRegisterBatchInput("redpanda", redpandaInputConfig(),
+ 		func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
+diff --git a/public/components/kafka/redpandaforward/redpandaforward.go b/public/components/kafka/redpandaforward/redpandaforward.go
+new file mode 100644
+index 0000000..22bbe8c
+--- /dev/null
++++ b/public/components/kafka/redpandaforward/redpandaforward.go
+@@ -0,0 +1,78 @@
++//go:build connect_patched
++
++// Copyright 2025 Redpanda Data, Inc.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//    http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++// Package redpandaforward re-exports the redpanda input config field set so
++// downstream plugins (e.g. benthos-umh's uns_beta forwarder) can declare a
++// schema-compatible reader without importing connect's internal/impl/kafka
++// package directly. The package is placed under connect/v4/ because only
++// packages there can import internal/impl/kafka.
++package redpandaforward
++
++import (
++	"errors"
++
++	"github.com/redpanda-data/benthos/v4/public/service"
++	"github.com/twmb/franz-go/pkg/kgo"
++
++	"github.com/redpanda-data/connect/v4/internal/impl/kafka"
++)
++
++// ConfigFields returns the full redpanda input field set by delegating to
++// connect's own redpandaInputConfigFields via the exported
++// kafka.RedpandaInputConfigFields wrapper. Delegating (rather than
++// reconstructing the slice here) means a structural change in connect (a new
++// wrapper toggle, a field moved outside the four groups, or a new group)
++// surfaces through this shim without a matching edit, so silent schema drift
++// is caught.
++func ConfigFields() []*service.ConfigField {
++	return kafka.RedpandaInputConfigFields()
++}
++
++// NewRedpandaInput re-assembles connect's redpanda input init(), explicit-
++// connection branch only. It is explicit-connection-only: the shared global
++// redpanda client fallback (FranzSharedClientUse / SharedGlobalRedpandaClientKey)
++// is intentionally omitted because no benthos-umh caller registers a shared
++// client, and uns_beta_single's lean surface always sets seed_brokers.
++func NewRedpandaInput(conf *service.ParsedConfig, res *service.Resources) (service.BatchInput, error) {
++	connDetails, err := kafka.FranzConnectionDetailsFromConfig(conf, res.Logger())
++	if err != nil {
++		return nil, err
++	}
++	if !connDetails.IsConfigured() {
++		return nil, errors.New("redpandaforward: seed_brokers is required; the shared-client fallback is not supported by this shim")
++	}
++	consumerOpts, err := kafka.FranzConsumerOptsFromConfig(conf)
++	if err != nil {
++		return nil, err
++	}
++	clientOpts := append(connDetails.FranzOpts(), consumerOpts...)
++	rdr, err := kafka.NewFranzReaderToggledFromConfig(conf, res, func() ([]kgo.Opt, error) {
++		return clientOpts, nil
++	})
++	if err != nil {
++		return nil, err
++	}
++	if rdr, err = service.AutoRetryNacksBatchedToggled(conf, rdr); err != nil {
++		return nil, err
++	}
++	if rdr, err = service.ForceTimelyNacksBatched(conf, rdr); err != nil {
++		return nil, err
++	}
++	if rdr, err = conf.WrapBatchInputExtractTracingSpanMapping("redpanda", rdr); err != nil {
++		return nil, err
++	}
++	return rdr, nil
++}

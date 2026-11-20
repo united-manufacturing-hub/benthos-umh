@@ -48,6 +48,8 @@ jobs:
       tag_processor: ${{ steps.filter.outputs.tag_processor }}
       topic_browser: ${{ steps.filter.outputs.topic_browser }}
       uns: ${{ steps.filter.outputs.uns }}
+      connect_patches: ${{ steps.filter.outputs.connect_patches }}
+      makefile: ${{ steps.filter.outputs.makefile }}
       nodered_js: ${{ steps.filter.outputs.nodered_js }}
       stream_processor: ${{ steps.filter.outputs.stream_processor }}
       downsampler: ${{ steps.filter.outputs.downsampler }}
@@ -101,6 +103,10 @@ jobs:
             uns:
               - 'uns_plugin/**'
               - '!uns_plugin/**/*.md'
+            connect_patches:
+              - 'patches/**'
+            makefile:
+              - 'Makefile*'
             nodered_js:
               - 'nodered_js_plugin/**'
               - '!nodered_js_plugin/**/*.md'
@@ -317,6 +323,8 @@ jobs:
       needs.lint.result == 'success' &&
       (needs.detect-changes.outputs.all == 'true' ||
        needs.detect-changes.outputs.uns == 'true' ||
+       needs.detect-changes.outputs.connect_patches == 'true' ||
+       needs.detect-changes.outputs.makefile == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true' ||
        needs.detect-changes.outputs.pkg == 'true')
