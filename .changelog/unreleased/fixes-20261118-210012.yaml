@@ -1,3 +1,0 @@
-kind: fixes
-body: 'OPC UA input and output: stopping a bridge with `autoReconnect` enabled while it reconnects no longer risks a crash or closing the wrong connection'
-time: 2026-11-18T21:00:12.000000+01:00
