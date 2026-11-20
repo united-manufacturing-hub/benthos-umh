@@ -1,3 +1,0 @@
-kind: fixes
-body: "Security: an OPC UA server, or anyone who can inject into an unencrypted (SecurityMode None) connection, could crash the bridge with a crafted 5-byte value, or make it allocate gigabytes of memory. Fixed by updating gopcua to v0.9.2. Reported by Safetybits ([GHSA], [CVE])"
-time: 2026-11-18T21:00:01.000000+01:00

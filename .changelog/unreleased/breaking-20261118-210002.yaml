@@ -1,0 +1,3 @@
+kind: breaking
+body: 'OPC UA input and output: a bridge now closes the connection when the server sends a message whose sequence number repeats or skips, as the OPC UA specification requires. Before, such a message was accepted, so a replayed message went through. The error starts with `Bad_SequenceNumberInvalid` and names the sequence number received and the one expected. Conforming servers are unaffected; the OPC Foundation .NET stack and open62541 enforce the same rule. After updating, check the bridge logs for `Bad_SequenceNumberInvalid`. If a bridge keeps reconnecting with it against one server, that server breaks the rule. There is no setting to turn the check off, so please tell us the server and its firmware'
+time: 2026-11-18T21:00:02.000000+01:00
