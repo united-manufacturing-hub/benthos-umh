@@ -22,10 +22,11 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
-// buildUnsBetaInner is the non-patched stub: the forwarder shim only
-// exists after `make patch-connect`, so without the connect_patched tag the
-// redpanda reader cannot be built. The input's Connect surfaces this error,
-// keeping config validation (which runs in both lanes) green.
-func buildUnsBetaInner(_ *service.Resources, _ []string, _, _ string, _ []string) (service.BatchInput, error) {
-	return nil, errors.New("uns_beta: not implemented (requires connect_patched build)")
+// errUnsBetaUnavailable makes newUnsBeta fail in a binary built without the
+// connect patches, which lack the forwarder shim that builds the reader.
+var errUnsBetaUnavailable = errors.New("uns_beta is not available in this binary: build it with `make build`, which applies the connect patches and sets the connect_patched tag")
+
+// buildUnsBetaInner is never reached, because newUnsBeta fails first.
+func buildUnsBetaInner(_ *service.Resources, _ []string, _ string, _ string, _ []string) (service.BatchInput, error) {
+	return nil, errUnsBetaUnavailable
 }

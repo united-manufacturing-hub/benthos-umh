@@ -14,7 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// R3 (ENG-5105): the redpanda_lag routing gate for the single-plugin form.
+// The redpanda_lag routing check for uns_beta's Go-side construction.
 // The registerCaptureExporter / captureExporter / startBroker / produce / rec
 // helpers live in uns_beta_integration_test.go and uns_input_nack_commit_repro_test.go
 // (same package).
@@ -34,16 +34,12 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
-// This is the gate rung for the single-plugin form. The source-level claim
-// (SPEC.md "Research facts", franz_reader_ordered.go:534) is that redpanda_lag
-// is created from f.res.Metrics() inside the reader's own poll goroutine, bound
-// to whatever *service.Resources is handed the constructor — and uns_beta
-// hands the constructor the OUTER res (via forwarder.NewRedpandaInput(conf, res)).
-// So redpanda_lag must reach the outer stream's metrics exporter regardless of
-// construction path. This spec mirrors the uns_beta metrics-routing Describe
-// (uns_beta_integration_test.go:1146) but drives uns_beta. If this fails,
-// the single-plugin form is dead: the source-level finding about metrics routing
-// is wrong. Do NOT weaken the assertion to make it pass.
+// redpanda_lag is created from f.res.Metrics() inside the reader's own poll
+// goroutine (franz_reader_ordered.go), bound to whatever *service.Resources is
+// handed the constructor, and uns_beta hands it the OUTER res via
+// redpandaforward.NewRedpandaInput(conf, res). So redpanda_lag must reach the
+// outer stream's metrics exporter. If this fails, uns_beta's inner input has
+// no observability; do NOT weaken the assertion to make it pass.
 var _ = Describe("uns_beta inner-input metrics routing", Label("uns_beta"), func() {
 	It("routes the inner redpanda input's redpanda_lag gauge through the outer stream's metrics registry under Go-side construction", func() {
 		registerCaptureExporter()
@@ -102,8 +98,7 @@ uns_beta:
 		// The routing assertion: redpanda_lag — a metric created ONLY by the
 		// inner redpanda input on f.res.Metrics() — must have been created on
 		// the outer-attached capturer. If this fails, the forwarder is not
-		// threading the outer res into the constructor (or the source-level
-		// finding is wrong), and the single-plugin form is dead.
+		// threading the outer res into the constructor.
 		Eventually(func() bool {
 			return captureExporter.registered("redpanda_lag")
 		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).

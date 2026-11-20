@@ -109,19 +109,20 @@ or more patterns instead.
 
 #### 5 Metrics
 
-`uns_beta` adds three always-on counters to the standard Redpanda Connect input
-metrics. Each counts a class of record it drops, so you can tell which one is
-firing:
+`uns_beta` adds always-on counters to the standard Redpanda Connect input
+metrics. Each counts records it drops:
 
-- `filtered_records` - a keyed record whose key matched none of your `umh_topics`
-  patterns. Climbing while `input_received` stays flat means your patterns are
-  too narrow.
-- `dropped_keyless` - a record with an empty or absent Kafka key. A non-zero
-  value means a producer is writing keyless records to the topic.
-- `dropped_spoofed_key` - a record carrying a Kafka header literally named
-  `kafka_key`, which shadows the real record key. `uns_beta` cannot recover the
-  real key, so it drops the record. A non-zero value points to a misconfigured
-  producer; remove the `kafka_key` header from it.
+- `key_omitted_records` - a record whose key matched none of your `umh_topics`
+  patterns, dropped before a message is built for it. Climbing while
+  `input_received` stays flat means your patterns are too narrow.
+- `dropped_keyless` - a record with an empty or absent Kafka key that your
+  patterns would otherwise accept (for example under `.*`). Under narrower
+  patterns, keyless records are counted in `key_omitted_records` instead. A
+  non-zero value means a producer is writing keyless records to the topic.
+- `filtered_records` - a record that passed the first filter but whose key, as
+  seen by the pipeline, matched none of your patterns. This happens when a
+  producer sets a Kafka header named `kafka_key`, which overrides the record
+  key. Remove that header from the producer.
 
 The counters appear under these bare names (carrying `path` / `label` / `stream`
 labels that identify the emitting component) in whatever metrics exporter you

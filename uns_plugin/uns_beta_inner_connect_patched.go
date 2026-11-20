@@ -23,32 +23,19 @@ import (
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 
-	// The forwarder shim is created by patches/connect-redpanda-forward.patch
-	// and is present only after `make patch-connect` (hence the connect_patched
-	// build tag). It re-exports connect's redpanda input constructor so this
-	// package can build a redpanda reader without importing connect's
-	// internal/impl/kafka directly.
+	// Added by patches/connect-redpanda-forward.patch (make patch-connect).
 	"github.com/redpanda-data/connect/v4/public/components/kafka/redpandaforward"
 )
 
-// redpandaConfigYAML is the pure, broker-free translation of the lean 4-field
-// uns_beta surface into a redpanda input config YAML. It pins all 12
-// values that uns_beta's render test re-derives so the translation is
-// inspectable without dialing a broker: seed_brokers, topics, consumer_group,
-// start_offset (earliest), commit_period ("5s"), the three fetch byte fields
-// (re-derived from the Go fetch constants in uns_input_config.go as strings,
-// matching upstream's NewStringField contract), fetch_max_wait and
-// conn_idle_timeout (re-derived from the Go fetch/conn constants),
-// auto_replay_nacks (pinned true — the ENG-5094 NACK-replay guarantee), and
-// key_pattern (the newBetaKeyFilter join of umh_topics). commit_period is
-// pinned to "5s" defensively, matching uns_beta's template pin and the
-// auto_replay_nacks treatment, so a future connect default change cannot
-// silently alter uns_beta's commit cadence.
-func redpandaConfigYAML(seedBrokers []string, kafkaTopic, consumerGroup string, umhTopics []string) string {
-	// Build the key_pattern alternation the same way the template and
-	// newBetaKeyFilter do: (?:p1)|(?:p2)|... . newBetaKeyFilter already
-	// validated each pattern and the combined alternation at construction, so
-	// this join cannot fail at RE2 limits here.
+// errUnsBetaUnavailable is nil: this binary carries the connect patches.
+var errUnsBetaUnavailable error
+
+// redpandaConfigYAML translates the uns_beta fields into a redpanda input
+// config. auto_replay_nacks is pinned true for at-least-once delivery
+// (ENG-5094), and commit_period and the fetch settings are pinned so a connect
+// default change cannot alter them.
+func redpandaConfigYAML(seedBrokers []string, kafkaTopic string, consumerGroup string, umhTopics []string) string {
+	// Same join as newBetaKeyFilter, which already validated it.
 	wrapped := make([]string, len(umhTopics))
 	for i, p := range umhTopics {
 		wrapped[i] = fmt.Sprintf("(?:%s)", p)
@@ -60,12 +47,7 @@ func redpandaConfigYAML(seedBrokers []string, kafkaTopic, consumerGroup string, 
 		brokersYAML.WriteString(fmt.Sprintf("  - %q\n", b))
 	}
 
-	// The fetch byte fields are NewStringField upstream, so emit them as
-	// strings re-derived from the same Go constants uns_beta's render test
-	// uses; a constant retune updates production and expectation in lockstep,
-	// so these pins guard format, not value. fetch_max_wait and
-	// conn_idle_timeout are NewDurationField, re-derived from the Go
-	// constants.
+	// The fetch byte fields are string fields upstream.
 	return fmt.Sprintf(`seed_brokers:
 %stopics:
   - %q
@@ -92,11 +74,9 @@ conn_idle_timeout: %s
 	)
 }
 
-// buildUnsBetaInner translates the lean 4-field surface into a redpanda
-// input config and builds it via the forwarder shim. The translation is
-// produced by redpandaConfigYAML (the pure, broker-free helper) so the 12
-// pinned values are inspectable without dialing a broker.
-func buildUnsBetaInner(res *service.Resources, seedBrokers []string, kafkaTopic, consumerGroup string, umhTopics []string) (service.BatchInput, error) {
+// buildUnsBetaInner builds connect's redpanda input from the translated
+// config through the forwarder shim.
+func buildUnsBetaInner(res *service.Resources, seedBrokers []string, kafkaTopic string, consumerGroup string, umhTopics []string) (service.BatchInput, error) {
 	yaml := redpandaConfigYAML(seedBrokers, kafkaTopic, consumerGroup, umhTopics)
 
 	spec := service.NewConfigSpec().Fields(redpandaforward.ConfigFields()...)

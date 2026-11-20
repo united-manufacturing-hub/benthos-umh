@@ -14,17 +14,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// R4 capstone (ENG-5105): the behavioral integration suite runs against the
-// uns_beta plugin via a plugin-name parameter. This file introduces the
-// parameterization helper (unsBetaInputYAML) and one parameterized behavioral
-// Describe — the dropped_keyless counter scenario — driven via DescribeTable.
-//
-// Scope: this rung enforces dropped_keyless counter behavior for genuine (non-
-// spoofed) keyless records only. uns_beta also wires filtered_records, but the
-// spoof-detection primitive (classifyDrop/hasSpoofHeader) and the
-// dropped_spoofed_key counter it feeds are deferred to ENG-5125, so drift
-// remains possible for that drop class. The parameterized DescribeTable below
-// proves dropped_keyless behavior; it does NOT prove full behavioral parity.
+// Per-reason drop counter specs for uns_beta, plus the unsBetaInputYAML
+// config helper the integration suite uses. They cover dropped_keyless for
+// genuine (non-spoofed) keyless records and filtered_records registration.
 
 package uns_plugin
 
@@ -46,10 +38,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
-// unsBetaInputYAML builds the lean 4-field input config for either form from a
-// plugin-name variable. The body is identical for both forms (the shared lean
-// surface); only the top-level key differs. This is the parameterization seam
-// the behavioral suite loops over, so a behavior fix applies to both forms.
+// unsBetaInputYAML builds the 4-field input config under the given plugin name.
 func unsBetaInputYAML(pluginName, broker, group, umhTopics string) string {
 	return fmt.Sprintf(`
 %[1]s:
@@ -61,9 +50,9 @@ func unsBetaInputYAML(pluginName, broker, group, umhTopics string) string {
 }
 
 // droppedKeylessCounterScenario drives the uns_beta dropped_keyless counter
-// behavioral Describe for a single form. Under a match-everything (".*")
+// spec. Under a match-everything (".*")
 // pattern the connect pre-filter builds a keyless record (it matches the empty
-// key), the form's own `key != ""` guard drops it, and dropped_keyless must
+// key), uns_beta's own `key != ""` guard drops it, and dropped_keyless must
 // increment on the outer stream's metrics registry. A keyed matching record
 // keeps the poll goroutine live so the counter tick is observable.
 func droppedKeylessCounterScenario(pluginName string) {
@@ -104,8 +93,7 @@ func droppedKeylessCounterScenario(pluginName string) {
 	}()
 
 	// The keyless drop must increment dropped_keyless on the outer stream's
-	// metrics registry. uns_beta wires this counter in filterAndAlias; a form
-	// that diverges (no per-reason counters) leaves it at 0 and fails here.
+	// metrics registry. uns_beta increments this counter in ReadBatch.
 	Eventually(func() int64 {
 		return captureExporter.counterValue("dropped_keyless")
 	}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
@@ -114,26 +102,16 @@ func droppedKeylessCounterScenario(pluginName string) {
 	// Guard against over-counting: the keyless record must be counted exactly
 	// once. If it were redelivered and re-dropped (the ENG-5094 infinite-
 	// redelivery wedge this suite exists to detect), dropped_keyless would
-	// climb past 1. The sibling key_omitted_records spec applies the same
+	// climb past 1. The key_omitted_records spec applies the same
 	// Consistently guard.
 	Consistently(func() int64 {
 		return captureExporter.counterValue("dropped_keyless")
 	}).WithTimeout(2*time.Second).WithPolling(200*time.Millisecond).
 		Should(Equal(int64(1)), pluginName+" must not over-count dropped_keyless (a climb would indicate the ENG-5094 redelivery wedge)")
 
-	// dropped_spoofed_key and filtered_records are registered (and, for
-	// filtered_records, incremented on the keyed non-matching branch) by BOTH
-	// forms' constructors. This scenario sends a keyless record and a keyed
-	// MATCHING record, so neither triggers the filtered_records increment path;
-	// counterValue==0 here reflects "no triggering record was sent", not a
-	// map-miss absence and not "the counter is never incremented". The
-	// filtered_records increment path is not exercised by any integration
-	// scenario for either form (connect's key_pattern pre-filter omits keyed
-	// non-matching records before ReadBatch); end-to-end coverage of the
-	// increment is tracked in ENG-5125. dropped_spoofed_key is not registered
-	// in the single form (no hasSpoofHeader), so a map miss returns 0 there.
-	Expect(captureExporter.counterValue("dropped_spoofed_key")).To(Equal(int64(0)),
-		pluginName+": a keyless record must not count as spoofed")
+	// This scenario sends a keyless record and a keyed MATCHING record, so
+	// neither triggers the filtered_records increment; 0 here means "no
+	// triggering record was sent".
 	Expect(captureExporter.counterValue("filtered_records")).To(Equal(int64(0)),
 		pluginName+": a keyless record must not count as a filtered (real-keyed) drop")
 	// The keyed matching record is delivered asynchronously by benthos's batch
@@ -149,11 +127,7 @@ func droppedKeylessCounterScenario(pluginName string) {
 		Should(Equal(1), pluginName+": the keyed matching record must be delivered")
 }
 
-// R4 parameterized behavioral suite: one behavioral Describe (the dropped_keyless
-// counter scenario) driven via the plugin-name parameter. This proves the
-// behavioral suite runs against uns_beta for the dropped_keyless counter; it is
-// not a full-parity proof (spoofed-key classification and filtered_records are
-// out of scope, ENG-5125).
+// The dropped_keyless counter spec, driven via the plugin-name parameter.
 var _ = DescribeTable("uns_beta dropped_keyless counter (parameterized)",
 	Label("uns_beta"),
 	droppedKeylessCounterScenario,
@@ -174,8 +148,8 @@ var _ = DescribeTable("uns_beta dropped_keyless counter (parameterized)",
 // reach the Go-level !matches branch for a keyed record: connect's key_pattern
 // pre-filter and the Go-level keyFilter apply the same pattern, so a keyed
 // non-matching record is dropped by connect before ReadBatch. Exercising the
-// increment requires a connect-level seam or direct ReadBatch injection, which
-// belongs to the ENG-5125 rung.
+// increment requires a connect-level seam or direct ReadBatch injection
+// (ENG-5125).
 func filteredRecordsCounterScenario(pluginName string) {
 	registerCaptureExporter()
 	captureExporter.reset()
@@ -206,8 +180,8 @@ func filteredRecordsCounterScenario(pluginName string) {
 	}()
 
 	// The input constructor runs when the stream starts it (during Run), and
-	// registers filtered_records eagerly there. A form that omits the
-	// NewCounter call never registers it and fails this poll.
+	// registers filtered_records eagerly there. Without the NewCounter call
+	// it is never registered and this poll fails.
 	Eventually(func() bool {
 		return captureExporter.registered("filtered_records")
 	}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
@@ -215,19 +189,9 @@ func filteredRecordsCounterScenario(pluginName string) {
 			pluginName+": filtered_records counter must be registered on the outer stream's metrics registry")
 }
 
-// The filtered_records counter registration behavioral Describe. Registration
-// is structural only: it proves the counter name exists on the registry, not
-// that the increment fires. The increment path (keyed records whose key matches
-// no umh_topics pattern) is tracked in ENG-5125, which requires a harness that
-// bypasses connect's key_pattern pre-filter.
-//
-// Coverage gap (ENG-5125): the Entry below does not exercise the filtered_records
-// INCREMENT. Connect's key_pattern pre-filter omits keyed non-matching records
-// before ReadBatch, so the Go-level !matches branch (where the increment lives)
-// is never reached by this scenario, which sends no records at all. A regression
-// that removes the filtered.Incr would leave this Describe green. Closing the
-// gap requires a connect-level seam or direct ReadBatch injection with a keyed
-// non-matching record, which belongs to the ENG-5125 rung.
+// The filtered_records counter registration spec. It does not cover the
+// increment (see filteredRecordsCounterScenario): a regression that removes
+// filtered.Incr would leave it green.
 var _ = DescribeTable("uns_beta filtered_records counter registration only (structural)",
 	Label("uns_beta"),
 	filteredRecordsCounterScenario,

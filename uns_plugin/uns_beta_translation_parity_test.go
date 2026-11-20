@@ -14,15 +14,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// The uns_beta translation must reproduce uns_beta's 12 pinned
-// redpanda values exactly. This spec drives the YAML construction through a
-// pure, broker-free helper (redpandaConfigYAML) so the rendered values can be
-// inspected directly against the same Go fetch constants uns_beta's render
-// test re-derives, plus the key_pattern join and connect-side schema
-// acceptance. A second case renders uns_beta's actual template for the same
-// inputs and asserts field-by-field parity with the translation, so a template
-// edit that diverges from the translation fails here rather than only in the
-// sibling uns_beta render test.
+// The uns_beta translation must reproduce uns_beta's 12 pinned redpanda values
+// exactly. This spec drives the YAML construction through a pure, broker-free
+// helper (redpandaConfigYAML) so the rendered values can be checked against
+// the Go fetch constants, the key_pattern join and connect's own schema.
 
 package uns_plugin
 
@@ -72,8 +67,7 @@ var _ = Describe("uns_beta translation parity", Label("uns_beta"), func() {
 
 		// String-valued pins: start_offset is a literal pin; the three
 		// fetch byte fields are re-derived from the Go fetch constants in
-		// uns_input_config.go (the same constants uns_beta's render test
-		// uses), so a constant retune updates production and expectation in
+		// uns_input_config.go, so a constant retune updates production and expectation in
 		// lockstep — these pins guard format, not value. They are emitted
 		// AS STRINGS (upstream NewStringField contract).
 		Expect(conf.FieldString("start_offset")).To(Equal("earliest"), "start_offset must be pinned to earliest")
@@ -84,9 +78,9 @@ var _ = Describe("uns_beta translation parity", Label("uns_beta"), func() {
 		// Duration-valued pins: fetch_max_wait and conn_idle_timeout re-derive
 		// from the Go fetch/conn constants (guarding format, not value, since
 		// both operands derive from the same constant). commit_period is EMITTED
-		// by the translation as the literal "5s" — pinned defensively, matching
-		// uns_beta's template pin and the auto_replay_nacks treatment, so a
-		// future connect default change cannot silently alter the commit cadence.
+		// by the translation as the literal "5s" — pinned defensively, like
+		// auto_replay_nacks, so a future connect default change cannot silently
+		// alter the commit cadence.
 		Expect(conf.FieldDuration("fetch_max_wait")).To(Equal(defaultFetchMaxWaitTime), "fetch_max_wait must mirror defaultFetchMaxWaitTime")
 		Expect(conf.FieldDuration("conn_idle_timeout")).To(Equal(defaultConnIdleTimeout), "conn_idle_timeout must mirror defaultConnIdleTimeout")
 		Expect(conf.FieldDuration("commit_period")).To(Equal(5*time.Second), "commit_period must be pinned to 5s by the translation")
@@ -102,26 +96,10 @@ var _ = Describe("uns_beta translation parity", Label("uns_beta"), func() {
 		// mis-grouping. Cross-check against newBetaKeyFilter's compiled source
 		// (filter.re.String()) rather than hand-rebuilding the join, so a drift
 		// between this helper's wrap convention and newBetaKeyFilter's fails
-		// here — mirroring the sibling uns_beta render test
-		// (uns_beta_input_test.go: rp["key_pattern"] == filter.re.String()).
+		// here.
 		filter, err := newBetaKeyFilter(umhTopics)
 		Expect(err).NotTo(HaveOccurred(), "test umh_topics must compile into a betaKeyFilter")
 		Expect(conf.FieldString("key_pattern")).To(Equal(filter.re.String()),
 			"key_pattern must equal the Go-side betaKeyFilter combined regex for umh_topics — connect's pre-filter must not drift from the Go keep set")
 	})
 })
-
-// stringSlice coerces a rendered YAML list ([]any) to []string for comparison
-// against a parsed conf's FieldStringList. Panics on non-string elements, which
-// is a test-only path for known string lists.
-func stringSlice(v any) []string {
-	in, ok := v.([]any)
-	Expect(ok).To(BeTrue(), "expected a YAML list, got %T", v)
-	out := make([]string, len(in))
-	for i, e := range in {
-		s, ok := e.(string)
-		Expect(ok).To(BeTrue(), "expected string element, got %T", e)
-		out[i] = s
-	}
-	return out
-}

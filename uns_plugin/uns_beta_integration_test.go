@@ -90,7 +90,7 @@ func runUnsBetaStream(t testingT, unsBetaYAML string, consumerFn func(context.Co
 // describeBothForms runs a behavioral Describe body against the uns_beta
 // plugin, nesting it under a Context named after the plugin. The body receives
 // the plugin name and must thread it into every AddInputYAML / reader-
-// construction call so the scenario actually exercises the named form. (R4, ENG-5105)
+// construction call.
 func describeBothForms(name string, body func(pluginName string)) bool {
 	Describe(name, Label("uns_beta"), func() {
 		for _, pluginName := range []string{"uns_beta"} {
@@ -137,8 +137,7 @@ var _ = describeBothForms("uns_beta input delivery", func(pluginName string) {
 		// config built by newUnsBeta) would deliver fine here but
 		// replay the full topic on every restart in production. The inner
 		// redpanda input commits on the 5s commit_period tick pinned in
-		// the uns_beta template (uns_beta_template.yaml), so Gomega's 1s default
-		// timeout would flake.
+		// redpandaConfigYAML, so Gomega's 1s default timeout would flake.
 		stop()
 		Eventually(func(g Gomega) {
 			off, ok, err := committedOffsetE(addr, group)
@@ -412,8 +411,7 @@ var _ = describeBothForms("uns_beta metadata contract", func(pluginName string) 
 		// data loss this pin documents. By then any leaked spoofed delivery
 		// has already happened, so the exclusion assertion below is checked
 		// at a meaningful time. 15s timeout: the inner redpanda input commits
-		// on the 5s commit_period tick pinned in the uns_beta template
-		// (uns_beta_template.yaml).
+		// on the 5s commit_period tick pinned in redpandaConfigYAML.
 		Eventually(func(g Gomega) {
 			off, ok, err := committedOffsetE(addr, group)
 			g.Expect(err).NotTo(HaveOccurred())
@@ -468,9 +466,8 @@ var _ = describeBothForms("uns_beta umh_topics key filter", func(pluginName stri
 		// resolved for the whole poll, dropped records included — and by then
 		// any leaked Munich/keyless delivery has already happened, so the
 		// exclusion assertion below is checked at a meaningful time. The inner
-		// redpanda input commits on the 5s commit_period tick pinned in the
-		// uns_beta template (uns_beta_template.yaml), so Gomega's 1s default
-		// timeout would flake.
+		// redpanda input commits on the 5s commit_period tick pinned in
+		// redpandaConfigYAML, so Gomega's 1s default timeout would flake.
 		Eventually(func(g Gomega) {
 			off, ok, err := committedOffsetE(addr, group)
 			g.Expect(err).NotTo(HaveOccurred())
@@ -517,8 +514,7 @@ var _ = describeBothForms("uns_beta umh_topics key filter", func(pluginName stri
 		// record — and by then any leaked keyless delivery has already
 		// happened, so the exclusion check below is checked at a meaningful
 		// time. 15s timeout: the inner redpanda input commits on the 5s
-		// commit_period tick pinned in the uns_beta template
-		// (uns_beta_template.yaml).
+		// commit_period tick pinned in redpandaConfigYAML.
 		Eventually(func(g Gomega) {
 			off, ok, err := committedOffsetE(addr, group)
 			g.Expect(err).NotTo(HaveOccurred())
@@ -567,11 +563,10 @@ var _ = describeBothForms("uns_beta all-filtered poll commit", func(pluginName s
 		defer stop()
 
 		// End-to-end effect check: the committed offset advances past all three
-		// non-matching records even though no message ever reaches the consumer.
-		// The self-ack MECHANISM itself is pinned by the broker-free unit specs
-		// (uns_beta_input_test.go asserts inner.acked); this spec confirms the
-		// observable end-to-end result. The inner redpanda input commits on the
-		// 5s commit_period tick pinned in the uns_beta template, so the 15s
+		// non-matching records even though no message ever reaches the consumer,
+		// which is only possible if ReadBatch self-acks the all-filtered batch.
+		// The inner redpanda input commits on the
+		// 5s commit_period tick pinned in redpandaConfigYAML, so the 15s
 		// timeout is required.
 		Eventually(func(g Gomega) {
 			off, ok, err := committedOffsetE(addr, group)
@@ -623,7 +618,7 @@ var _ = describeBothForms("uns_beta all-filtered poll commit", func(pluginName s
 		// The committed offset reaches the high-water mark (total): the stream
 		// drained instead of wedging at the first all-filtered fetch. Draining
 		// 2000 self-acks then waiting for a 5s commit tick (commit_period is
-		// hardcoded in the template and cannot be shortened from test config) can
+		// pinned in redpandaConfigYAML and cannot be shortened from test config) can
 		// eat most of a 15s budget on a slow kfake startup, so this single spec
 		// gets a 30s timeout to keep it off the merge-queue flake list.
 		Eventually(func(g Gomega) {
@@ -640,12 +635,10 @@ var _ = describeBothForms("uns_beta all-filtered poll commit", func(pluginName s
 })
 
 // A fresh consumer group must read from the EARLIEST offset: records produced
-// BEFORE the consumer ever started must still be delivered. The template pins
-// start_offset = "earliest" (uns_beta_template.yaml); the config-value half is
-// pinned by Describe("uns_beta template rendering") in uns_beta_input_test.go
-// (asserts start_offset == "earliest"), this spec pins the observable BEHAVIOR.
-// A "latest" start would
-// position a never-committed group at the high-water mark, so a record produced
+// BEFORE the consumer ever started must still be delivered. redpandaConfigYAML
+// pins start_offset = "earliest"; uns_beta_translation_parity_test.go asserts
+// the config value, this spec pins the observable BEHAVIOR. A "latest" start
+// would position a never-committed group at the high-water mark, so a record produced
 // before the group connected would be skipped — the arrival assertion below
 // would time out. (ENG-5094 / spec P5)
 var _ = describeBothForms("uns_beta start-from-earliest", func(pluginName string) {
@@ -689,7 +682,7 @@ var _ = describeBothForms("uns_beta start-from-earliest", func(pluginName string
 })
 
 // The filter × ack-forward × NACK-redelivery interaction that the mixed-batch
-// ack spec and the unfiltered capstone each cover only half of. A mixed
+// ack spec and the unfiltered NACK redelivery spec each cover only half of. A mixed
 // delegated poll (one matching + one non-matching record) whose KEPT record the
 // consumer NACKs: auto_replay_nacks (on the INNER redpanda input, pre-filter)
 // must redeliver the full original poll, uns_beta re-applies the drop, and the
@@ -702,8 +695,7 @@ var _ = describeBothForms("uns_beta start-from-earliest", func(pluginName string
 // sets an in-memory mark and the broker-visible offset cannot move until the
 // tick fires — a broker OffsetFetch from inside the callback would read "not
 // committed" whether the ack was pending OR fired prematurely, so it cannot
-// distinguish correct from buggy. The premature-ack ordering is pinned instead
-// by the broker-free self-ack unit specs (uns_beta_input_test.go).
+// distinguish correct from buggy.
 var _ = describeBothForms("uns_beta mixed-batch NACK redelivery", func(pluginName string) {
 	It("redelivers the NACKed kept record without committing past it and re-drops the filtered one", func() {
 		addr := startBroker(GinkgoT())
@@ -822,8 +814,8 @@ var _ = describeBothForms("uns_beta gapless restart", func(pluginName string) {
 		// The committed offset reaches the high-water mark even though all but one
 		// record were omitted: this is the proof that the placeholder advances the
 		// commit so the re-read window is bounded (no stuck commit). Draining 1500
-		// omitted records then waiting for the 5s commit_period tick (hardcoded in
-		// the template, not shortenable from test config) can eat most of a 15s
+		// omitted records then waiting for the 5s commit_period tick (pinned in
+		// redpandaConfigYAML, not shortenable from test config) can eat most of a 15s
 		// budget on a slow kfake startup, so this gets a 30s timeout.
 		Eventually(func(g Gomega) {
 			off, ok, err := committedOffsetE(addr, group)
@@ -897,18 +889,15 @@ func closedLocalPort(t testingT) string {
 	return addr
 }
 
-// connectProbeTimeout bounds the Connect connectivity probe in the template
-// form's production code (uns_beta_input.go). The single form (now production
-// uns_beta) delegates Connect to the inner redpanda input, which fails against
-// a closed port on its own dial; this constant is kept as the Eventually bound
-// for the unreachable-broker spec below.
+// connectProbeTimeout bounds how long the unreachable-broker spec below waits
+// for Connect to fail. uns_beta delegates Connect to the inner redpanda input,
+// which fails against a closed port on its own dial.
 const connectProbeTimeout = 10 * time.Second
 
 // Connect must FAIL FAST against an unreachable broker rather than starting a
-// stream that delivers nothing. The broker-free unit specs (uns_beta_input_test.go)
-// fabricate the ConnectionTest result; this spec exercises the REAL probe path —
-// it builds the input against a closed localhost port and asserts the production
-// Connect returns a non-nil error, bounded by connectProbeTimeout (F2).
+// stream that delivers nothing. This spec builds the input against a closed
+// localhost port and asserts the production Connect returns a non-nil error,
+// bounded by connectProbeTimeout.
 // (ENG-5094 / ENG-5105)
 var _ = describeBothForms("uns_beta Connect against an unreachable broker", func(pluginName string) {
 	It("returns a Connect error within the connect-probe bound", func() {
@@ -1070,95 +1059,10 @@ func registerCaptureExporter() {
 	})
 }
 
-// This is the observability regression guard for the uns_beta restructure
-// (commit a2993e6f). The restructure replaced the inner redpanda input's
-// construction from ParseYAML(innerYAML, nil) — which built it on a NOOP
-// manager whose logs/metrics/kafka_lag were silently discarded — with a
-// service.NewInputField("input"), so the FRAMEWORK builds the inner input on
-// the REAL outer manager and routes its metrics through the outer stream's
-// registry. ZERO behavioral tests prove this: a regression reintroducing a
-// detached/noop inner manager would keep every other spec in this file green
-// while silently dropping the inner input's observability.
-//
-// This spec closes that gap as a TRUE behavioral guard. It attaches a capturing
-// metrics exporter to the OUTER StreamBuilder, runs uns_beta against the kfake
-// broker, and asserts the inner redpanda input's own `redpanda_lag` gauge
-// (registered by franz_reader_ordered.go only when consumer_group != "", on the
-// poll goroutine that starts during Connect) reaches that outer-attached
-// exporter. Under the pre-restructure noop-manager construction the inner
-// input's metrics would land on a discarded registry and `redpanda_lag` would
-// never reach the capturer, so this assertion would fail.
-//
-// This spec tests the uns_beta metrics-routing path specifically (R4, ENG-5105).
-// The equivalent R3 registration spec lives in uns_beta_metrics_routing_test.go.
-var _ = Describe("uns_beta inner-input metrics routing", Label("uns_beta"), func() {
-	It("routes the inner redpanda input's redpanda_lag gauge through the outer stream's metrics registry", func() {
-		registerCaptureExporter()
-
-		addr := startBroker(GinkgoT())
-		const group = "uns-beta-metrics-routing"
-		produce(GinkgoT(), addr, rec("umh.v1.acme.berlin.temp", `{"v":1}`))
-
-		sb := service.NewStreamBuilder()
-		Expect(sb.AddInputYAML(`
-uns_beta:
-  broker_address: "` + addr + `"
-  consumer_group: "` + group + `"
-  umh_topics: [".*"]
-`)).To(Succeed())
-		// Select the capturing exporter. The metrics-section YAML keys the
-		// exporter by its registered plugin name (see benthos's own
-		// TestMetricsPlugin in public/service/metrics_test.go); an empty config
-		// body suffices since the spec has no fields.
-		Expect(sb.SetMetricsYAML(captureExporterName + ": {}")).To(Succeed())
-
-		var mu sync.Mutex
-		var got int
-		Expect(sb.AddBatchConsumerFunc(func(_ context.Context, b service.MessageBatch) error {
-			mu.Lock()
-			got += len(b)
-			mu.Unlock()
-			return nil // ack so the inner input keeps polling/connected
-		})).To(Succeed())
-
-		stream, err := sb.Build()
-		Expect(err).NotTo(HaveOccurred())
-
-		ctx, cancel := context.WithCancel(context.Background())
-		done := make(chan struct{})
-		var runErr error // written before close(done), read after <-done
-		go func() { defer close(done); runErr = stream.Run(ctx) }()
-		defer func() {
-			cancel()
-			<-done
-			if runErr != nil && !errors.Is(runErr, context.Canceled) {
-				Fail("stream run: " + runErr.Error())
-			}
-		}()
-
-		// Connect + read at least one record so the inner input's poll
-		// goroutine (which registers redpanda_lag) is running.
-		Eventually(func() int {
-			mu.Lock()
-			defer mu.Unlock()
-			return got
-		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
-			Should(BeNumerically(">=", 1), "message never arrived through uns_beta")
-
-		// The routing assertion: redpanda_lag — a metric created ONLY by the
-		// inner redpanda input — must have been created on the outer-attached
-		// capturer. It registers on the poll goroutine started during Connect.
-		Eventually(func() bool {
-			return captureExporter.registered("redpanda_lag")
-		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
-			Should(BeTrue(), "the inner redpanda input's redpanda_lag gauge never reached the outer stream's metrics registry — the inner input is being built on a detached/noop manager (the pre-restructure construction)")
-	})
-})
-
 // Dropped records must be observable. With the connect key_pattern pre-filter
 // (ENG-5105) a record whose native key fails the pattern is OMITTED in connect,
-// before it ever reaches uns_beta's filterAndAlias — so it can no longer touch
-// uns_beta's per-reason counters. Decision (a): those omitted records are
+// before it ever reaches uns_beta's ReadBatch — so it can no longer touch
+// uns_beta's per-reason counters. Those omitted records are
 // instead counted COARSELY by connect's key_omitted_records counter (on the same
 // outer stream metrics registry), and uns_beta's filtered_records now counts
 // ONLY records that REACH uns_beta (their native key matched the pattern) and
@@ -1169,13 +1073,6 @@ uns_beta:
 // poll of 3 records and asserts key_omitted_records reaches 3 on the outer
 // stream's metrics registry, with filtered_records left at 0. (ENG-5094 /
 // ENG-5105)
-//
-// NOT parameterized over both forms (R4, ENG-5105): the registration-only
-// parity for filtered_records is already covered by the parameterized
-// DescribeTable in uns_beta_parameterized_behavioral_test.go. This uns_beta-only
-// spec additionally asserts the connect pre-filter's key_omitted_records
-// counter behavior, which is structurally identical between forms (the
-// pre-filter lives in connect, not in either form's Go code).
 var _ = Describe("uns_beta filtered_records counter", Label("uns_beta"), func() {
 	It("counts records omitted by the connect pre-filter under key_omitted_records, leaving uns_beta's filtered_records at 0", func() {
 		registerCaptureExporter()
@@ -1244,19 +1141,17 @@ uns_beta:
 
 		// uns_beta's per-reason filtered_records must stay 0: none of these records
 		// reached uns_beta (connect omitted them all), so uns_beta dropped nothing
-		// of its own. Decision (a): per-reason counters account only for records
-		// that REACH uns_beta.
+		// of its own: per-reason counters account only for records that REACH
+		// uns_beta.
 		Expect(captureExporter.counterValue("filtered_records")).To(Equal(int64(0)),
 			"records omitted by the connect pre-filter must not reach uns_beta's filtered_records counter")
 		// The connect high-water placeholder (the poll's last non-matching record,
 		// kept with no metadata to carry the commit offset) reaches uns_beta but is
 		// dropped on the missing-kafka_key path WITHOUT touching a per-reason
 		// counter. Pin that it does not leak into dropped_keyless (it has no
-		// kafka_key meta, so the old `key==""` classify would have miscounted it).
+		// kafka_key meta, so a naive `key==""` check would miscount it).
 		Expect(captureExporter.counterValue("dropped_keyless")).To(Equal(int64(0)),
 			"the connect high-water placeholder must not be miscounted as dropped_keyless")
-		Expect(captureExporter.counterValue("dropped_spoofed_key")).To(Equal(int64(0)),
-			"records omitted by the connect pre-filter must not reach uns_beta's dropped_spoofed_key counter")
 	})
 
 	// A MIXED batch: N matching + M non-matching keyed records under a select-some
@@ -1353,8 +1248,6 @@ uns_beta:
 			"records omitted by the connect pre-filter must not reach uns_beta's filtered_records counter")
 		Expect(captureExporter.counterValue("dropped_keyless")).To(Equal(int64(0)),
 			"no record reaching uns_beta was keyless")
-		Expect(captureExporter.counterValue("dropped_spoofed_key")).To(Equal(int64(0)),
-			"no record reaching uns_beta carried a spoof header")
 	})
 })
 
@@ -1366,16 +1259,10 @@ uns_beta:
 // uns_beta, hits the `key != ""` guard in betaKeyFilter.matches, and increments
 // dropped_keyless. Under a SPECIFIC pattern the keyless record would instead be
 // OMITTED in connect (its empty key fails the pattern) and counted coarsely by
-// key_omitted_records — decision (a) — never reaching dropped_keyless; that path
+// key_omitted_records, never reaching dropped_keyless; that path
 // is exercised by the filtered_records specs above. This spec pins the
 // keyless-reaches-uns_beta path that the `.*` (match-everything) deployment still
 // has. (ENG-5094 / ENG-5105)
-//
-// NOT parameterized over both forms (R4, ENG-5105): dropped_keyless counter
-// parity is already covered by the parameterized DescribeTable in
-// uns_beta_parameterized_behavioral_test.go. This uns_beta-only spec additionally
-// asserts key_omitted_records stays 0 under `.*`, which is structurally
-// identical between forms (the pre-filter lives in connect).
 var _ = Describe("uns_beta dropped_keyless counter", Label("uns_beta"), func() {
 	It("increments dropped_keyless for a keyless record that reaches uns_beta under a match-everything pattern", func() {
 		registerCaptureExporter()
@@ -1431,8 +1318,6 @@ uns_beta:
 
 		// The keyless record carried a real (absent) key, not a spoof header, and
 		// the keyed record was delivered, not filtered.
-		Expect(captureExporter.counterValue("dropped_spoofed_key")).To(Equal(int64(0)),
-			"a keyless record must not count as spoofed")
 		Expect(captureExporter.counterValue("filtered_records")).To(Equal(int64(0)),
 			"a keyless record must not count as a filtered (real-keyed) drop")
 		// Under `.*` connect omits nothing (every key, including the empty one,
@@ -1446,13 +1331,10 @@ uns_beta:
 	})
 })
 
-// The dropped_spoofed_key counter increment spec is removed: it tested
-// template-form-only behavior (the classifyDrop/hasSpoofHeader primitive that
-// feeds the counter). The single form defers spoof detection to ENG-5125, so
-// the counter is never registered and the spec cannot pass. It will be re-added
-// when spoof detection is ported. TODO(ENG-5125).
+// TODO(ENG-5125): add a dropped_spoofed_key increment spec once spoof
+// detection lands; the counter is not registered yet.
 
-// The capstone for ENG-5094: the flipped reproduction of
+// The flipped reproduction of
 // TestUNSInput_CommitsPastNACK_DataLoss, end to end through uns_beta. The old
 // uns input commits the polled head past a NACKed batch (data loss); uns_beta
 // must instead redeliver the NACKed message until it succeeds and commit only

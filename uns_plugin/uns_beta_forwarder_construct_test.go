@@ -33,10 +33,8 @@ import (
 // TestRedpandaForwarderConnects asserts that
 // redpandaforward.NewRedpandaInput(conf, res) returns a non-nil
 // service.BatchInput that successfully Connects to a real in-process kfake
-// broker. This R0b rung verifies construction + Connect only; consumption
-// parity (ReadBatch yielding records, NACK replay) is deferred to R1b (delivery
-// end-to-end), so the test does not yet produce records or assert a batch.
-// test does not yet produce records or assert a batch.
+// broker. It covers construction and Connect only; record delivery is covered
+// by uns_beta_delivery_test.go.
 func TestRedpandaForwarderConnects(t *testing.T) {
 	// Real in-process kfake broker (the same helper the uns_beta integration
 	// suite uses), pre-creating the umh.messages single-partition topic.

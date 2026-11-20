@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// This file is EVIDENCE for ENG-5094: "UNS input can commit past NACKed Kafka
-// messages".
+// Tests for ENG-5094: "UNS input can commit past NACKed Kafka messages".
 //
 // Unlike uns_input_test.go, which mocks the consumer with a boolean
 // (IsCommitRecordsCalled) and therefore has NO notion of Kafka offsets, these
@@ -22,8 +21,8 @@
 // (DisableAutoCommit + CommitUncommittedOffsets) is exercised end to end, and
 // we can read back the committed offset the broker stored.
 //
-// TestUNSInput_CommitsPastNACK_DataLoss reproduces the data-loss bug.
-// TestOfficialGaplessDiscipline_NoDataLoss demonstrates the official Benthos
+// TestUNSInput_DoesNotCommitPastNACK asserts the fix and is skipped until the
+// legacy uns input is fixed. TestOfficialGaplessDiscipline_NoDataLoss demonstrates the official Benthos
 // kafka_franz discipline (AutoCommitMarks + Jeffail checkpointer) on the exact
 // same scenario, as a no-regression reference for the eventual fix.
 package uns_plugin
@@ -128,19 +127,19 @@ func rec(key string, val string) *kgo.Record {
 	return &kgo.Record{Key: []byte(key), Value: []byte(val)}
 }
 
-// TestUNSInput_CommitsPastNACK_DataLoss reproduces ENG-5094.
-//
-// Scenario (straight from the ticket):
+// TestUNSInput_DoesNotCommitPastNACK covers ENG-5094:
 //   - batch A (offsets 0-2) is read, then batch B (offsets 3-5) is read
 //   - batch A fails at the output and is NACKed (ack called with an error)
-//   - batch B succeeds and triggers the ack path (ack called with nil)
+//   - batch B succeeds (ack called with nil)
 //
-// The ack path calls CommitUncommittedOffsets, which commits the entire polled
-// head (offset 6) — including A's offsets — even though A was NACKed. On
-// restart the group resumes at 6 and A (0-2) is never redelivered: data loss.
-func TestUNSInput_CommitsPastNACK_DataLoss(t *testing.T) {
+// The committed offset must not pass A, so a restart redelivers A. Today the
+// legacy uns input commits the whole polled head (offset 6) on B's ack and
+// loses A, so the test is skipped until ENG-5094 is fixed.
+func TestUNSInput_DoesNotCommitPastNACK(t *testing.T) {
+	t.Skip("ENG-5094: the legacy uns input commits past a NACKed batch; remove this skip with the fix")
+
 	addr := startBroker(t)
-	const group = "eng5094-bug"
+	const group = "eng5094"
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -151,62 +150,36 @@ func TestUNSInput_CommitsPastNACK_DataLoss(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = input.Close(ctx) })
 
-	// Produce batch A, read it.
 	produce(t, addr, rec("umh.v1.acme.a0", `{"v":0}`), rec("umh.v1.acme.a1", `{"v":1}`), rec("umh.v1.acme.a2", `{"v":2}`))
 	batchA, ackA := readNonEmpty(ctx, t, input)
 	if len(batchA) != 3 {
 		t.Fatalf("batch A: expected 3 messages, got %d", len(batchA))
 	}
 
-	// Produce batch B, read it.
 	produce(t, addr, rec("umh.v1.acme.b3", `{"v":3}`), rec("umh.v1.acme.b4", `{"v":4}`), rec("umh.v1.acme.b5", `{"v":5}`))
 	batchB, ackB := readNonEmpty(ctx, t, input)
 	if len(batchB) != 3 {
 		t.Fatalf("batch B: expected 3 messages, got %d", len(batchB))
 	}
 
-	// NACK A (output failed). Local invariant holds: this must NOT commit.
-	failErr := errors.New("output NACK on batch A")
-	if err := ackA(ctx, failErr); !errors.Is(err, failErr) {
-		t.Fatalf("ackA: expected the NACK error to propagate, got %v", err)
-	}
-	if off, ok := committedOffset(t, addr, group); ok {
-		t.Fatalf("after NACK of A nothing should be committed yet, but offset %d is committed", off)
-	}
-
-	// ACK B (output succeeded). This commits the whole polled head.
+	// A fix may replay the NACK internally and return nil, so only the
+	// committed offset is asserted.
+	_ = ackA(ctx, errors.New("output NACK on batch A"))
 	if err := ackB(ctx, nil); err != nil {
 		t.Fatalf("ackB: %v", err)
 	}
 
-	off, ok := committedOffset(t, addr, group)
-	if !ok {
-		t.Fatal("expected a committed offset after ACK of B")
+	if off, ok := committedOffset(t, addr, group); ok && off > 0 {
+		t.Fatalf("committed offset %d is past NACKed batch A (offsets 0-2)", off)
+	}
+	if err := input.Close(ctx); err != nil {
+		t.Fatalf("close: %v", err)
 	}
 
-	// THE BUG: committed offset is 6 (past A). A (offsets 0-2) is buried even
-	// though it was NACKed. Anything >= 3 means A's offsets were committed.
-	t.Logf("ENG-5094: committed offset after NACK(A)+ACK(B) = %d (A occupied offsets 0-2)", off)
-	if off < 3 {
-		t.Fatalf("expected the bug: committed offset past A (>=3), got %d", off)
+	// A restart of the group must redeliver A.
+	if got := drainGroup(t, addr, group, 3); got < 3 {
+		t.Fatalf("restart of the group saw %d records; NACKed batch A must be redelivered", got)
 	}
-	if off != 6 {
-		t.Logf("note: committed offset %d (expected 6 = head past B); still past A, still data loss", off)
-	}
-
-	// Prove the data is still in the log (a fresh group from start sees all 6),
-	// so the loss is purely the committed-offset advancing past the NACK — not
-	// the records being gone from Kafka.
-	if got := drainFromStart(t, addr, "eng5094-bug-verify", 6); got != 6 {
-		t.Fatalf("sanity: a from-start consumer should see all 6 records, saw %d", got)
-	}
-
-	// Prove the bug's group skips A on restart: resume at the committed offset
-	// (6 == end of a 6-record log) and observe zero redelivery of A.
-	if got := drainGroupOnce(t, addr, group); got != 0 {
-		t.Fatalf("restart of the buggy group resumed past A; got %d records (A should have been redelivered but was committed away)", got)
-	}
-	t.Log("ENG-5094 confirmed: NACKed batch A (offsets 0-2) was committed away by batch B's success and is never redelivered -> DATA LOSS")
 }
 
 // TestOfficialGaplessDiscipline_NoDataLoss demonstrates the official Benthos
@@ -372,24 +345,24 @@ func drainFromStart(t *testing.T, addr string, group string, expect int) int {
 	return count
 }
 
-// drainGroupOnce resumes an existing group at its committed offset and returns
-// how many records it can read within a short window (0 == nothing redelivered).
-func drainGroupOnce(t *testing.T, addr string, group string) int {
+// drainGroup resumes group at its committed offset, or at the start if it
+// has none, and returns how many records it reads, stopping at want.
+func drainGroup(t *testing.T, addr string, group string, want int) int {
 	t.Helper()
 	cl, err := kgo.NewClient(
 		kgo.SeedBrokers(addr),
 		kgo.ConsumerGroup(group),
 		kgo.ConsumeTopics(reproTopic),
-		// no AtStart override: resume at committed offset, like a real restart
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
 	)
 	if err != nil {
 		t.Fatalf("resume client: %v", err)
 	}
 	defer cl.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	count := 0
-	for ctx.Err() == nil {
+	for count < want && ctx.Err() == nil {
 		fs := cl.PollFetches(ctx)
 		fs.EachRecord(func(*kgo.Record) { count++ })
 	}

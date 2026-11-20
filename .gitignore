@@ -239,7 +239,7 @@ cmd/schema-export/schema-export
 
 # Transient patched copy of redpanda/connect + its side modfile (see Makefile patch-connect)
 .connect-patched/
+.connect-patch-check/
 go.patched.mod
 go.patched.sum
-003_klaus/
 vsdd/
