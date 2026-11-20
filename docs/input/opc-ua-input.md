@@ -61,9 +61,9 @@ The plugin provides metadata for each message, that can be used to create a topi
 
 | Metadata                 | Description                                                                                                                                          |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `opcua_tag_name`         | The sanitized ID of the Node that sent the message. This is always unique between nodes                                                              |
-| `opcua_tag_path`         | A dot-separated path to the tag, created by joining the BrowseNames.                                                                                 |
-| `opcua_tag_group`        | Other name for `opcua_tag_path`                                                                                                                      |
+| `opcua_tag_name`         | The sanitized BrowseName of the Node that sent the message. Not unique: nodes in different folders can share it                                     |
+| `opcua_tag_path`         | The dot-separated browse path to the tag, without the tag's own name, and empty for a node at the root of the browse. Two cases keep a last segment: a name with characters other than letters, digits, `_` and `-` keeps its sanitized name below the root (`Line.Pump_1` for `Pump 1`), and nodes that would share a path get their sanitized NodeID instead (`Line.ns_3_s_Line_Temp` for `ns=3;s=Line.Temp`), also at the root |
+| `opcua_tag_group`        | Same as `opcua_tag_path`, except where that is empty, where it is the tag name                                                                      |
 | `opcua_tag_type`         | The data type of the node optimized for benthos, which can be either a number, string or bool. For the original one, check out `opcua_attr_datatype` |
 | `opcua_source_timestamp` | The SourceTimestamp of the OPC UA node                                                                                                               |
 | `opcua_server_timestamp` | The ServerTimestamp of the OPC UA node                                                                                                               |

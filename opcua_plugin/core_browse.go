@@ -110,15 +110,38 @@ type tagTopicParts struct {
 // name where the path is empty.
 func tagTopicPartsOf(n NodeDef) tagTopicParts {
 	name := sanitize(n.BrowseName)
-	group := strings.TrimSuffix(strings.Replace(n.Path, n.BrowseName, "", 1), ".")
+	path := tagPathOf(n.Path, n.BrowseName)
+	group := path
 	if group == "" {
 		group = name
 	}
-	path := group
-	if group == name {
-		path = ""
-	}
 	return tagTopicParts{path: path, name: name, group: group}
+}
+
+// tagPathOf returns the opcua_tag_path of the node at path: its browse path
+// without the node's own name, which opcua_tag_name already carries. Browse
+// builds path from sanitized names; browseName is the node's BrowseName before
+// sanitize.
+func tagPathOf(path string, browseName string) string {
+	parent, last := splitLast(path)
+
+	// Compared before sanitize, so a name that sanitize changes keeps its
+	// segment: "Pump 1" at Line.Pump_1 gets the tag path Line.Pump_1. Comparing
+	// after sanitize would change the topic of those tags (ENG-7956).
+	if last == browseName {
+		return parent
+	}
+
+	// Root nodes whose name sanitize changes already publish with an empty
+	// tag path. Keep them there (ENG-7956).
+	if parent == "" && last == sanitize(browseName) {
+		return ""
+	}
+
+	// The last segment is a name that sanitize changed (see above), or a NodeID
+	// that UpdateNodePaths put there because two nodes had the same path.
+	// Cutting the NodeID would give both nodes the same topic again.
+	return path
 }
 
 type Logger interface {
