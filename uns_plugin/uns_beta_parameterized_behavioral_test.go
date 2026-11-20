@@ -108,7 +108,7 @@ func droppedKeylessCounterScenario(pluginName string) {
 	// that diverges (no per-reason counters) leaves it at 0 and fails here.
 	Eventually(func() int64 {
 		return captureExporter.counterValue("dropped_keyless")
-	}).WithTimeout(15 * time.Second).WithPolling(100 * time.Millisecond).
+	}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
 		Should(Equal(int64(1)), pluginName+" must increment dropped_keyless for a keyless record that reaches it under a match-everything pattern")
 
 	// Guard against over-counting: the keyless record must be counted exactly
@@ -118,7 +118,7 @@ func droppedKeylessCounterScenario(pluginName string) {
 	// Consistently guard.
 	Consistently(func() int64 {
 		return captureExporter.counterValue("dropped_keyless")
-	}).WithTimeout(2 * time.Second).WithPolling(200 * time.Millisecond).
+	}).WithTimeout(2*time.Second).WithPolling(200*time.Millisecond).
 		Should(Equal(int64(1)), pluginName+" must not over-count dropped_keyless (a climb would indicate the ENG-5094 redelivery wedge)")
 
 	// dropped_spoofed_key and filtered_records are registered (and, for
@@ -145,7 +145,7 @@ func droppedKeylessCounterScenario(pluginName string) {
 		mu.Lock()
 		defer mu.Unlock()
 		return delivered
-	}).WithTimeout(15 * time.Second).WithPolling(100 * time.Millisecond).
+	}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
 		Should(Equal(1), pluginName+": the keyed matching record must be delivered")
 }
 
@@ -210,7 +210,7 @@ func filteredRecordsCounterScenario(pluginName string) {
 	// NewCounter call never registers it and fails this poll.
 	Eventually(func() bool {
 		return captureExporter.registered("filtered_records")
-	}).WithTimeout(15 * time.Second).WithPolling(100 * time.Millisecond).
+	}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
 		Should(BeTrue(),
 			pluginName+": filtered_records counter must be registered on the outer stream's metrics registry")
 }

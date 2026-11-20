@@ -1,3 +1,5 @@
+//go:build connect_patched
+
 // Copyright 2025 UMH Systems GmbH
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
