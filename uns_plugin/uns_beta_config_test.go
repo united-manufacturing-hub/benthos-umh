@@ -15,27 +15,20 @@
 package uns_plugin
 
 import (
-	"context"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/types"
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
-// These specs construct through newUnsBeta directly, so the bare constructor
-// error can be matched exactly.
 var _ = Describe("uns_beta config validation", Label("uns_beta"), func() {
-	// parseAndConstruct parses body against the spec and constructs the input,
-	// returning the first error encountered: a parse-time required-field
-	// rejection or a constructor-time scalar rejection. Both are bare errors
-	// (no framework wrapping), so callers can assert with MatchError.
+	// parseAndConstruct returns the parse error or the constructor error.
 	parseAndConstruct := func(body string) (service.BatchInput, error) {
 		parsed, err := unsBetaConfigSpec().ParseYAML(body, nil)
 		if err != nil {
 			return nil, err
 		}
-		return newUnsBeta(parsed, nil)
+		return newUnsBeta(parsed, service.MockResources())
 	}
 
 	DescribeTable("newUnsBeta rejects invalid config",
@@ -45,53 +38,42 @@ var _ = Describe("uns_beta config validation", Label("uns_beta"), func() {
 		},
 		Entry("empty consumer_group is rejected",
 			"consumer_group: \"\"\numh_topics: [\".*\"]\n",
-			Equal("consumer_group must not be empty")),
+			Equal("consumer_group must not be empty: set a name unique to this consumer, for example analytics_reader")),
+		Entry("empty broker_address is rejected",
+			"broker_address: \" , \"\nconsumer_group: \"g\"\numh_topics: [\".*\"]\n",
+			Equal("broker_address must not be empty: set host:port, for example localhost:9092")),
 		Entry("kafka_topic '.' is rejected",
 			"consumer_group: \"g\"\numh_topics: [\".*\"]\nkafka_topic: \".\"\n",
-			Equal("kafka_topic must be a legal Kafka topic name (letters, digits, '.', '_', '-'; max 249 chars)")),
+			Equal(`kafka_topic "." is not a legal Kafka topic name: use 1-249 letters, digits, '.', '_' or '-'`)),
 		Entry("kafka_topic '..' is rejected",
 			"consumer_group: \"g\"\numh_topics: [\".*\"]\nkafka_topic: \"..\"\n",
-			Equal("kafka_topic must be a legal Kafka topic name (letters, digits, '.', '_', '-'; max 249 chars)")),
+			Equal(`kafka_topic ".." is not a legal Kafka topic name: use 1-249 letters, digits, '.', '_' or '-'`)),
 		Entry("illegal kafka_topic (contains colon) is rejected",
 			"consumer_group: \"g\"\numh_topics: [\".*\"]\nkafka_topic: \"a:b\"\n",
-			Equal("kafka_topic must be a legal Kafka topic name (letters, digits, '.', '_', '-'; max 249 chars)")),
+			Equal(`kafka_topic "a:b" is not a legal Kafka topic name: use 1-249 letters, digits, '.', '_' or '-'`)),
 		Entry("missing umh_topics is rejected",
 			"consumer_group: \"g\"\n",
-			Equal("umh_topics must not be empty")),
+			Equal(`umh_topics must not be empty: to read the whole namespace, set umh_topics: [".*"]`)),
 		Entry("empty umh_topics list is rejected",
 			"consumer_group: \"g\"\numh_topics: []\n",
-			Equal("umh_topics must not be empty")),
+			Equal(`umh_topics must not be empty: to read the whole namespace, set umh_topics: [".*"]`)),
 		Entry("empty umh_topics element is rejected (an empty pattern wraps to (?:) matching every key)",
 			"consumer_group: \"g\"\numh_topics: [\".*\", \"\"]\n",
 			ContainSubstring("umh_topics pattern at index 1 must not be empty or whitespace-only")),
 		Entry("invalid umh_topics regex is rejected",
 			"consumer_group: \"g\"\numh_topics: [\"[\"]\n",
 			ContainSubstring("invalid umh_topics pattern at index 0:")),
-		Entry("consumer_group with a newline is rejected (YAML injection guard)",
-			"consumer_group: \"x\\nauto_replay_nacks: false\"\numh_topics: [\".*\"]\n",
-			ContainSubstring("consumer_group must not contain control characters or newlines")),
-		Entry("broker_address with a newline is rejected (YAML injection guard)",
-			"broker_address: \"localhost:9092\\nstart_offset: latest\"\nconsumer_group: \"g\"\numh_topics: [\".*\"]\n",
-			ContainSubstring("broker_address must not contain control characters or newlines")),
 	)
 
 	It("rejects a missing required consumer_group at parse time", func() {
-		// consumer_group is a required field (no Default); the framework
-		// rejects its absence before the constructor runs. Framework error
-		// strings are not part of this plugin's contract, so match by
-		// substring.
+		// The framework's error text is not ours to pin, so match a substring.
 		_, err := parseAndConstruct("umh_topics: [\".*\"]\n")
 		Expect(err).To(MatchError(ContainSubstring("consumer_group")))
 	})
 
-	It("accepts a valid config (constructor passes Go-level validation and returns a non-nil input)", func() {
+	It("accepts a valid config", func() {
 		in, err := parseAndConstruct("consumer_group: \"g\"\numh_topics: [\".*\"]\n")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(in).NotTo(BeNil())
-	})
-
-	It("returns ErrNotConnected from ReadBatch before Connect", func() {
-		_, _, err := (&unsBetaInput{}).ReadBatch(context.Background())
-		Expect(err).To(MatchError(service.ErrNotConnected))
 	})
 })

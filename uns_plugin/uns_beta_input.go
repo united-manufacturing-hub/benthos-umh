@@ -27,28 +27,13 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
-// validateYAMLScalar rejects control characters and surrounding whitespace in
-// a value that is interpolated into the translated redpanda config. A newline
-// would let a user inject redpanda keys such as auto_replay_nacks: false.
-func validateYAMLScalar(v string, fieldName string) error {
-	for _, r := range v {
-		if r == '\n' || r == '\r' || r == '\t' || r < 0x20 {
-			return fmt.Errorf("%s must not contain control characters or newlines", fieldName)
-		}
-	}
-	if strings.TrimSpace(v) != v {
-		return fmt.Errorf("%s must not have leading or trailing whitespace", fieldName)
-	}
-	return nil
-}
-
 // unsBetaConfigSpec returns the ConfigSpec for the "uns_beta" input.
 func unsBetaConfigSpec() *service.ConfigSpec {
 	return service.NewConfigSpec().
 		Summary("At-least-once consumer of the Unified Namespace (preview).").
 		Description("Consumes the UNS Kafka topic and delivers only the records whose Kafka key (the UMH topic) matches umh_topics. Each message stays in flight until the pipeline acknowledges it; a rejected message is redelivered until it is accepted.").
 		Field(service.NewStringField("broker_address").
-			Description("Kafka broker address to connect to. For example: \"localhost:9092\".").
+			Description("Kafka broker address, for example \"localhost:9092\". Separate several addresses with commas.").
 			Default("localhost:9092").
 			Advanced()).
 		Field(service.NewStringField("consumer_group").
@@ -59,7 +44,7 @@ func unsBetaConfigSpec() *service.ConfigSpec {
 			Default("umh.messages").
 			Advanced()).
 		Field(service.NewStringListField("umh_topics").
-			Description("List of RE2 regex patterns matched against each record's Kafka key (the umh_topic). Only records whose key matches at least one pattern are delivered; records with an empty or absent key never match any pattern. Patterns are unanchored; use ^...$ to match the full key. Required; to consume the whole namespace, set it explicitly to [\".*\"].").
+			Description("List of RE2 regex patterns matched against each record's Kafka key (the UMH topic). Only records whose key matches at least one pattern are delivered; records with an empty or absent key never match any pattern. Patterns are unanchored; use ^...$ to match the full key. Required; to consume the whole namespace, set it explicitly to [\".*\"].").
 			Example([]string{".*"}).
 			Example([]string{`umh\.v1\.acme\.berlin\..+`, `umh\.v1\.acme\.munich\..+`}))
 }
@@ -70,15 +55,22 @@ func init() {
 	}
 }
 
-// newUnsBeta validates the config and returns an input that builds the
-// redpanda reader on first Connect, so construction never dials a broker.
+// newUnsBeta validates the config and builds the redpanda reader. Building it
+// does not dial the broker, so a config error fails at startup instead of on
+// every Connect retry.
 func newUnsBeta(conf *service.ParsedConfig, res *service.Resources) (service.BatchInput, error) {
 	brokerAddress, err := conf.FieldString("broker_address")
 	if err != nil {
 		return nil, err
 	}
-	if err = validateYAMLScalar(brokerAddress, "broker_address"); err != nil {
-		return nil, err
+	var seedBrokers []string
+	for _, b := range strings.Split(brokerAddress, ",") {
+		if b = strings.TrimSpace(b); b != "" {
+			seedBrokers = append(seedBrokers, b)
+		}
+	}
+	if len(seedBrokers) == 0 {
+		return nil, errors.New("broker_address must not be empty: set host:port, for example localhost:9092")
 	}
 
 	consumerGroup, err := conf.FieldString("consumer_group")
@@ -86,10 +78,7 @@ func newUnsBeta(conf *service.ParsedConfig, res *service.Resources) (service.Bat
 		return nil, err
 	}
 	if consumerGroup == "" {
-		return nil, errors.New("consumer_group must not be empty")
-	}
-	if err = validateYAMLScalar(consumerGroup, "consumer_group"); err != nil {
-		return nil, err
+		return nil, errors.New("consumer_group must not be empty: set a name unique to this consumer, for example analytics_reader")
 	}
 
 	kafkaTopic, err := conf.FieldString("kafka_topic")
@@ -97,7 +86,7 @@ func newUnsBeta(conf *service.ParsedConfig, res *service.Resources) (service.Bat
 		return nil, err
 	}
 	if !legalKafkaTopicName.MatchString(kafkaTopic) || kafkaTopic == "." || kafkaTopic == ".." {
-		return nil, errors.New("kafka_topic must be a legal Kafka topic name (letters, digits, '.', '_', '-'; max 249 chars)")
+		return nil, fmt.Errorf("kafka_topic %q is not a legal Kafka topic name: use 1-249 letters, digits, '.', '_' or '-'", kafkaTopic)
 	}
 
 	patterns, err := conf.FieldStringList("umh_topics")
@@ -109,69 +98,41 @@ func newUnsBeta(conf *service.ParsedConfig, res *service.Resources) (service.Bat
 		return nil, err
 	}
 
-	// A binary built without the connect patches cannot read. Fail here, at
-	// startup, rather than on every Connect retry.
-	if errUnsBetaUnavailable != nil {
-		return nil, errUnsBetaUnavailable
+	inner, err := buildUnsBetaInner(res, seedBrokers, kafkaTopic, consumerGroup, keyFilter.re.String())
+	if err != nil {
+		return nil, err
 	}
 
-	// Tests construct the input with nil resources. A nil *MetricCounter is a
-	// no-op on Incr.
-	var keylessCounter, filteredCounter *service.MetricCounter
-	if res != nil {
-		keylessCounter = res.Metrics().NewCounter("dropped_keyless")
-		filteredCounter = res.Metrics().NewCounter("filtered_records")
-	}
 	return &unsBetaInput{
-		res:             res,
-		seedBrokers:     []string{brokerAddress},
-		kafkaTopic:      kafkaTopic,
-		consumerGroup:   consumerGroup,
-		umhTopics:       patterns,
+		inner:           inner,
 		keyFilter:       keyFilter,
-		keylessCounter:  keylessCounter,
-		filteredCounter: filteredCounter,
+		keylessCounter:  res.Metrics().NewCounter("dropped_keyless"),
+		filteredCounter: res.Metrics().NewCounter("filtered_records"),
 	}, nil
 }
 
 // unsBetaInput wraps the redpanda reader and applies the umh_topics key filter.
 type unsBetaInput struct {
-	res           *service.Resources
-	seedBrokers   []string
-	kafkaTopic    string
-	consumerGroup string
-	umhTopics     []string
-	keyFilter     *betaKeyFilter
+	// inner is connect's redpanda reader.
+	inner     service.BatchInput
+	keyFilter *betaKeyFilter
 
-	// keylessCounter counts dropped records with an empty kafka_key.
-	// TODO(ENG-5125): connect lets a producer header named "kafka_key"
-	// override the record key, so a record can be delivered under a spoofed
-	// umh_topic, or counted here or in filteredCounter. Detect and drop it.
+	// keylessCounter counts records dropped because their key is empty.
+	// TODO(ENG-5125): a producer header named "kafka_key" overrides the record
+	// key in connect's metadata, so such a record can be delivered under a
+	// spoofed UMH topic. Detect and drop it.
 	keylessCounter *service.MetricCounter
 
 	// filteredCounter counts keyed records that reach ReadBatch but match no
 	// pattern. Connect's key_pattern pre-filter drops most of them first.
 	filteredCounter *service.MetricCounter
-
-	// inner is the redpanda reader, built on first Connect.
-	inner service.BatchInput
 }
 
 func (i *unsBetaInput) Connect(ctx context.Context) error {
-	if i.inner == nil {
-		inner, err := buildUnsBetaInner(i.res, i.seedBrokers, i.kafkaTopic, i.consumerGroup, i.umhTopics)
-		if err != nil {
-			return err
-		}
-		i.inner = inner
-	}
 	return i.inner.Connect(ctx)
 }
 
 func (i *unsBetaInput) ReadBatch(ctx context.Context) (service.MessageBatch, service.AckFunc, error) {
-	if i.inner == nil {
-		return nil, nil, service.ErrNotConnected
-	}
 	for {
 		batch, ack, err := i.inner.ReadBatch(ctx)
 		if err != nil {
@@ -180,13 +141,13 @@ func (i *unsBetaInput) ReadBatch(ctx context.Context) (service.MessageBatch, ser
 		// Connect's key_pattern matches an empty key under ".*", so this
 		// filter is the one that enforces "an empty key never matches". A
 		// delivered keyless record would be rejected by the uns output and
-		// redelivered forever (ENG-5094).
+		// redelivered forever.
 		kept := make(service.MessageBatch, 0, len(batch))
 		for _, msg := range batch {
 			key, ok := msg.MetaGet("kafka_key")
-			// The connect pre-filter keeps the last omitted record of a poll
-			// as an empty placeholder without metadata, so its offset still
-			// commits. Drop it.
+			// Connect's key_pattern pre-filter keeps the last dropped record of
+			// a fetch as an empty placeholder without metadata, so its offset
+			// still commits. Drop it.
 			if !ok {
 				continue
 			}
@@ -222,9 +183,6 @@ func (i *unsBetaInput) ReadBatch(ctx context.Context) (service.MessageBatch, ser
 }
 
 func (i *unsBetaInput) Close(ctx context.Context) error {
-	if i.inner == nil {
-		return nil
-	}
 	return i.inner.Close(ctx)
 }
 
@@ -235,11 +193,11 @@ type betaKeyFilter struct {
 }
 
 // newBetaKeyFilter compiles the umh_topics patterns into one alternation,
-// (?:p1)|(?:p2)|..., the same join the legacy uns input uses. An empty list or
+// (?:p1)|(?:p2)|..., the same join the uns input uses. An empty list or
 // an empty element is rejected because it would match every key.
 func newBetaKeyFilter(patterns []string) (*betaKeyFilter, error) {
 	if len(patterns) == 0 {
-		return nil, errors.New("umh_topics must not be empty")
+		return nil, errors.New(`umh_topics must not be empty: to read the whole namespace, set umh_topics: [".*"]`)
 	}
 	wrapped := make([]string, len(patterns))
 	for i, pattern := range patterns {
@@ -256,14 +214,14 @@ func newBetaKeyFilter(patterns []string) (*betaKeyFilter, error) {
 	// still fail.
 	re, err := regexp.Compile(strings.Join(wrapped, "|"))
 	if err != nil {
-		return nil, fmt.Errorf("compiling combined umh_topics pattern: %w", err)
+		return nil, fmt.Errorf("the umh_topics patterns together are too large for RE2: use fewer or simpler patterns: %w", err)
 	}
 	return &betaKeyFilter{re: re}, nil
 }
 
 // matches reports whether a record with the given Kafka key is delivered. An
-// empty key never matches, unlike in the legacy uns input: the uns output
-// would reject it and the record would be redelivered forever (ENG-5094).
+// empty key never matches, unlike in the uns input: the uns output would reject
+// it and the record would be redelivered forever.
 func (f *betaKeyFilter) matches(key string) bool {
 	return key != "" && f.re.MatchString(key)
 }

@@ -10,8 +10,11 @@
 stays in-flight until your pipeline acknowledges it. If a processor or output
 rejects a message, `uns_beta` redelivers it until it succeeds and only then
 advances the committed offset, so a transient downstream failure never costs you
-a message. This is the same retry-until-accepted behavior you rely on in write
-flows.
+a message.
+
+There is no retry limit and no dead-letter queue yet. A message that your
+pipeline rejects every time, for example one that a processor always fails on,
+is redelivered forever and holds up every later message on its partition.
 
 #### 1 Quick-start
 
@@ -89,9 +92,9 @@ or more patterns instead.
    in-flight-until-accepted behavior described at the top.
 
 **Performance notes**
-- `uns_beta` is built for selective consumers: when you subscribe to a subset of
-  a high-volume namespace, non-matching records are discarded before
-  construction, so memory churn stays low regardless of firehose volume.
+- `uns_beta` is built for selective consumers: when you subscribe to a small
+  part of a busy namespace, the records you don't want are dropped before a
+  message is built for them, so they cost little memory.
 - A complex regex can still cost CPU. Prefer anchored, specific patterns such as
   `umh\\.v1\\.acme\\.(berlin|munich)\\..+` over `.*temperature.*` when throughput
   matters.
@@ -99,10 +102,10 @@ or more patterns instead.
 #### 4 Migrating from `uns`
 
 - Replace `umh_topic: "<pattern>"` (or `topic:`) with `umh_topics: ["<pattern>"]`.
-  `umh_topics` is required: legacy `uns` defaulted to `.*` (the whole namespace),
+  `umh_topics` is required: `uns` defaulted to `.*` (the whole namespace),
   so to keep that behavior set `umh_topics: [".*"]` explicitly.
 - Set a `consumer_group`. Unlike `uns`, `uns_beta` does not default it.
-- Records with an empty or absent Kafka key are no longer delivered. Legacy `uns`
+- Records with an empty or absent Kafka key are no longer delivered. `uns`
   passed them through under its default `.*` pattern; `uns_beta` drops them,
   because an empty key produces an empty `umh_topic` that the `uns` output would
   reject forever.
@@ -113,16 +116,16 @@ or more patterns instead.
 metrics. Each counts records it drops:
 
 - `key_omitted_records` - a record whose key matched none of your `umh_topics`
-  patterns, dropped before a message is built for it. Climbing while
-  `input_received` stays flat means your patterns are too narrow.
+  patterns, dropped before a message is built for it. If it counts every
+  record and nothing is delivered, check your patterns.
 - `dropped_keyless` - a record with an empty or absent Kafka key that your
   patterns would otherwise accept (for example under `.*`). Under narrower
   patterns, keyless records are counted in `key_omitted_records` instead. A
   non-zero value means a producer is writing keyless records to the topic.
-- `filtered_records` - a record that passed the first filter but whose key, as
-  seen by the pipeline, matched none of your patterns. This happens when a
-  producer sets a Kafka header named `kafka_key`, which overrides the record
-  key. Remove that header from the producer.
+- `filtered_records` - a record whose Kafka key matched your patterns, but whose
+  `kafka_key` metadata did not. This happens when a producer sets a Kafka header
+  named `kafka_key`, which overrides the record key in the metadata. Remove that
+  header from the producer.
 
 The counters appear under these bare names (carrying `path` / `label` / `stream`
 labels that identify the emitting component) in whatever metrics exporter you
@@ -140,6 +143,7 @@ documentation.
   Start with `[".*"]`, confirm the flow, then tighten. The drop counters under
   Metrics tell you which records are being dropped and why.
 
-- **"Consumer-group lag grows forever":** your pipeline never acknowledges.
-  `uns_beta` commits only on a successful ack and redelivers on a nack, so check
-  downstream processors and outputs for errors.
+- **"Consumer-group lag grows forever":** your pipeline rejects a message every
+  time it is delivered, or never acknowledges it. `uns_beta` commits only on a
+  successful ack and redelivers on a nack, so check downstream processors and
+  outputs for errors.

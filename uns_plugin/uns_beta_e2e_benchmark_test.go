@@ -34,45 +34,25 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
-// This file compares the OLD `uns` input against the NEW `uns_beta` input end to
-// end: each case drains a firehose of records through a real benthos stream
-// (input -> consumer func), exercising the whole framework path (Connect, fetch,
-// decode, metadata, the umh_topics filter, ack/commit) rather than the regex
-// filter in isolation. Two filter scenarios run against the SAME corpus,
-// selected only by umh_topics:
+// These benchmarks drain a corpus of records through a benthos stream (input
+// -> consumer func) with the uns input and with the uns_beta input, against a
+// real redpanda container. Two scenarios read the same corpus and differ only
+// in umh_topics:
 //
-//   - match_all ('.*'): nothing is dropped. Isolates the wrapping overhead of
-//     delegating to the official redpanda input (uns_beta) versus the bespoke
-//     consumer (uns).
-//   - select_one: keep exactly ONE topic out of the whole firehose (the
-//     production-realistic "subscribe to one tag" case, and the worst case for
-//     build-then-filter). The OLD uns filters on the raw key BEFORE building a
-//     message, so it builds ~one message; uns_beta delegates to the official
-//     input, which builds a message for EVERY record, then drops all but one.
+//   - match_all ('.*'): nothing is dropped. This measures the cost of
+//     uns_beta's wrapper around connect's redpanda input against uns.
+//   - select_one: one record of the corpus matches. Both inputs drop the
+//     other records before building a message: uns filters the raw key, and
+//     uns_beta's records are dropped by connect's key_pattern pre-filter.
 //
-// Backends:
+// Throughput is records consumed per second; every scenario consumes the whole
+// corpus. The corpus must be large enough that draining outweighs the
+// consumer-group rebalance, which takes seconds. Set it with UNS_BENCH_CORPUS:
 //
-//   - BenchmarkE2E_DrainRedpanda runs against a REAL redpanda testcontainer.
-//     This is the throughput comparison to trust. Needs Docker; skips cleanly
-//     when Docker is unavailable.
-//   - BenchmarkE2E_DrainKfake runs against an in-process kfake broker. kfake is
-//     a correctness fake, not a performance broker: the official redpanda
-//     input's franz-go consumer-session machinery (offset-list/epoch loads,
-//     broker reconnects) thrashes against it and floods the trace log, so its
-//     uns_beta numbers reflect that client-vs-fake-broker interaction, NOT real
-//     throughput. Kept because it exercises both inputs E2E with no external
-//     dependency; read it for behavior, not for rec/s.
+//	UNS_BENCH_CORPUS=500000 go test -tags connect_patched -run=^$ -bench=BenchmarkE2E_DrainRedpanda -benchtime=3x ./uns_plugin/
 //
-// Throughput is reported as records CONSUMED per second: the whole corpus is
-// consumed in every scenario, only delivery differs. The corpus must be large
-// enough that draining dominates the one-time consumer-group rebalance floor
-// (~seconds), otherwise rec/s reflects the floor, not steady state. Tune it with
-// UNS_BENCH_CORPUS. Run with a fixed iteration count, e.g.:
-//
-//	UNS_BENCH_CORPUS=500000 go test -run=^$ -bench=BenchmarkE2E_DrainRedpanda -benchtime=3x ./uns_plugin/
-//
-// allocs/op and B/op scale with records (the rebalance floor is negligible in
-// allocations), so the allocation ratios are trustworthy at any corpus size.
+// The rebalance allocates little, so allocs/op and B/op are comparable at any
+// corpus size.
 
 // benchCorpusSize is the firehose depth, overridable via UNS_BENCH_CORPUS.
 var benchCorpusSize = benchEnvInt("UNS_BENCH_CORPUS", 200000)
@@ -102,17 +82,16 @@ func nextBenchGroup(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, benchGroupSeq.Add(1))
 }
 
-// benchCorpus builds the firehose: every record carries a drop.* key except the
-// last, which carries the single keep.* key matched by select_one. Putting the
-// one keep last means the select_one drain completes only once the ENTIRE
-// firehose has been consumed (so it measures consume-all-deliver-one).
-func benchCorpus() []*kgo.Record {
-	recs := make([]*kgo.Record, benchCorpusSize)
+// benchCorpus builds n records with drop.* keys, except the last, which has the
+// keep.* key select_one matches. A select_one drain therefore ends only after
+// the whole corpus is consumed.
+func benchCorpus(n int) []*kgo.Record {
+	recs := make([]*kgo.Record, n)
 	for i := range recs {
 		key := fmt.Sprintf("umh.v1.drop.line.tag%d", i)
 		recs[i] = &kgo.Record{Key: []byte(key), Value: []byte(`{"v":1}`)}
 	}
-	last := benchCorpusSize - 1
+	last := n - 1
 	recs[last] = &kgo.Record{
 		Key:   []byte(fmt.Sprintf("umh.v1.keep.line.tag%d", last)),
 		Value: []byte(`{"v":1}`),
@@ -120,9 +99,9 @@ func benchCorpus() []*kgo.Record {
 	return recs
 }
 
-// benchProduce writes the whole corpus to reproTopic in chunks (one ProduceSync
+// benchProduce writes the whole corpus to testTopic in chunks (one ProduceSync
 // per chunk keeps a large corpus from outrunning the client's record buffer).
-func benchProduce(b *testing.B, addr string, recs []*kgo.Record) {
+func benchProduce(b testing.TB, addr string, recs []*kgo.Record) {
 	b.Helper()
 	cl, err := kgo.NewClient(kgo.SeedBrokers(addr))
 	if err != nil {
@@ -130,7 +109,7 @@ func benchProduce(b *testing.B, addr string, recs []*kgo.Record) {
 	}
 	defer cl.Close()
 	for _, r := range recs {
-		r.Topic = reproTopic
+		r.Topic = testTopic
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
@@ -143,10 +122,8 @@ func benchProduce(b *testing.B, addr string, recs []*kgo.Record) {
 	}
 }
 
-// ensureTopic creates reproTopic (single partition, for offset-order parity with
-// kfake) if it does not already exist. Used for the redpanda backend, where the
-// topic is not pre-seeded.
-func ensureTopic(b *testing.B, addr string) {
+// ensureTopic creates testTopic with one partition if it does not exist.
+func ensureTopic(b testing.TB, addr string) {
 	b.Helper()
 	cl, err := kgo.NewClient(kgo.SeedBrokers(addr))
 	if err != nil {
@@ -155,12 +132,12 @@ func ensureTopic(b *testing.B, addr string) {
 	defer cl.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	resp, err := kadm.NewClient(cl).CreateTopic(ctx, 1, 1, nil, reproTopic)
+	resp, err := kadm.NewClient(cl).CreateTopic(ctx, 1, 1, nil, testTopic)
 	if err != nil && !errors.Is(err, kerr.TopicAlreadyExists) {
-		b.Fatalf("create topic %q: %v", reproTopic, err)
+		b.Fatalf("create topic %q: %v", testTopic, err)
 	}
 	if resp.Err != nil && !errors.Is(resp.Err, kerr.TopicAlreadyExists) {
-		b.Fatalf("create topic %q: %v", reproTopic, resp.Err)
+		b.Fatalf("create topic %q: %v", testTopic, resp.Err)
 	}
 }
 
@@ -171,28 +148,21 @@ func benchInputYAML(plugin string, addr string, group string, topics string) str
   consumer_group: %q
   kafka_topic: %q
   umh_topics: [%s]
-`, plugin, addr, group, reproTopic, topics)
+`, plugin, addr, group, testTopic, topics)
 }
 
-// BenchmarkE2E_DrainRedpanda is the throughput comparison to trust: both inputs
-// run against a real redpanda broker. Needs Docker; skips otherwise.
+// BenchmarkE2E_DrainRedpanda compares uns and uns_beta against a real redpanda
+// broker. It needs Docker and skips without it.
 func BenchmarkE2E_DrainRedpanda(b *testing.B) {
 	addr := startRedpandaBroker(b)
 	ensureTopic(b, addr)
 	runDrainMatrix(b, addr)
 }
 
-// BenchmarkE2E_DrainKfake runs the same matrix against an in-process kfake
-// broker. See the file header: uns_beta numbers here reflect franz-go vs the
-// fake broker, not real throughput.
-func BenchmarkE2E_DrainKfake(b *testing.B) {
-	runDrainMatrix(b, startBroker(b))
-}
-
 // runDrainMatrix produces the corpus once, then benchmarks {uns, uns_beta}
 // x {match_all, select_one} draining it from addr.
 func runDrainMatrix(b *testing.B, addr string) {
-	benchProduce(b, addr, benchCorpus())
+	benchProduce(b, addr, benchCorpus(benchCorpusSize))
 
 	scenarios := []struct {
 		name              string
@@ -226,10 +196,9 @@ func runDrainMatrix(b *testing.B, addr string) {
 	}
 }
 
-// startRedpandaBroker starts a real redpanda container and returns its Kafka
-// seed-broker address. It skips the benchmark when Docker/redpanda is
-// unavailable, so `-bench=.` stays runnable in environments without Docker.
-func startRedpandaBroker(b *testing.B) string {
+// startRedpandaBroker starts a redpanda container and returns its Kafka seed
+// broker address. It skips the test or benchmark when Docker is unavailable.
+func startRedpandaBroker(b testing.TB) string {
 	b.Helper()
 	ctx := context.Background()
 	container, err := redpanda.Run(ctx, "redpandadata/redpanda:latest")
@@ -251,7 +220,7 @@ func startRedpandaBroker(b *testing.B) string {
 // drainOnce runs a fresh stream for the given input YAML and blocks until the
 // consumer has been delivered `want` records (by which point the corpus is
 // fully consumed), then stops the stream.
-func drainOnce(b *testing.B, inputYAML string, want int) {
+func drainOnce(b testing.TB, inputYAML string, want int) {
 	b.Helper()
 	var delivered atomic.Int64
 	done := make(chan struct{})

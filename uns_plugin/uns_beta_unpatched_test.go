@@ -19,15 +19,16 @@ package uns_plugin
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
 // Runs in the unpatched lane (make test-uns), unlike the specs labeled uns_beta.
 var _ = Describe("uns_beta in an unpatched build", func() {
-	It("fails at construction instead of on every Connect", func() {
+	It("fails at construction with a message the user can act on", func() {
 		parsed, err := unsBetaConfigSpec().ParseYAML("consumer_group: \"g\"\numh_topics: [\".*\"]\n", nil)
 		Expect(err).NotTo(HaveOccurred())
 
-		in, err := newUnsBeta(parsed, nil)
+		in, err := newUnsBeta(parsed, service.MockResources())
 		Expect(err).To(MatchError(errUnsBetaUnavailable))
 		Expect(in).To(BeNil())
 	})

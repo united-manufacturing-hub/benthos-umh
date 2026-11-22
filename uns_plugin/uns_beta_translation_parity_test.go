@@ -14,10 +14,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// The uns_beta translation must reproduce uns_beta's 12 pinned redpanda values
-// exactly. This spec drives the YAML construction through a pure, broker-free
-// helper (redpandaConfigYAML) so the rendered values can be checked against
-// the Go fetch constants, the key_pattern join and connect's own schema.
+// The translated redpanda config must parse against connect's own schema and
+// carry every pinned value.
 
 package uns_plugin
 
@@ -29,77 +27,34 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
 
-	// The forwarder shim re-exports connect's redpanda ConfigFields so the
-	// translated YAML can be parsed against connect's real schema without a
-	// live broker. Present only after `make patch-connect`.
 	"github.com/redpanda-data/connect/v4/public/components/kafka/redpandaforward"
 )
 
-var _ = Describe("uns_beta translation parity", Label("uns_beta"), func() {
-	It("reproduces all 12 pinned redpanda values, the key_pattern join, and a connect-accepted config from the pure YAML builder", func() {
-		seedBrokers := []string{"broker1:9092", "broker2:9092"}
-		kafkaTopic := "umh.messages"
-		consumerGroup := "parity-group"
-		umhTopics := []string{"umh.v1.acme.temp", "umh.v1.acme.pressure"}
+var _ = Describe("uns_beta translation to the redpanda input", Label("uns_beta"), func() {
+	It("produces a config connect accepts, with every pinned value", func() {
+		// The quote and newline would break a hand-built YAML document.
+		consumerGroup := "group\"\nauto_replay_nacks: false"
+		keyPattern := `(?:umh\.v1\.acme\.temp)|(?:umh\.v1\.acme\.pressure)`
 
-		// Pure, broker-free access to the translated redpanda config YAML.
-		// buildUnsBetaInner must delegate to this helper so the
-		// translation is inspectable without dialing a broker.
-		yaml := redpandaConfigYAML(seedBrokers, kafkaTopic, consumerGroup, umhTopics)
+		yaml, err := redpandaConfigYAML([]string{"broker1:9092", "broker2:9092"}, "umh.messages", consumerGroup, keyPattern)
+		Expect(err).NotTo(HaveOccurred())
+		conf, err := service.NewConfigSpec().Fields(redpandaforward.ConfigFields()...).ParseYAML(yaml, nil)
+		Expect(err).NotTo(HaveOccurred(), "connect rejected the translated config:\n%s", yaml)
 
-		// "connect accepts the parsed config": parse against the forwarder's
-		// re-exported redpanda field set (connect's real schema), not a local
-		// copy. A YAML that connect's schema rejects fails here.
-		spec := service.NewConfigSpec().Fields(redpandaforward.ConfigFields()...)
-		conf, err := spec.ParseYAML(yaml, nil)
-		Expect(err).NotTo(HaveOccurred(), "translated YAML must parse against connect's redpanda field set:\n%s", yaml)
+		Expect(conf.FieldStringList("seed_brokers")).To(Equal([]string{"broker1:9092", "broker2:9092"}))
+		Expect(conf.FieldStringList("topics")).To(Equal([]string{"umh.messages"}))
+		Expect(conf.FieldString("consumer_group")).To(Equal(consumerGroup))
+		Expect(conf.FieldString("key_pattern")).To(Equal(keyPattern))
 
-		// Lean-field pass-throughs.
-		gotBrokers, err := conf.FieldStringList("seed_brokers")
-		Expect(err).NotTo(HaveOccurred(), "seed_brokers missing")
-		Expect(gotBrokers).To(Equal(seedBrokers), "seed_brokers must mirror the lean broker list")
-		gotTopics, err := conf.FieldStringList("topics")
-		Expect(err).NotTo(HaveOccurred(), "topics missing")
-		Expect(gotTopics).To(Equal([]string{kafkaTopic}), "topics must mirror the lean kafka_topic")
-		gotGroup, err := conf.FieldString("consumer_group")
-		Expect(err).NotTo(HaveOccurred(), "consumer_group missing")
-		Expect(gotGroup).To(Equal(consumerGroup), "consumer_group must mirror the lean field")
+		Expect(conf.FieldString("start_offset")).To(Equal("earliest"))
+		Expect(conf.FieldDuration("commit_period")).To(Equal(5 * time.Second))
+		Expect(conf.FieldBool("auto_replay_nacks")).To(BeTrue())
 
-		// String-valued pins: start_offset is a literal pin; the three
-		// fetch byte fields are re-derived from the Go fetch constants in
-		// uns_input_config.go, so a constant retune updates production and expectation in
-		// lockstep — these pins guard format, not value. They are emitted
-		// AS STRINGS (upstream NewStringField contract).
-		Expect(conf.FieldString("start_offset")).To(Equal("earliest"), "start_offset must be pinned to earliest")
-		Expect(conf.FieldString("fetch_max_bytes")).To(Equal(strconv.FormatFloat(defaultFetchMaxBytes, 'f', -1, 64)), "fetch_max_bytes must mirror defaultFetchMaxBytes")
-		Expect(conf.FieldString("fetch_max_partition_bytes")).To(Equal(strconv.FormatFloat(defaultFetchMaxPartitionBytes, 'f', -1, 64)), "fetch_max_partition_bytes must mirror defaultFetchMaxPartitionBytes")
-		Expect(conf.FieldString("fetch_min_bytes")).To(Equal(strconv.FormatFloat(defaultFetchMinBytes, 'f', -1, 64)), "fetch_min_bytes must mirror defaultFetchMinBytes")
-
-		// Duration-valued pins: fetch_max_wait and conn_idle_timeout re-derive
-		// from the Go fetch/conn constants (guarding format, not value, since
-		// both operands derive from the same constant). commit_period is EMITTED
-		// by the translation as the literal "5s" — pinned defensively, like
-		// auto_replay_nacks, so a future connect default change cannot silently
-		// alter the commit cadence.
-		Expect(conf.FieldDuration("fetch_max_wait")).To(Equal(defaultFetchMaxWaitTime), "fetch_max_wait must mirror defaultFetchMaxWaitTime")
-		Expect(conf.FieldDuration("conn_idle_timeout")).To(Equal(defaultConnIdleTimeout), "conn_idle_timeout must mirror defaultConnIdleTimeout")
-		Expect(conf.FieldDuration("commit_period")).To(Equal(5*time.Second), "commit_period must be pinned to 5s by the translation")
-
-		// auto_replay_nacks pinned true (the ENG-5094 NACK-replay guarantee),
-		// defensively, so a future connect default change cannot silently
-		// disable redelivery.
-		Expect(conf.FieldBool("auto_replay_nacks")).To(BeTrue(), "auto_replay_nacks must be pinned true")
-
-		// key_pattern must equal the Go-side betaKeyFilter combined regex for
-		// the same umh_topics — (?:p1)|(?:p2)|... — reusing the same wrap, not a
-		// raw "|"-join. The wrap prevents a pattern containing '|' from
-		// mis-grouping. Cross-check against newBetaKeyFilter's compiled source
-		// (filter.re.String()) rather than hand-rebuilding the join, so a drift
-		// between this helper's wrap convention and newBetaKeyFilter's fails
-		// here.
-		filter, err := newBetaKeyFilter(umhTopics)
-		Expect(err).NotTo(HaveOccurred(), "test umh_topics must compile into a betaKeyFilter")
-		Expect(conf.FieldString("key_pattern")).To(Equal(filter.re.String()),
-			"key_pattern must equal the Go-side betaKeyFilter combined regex for umh_topics — connect's pre-filter must not drift from the Go keep set")
+		// The fetch byte fields are string fields upstream.
+		Expect(conf.FieldString("fetch_max_bytes")).To(Equal(strconv.FormatFloat(defaultFetchMaxBytes, 'f', -1, 64)))
+		Expect(conf.FieldString("fetch_max_partition_bytes")).To(Equal(strconv.FormatFloat(defaultFetchMaxPartitionBytes, 'f', -1, 64)))
+		Expect(conf.FieldString("fetch_min_bytes")).To(Equal(strconv.FormatFloat(defaultFetchMinBytes, 'f', -1, 64)))
+		Expect(conf.FieldDuration("fetch_max_wait")).To(Equal(defaultFetchMaxWaitTime))
+		Expect(conf.FieldDuration("conn_idle_timeout")).To(Equal(defaultConnIdleTimeout))
 	})
 })

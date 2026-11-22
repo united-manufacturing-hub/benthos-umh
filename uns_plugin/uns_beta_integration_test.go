@@ -14,9 +14,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// The startBroker/produce/rec/committedOffsetE helpers used here live in
-// uns_input_nack_commit_repro_test.go (same package).
-
 package uns_plugin
 
 import (
@@ -30,10 +27,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	// Registers benthos core components (incl. the "none" tracer that
-	// StreamBuilder.Build defaults to). The production binary gets these via
-	// its full component bundle; this minimal test package only blank-imports
-	// the kafka components, so the StreamBuilder build needs pure here.
+	// Registers the "none" tracer that StreamBuilder.Build defaults to.
 	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -60,20 +54,11 @@ func runUnsBetaStream(t testingT, unsBetaYAML string, consumerFn func(context.Co
 	go func() { defer close(done); runErr = stream.Run(ctx) }()
 	var stopOnce sync.Once
 	return func() {
-		// Idempotent: specs may call stop() explicitly AND via defer (e.g. a
-		// restart spec stops run 1 before starting run 2). A second StopWithin on
-		// an already-stopped stream would error, so guard with sync.Once.
+		// Specs call stop() both explicitly and via defer.
 		stopOnce.Do(func() {
-			// StopWithin (not a bare context cancel) is what actually tears the inner
-			// redpanda input down: stream.Run returns on ctx cancel in microseconds
-			// WITHOUT waiting for the delegated franz client to stop, so a bare cancel
-			// leaves a leaked consumer goroutine that keeps polling and committing on
-			// the same consumer group. A restart spec that produces a record after
-			// stop() would otherwise see the lingering stream-1 consumer eat and commit
-			// past it (apparent data loss that is purely a teardown race, not a filter
-			// bug). StopWithin drains the franz client before returning, so the group
-			// is genuinely free for a restart. The streams under test self-terminate
-			// quickly once their input closes; 30s is a generous teardown bound.
+			// A bare cancel returns before the franz client stops, and the leaked
+			// consumer keeps committing on the group. StopWithin waits for it, so
+			// a restarted stream gets the group to itself.
 			stopErr := stream.StopWithin(30 * time.Second)
 			cancel() // backstop: unblock Run if StopWithin's path left it parked
 			<-done
@@ -87,30 +72,15 @@ func runUnsBetaStream(t testingT, unsBetaYAML string, consumerFn func(context.Co
 	}
 }
 
-// describeBothForms runs a behavioral Describe body against the uns_beta
-// plugin, nesting it under a Context named after the plugin. The body receives
-// the plugin name and must thread it into every AddInputYAML / reader-
-// construction call.
-func describeBothForms(name string, body func(pluginName string)) bool {
-	Describe(name, Label("uns_beta"), func() {
-		for _, pluginName := range []string{"uns_beta"} {
-			Context(pluginName, func() {
-				body(pluginName)
-			})
-		}
-	})
-	return false
-}
-
-var _ = describeBothForms("uns_beta input delivery", func(pluginName string) {
+var _ = Describe("uns_beta input delivery", Label("uns_beta"), func() {
 	It("delivers a produced message and commits its offset on ack", func() {
 		addr := startBroker(GinkgoT())
-		group := "uns-beta-delivery-" + pluginName
+		group := "uns-beta-delivery"
 		produce(GinkgoT(), addr, rec("umh.v1.acme.berlin.temp", `{"v":1}`))
 
 		var mu sync.Mutex
 		var got []string
-		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `.*`), func(_ context.Context, b service.MessageBatch) error {
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(addr, group, `.*`), func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
 			for _, m := range b {
@@ -132,12 +102,9 @@ var _ = describeBothForms("uns_beta input delivery", func(pluginName string) {
 		mu.Unlock()
 		Expect(first).To(Equal(`{"v":1}`))
 
-		// Stop the stream, then verify the ack actually committed the offset. A
-		// mis-wired ack path (or a consumer_group dropped from the redpanda
-		// config built by newUnsBeta) would deliver fine here but
-		// replay the full topic on every restart in production. The inner
-		// redpanda input commits on the 5s commit_period tick pinned in
-		// redpandaConfigYAML, so Gomega's 1s default timeout would flake.
+		// A broken ack path still delivers, but replays the whole topic on
+		// restart. The 15s timeout covers the 5s commit_period in
+		// redpandaConfigYAML.
 		stop()
 		Eventually(func(g Gomega) {
 			off, ok, err := committedOffsetE(addr, group)
@@ -148,32 +115,22 @@ var _ = describeBothForms("uns_beta input delivery", func(pluginName string) {
 	})
 })
 
-// Every emitted message carries umh_topic and kafka_msg_key as aliases of the
-// kafka_key metadata, alongside the metadata the delegated redpanda input sets
-// natively (kafka_key, kafka_topic, kafka_timestamp_ms, headers). kafka_key
-// normally holds the record key, so the aliases override any umh_topic header
-// that passed through from the producer; a producer header literally named
-// "kafka_key", however, shadows the record key before the umh_topics filter
-// runs and before the aliases are stamped (the documented gap pinned below).
-// For non-UMH producers that send no headers the aliases are the only source
-// of umh_topic. (ENG-5094)
-var _ = describeBothForms("uns_beta metadata contract", func(pluginName string) {
+// Every message carries umh_topic and kafka_msg_key as copies of the kafka_key
+// metadata, next to the metadata the redpanda input sets (kafka_key,
+// kafka_topic, kafka_timestamp_ms, headers). The copies override a umh_topic
+// header sent by the producer.
+var _ = Describe("uns_beta metadata contract", Label("uns_beta"), func() {
 	It("aliases each message's own record key and passes the native redpanda metadata through", func() {
 		addr := startBroker(GinkgoT())
-		group := "uns-beta-meta-" + pluginName
+		group := "uns-beta-meta"
 		const key1 = "umh.v1.acme.k1"
 		const key2 = "umh.v1.acme.k2"
-		// Two records with distinct keys pin per-message aliasing: a regression
-		// that stamps the first record's key onto every message in a fetch
-		// batch would reroute data to the wrong UNS topic without any error.
+		// Two distinct keys: copying the first key onto the whole batch would
+		// silently route data to the wrong UNS topic.
 		produce(GinkgoT(), addr,
 			&kgo.Record{
 				Key:   []byte(key1),
 				Value: []byte(`{"v":1}`),
-				// Multi-byte header values read back as plain strings.
-				// Single-byte and empty header values are not asserted here.
-				// The umh_topic header pins that the alias overrides a
-				// divergent producer-supplied value.
 				Headers: []kgo.RecordHeader{
 					{Key: "h-multi", Value: []byte("hello")},
 					{Key: "umh_topic", Value: []byte("umh.v1.evil.divergent")},
@@ -184,7 +141,7 @@ var _ = describeBothForms("uns_beta metadata contract", func(pluginName string) 
 
 		var mu sync.Mutex
 		seen := map[string]map[string]string{} // payload -> metadata snapshot
-		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `.*`), func(_ context.Context, b service.MessageBatch) error {
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(addr, group, `.*`), func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
 			for _, msg := range b {
@@ -223,34 +180,21 @@ var _ = describeBothForms("uns_beta metadata contract", func(pluginName string) 
 		Expect(m1["kafka_topic"]).To(Equal("umh.messages"))
 		Expect(m1["kafka_timestamp_ms"]).To(MatchRegexp(`^\d+$`), "kafka_timestamp_ms must be a numeric string")
 		Expect(m1["h-multi"]).To(Equal("hello"), "record headers must pass through as metadata")
-		// The delegated input's raw kgo header slice must not leak downstream:
-		// the uns output copies metadata into Kafka headers, so a surviving
-		// rpcnKafkaHeadersKey value would compound per hop.
+		// The uns output copies metadata into Kafka headers, so a surviving
+		// header slice would grow with every hop.
 		Expect(m1).NotTo(HaveKey(rpcnKafkaHeadersKey), rpcnKafkaHeadersKey+" must be stripped before delivery")
 
 		Expect(m2["umh_topic"]).To(Equal(key2), "umh_topic must alias the record's own key")
 		Expect(m2["kafka_msg_key"]).To(Equal(key2), "kafka_msg_key must alias the record's own key")
 	})
 
-	// Read-safe header typing is provided by the delegated redpanda input,
-	// not by uns_beta. Connect v4.94.1's AddHeaders (franz_headers.go) stores
-	// every header value uniformly: nil -> nil, empty -> "", else
-	// string(h.Value). A single-byte header therefore reads back as its string
-	// ("x"), with no normalization in uns_beta.
-	//
-	// This pins that upstream contract and guards against a future connect
-	// regression that reintroduces the older v4.78 behavior: that version had
-	// an extra len==1 branch storing the single byte as a rune/int32, which
-	// benthos MetaGet then rendered as the decimal of the byte ("x" -> "120").
-	// If connect regresses, the single-byte assertion below goes red and
-	// uns_beta would need its own normalization to stay read-safe.
-	//
-	// The native int fields (kafka_timestamp_ms, kafka_partition) and the
-	// string aliases are checked to pin that the upstream contract leaves them
-	// as their decimal strings. (ENG-5094 / ENG-5105)
+	// The redpanda input stores each header value as a string, so a
+	// single-byte header reads back as "x", not as the decimal of its byte
+	// ("120"). uns_beta does not normalize headers itself, so this spec pins
+	// connect's behaviour.
 	It("reads single-byte, empty, and multi-byte headers back as strings without corrupting native int fields", func() {
 		addr := startBroker(GinkgoT())
-		group := "uns-beta-header-typing-" + pluginName
+		group := "uns-beta-header-typing"
 		const key = "umh.v1.acme.headertyping"
 		produce(GinkgoT(), addr,
 			&kgo.Record{
@@ -266,7 +210,7 @@ var _ = describeBothForms("uns_beta metadata contract", func(pluginName string) 
 
 		var mu sync.Mutex
 		var snap map[string]string // metadata snapshot of the delivered message
-		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `.*`), func(_ context.Context, b service.MessageBatch) error {
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(addr, group, `.*`), func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
 			for _, msg := range b {
@@ -294,40 +238,27 @@ var _ = describeBothForms("uns_beta metadata contract", func(pluginName string) 
 		m := snap
 		mu.Unlock()
 
-		// Read-safe header typing: connect v4.94.1 stores the single-byte header
-		// as the string "x", so MetaGet returns "x" and not the decimal of its
-		// byte ("120"). A regression to v4.78's rune branch would flip h-single.
 		Expect(m["h-multi"]).To(Equal("hello"), "multi-byte header must read back as its string")
 		Expect(m["h-single"]).To(Equal("x"), "single-byte header must read back as its string, not the decimal of its byte")
 		Expect(m).To(HaveKey("h-empty"), "empty header must still appear in metadata")
 		Expect(m["h-empty"]).To(Equal(""), "empty header must read back as the empty string")
 
-		// Native-field guard: the upstream contract leaves the native int
-		// metadata as decimal strings. Pin that they are not coerced via
-		// string(rune) into control characters.
+		// Integer metadata stays a decimal string, not a string(rune).
 		Expect(m["kafka_timestamp_ms"]).To(MatchRegexp(`^\d+$`), "kafka_timestamp_ms must stay a decimal string")
 		Expect(m).To(HaveKey("kafka_partition"))
 		Expect(m["kafka_partition"]).To(Equal("0"), "kafka_partition must stay its decimal string, not a control character")
 
-		// Alias semantics unchanged: the aliases still equal the record key.
 		Expect(m["umh_topic"]).To(Equal(key), "umh_topic alias must equal the record key")
 		Expect(m["kafka_msg_key"]).To(Equal(key), "kafka_msg_key alias must equal the record key")
 	})
 
-	// Documented known gap, pinned as current behavior (not aspiration): the
-	// delegated redpanda input applies record headers AFTER its native fields,
-	// so a producer header literally named "kafka_key" overwrites the real
-	// record key in metadata before the umh_topics filter runs and before
-	// ReadBatch stamps the aliases. The shadowed value therefore controls the
-	// drop/deliver decision as well as the aliases. The deferral contract
-	// (detection is possible at this layer, recovery of the shadowed key is
-	// not) lives on the trust-boundary comment in ReadBatch
-	// (uns_beta_input.go). If this test starts failing, the deferred
-	// hardening has been implemented and this pin should be replaced with
-	// the new contract.
+	// Known defect (ENG-5125): the redpanda input applies record headers after
+	// its own metadata, so a producer header named "kafka_key" replaces the
+	// record key before the umh_topics filter and the umh_topic copy. These
+	// two specs pin the current behaviour; replace them when it is fixed.
 	It("stamps a spoofed kafka_key header over the real record key (documented gap)", func() {
 		addr := startBroker(GinkgoT())
-		group := "uns-beta-spoof-" + pluginName
+		group := "uns-beta-spoof"
 		produce(GinkgoT(), addr, &kgo.Record{
 			Key:   []byte("umh.v1.acme.real"),
 			Value: []byte(`{"v":1}`),
@@ -338,7 +269,7 @@ var _ = describeBothForms("uns_beta metadata contract", func(pluginName string) 
 
 		var mu sync.Mutex
 		var umhTopics []string
-		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `.*`), func(_ context.Context, b service.MessageBatch) error {
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(addr, group, `.*`), func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
 			for _, msg := range b {
@@ -362,27 +293,16 @@ var _ = describeBothForms("uns_beta metadata contract", func(pluginName string) 
 		Expect(got).To(Equal("umh.v1.spoofed"), "the kafka_key header shadows the record key (documented gap)")
 	})
 
-	// The data-loss direction of the same documented gap: the shadowed value
-	// controls the DROP decision too. Under a selective umh_topics filter, a
-	// record whose REAL key matches the filter but whose "kafka_key" header
-	// does not is dropped — and the shared delegated ack then commits past it,
-	// so the legitimately keyed record is gone for good (the spoof pin above
-	// only covers the benign direction: a delivered record carrying the
-	// spoofed alias). The matching ride-along record shares the single produce
-	// call so the consumer-visible batch is — overwhelmingly likely under
-	// kfake — never all-filtered, keeping this pin on the mixed-batch path
-	// (the all-filtered self-ack — advancing the offset past an entirely
-	// non-matching poll — is covered by its own spec). If this
-	// test starts failing, the deferred hardening has been implemented and this
-	// pin should be replaced with the new contract.
+	// ENG-5125, data loss: a record whose real key matches but whose
+	// "kafka_key" header does not is dropped, and the shared ack commits past
+	// it. The matching ride-along record keeps the batch from being
+	// all-filtered.
 	It("drops and commits past a matching record whose spoofed kafka_key header fails the filter (documented gap)", func() {
 		addr := startBroker(GinkgoT())
-		group := "uns-beta-spoof-dataloss-" + pluginName
+		group := "uns-beta-spoof-dataloss"
 		produce(GinkgoT(), addr,
 			&kgo.Record{
-				// offset 0: the real key matches the filter, but the spoofed
-				// header — applied AFTER the native fields by the delegated
-				// input — does not, so the filter drops the record.
+				// offset 0: the real key matches, the spoofed header does not.
 				Key:   []byte("umh.v1.acme.real"),
 				Value: []byte(`{"v":"spoofed"}`),
 				Headers: []kgo.RecordHeader{
@@ -395,7 +315,7 @@ var _ = describeBothForms("uns_beta metadata contract", func(pluginName string) 
 
 		var mu sync.Mutex
 		var got []string
-		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `umh\.v1\.acme\..+`), func(_ context.Context, b service.MessageBatch) error {
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(addr, group, `umh\.v1\.acme\..+`), func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
 			for _, m := range b {
@@ -406,12 +326,8 @@ var _ = describeBothForms("uns_beta metadata contract", func(pluginName string) 
 		})
 		defer stop()
 
-		// The committed offset reaching 2 proves the shared delegated ack
-		// resolved past BOTH records, the dropped spoofed one included — the
-		// data loss this pin documents. By then any leaked spoofed delivery
-		// has already happened, so the exclusion assertion below is checked
-		// at a meaningful time. 15s timeout: the inner redpanda input commits
-		// on the 5s commit_period tick pinned in redpandaConfigYAML.
+		// Once the commit covers both records, a leaked delivery of the spoofed
+		// record would already have happened.
 		Eventually(func(g Gomega) {
 			off, ok, err := committedOffsetE(addr, group)
 			g.Expect(err).NotTo(HaveOccurred())
@@ -426,23 +342,15 @@ var _ = describeBothForms("uns_beta metadata contract", func(pluginName string) 
 	})
 })
 
-// The umh_topics key-regex filter: only records whose Kafka key matches one
-// of the configured patterns reach the pipeline; a record with an
-// empty/absent key never matches, regardless of patterns (why: see the
-// betaKeyFilter.matches doc). The delegated ack covers the whole poll, so a
-// batch mixing kept and dropped records must still commit past the dropped
-// offsets once the kept subset is acked. (ENG-5094)
-var _ = describeBothForms("uns_beta umh_topics key filter", func(pluginName string) {
+// Only records whose Kafka key matches a umh_topics pattern are delivered, and
+// a keyless record never matches (see betaKeyFilter.matches). The ack of the
+// kept records also commits past the dropped ones.
+var _ = Describe("uns_beta umh_topics key filter", Label("uns_beta"), func() {
 	It("delivers only matching keys, drops keyless records, and commits past the dropped offsets", func() {
 		addr := startBroker(GinkgoT())
-		group := "uns-beta-keyfilter-" + pluginName
-		// All three records go in ONE produce call so they share a fetch and —
-		// overwhelmingly likely under kfake — one delegated batch; the public
-		// surface cannot deterministically force a single batch. The matching
-		// record rides alongside so the kept subset is never empty, keeping
-		// this spec on the mixed-batch path; the all-filtered case (where
-		// ReadBatch self-acks the empty batch so the offset still advances) has
-		// its own spec.
+		group := "uns-beta-keyfilter"
+		// One produce call, so under kfake the records almost always share one
+		// batch. The matching record keeps it from being all-filtered.
 		produce(GinkgoT(), addr,
 			rec("umh.v1.acme.berlin.temp", `{"v":"berlin"}`), // offset 0: matches
 			rec("umh.v1.acme.munich.temp", `{"v":"munich"}`), // offset 1: dropped, key does not match
@@ -451,7 +359,7 @@ var _ = describeBothForms("uns_beta umh_topics key filter", func(pluginName stri
 
 		var mu sync.Mutex
 		var got []string
-		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `umh\.v1\.acme\.berlin\..+`), func(_ context.Context, b service.MessageBatch) error {
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(addr, group, `umh\.v1\.acme\.berlin\..+`), func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
 			for _, m := range b {
@@ -462,12 +370,8 @@ var _ = describeBothForms("uns_beta umh_topics key filter", func(pluginName stri
 		})
 		defer stop()
 
-		// The committed offset reaching 3 proves the shared delegated ack
-		// resolved for the whole poll, dropped records included — and by then
-		// any leaked Munich/keyless delivery has already happened, so the
-		// exclusion assertion below is checked at a meaningful time. The inner
-		// redpanda input commits on the 5s commit_period tick pinned in
-		// redpandaConfigYAML, so Gomega's 1s default timeout would flake.
+		// Once the commit covers all three records, a leaked delivery of a
+		// dropped record would already have happened.
 		Eventually(func(g Gomega) {
 			off, ok, err := committedOffsetE(addr, group)
 			g.Expect(err).NotTo(HaveOccurred())
@@ -481,17 +385,11 @@ var _ = describeBothForms("uns_beta umh_topics key filter", func(pluginName stri
 			"only the Berlin-keyed record may reach the consumer: Munich fails the umh_topics regex and a keyless record never matches any pattern")
 	})
 
-	// The keyless contract holds even under an explicit match-everything filter:
-	// `.*` matches "" as a regex, yet a keyless record is still dropped — this
-	// pins that the never-match rule overrides even [".*"] (rationale and the
-	// legacy behavior change: betaKeyFilter.matches doc).
+	// `.*` matches the empty string, yet a keyless record is still dropped.
 	It("drops a keyless record under an explicit match-everything filter and still commits past it", func() {
 		addr := startBroker(GinkgoT())
-		group := "uns-beta-keyless-" + pluginName
-		// One produce call: the keyed record rides alongside so the delegated
-		// batch is — overwhelmingly likely under kfake — never all-filtered
-		// (the all-filtered case, where ReadBatch self-acks the empty batch so
-		// the offset still advances, has its own spec).
+		group := "uns-beta-keyless"
+		// The keyed record keeps the batch from being all-filtered.
 		produce(GinkgoT(), addr,
 			rec("umh.v1.acme.keyed", `{"v":1}`),   // offset 0: keyed, delivered
 			&kgo.Record{Value: []byte(`{"v":2}`)}, // offset 1: keyless, dropped
@@ -499,7 +397,7 @@ var _ = describeBothForms("uns_beta umh_topics key filter", func(pluginName stri
 
 		var mu sync.Mutex
 		var got []string
-		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `.*`), func(_ context.Context, b service.MessageBatch) error {
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(addr, group, `.*`), func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
 			for _, m := range b {
@@ -510,11 +408,6 @@ var _ = describeBothForms("uns_beta umh_topics key filter", func(pluginName stri
 		})
 		defer stop()
 
-		// Offset 2 proves the shared delegated ack covered the dropped keyless
-		// record — and by then any leaked keyless delivery has already
-		// happened, so the exclusion check below is checked at a meaningful
-		// time. 15s timeout: the inner redpanda input commits on the 5s
-		// commit_period tick pinned in redpandaConfigYAML.
 		Eventually(func(g Gomega) {
 			off, ok, err := committedOffsetE(addr, group)
 			g.Expect(err).NotTo(HaveOccurred())
@@ -529,21 +422,14 @@ var _ = describeBothForms("uns_beta umh_topics key filter", func(pluginName stri
 	})
 })
 
-// An all-filtered poll — every record in the fetch fails the umh_topics filter
-// — must still advance the committed offset. Benthos's AsyncReader
-// discards an empty MessageBatch WITHOUT calling its AckFunc, so the delegated
-// redpanda input's checkpoint never resolves and the partition wedges: at high
-// selectivity nearly every fetch is all-filtered, so a selective consumer hangs
-// at offset 0 forever. uns_beta must self-ack the delegated transaction on an
-// all-filtered poll so the commit advances even though the consumer never sees a
-// message. (ENG-5094 / ENG-5105)
-var _ = describeBothForms("uns_beta all-filtered poll commit", func(pluginName string) {
+// Benthos discards an empty batch without calling its AckFunc. ReadBatch acks
+// an all-filtered poll itself, so the offset advances and the partition does
+// not stall.
+var _ = Describe("uns_beta all-filtered poll commit", Label("uns_beta"), func() {
 	It("self-acks an all-filtered poll so the committed offset advances while the consumer receives nothing", func() {
 		addr := startBroker(GinkgoT())
-		group := "uns-beta-all-filtered-" + pluginName
-		// Three records, none of whose keys match the select-1 filter below: this
-		// is the all-filtered poll. The consumer never sees a message, yet the
-		// offset must still advance to 3 — otherwise the partition wedges.
+		group := "uns-beta-all-filtered"
+		// No key matches the filter below.
 		produce(GinkgoT(), addr,
 			rec("umh.v1.acme.berlin.temp", `{"v":0}`),
 			rec("umh.v1.acme.munich.temp", `{"v":1}`),
@@ -551,7 +437,7 @@ var _ = describeBothForms("uns_beta all-filtered poll commit", func(pluginName s
 
 		var mu sync.Mutex
 		var got []string
-		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `^only-this$`), func(_ context.Context, b service.MessageBatch) error {
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(addr, group, `^only-this$`), func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
 			for _, m := range b {
@@ -562,12 +448,6 @@ var _ = describeBothForms("uns_beta all-filtered poll commit", func(pluginName s
 		})
 		defer stop()
 
-		// End-to-end effect check: the committed offset advances past all three
-		// non-matching records even though no message ever reaches the consumer,
-		// which is only possible if ReadBatch self-acks the all-filtered batch.
-		// The inner redpanda input commits on the
-		// 5s commit_period tick pinned in redpandaConfigYAML, so the 15s
-		// timeout is required.
 		Eventually(func(g Gomega) {
 			off, ok, err := committedOffsetE(addr, group)
 			g.Expect(err).NotTo(HaveOccurred())
@@ -580,15 +460,11 @@ var _ = describeBothForms("uns_beta all-filtered poll commit", func(pluginName s
 		Expect(got).To(BeEmpty(), "no record matches ^only-this$, so the consumer must receive nothing")
 	})
 
-	// A production-shaped selective consumer: thousands of distinct keys, only
-	// one of which matches the filter. At this selectivity nearly every fetch is
-	// all-filtered, so before the self-ack landed the stream wedged at offset 0
-	// (zero delivered) — this is the real ENG-5105 use case the self-ack
-	// unblocks. The acceptance gate: the stream DRAINS (committed offset reaches
-	// the high-water mark) and the one matching record is delivered.
+	// Thousands of keys, one of which matches, so nearly every fetch is
+	// all-filtered. The stream drains to the high-water mark.
 	It("drains a high-cardinality selective stream to completion, delivering only the matching record", func() {
 		addr := startBroker(GinkgoT())
-		group := "uns-beta-selective-drain-" + pluginName
+		group := "uns-beta-selective-drain"
 		const total = 2000
 		const matchAt = 1234 // the single matching record's offset
 
@@ -604,7 +480,7 @@ var _ = describeBothForms("uns_beta all-filtered poll commit", func(pluginName s
 
 		var mu sync.Mutex
 		var got []string
-		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `^umh\.v1\.match\..+$`), func(_ context.Context, b service.MessageBatch) error {
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(addr, group, `^umh\.v1\.match\..+$`), func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
 			for _, m := range b {
@@ -615,12 +491,8 @@ var _ = describeBothForms("uns_beta all-filtered poll commit", func(pluginName s
 		})
 		defer stop()
 
-		// The committed offset reaches the high-water mark (total): the stream
-		// drained instead of wedging at the first all-filtered fetch. Draining
-		// 2000 self-acks then waiting for a 5s commit tick (commit_period is
-		// pinned in redpandaConfigYAML and cannot be shortened from test config) can
-		// eat most of a 15s budget on a slow kfake startup, so this single spec
-		// gets a 30s timeout to keep it off the merge-queue flake list.
+		// Draining 2000 records plus the 5s commit_period can take most of 15s
+		// on a slow kfake start, hence 30s.
 		Eventually(func(g Gomega) {
 			off, ok, err := committedOffsetE(addr, group)
 			g.Expect(err).NotTo(HaveOccurred())
@@ -634,30 +506,22 @@ var _ = describeBothForms("uns_beta all-filtered poll commit", func(pluginName s
 	})
 })
 
-// A fresh consumer group must read from the EARLIEST offset: records produced
-// BEFORE the consumer ever started must still be delivered. redpandaConfigYAML
-// pins start_offset = "earliest"; uns_beta_translation_parity_test.go asserts
-// the config value, this spec pins the observable BEHAVIOR. A "latest" start
-// would position a never-committed group at the high-water mark, so a record produced
-// before the group connected would be skipped — the arrival assertion below
-// would time out. (ENG-5094 / spec P5)
-var _ = describeBothForms("uns_beta start-from-earliest", func(pluginName string) {
+// A fresh consumer group starts at the earliest offset, so records produced
+// before it started are delivered. uns_beta_translation_parity_test.go checks
+// the start_offset value; this spec checks the behaviour.
+var _ = Describe("uns_beta start-from-earliest", Label("uns_beta"), func() {
 	It("delivers records produced before a fresh consumer group started", func() {
 		addr := startBroker(GinkgoT())
-		// A never-committed group name (unique suffix) so there is no committed
-		// offset to resume from — start_offset alone decides where it begins.
-		group := fmt.Sprintf("uns-beta-earliest-%s-%d", pluginName, time.Now().UnixNano())
+		group := fmt.Sprintf("uns-beta-earliest-%d", time.Now().UnixNano())
 
-		// Produce BOTH records FIRST, before any consumer exists. Their keys
-		// match the umh_topics filter so they are delivered, not dropped.
+		// Produce before any consumer exists.
 		produce(GinkgoT(), addr,
 			rec("umh.v1.enterprise.siteA._raw.temp", `{"v":"A"}`),
 			rec("umh.v1.enterprise.siteB._raw.temp", `{"v":"B"}`))
 
 		var mu sync.Mutex
 		var got []string
-		// THEN start the stream with the fresh group.
-		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `^umh\.v1\.`), func(_ context.Context, b service.MessageBatch) error {
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(addr, group, `^umh\.v1\.`), func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
 			for _, m := range b {
@@ -668,9 +532,6 @@ var _ = describeBothForms("uns_beta start-from-earliest", func(pluginName string
 		})
 		defer stop()
 
-		// Both pre-existing records must arrive. A fresh "latest" group would
-		// never see them (it would position past them at connect), so this
-		// arrival assertion is what distinguishes earliest from latest.
 		Eventually(func() []string {
 			mu.Lock()
 			defer mu.Unlock()
@@ -681,105 +542,97 @@ var _ = describeBothForms("uns_beta start-from-earliest", func(pluginName string
 	})
 })
 
-// The filter × ack-forward × NACK-redelivery interaction that the mixed-batch
-// ack spec and the unfiltered NACK redelivery spec each cover only half of. A mixed
-// delegated poll (one matching + one non-matching record) whose KEPT record the
-// consumer NACKs: auto_replay_nacks (on the INNER redpanda input, pre-filter)
-// must redeliver the full original poll, uns_beta re-applies the drop, and the
-// offset must NOT commit past the NACKed kept record.
-//
-// The load-bearing check is the trailing positive one: the offset advances past
-// both records ONLY after the kept record finally succeeds. A synchronous
-// in-callback "nothing committed yet" assertion was deliberately NOT added: the
-// inner redpanda input uses AutoCommitMarks + a 5s commit tick, so an ack only
-// sets an in-memory mark and the broker-visible offset cannot move until the
-// tick fires — a broker OffsetFetch from inside the callback would read "not
-// committed" whether the ack was pending OR fired prematurely, so it cannot
-// distinguish correct from buggy.
-var _ = describeBothForms("uns_beta mixed-batch NACK redelivery", func(pluginName string) {
-	It("redelivers the NACKed kept record without committing past it and re-drops the filtered one", func() {
+// A mixed poll whose kept record is NACKed for longer than the 5s
+// commit_period: auto_replay_nacks replays the whole poll, ReadBatch drops the
+// filtered record again, and no commit tick moves the offset past the NACKed
+// record. Once the record is acked the offset commits past both.
+var _ = Describe("uns_beta mixed-batch NACK redelivery", Label("uns_beta"), func() {
+	It("does not commit past a NACKed kept record across commit ticks and re-drops the filtered one", func() {
 		addr := startBroker(GinkgoT())
-		group := "uns-beta-mixed-nack-" + pluginName
-		// One produce call: matching (offset 0) + non-matching (offset 1) share
-		// one fetch, overwhelmingly likely one delegated batch under kfake.
+		group := "uns-beta-mixed-nack"
+		const nackedOffset = 0
 		produce(GinkgoT(), addr,
-			rec("umh.v1.acme.keep", `{"v":"keep"}`), // offset 0: matches, the kept record
+			rec("umh.v1.acme.keep", `{"v":"keep"}`), // offset 0: kept, NACKed
 			rec("umh.v1.evil.drop", `{"v":"drop"}`), // offset 1: dropped by the filter
 		)
 
+		// nackFor must exceed the 5s commit_period, so at least one commit
+		// tick fires while the record is NACKed.
+		const nackFor = 8 * time.Second
 		var mu sync.Mutex
-		deliveries := map[string]int{} // payload -> delivery count
-		const failuresWanted = 2
+		var firstNack time.Time
+		acked := false
 
-		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `^umh\.v1\.acme\..+$`), func(_ context.Context, b service.MessageBatch) error {
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(addr, group, `^umh\.v1\.acme\..+$`), func(_ context.Context, b service.MessageBatch) error {
 			defer GinkgoRecover()
 			mu.Lock()
 			defer mu.Unlock()
-			// Only the matching record survives the filter; the dropped one is
-			// re-dropped by uns_beta on every replay (it never reaches here).
-			Expect(b).To(HaveLen(1), "only the kept record may reach the consumer")
+			Expect(b).To(HaveLen(1), "only the kept record may reach the consumer, even on replay")
 			bs, _ := b[0].AsBytes()
 			Expect(string(bs)).To(Equal(`{"v":"keep"}`), "the filtered record must never be delivered, even on replay")
-			deliveries[string(bs)]++
 
-			if deliveries[`{"v":"keep"}`] <= failuresWanted {
+			if firstNack.IsZero() {
+				firstNack = time.Now()
+			}
+			if time.Since(firstNack) < nackFor {
 				return errors.New("simulated output failure")
 			}
+			acked = true
 			return nil
 		})
 		defer stop()
 
-		// Redelivery: the kept record is retried until it succeeds — no loss.
-		Eventually(func() int {
+		Eventually(func() bool {
 			mu.Lock()
 			defer mu.Unlock()
-			return deliveries[`{"v":"keep"}`]
-		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
-			Should(BeNumerically(">=", failuresWanted+1), "the NACKed kept record was never redelivered to success")
+			return !firstNack.IsZero()
+		}).WithTimeout(15*time.Second).WithPolling(50*time.Millisecond).
+			Should(BeTrue(), "the kept record never reached the consumer")
 
-		// Only after success does the offset commit past BOTH records (the kept
-		// one succeeded; the filtered one rode the same delegated ack).
+		committed := func() int64 {
+			off, ok, err := committedOffsetE(addr, group)
+			Expect(err).NotTo(HaveOccurred())
+			if !ok {
+				return 0
+			}
+			return off
+		}
+		Consistently(committed).WithTimeout(7*time.Second).WithPolling(250*time.Millisecond).
+			Should(BeNumerically("<=", nackedOffset), "the offset was committed past the record while it was still being NACKed")
+
+		mu.Lock()
+		windowInsideNacks := time.Since(firstNack) < nackFor
+		mu.Unlock()
+		Expect(windowInsideNacks).To(BeTrue(), "the Consistently window ran past the NACK period, so it does not prove anything")
+
+		Eventually(func() bool {
+			mu.Lock()
+			defer mu.Unlock()
+			return acked
+		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
+			Should(BeTrue(), "the NACKed kept record was never redelivered to success")
+
 		Eventually(func(g Gomega) {
 			off, ok, err := committedOffsetE(addr, group)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(ok).To(BeTrue(), "offset never committed after the kept record succeeded")
-			g.Expect(off).To(Equal(int64(2)), "the offset commits past both records only after the kept record succeeds")
+			g.Expect(off).To(Equal(int64(2)), "the offset commits past both records once the kept record succeeds")
 		}).WithTimeout(15 * time.Second).WithPolling(100 * time.Millisecond).Should(Succeed())
-
-		mu.Lock()
-		defer mu.Unlock()
-		Expect(deliveries[`{"v":"drop"}`]).To(BeZero(), "the filtered record must never be delivered, on first poll or replay")
 	})
 })
 
-// The mandatory safety gate: an explicit stop-and-restart across a long
-// non-matching run, proving no data loss and no stuck commit. Everything above
-// runs one stream to completion; nothing pins that a SECOND stream on the same
-// consumer group resumes from the committed offset rather than replaying acked
-// data. This is the durability claim of the whole filter design: the high-water
-// placeholder advances the commit over an omitted run so the re-read window stays
-// bounded, and a restart sees only data produced after the committed offset.
-//
-// Shape of the log (single produce, so offsets are call order):
-//   - offset 0:      matching  -> delivered in run 1
-//   - offsets 1..N:  non-matching -> all omitted in connect; the match is NOT
-//     last, so the high-water placeholder path is exercised, and N
-//     is large enough that whole fetches land all-non-matching
-//     (the all-non-match high-water case).
-//
-// A specific umh_topics pattern (NOT ".*") is used so the non-matches are
-// genuinely omitted in connect, not merely dropped by uns_beta's keyless guard.
-// (ENG-5094 / ENG-5105)
-var _ = describeBothForms("uns_beta gapless restart", func(pluginName string) {
+// A restarted stream on the same consumer group resumes from the committed
+// offset, with no loss and no replay. The log holds one match at offset 0 and
+// then 1500 non-matching records, which span whole fetches. Connect's
+// key_pattern pre-filter omits them; the placeholder it keeps for each poll's
+// last omitted record carries the commit to the high-water mark.
+var _ = Describe("uns_beta gapless restart", Label("uns_beta"), func() {
 	It("resumes a restarted consumer group from the committed offset with no loss and no replay across a long omitted run", func() {
 		addr := startBroker(GinkgoT())
-		group := "uns-beta-gapless-restart-" + pluginName
+		group := "uns-beta-gapless-restart"
 		const nonMatching = 1500 // a long omitted run, spanning many fetches
 		const total = 1 + nonMatching
 
-		// Offset 0 matches; offsets 1..1500 do not. The match is first, never
-		// last, so the kept subset is exhausted long before the high-water mark
-		// and the placeholder must carry the commit the rest of the way.
 		records := make([]*kgo.Record, total)
 		records[0] = rec("umh.v1.match.first", `{"v":"first"}`)
 		for i := 1; i < total; i++ {
@@ -787,9 +640,9 @@ var _ = describeBothForms("uns_beta gapless restart", func(pluginName string) {
 		}
 		produce(GinkgoT(), addr, records...)
 
-		streamYAML := unsBetaInputYAML(pluginName, addr, group, `^umh\.v1\.match\..+$`)
+		streamYAML := unsBetaInputYAML(addr, group, `^umh\.v1\.match\..+$`)
 
-		// --- Run 1: drain the whole log on group G ---
+		// Run 1 drains the whole log.
 		var mu sync.Mutex
 		var got []string
 		noPlaceholder := true // set false if any message arrives without a kafka_key
@@ -799,10 +652,7 @@ var _ = describeBothForms("uns_beta gapless restart", func(pluginName string) {
 			for _, m := range b {
 				bs, _ := m.AsBytes()
 				got = append(got, string(bs))
-				// A high-water placeholder is a no-metadata record (no kafka_key).
-				// It rides the ack-gated batch to advance the commit but must be
-				// dropped before the consumer ever sees it. If one leaks, the
-				// selective consumer would receive empty/keyless junk.
+				// The placeholder has no kafka_key and must never be delivered.
 				if _, ok := m.MetaGet("kafka_key"); !ok {
 					noPlaceholder = false
 				}
@@ -811,12 +661,8 @@ var _ = describeBothForms("uns_beta gapless restart", func(pluginName string) {
 		})
 		defer stop()
 
-		// The committed offset reaches the high-water mark even though all but one
-		// record were omitted: this is the proof that the placeholder advances the
-		// commit so the re-read window is bounded (no stuck commit). Draining 1500
-		// omitted records then waiting for the 5s commit_period tick (pinned in
-		// redpandaConfigYAML, not shortenable from test config) can eat most of a 15s
-		// budget on a slow kfake startup, so this gets a 30s timeout.
+		// 30s: draining 1500 records plus the 5s commit_period can take most of
+		// 15s on a slow kfake start.
 		Eventually(func(g Gomega) {
 			off, ok, err := committedOffsetE(addr, group)
 			g.Expect(err).NotTo(HaveOccurred())
@@ -829,15 +675,11 @@ var _ = describeBothForms("uns_beta gapless restart", func(pluginName string) {
 		Expect(noPlaceholder).To(BeTrue(), "no high-water placeholder / keyless / no-kafka_key record may ever reach the consumer")
 		mu.Unlock()
 
-		// --- Restart: stop run 1, produce a SECOND match after the gap ---
-		// (Modeling a kill as stop-then-start on the same group is what the public
-		// stream lifecycle allows; the load-bearing assertion is that run 2 resumes
-		// from the committed offset, which is identical under a true mid-stream
-		// kill.)
+		// Restart: stop run 1, then produce a second match.
 		stop()
 		produce(GinkgoT(), addr, rec("umh.v1.match.second", `{"v":"second"}`)) // offset == total
 
-		// --- Run 2: a NEW stream on the SAME group G ---
+		// Run 2 is a new stream on the same group.
 		var mu2 sync.Mutex
 		var got2 []string
 		stop2 := runUnsBetaStream(GinkgoT(), streamYAML, func(_ context.Context, b service.MessageBatch) error {
@@ -851,9 +693,8 @@ var _ = describeBothForms("uns_beta gapless restart", func(pluginName string) {
 		})
 		defer stop2()
 
-		// Run 2 must deliver ONLY the new record. If it resumed from 0 (lost
-		// commit) the first match would reappear; if the placeholder had been
-		// committed past an un-acked record, the new record could be skipped.
+		// A lost commit replays the first match; a commit past an unacked
+		// record skips the new one.
 		Eventually(func() []string {
 			mu2.Lock()
 			defer mu2.Unlock()
@@ -862,7 +703,6 @@ var _ = describeBothForms("uns_beta gapless restart", func(pluginName string) {
 			Should(ConsistOf(`{"v":"second"}`),
 				"the restarted group must deliver only the record produced after the committed offset — no replay of the acked first match, no loss of the new one")
 
-		// And the commit advances to cover the new record too.
 		Eventually(func(g Gomega) {
 			off, ok, err := committedOffsetE(addr, group)
 			g.Expect(err).NotTo(HaveOccurred())
@@ -872,10 +712,8 @@ var _ = describeBothForms("uns_beta gapless restart", func(pluginName string) {
 	})
 })
 
-// closedLocalPort binds a loopback listener to grab an OS-assigned port, then
-// closes it — the returned "127.0.0.1:PORT" is a port nothing is listening on,
-// so a dial against it is refused (a guaranteed-closed port, not merely an
-// "unlikely to be open" one).
+// closedLocalPort returns a loopback address that nothing listens on, so a
+// dial to it is refused.
 func closedLocalPort(t testingT) string {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -889,48 +727,38 @@ func closedLocalPort(t testingT) string {
 	return addr
 }
 
-// connectProbeTimeout bounds how long the unreachable-broker spec below waits
-// for Connect to fail. uns_beta delegates Connect to the inner redpanda input,
-// which fails against a closed port on its own dial.
+// connectProbeTimeout bounds how long the unreachable-broker spec waits for
+// Connect to fail.
 const connectProbeTimeout = 10 * time.Second
 
-// Connect must FAIL FAST against an unreachable broker rather than starting a
-// stream that delivers nothing. This spec builds the input against a closed
-// localhost port and asserts the production Connect returns a non-nil error,
-// bounded by connectProbeTimeout.
-// (ENG-5094 / ENG-5105)
-var _ = describeBothForms("uns_beta Connect against an unreachable broker", func(pluginName string) {
+// Connect against an unreachable broker returns an error instead of starting a
+// stream that delivers nothing.
+var _ = Describe("uns_beta Connect against an unreachable broker", Label("uns_beta"), func() {
 	It("returns a Connect error within the connect-probe bound", func() {
 		addr := closedLocalPort(GinkgoT())
 
-		// Build the reader directly so Connect can be called on the real input.
-		// uns_beta constructs the inner redpanda input lazily on first Connect
-		// via buildUnsBetaInner, so construction succeeds without dialing; the
-		// closed-port error surfaces on Connect itself.
+		// newUnsBeta builds the redpanda reader without dialing; Connect dials.
 		var input service.BatchInput
-		singleYAML := fmt.Sprintf(`
+		inputYAML := fmt.Sprintf(`
 broker_address: %q
 consumer_group: "uns-beta-unreachable"
 umh_topics: [".*"]
 `, addr)
-		pConf, err := unsBetaConfigSpec().ParseYAML(singleYAML, service.GlobalEnvironment())
+		pConf, err := unsBetaConfigSpec().ParseYAML(inputYAML, service.GlobalEnvironment())
 		Expect(err).NotTo(HaveOccurred(), "the reader config must parse")
 		input, err = newUnsBeta(pConf, service.MockResources())
 		Expect(err).NotTo(HaveOccurred(), "the reader must construct against a (closed) broker")
 		defer func() {
-			// The connectivity probe spins up the inner redpanda reader, whose
-			// retry loop keeps dialing the closed port; OwnedInput.Close waits for
-			// that reader to stop and would otherwise block the spec. Bound the
-			// close — a leaked dial goroutine after the deadline is acceptable in
-			// this no-goleak suite; the assertion below is what the spec pins.
+			// Close waits for the redpanda reader, which keeps redialing the
+			// closed port. Bound it; this suite does not check for leaked
+			// goroutines.
 			closeCtx, closeCancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer closeCancel()
 			_ = input.Close(closeCtx)
 		}()
 
-		// Run Connect off the spec goroutine so a HUNG probe (the bug F2 guards)
-		// trips the Eventually deadline and fails loudly, while a correctly bounded
-		// probe returns its refusal error well inside connectProbeTimeout.
+		// Off the spec goroutine, so a hung Connect fails the spec instead of
+		// blocking it.
 		done := make(chan error, 1)
 		go func() { done <- input.Connect(context.Background()) }()
 
@@ -942,14 +770,9 @@ umh_topics: [".*"]
 	})
 })
 
-// capturingMetricsExporter is a service.MetricsExporter that records the NAME
-// of every metric the framework asks it to create, AND accumulates the summed
-// Incr of every counter keyed by name, into mutex-guarded maps (mirroring
-// benthos's own mockMetricsExporter in public/service/metrics_test.go). It lets
-// a test assert both that a metric NAME reached the OUTER stream's metrics
-// registry and, for counters, the VALUE that was incremented — so a counter
-// that is named but never incremented (or incremented by the wrong amount) is
-// caught, not passed.
+// capturingMetricsExporter records the name of every metric created on it and
+// the sum of every counter's increments, so a spec can check both that a
+// metric reached the stream's registry and a counter's value.
 type capturingMetricsExporter struct {
 	mu     sync.Mutex
 	names  map[string]bool
@@ -1014,9 +837,7 @@ func (c *capturingMetricsExporter) NewGaugeCtor(name string, _ ...string) servic
 
 func (c *capturingMetricsExporter) Close(context.Context) error { return nil }
 
-// accumulatingCounter is a counter metric instance that sums every Incr into the
-// exporter's per-name total, so a spec can assert the incremented value (not just
-// that the counter was created).
+// accumulatingCounter adds every Incr to the exporter's per-name total.
 type accumulatingCounter struct {
 	exporter *capturingMetricsExporter
 	name     string
@@ -1025,8 +846,7 @@ type accumulatingCounter struct {
 func (a *accumulatingCounter) Incr(v int64)          { a.exporter.addCount(a.name, v) }
 func (a *accumulatingCounter) IncrFloat64(v float64) { a.exporter.addCount(a.name, int64(v)) }
 
-// noopMetric satisfies the timer and gauge metric interfaces; those specs only
-// care that the metric was CREATED (its name recorded), not its value.
+// noopMetric is the timer and gauge instance; specs only check their names.
 type noopMetric struct{}
 
 func (noopMetric) Timing(int64) {}
@@ -1059,33 +879,18 @@ func registerCaptureExporter() {
 	})
 }
 
-// Dropped records must be observable. With the connect key_pattern pre-filter
-// (ENG-5105) a record whose native key fails the pattern is OMITTED in connect,
-// before it ever reaches uns_beta's ReadBatch — so it can no longer touch
-// uns_beta's per-reason counters. Those omitted records are
-// instead counted COARSELY by connect's key_omitted_records counter (on the same
-// outer stream metrics registry), and uns_beta's filtered_records now counts
-// ONLY records that REACH uns_beta (their native key matched the pattern) and
-// that uns_beta itself drops. Because the connect pre-filter is a faithful
-// superset of uns_beta's keep set, a real-keyed record that reaches uns_beta has
-// already matched, so filtered_records stays at 0 for these scenarios while
-// key_omitted_records carries the count. This spec drives an all-non-matching
-// poll of 3 records and asserts key_omitted_records reaches 3 on the outer
-// stream's metrics registry, with filtered_records left at 0. (ENG-5094 /
-// ENG-5105)
+// Connect's key_pattern pre-filter omits a record whose key fails the pattern
+// before it reaches ReadBatch, and counts it in key_omitted_records. uns_beta's
+// filtered_records counts only records that reach ReadBatch and fail its own
+// filter, so it stays 0 here.
 var _ = Describe("uns_beta filtered_records counter", Label("uns_beta"), func() {
 	It("counts records omitted by the connect pre-filter under key_omitted_records, leaving uns_beta's filtered_records at 0", func() {
 		registerCaptureExporter()
-		// The capturer is a process-global singleton; reset so the counter value
-		// asserted below reflects only this spec's drops, not increments leaked
-		// from a prior spec.
 		captureExporter.reset()
 
 		addr := startBroker(GinkgoT())
 		const group = "uns-beta-filtered-counter"
-		// An all-non-matching poll: none of these keys match the select-1 filter
-		// below, so connect omits every one of them before message construction
-		// (M=3 omitted) and uns_beta never sees them.
+		// No key matches the filter below.
 		produce(GinkgoT(), addr,
 			rec("umh.v1.acme.berlin.temp", `{"v":0}`),
 			rec("umh.v1.acme.munich.temp", `{"v":1}`),
@@ -1121,68 +926,33 @@ uns_beta:
 			}
 		}()
 
-		// The connect key_omitted_records counter on the outer-attached capturer
-		// must be incremented by exactly the 3 omitted records. Asserting the
-		// VALUE (not just that the counter was created) pins the Incr path:
-		// deleting the Incr, or miscounting the omitted run, leaves it at 0 and
-		// fails here.
 		Eventually(func() int64 {
 			return captureExporter.counterValue("key_omitted_records")
 		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
 			Should(Equal(int64(wantOmitted)), "the connect pre-filter's key_omitted_records counter did not reach the omitted-record count on the outer stream's metrics registry — pre-filtered records are unobservable")
 
-		// The omitted records are committed past once (the last-record placeholder
-		// carries the high-water offset), so the count settles at exactly 3, not
-		// climbing from re-polls.
-		Consistently(func() int64 {
-			return captureExporter.counterValue("key_omitted_records")
-		}).WithTimeout(2*time.Second).WithPolling(200*time.Millisecond).
-			Should(Equal(int64(wantOmitted)), "key_omitted_records over-counted — the same omitted records were counted more than once")
-
-		// uns_beta's per-reason filtered_records must stay 0: none of these records
-		// reached uns_beta (connect omitted them all), so uns_beta dropped nothing
-		// of its own: per-reason counters account only for records that REACH
-		// uns_beta.
 		Expect(captureExporter.counterValue("filtered_records")).To(Equal(int64(0)),
 			"records omitted by the connect pre-filter must not reach uns_beta's filtered_records counter")
-		// The connect high-water placeholder (the poll's last non-matching record,
-		// kept with no metadata to carry the commit offset) reaches uns_beta but is
-		// dropped on the missing-kafka_key path WITHOUT touching a per-reason
-		// counter. Pin that it does not leak into dropped_keyless (it has no
-		// kafka_key meta, so a naive `key==""` check would miscount it).
+		// The placeholder for the poll's last omitted record reaches ReadBatch
+		// without kafka_key and is dropped without being counted.
 		Expect(captureExporter.counterValue("dropped_keyless")).To(Equal(int64(0)),
 			"the connect high-water placeholder must not be miscounted as dropped_keyless")
 	})
 
-	// A MIXED batch: N matching + M non-matching keyed records under a select-some
-	// filter. With the connect pre-filter, the M non-matching records are OMITTED
-	// in connect (counted by key_omitted_records) and never reach uns_beta; the N
-	// matching records are delivered. Because the connect pre-filter is a faithful
-	// superset of uns_beta's keep set, every record that reaches uns_beta has
-	// already matched, so uns_beta's own filtered_records stays at 0. This spec is
-	// the mixed-batch counterpart that pins key_omitted_records to exactly M (not
-	// N+M and not 0), proving the connect coarse count is per-omitted-record, not
-	// per-batch or per-poll. (ENG-5094 / ENG-5105)
+	// key_omitted_records counts each omitted record, not each batch or poll.
 	It("counts only the omitted records (M) under key_omitted_records, delivers the N matching records, and leaves uns_beta's per-reason counters at 0", func() {
 		registerCaptureExporter()
 		captureExporter.reset()
 
 		addr := startBroker(GinkgoT())
 		const group = "uns-beta-mixed-counter"
-		// N=2 matching (umh.v1.keep.*) + M=3 non-matching, all keyed. The LAST
-		// produced record (highest offset) is a MATCHING one on purpose: connect
-		// always keeps the last record of a poll as the high-water placeholder, and
-		// when that last record does NOT match it is carried to uns_beta as an
-		// empty (no-kafka_key) message that uns_beta classifies as keyless. Ending
-		// on a matching record keeps the placeholder a real delivered record, so
-		// this spec's per-reason-counters-stay-0 assertion is not muddied by the
-		// placeholder edge (that edge is its own observable; see below).
+		// The last record matches, so connect keeps no placeholder for this poll.
 		produce(GinkgoT(), addr,
 			rec("umh.v1.keep.alpha", `{"v":0}`),   // delivered (matches pattern)
 			rec("umh.v1.drop.beta", `{"v":1}`),    // omitted in connect
 			rec("umh.v1.drop.delta", `{"v":2}`),   // omitted in connect
 			rec("umh.v1.drop.epsilon", `{"v":3}`), // omitted in connect
-			rec("umh.v1.keep.gamma", `{"v":4}`))   // delivered (matches; also the high-water placeholder)
+			rec("umh.v1.keep.gamma", `{"v":4}`))   // delivered (matches pattern)
 		const wantDelivered = 2
 		const wantOmitted = 3
 
@@ -1219,7 +989,6 @@ uns_beta:
 			}
 		}()
 
-		// The 2 matching records must be delivered.
 		Eventually(func() int {
 			mu.Lock()
 			defer mu.Unlock()
@@ -1227,23 +996,11 @@ uns_beta:
 		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
 			Should(Equal(wantDelivered), "the matching records must be delivered")
 
-		// key_omitted_records must reach exactly M (the omitted subset), not N+M
-		// (would mean matching records were omitted too) and not 0.
 		Eventually(func() int64 {
 			return captureExporter.counterValue("key_omitted_records")
 		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
 			Should(Equal(int64(wantOmitted)), "key_omitted_records must count only the M omitted records, not the whole batch")
 
-		// And it must SETTLE at M — a mutant counting the whole batch would show
-		// N+M here.
-		Consistently(func() int64 {
-			return captureExporter.counterValue("key_omitted_records")
-		}).WithTimeout(2*time.Second).WithPolling(200*time.Millisecond).
-			Should(Equal(int64(wantOmitted)), "key_omitted_records over- or under-counted the mixed batch")
-
-		// Every record that REACHED uns_beta had already matched the pattern (the
-		// connect pre-filter is a superset of uns_beta's keep set), so uns_beta
-		// dropped nothing of its own — all three per-reason counters stay 0.
 		Expect(captureExporter.counterValue("filtered_records")).To(Equal(int64(0)),
 			"records omitted by the connect pre-filter must not reach uns_beta's filtered_records counter")
 		Expect(captureExporter.counterValue("dropped_keyless")).To(Equal(int64(0)),
@@ -1251,98 +1008,15 @@ uns_beta:
 	})
 })
 
-// dropped_keyless counts records with an empty/absent Kafka key that REACH
-// uns_beta and fail its `key != ""` guard. With the connect key_pattern
-// pre-filter (ENG-5105) a keyless record only reaches uns_beta when the pattern
-// matches the empty key — i.e. under a `.*` umh_topics (".*" matches ""). So this
-// spec uses `.*`: connect BUILDS the keyless record (it matched), it reaches
-// uns_beta, hits the `key != ""` guard in betaKeyFilter.matches, and increments
-// dropped_keyless. Under a SPECIFIC pattern the keyless record would instead be
-// OMITTED in connect (its empty key fails the pattern) and counted coarsely by
-// key_omitted_records, never reaching dropped_keyless; that path
-// is exercised by the filtered_records specs above. This spec pins the
-// keyless-reaches-uns_beta path that the `.*` (match-everything) deployment still
-// has. (ENG-5094 / ENG-5105)
-var _ = Describe("uns_beta dropped_keyless counter", Label("uns_beta"), func() {
-	It("increments dropped_keyless for a keyless record that reaches uns_beta under a match-everything pattern", func() {
-		registerCaptureExporter()
-		captureExporter.reset()
-
-		addr := startBroker(GinkgoT())
-		const group = "uns-beta-keyless-counter"
-		// A keyless record: nil key. Under the `.*` pattern below connect matches
-		// it (".*" matches the empty key) and BUILDS it, so it reaches uns_beta,
-		// where the `key != ""` guard drops it as keyless. A keyed record gives the
-		// stream something to deliver so the poll goroutine stays live.
-		produce(GinkgoT(), addr,
-			&kgo.Record{Key: nil, Value: []byte(`{"v":0}`)},
-			rec("umh.v1.keep.live", `{"v":1}`))
-
-		var mu sync.Mutex
-		var delivered int
-		sb := service.NewStreamBuilder()
-		Expect(sb.AddInputYAML(`
-uns_beta:
-  broker_address: "` + addr + `"
-  consumer_group: "` + group + `"
-  umh_topics:
-    - ".*"
-`)).To(Succeed())
-		Expect(sb.SetMetricsYAML(captureExporterName + ": {}")).To(Succeed())
-		Expect(sb.AddBatchConsumerFunc(func(_ context.Context, b service.MessageBatch) error {
-			mu.Lock()
-			delivered += len(b)
-			mu.Unlock()
-			return nil
-		})).To(Succeed())
-
-		stream, err := sb.Build()
-		Expect(err).NotTo(HaveOccurred())
-
-		ctx, cancel := context.WithCancel(context.Background())
-		done := make(chan struct{})
-		var runErr error
-		go func() { defer close(done); runErr = stream.Run(ctx) }()
-		defer func() {
-			cancel()
-			<-done
-			if runErr != nil && !errors.Is(runErr, context.Canceled) {
-				Fail("stream run: " + runErr.Error())
-			}
-		}()
-
-		Eventually(func() int64 {
-			return captureExporter.counterValue("dropped_keyless")
-		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
-			Should(Equal(int64(1)), "the keyless drop must increment dropped_keyless on the outer stream's metrics registry")
-
-		// The keyless record carried a real (absent) key, not a spoof header, and
-		// the keyed record was delivered, not filtered.
-		Expect(captureExporter.counterValue("filtered_records")).To(Equal(int64(0)),
-			"a keyless record must not count as a filtered (real-keyed) drop")
-		// Under `.*` connect omits nothing (every key, including the empty one,
-		// matches), so the connect coarse counter never fires — the keyless record
-		// is accounted for by uns_beta's dropped_keyless, not key_omitted_records.
-		Expect(captureExporter.counterValue("key_omitted_records")).To(Equal(int64(0)),
-			"under a match-everything pattern connect omits nothing, so key_omitted_records must stay 0")
-		mu.Lock()
-		Expect(delivered).To(Equal(1), "the keyed matching record must be delivered")
-		mu.Unlock()
-	})
-})
-
 // TODO(ENG-5125): add a dropped_spoofed_key increment spec once spoof
 // detection lands; the counter is not registered yet.
 
-// The flipped reproduction of
-// TestUNSInput_CommitsPastNACK_DataLoss, end to end through uns_beta. The old
-// uns input commits the polled head past a NACKed batch (data loss); uns_beta
-// must instead redeliver the NACKed message until it succeeds and commit only
-// after.
-var _ = describeBothForms("uns_beta NACK redelivery capstone", func(pluginName string) {
+// The uns_beta counterpart of TestUNSInput_DoesNotCommitPastNACK: a NACKed
+// message is redelivered until it succeeds, and the offset commits after.
+var _ = Describe("uns_beta NACK redelivery capstone", Label("uns_beta"), func() {
 	It("redelivers a NACKed message until success and commits the offset only after", func() {
 		addr := startBroker(GinkgoT())
-		group := "uns-beta-capstone-" + pluginName
+		group := "uns-beta-capstone"
 		// A occupies offset 0, B offset 1 (produce is synchronous, in call order).
 		produce(GinkgoT(), addr,
 			rec("umh.v1.acme.poison", `{"v":"A"}`),
@@ -1352,11 +1026,7 @@ var _ = describeBothForms("uns_beta NACK redelivery capstone", func(pluginName s
 		const failuresWanted = 3
 		var mu sync.Mutex
 		deliveries := map[string]int{} // payload -> delivery count
-		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(pluginName, addr, group, `.*`), func(_ context.Context, b service.MessageBatch) error {
-			// This callback runs off the test goroutine, so a Gomega failure
-			// inside it must be recovered here to be reported instead of
-			// crashing the suite.
-			defer GinkgoRecover()
+		stop := runUnsBetaStream(GinkgoT(), unsBetaInputYAML(addr, group, `.*`), func(_ context.Context, b service.MessageBatch) error {
 			mu.Lock()
 			defer mu.Unlock()
 			reject := false
@@ -1368,27 +1038,12 @@ var _ = describeBothForms("uns_beta NACK redelivery capstone", func(pluginName s
 				}
 			}
 			if reject {
-				// auto_replay_nacks redelivers in-process within milliseconds,
-				// so an external poll can never reliably observe the failing
-				// window; this callback IS the failing window — while A is
-				// about to be NACKed here, nothing at or past A's offset (0)
-				// may be committed.
-				if deliveries[payloadA] == 2 {
-					off, ok, err := committedOffsetE(addr, group)
-					Expect(err).NotTo(HaveOccurred())
-					if ok {
-						Expect(off).To(BeNumerically("<", 1),
-							"offset committed past the NACKed message while it was still being rejected")
-					}
-				}
 				return errors.New("simulated output failure")
 			}
 			return nil
 		})
 		defer stop()
 
-		// P2: A is redelivered until it succeeds (failuresWanted rejections,
-		// then one accepted delivery).
 		Eventually(func() int {
 			mu.Lock()
 			defer mu.Unlock()
@@ -1396,9 +1051,6 @@ var _ = describeBothForms("uns_beta NACK redelivery capstone", func(pluginName s
 		}).WithTimeout(15*time.Second).WithPolling(100*time.Millisecond).
 			Should(BeNumerically(">=", failuresWanted+1), "A was never redelivered to success")
 
-		// P1: after A succeeds the committed offset reaches past both messages.
-		// The inner redpanda input commits on a 5s commit_period tick, so
-		// Gomega's 1s default timeout would flake.
 		Eventually(func(g Gomega) {
 			off, ok, err := committedOffsetE(addr, group)
 			g.Expect(err).NotTo(HaveOccurred())

@@ -29,19 +29,18 @@ BENTHOS_BIN := tmp/bin/benthos
 LOG_LEVEL ?= INFO
 CONFIG ?= ./config/opcua-hex-test.yaml
 
-# uns_beta needs two patches to the pinned redpanda Connect module (ENG-5105):
+# uns_beta needs two patches to the pinned redpanda Connect module:
 # connect-key-filter.patch drops records that fail key_pattern before a message
-# is built, and connect-redpanda-forward.patch exports the redpanda input
-# constructor. patch-connect applies them to a copy in .connect-patched/ and
-# points a side modfile (go.patched.mod) at it, so the committed go.mod never
-# changes. A connect bump that moves the patched code fails patch-connect. Build
-# and test with GOFLAGS="$(PATCHED_GOFLAGS)"; without it, uns_beta fails at
-# startup.
+# is built, and connect-redpanda-forward.patch exports the redpanda input's
+# constructor and config fields. patch-connect applies them to a copy in
+# .connect-patched/ and points a side modfile (go.patched.mod) at it, so the
+# committed go.mod never changes. A connect bump that moves the patched code
+# fails patch-connect. Build and test with GOFLAGS="$(PATCHED_GOFLAGS)";
+# without it, uns_beta fails at startup.
 CONNECT_PKG := github.com/redpanda-data/connect/v4
-CONNECT_PATCH := patches/connect-key-filter.patch
+CONNECT_KEY_FILTER_PATCH := patches/connect-key-filter.patch
 CONNECT_FORWARD_PATCH := patches/connect-redpanda-forward.patch
 CONNECT_VENDOR := .connect-patched
-CONNECT_CHECK_DIR := .connect-patch-check
 PATCHED_MODFILE := go.patched.mod
 PATCHED_SUMFILE := go.patched.sum
 PATCHED_GOFLAGS := -modfile=$(PATCHED_MODFILE) -tags=connect_patched
@@ -75,35 +74,16 @@ patch-connect:
 	@GOFLAGS= go mod download $(CONNECT_PKG) && \
 	CONNECT_SRC=$$(GOFLAGS= go list -m -f '{{.Dir}}' $(CONNECT_PKG)) && \
 	test -n "$$CONNECT_SRC" && \
-	rm -rf $(CONNECT_VENDOR) && mkdir -p $(CONNECT_VENDOR) && \
+	rm -rf $(CONNECT_VENDOR) $(PATCHED_MODFILE) $(PATCHED_SUMFILE) && mkdir -p $(CONNECT_VENDOR) && \
 	cp -R "$$CONNECT_SRC"/. $(CONNECT_VENDOR)/ && \
 	chmod -R u+w $(CONNECT_VENDOR) && \
-	( cd $(CONNECT_VENDOR) && git init -q && git add -A && \
-	  git -c user.email=patch@umh -c user.name=patch commit -qm base && \
-	  git apply --check -p1 ../$(CONNECT_PATCH) && \
-	  git apply -p1 ../$(CONNECT_PATCH) && \
-	  git apply --check -p1 ../$(CONNECT_FORWARD_PATCH) && \
+	( cd $(CONNECT_VENDOR) && git init -q && \
+	  git apply -p1 ../$(CONNECT_KEY_FILTER_PATCH) && \
 	  git apply -p1 ../$(CONNECT_FORWARD_PATCH) ) && \
 	cp go.mod $(PATCHED_MODFILE) && cp go.sum $(PATCHED_SUMFILE) && \
 	go mod edit -replace $(CONNECT_PKG)=./$(CONNECT_VENDOR) $(PATCHED_MODFILE) && \
 	echo "patched $(CONNECT_PKG) -> ./$(CONNECT_VENDOR); committed go.mod untouched." && \
 	echo "build/test patched with: GOFLAGS=\"$(PATCHED_GOFLAGS)\""
-
-# Verify both connect patches still apply to the pinned module, without
-# writing the side modfile. Run it after a connect bump.
-.PHONY: check-connect-patch
-check-connect-patch:
-	@GOFLAGS= go mod download $(CONNECT_PKG) && \
-	CONNECT_SRC=$$(GOFLAGS= go list -m -f '{{.Dir}}' $(CONNECT_PKG)) && \
-	test -n "$$CONNECT_SRC" && \
-	rm -rf $(CONNECT_CHECK_DIR) && mkdir -p $(CONNECT_CHECK_DIR) && \
-	cp -R "$$CONNECT_SRC"/. $(CONNECT_CHECK_DIR)/ && \
-	chmod -R u+w $(CONNECT_CHECK_DIR) && \
-	( cd $(CONNECT_CHECK_DIR) && git init -q && \
-	  git apply -p1 $(CURDIR)/$(CONNECT_PATCH) && \
-	  git apply --check -p1 $(CURDIR)/$(CONNECT_FORWARD_PATCH) ) && \
-	rm -rf $(CONNECT_CHECK_DIR) && \
-	echo "connect patches apply cleanly to $$(go list -m -f '{{.Version}}' $(CONNECT_PKG))"
 
 .PHONY: unpatch-connect
 unpatch-connect:

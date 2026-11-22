@@ -22,11 +22,10 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
 
-// errUnsBetaUnavailable makes newUnsBeta fail in a binary built without the
-// connect patches, which lack the forwarder shim that builds the reader.
-var errUnsBetaUnavailable = errors.New("uns_beta is not available in this binary: build it with `make build`, which applies the connect patches and sets the connect_patched tag")
+// errUnsBetaUnavailable is returned in a binary built without the connect
+// patches, which lack the redpanda constructor uns_beta needs.
+var errUnsBetaUnavailable = errors.New("uns_beta is not included in this benthos-umh build: use an official benthos-umh release, or build with `make build`")
 
-// buildUnsBetaInner is never reached, because newUnsBeta fails first.
-func buildUnsBetaInner(_ *service.Resources, _ []string, _ string, _ string, _ []string) (service.BatchInput, error) {
+func buildUnsBetaInner(_ *service.Resources, _ []string, _ string, _ string, _ string) (service.BatchInput, error) {
 	return nil, errUnsBetaUnavailable
 }
