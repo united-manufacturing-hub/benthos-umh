@@ -250,15 +250,17 @@ type OPCUAInput struct {
 	LastMessageReceived          atomic.Uint32
 	HeartbeatManualSubscribed    bool
 	HeartbeatNodeId              *ua.NodeID
-	Subscription                 *opcua.Subscription
-	ServerInfo                   ServerInfo
-	ServerProfile                ServerProfile
-	PollRate                     int
-	QueueSize                    uint32
-	SamplingInterval             float64
-	DeadbandType                 string
-	DeadbandValue                float64
-	ServerCapabilities           *ServerCapabilities
+	Subscription                 subscription
+	// handles resolves the ClientHandle of each notification to its node.
+	handles            handleRegistry
+	ServerInfo         ServerInfo
+	ServerProfile      ServerProfile
+	PollRate           int
+	QueueSize          uint32
+	SamplingInterval   float64
+	DeadbandType       string
+	DeadbandValue      float64
+	ServerCapabilities *ServerCapabilities
 
 	// browseErr signals async browse failure to ReadBatch (avoids self-Close deadlock).
 	browseErrMu sync.Mutex
@@ -275,6 +277,8 @@ func (g *OPCUAInput) unsubscribeAndResetHeartbeat(ctx context.Context) {
 		}
 		g.Subscription = nil
 	}
+	// Notifications still queued for the cancelled subscription are dropped.
+	g.handles.reset()
 
 	g.LastHeartbeatMessageReceived.Store(uint32(0))
 	g.LastMessageReceived.Store(uint32(0))
@@ -580,22 +584,36 @@ func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBat
 
 		switch x := res.Value.(type) {
 		case *ua.DataChangeNotification:
+			// Summarize the dropped values instead of logging each one. The
+			// server decides how many items a notification carries, so one
+			// line per item lets a server that sends handles we never issued
+			// fill the disk of the device we run on.
+			var dropped int
+			var firstDropped uint32
+
 			for _, item := range x.MonitoredItems {
 				if item == nil || item.Value == nil || item.Value.Value == nil {
 					g.Log.Debugf("Received nil in item structure. This can occur when subscribing to an OPC UA folder and may be ignored.")
 					continue
 				}
 
-				// now get the handle id, which is the position in g.Nodelist
-				// see also NewMonitoredItemCreateRequestWithDefaults call in other functions
-				handleID := item.ClientHandle
-
-				if uint32(len(g.NodeList)) >= handleID {
-					message := g.createMessageFromValue(item.Value, g.NodeList[handleID])
-					if message != nil {
-						msgs = append(msgs, message)
+				nodeDef, ok := g.handles.lookup(item.ClientHandle)
+				if !ok {
+					if dropped == 0 {
+						firstDropped = item.ClientHandle
 					}
+					dropped++
+					continue
 				}
+				message := g.createMessageFromValue(item.Value, nodeDef)
+				if message != nil {
+					msgs = append(msgs, message)
+				}
+			}
+
+			if dropped > 0 {
+				g.Log.Errorf("Dropped %d of %d values in this notification: their ClientHandles belong to no monitored item of the current subscription (first was %d). Values are lost.",
+					dropped, len(x.MonitoredItems), firstDropped)
 			}
 		default:
 			g.Log.Errorf("Unknown publish result %T", res.Value)
