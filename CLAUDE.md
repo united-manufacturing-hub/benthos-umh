@@ -27,6 +27,22 @@ make changelog   # installs changie into .tools/ on first use, prompts for kind 
 - Describe the user-visible change in product language. No "Added"/"Fixed" lead-ins.
 - At release time, `make release-changelog VERSION=vX.Y.Z` batches the fragments into `.changelog/<version>.md`, moves them to `.changelog/<version>/` and regenerates `CHANGELOG.md`.
 
+### Redpanda Connect updates
+
+When a PR (usually Renovate's) moves `github.com/redpanda-data/connect/v4` to a new version, write the fragments from the upstream `CHANGELOG.md` of every version it skips:
+
+1. One `improvements` fragment that names the old and new version and links the upstream release notes, e.g. `Updated the bundled Redpanda Connect components from v4.117.0 to v4.118.0. … See the [Redpanda Connect v4.118.0 release notes](https://github.com/redpanda-data/connect/releases/tag/v4.118.0) for the full list`.
+2. One fragment for each upstream entry that a benthos-umh user can reach. Use the upstream kind: Added is `new`, Fixed is `fixes`, Changed is `improvements`.
+3. Skip the entries users cannot reach:
+   - Components that are not in our binary: `go list -deps ./cmd/benthos` does not list their `internal/impl/...` package. benthos-umh imports only `public/bundle/free/v4` (see `cmd/benthos/bundle/package.go`).
+   - Components that call `license.CheckRunningEnterprise`, because they need a Redpanda license (e.g. `postgres_cdc`).
+   - Changes to the Go API only, enterprise CLI features (e.g. the telemetry pipeline ID) and internal refactors.
+
+   The `enterprise` mark in `internal/plugins/info.csv` is not enough: `aws_dynamodb_cdc` has it, but it is in our binary and runs without a license.
+4. Check the libraries our own plugins use, which the same PR often bumps (e.g. franz-go, which the `uns` input and output use). Write a fragment for a fix that a user of our plugin would notice, under our plugin's name.
+
+Write each entry like any other one. Start with the component's public name and its config name, e.g. `Kafka output (kafka) with idempotent_write enabled now starts`, not a `Redpanda Connect:` prefix. For a fix, say what the user saw go wrong. Read the upstream diff when the upstream entry does not say that. If the bump also clears a security advisory, the handbook's vulnerable-dependency rule decides that entry.
+
 ## Layout
 
 | Path | Contents |
