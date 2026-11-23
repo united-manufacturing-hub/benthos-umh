@@ -22,6 +22,7 @@ import (
 	"math/rand"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -120,6 +121,21 @@ func (h *subscriptionHarness) expectEveryItemPublishedAsItsNode() {
 	}
 }
 
+// expectMonitoredOnce checks that the server holds exactly one monitored
+// item for each of nodes. The filter fallback must not monitor again what
+// already succeeded (ENG-3880); every copy would get its own handle, so the
+// attribution checks cannot see a duplicate.
+func (h *subscriptionHarness) expectMonitoredOnce(nodes []NodeDef) {
+	GinkgoHelper()
+	counts := map[string]int{}
+	for _, item := range h.sub.items() {
+		counts[item.nodeID]++
+	}
+	for _, n := range nodes {
+		Expect(counts[n.NodeID.String()]).To(Equal(1), "monitored items for node %s", n.NodeID)
+	}
+}
+
 // expectDropped sends a value under handle and checks that it is logged
 // and not published.
 func (h *subscriptionHarness) expectDropped(handle uint32) {
@@ -196,6 +212,20 @@ type filterScenario struct {
 	capability FilterCapability
 	rejected   []int // indices of the nodes whose filter is rejected
 	rejectAll  bool
+}
+
+// firstRejected is the index of the first node whose filter the server
+// rejects, or the node count if it rejects none. The fallback retries from
+// there, so every node before it was already monitored.
+func (s filterScenario) firstRejected() int {
+	switch {
+	case s.rejectAll:
+		return 0
+	case len(s.rejected) == 0:
+		return s.nodes
+	default:
+		return slices.Min(s.rejected)
+	}
 }
 
 func (s filterScenario) String() string {
@@ -314,6 +344,10 @@ var _ = Describe("OPC UA subscription ClientHandles", func() {
 			}
 
 			h.monitor()
+			// Only the nodes before the rejected one: the retry starts there and
+			// also monitors again the later nodes of that batch the server
+			// already accepted.
+			h.expectMonitoredOnce(nodes[:s.firstRejected()])
 			h.expectEveryItemPublishedAsItsNode()
 		},
 		filterScenarioEntries(),
