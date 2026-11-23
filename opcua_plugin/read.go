@@ -584,7 +584,7 @@ func (g *OPCUAInput) ReadBatchSubscribe(ctx context.Context) (service.MessageBat
 
 		switch x := res.Value.(type) {
 		case *ua.DataChangeNotification:
-			// Summarise the dropped values instead of logging each one. The
+			// Summarize the dropped values instead of logging each one. The
 			// server decides how many items a notification carries, so one
 			// line per item lets a server that sends handles we never issued
 			// fill the disk of the device we run on.

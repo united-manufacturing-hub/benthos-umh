@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -483,9 +484,10 @@ var _ = Describe("OPC UA subscription ClientHandles", func() {
 		// If the failed result were stored, Close would call Cancel on a nil
 		// *opcua.Subscription and panic here.
 		Expect(g.BrowseAndSubscribeIfNeeded(context.Background())).To(HaveOccurred())
-		// Not Expect(...).To(BeNil()): Gomega's BeNil accepts an interface
-		// holding a typed-nil pointer, which is exactly the bug being guarded.
-		Expect(g.Subscription == nil).To(BeTrue(),
+		// Checks the dynamic type, not Expect(g.Subscription).To(BeNil()):
+		// Gomega's BeNil accepts an interface holding a typed-nil pointer,
+		// which is exactly the bug being guarded.
+		Expect(reflect.TypeOf(g.Subscription)).To(BeNil(),
 			"a failed Subscribe must leave the field truly nil, not an interface wrapping a nil pointer")
 	})
 
