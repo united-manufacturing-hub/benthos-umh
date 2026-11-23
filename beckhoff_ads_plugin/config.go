@@ -129,42 +129,43 @@ func validateAMSNetID(s string) error {
 }
 
 // parseSymbolOptions applies keyed options ("key=value") onto sym; fullSpec names
-// the offender in warnings. Keyed only: "name:0s:10ms" hid which slot was which.
-func parseSymbolOptions(opts []string, fullSpec string, sym *PlcSymbol) []string {
+// the offender in the errors. Keyed only: "name:0s:10ms" hid which slot was which.
+func parseSymbolOptions(opts []string, fullSpec string, sym *PlcSymbol) []error {
 	targets := map[string]*time.Duration{
 		"maxDelay":  &sym.MaxDelay,
 		"cycleTime": &sym.CycleTime,
 	}
 
-	var warnings []string
+	var errs []error
 	for _, opt := range opts {
 		key, value, ok := strings.Cut(opt, "=")
 		if !ok {
-			warnings = append(warnings, fmt.Sprintf("symbol %q: ignoring option %q (use maxDelay=100ms or cycleTime=10ms)", fullSpec, opt))
+			errs = append(errs, fmt.Errorf("symbol %q: ignoring option %q (use maxDelay=100ms or cycleTime=10ms)", fullSpec, opt))
 			continue
 		}
 		target, ok := targets[key]
 		if !ok {
-			warnings = append(warnings, fmt.Sprintf("symbol %q: ignoring unknown option %q (supported: maxDelay, cycleTime)", fullSpec, key))
+			errs = append(errs, fmt.Errorf("symbol %q: ignoring unknown option %q (supported: maxDelay, cycleTime)", fullSpec, key))
 			continue
 		}
 		d, err := parseSymbolDuration(value)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("symbol %q: ignoring invalid %s value %q (using default)", fullSpec, key, value))
+			errs = append(errs, fmt.Errorf("symbol %q: ignoring invalid %s value %q (using default): %w", fullSpec, key, value, err))
 			continue
 		}
 		*target = d
 	}
-	return warnings
+	return errs
 }
 
 // CreateSymbolList parses a list of symbol strings ("name[:opt...]") into
-// PlcSymbol structs. The second return value holds warnings for malformed
-// options (nil if all valid); defaults are kept for options that fail to parse.
-func CreateSymbolList(s []string, defaultCycleTime time.Duration, defaultMaxDelay time.Duration) ([]PlcSymbol, []string) {
+// PlcSymbol structs. The second return value holds one error per malformed
+// option (nil if all are valid); an option that fails to parse keeps its
+// default, so the errors are warnings, not a reason to fail.
+func CreateSymbolList(s []string, defaultCycleTime time.Duration, defaultMaxDelay time.Duration) ([]PlcSymbol, []error) {
 	var (
-		result   []PlcSymbol
-		warnings []string
+		result []PlcSymbol
+		errs   []error
 	)
 	for _, symbol := range s {
 		parts := strings.Split(symbol, ":")
@@ -176,8 +177,8 @@ func CreateSymbolList(s []string, defaultCycleTime time.Duration, defaultMaxDela
 			MaxDelay:       defaultMaxDelay,
 			CycleTime:      defaultCycleTime,
 		}
-		warnings = append(warnings, parseSymbolOptions(parts[1:], symbol, &plcSym)...)
+		errs = append(errs, parseSymbolOptions(parts[1:], symbol, &plcSym)...)
 		result = append(result, plcSym)
 	}
-	return result, warnings
+	return result, errs
 }

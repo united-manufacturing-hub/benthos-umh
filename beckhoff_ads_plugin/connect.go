@@ -97,8 +97,8 @@ func (a *AdsCommInput) setupNotifications(ctx context.Context) error {
 		return fmt.Errorf("no symbols registered for notifications (%d symbols all failed to resolve)", len(cfgs))
 	}
 	for _, r := range failed {
-		if r.Skipped {
-			a.Log.Warnf("Notification symbol %q skipped (check symbol name)", r.SymbolName)
+		if r.Skipped != nil {
+			a.Log.Warnf("Notification symbol %q skipped (check symbol name): %v", r.SymbolName, r.Skipped)
 			continue
 		}
 		a.Log.Warnf("Notification symbol %q rejected by PLC: ADS error 0x%X", r.SymbolName, r.Code)
