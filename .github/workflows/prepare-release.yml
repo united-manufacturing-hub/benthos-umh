@@ -1,0 +1,96 @@
+# Copyright 2026 UMH Systems GmbH
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+# Keeps the release PR up to date: on every push to staging, branch
+# release/next is reset to staging and `make release-changelog` batches the
+# fragments in .changelog/unreleased/ into the next version. changie picks the
+# version from the fragments' kinds (auto in .changie.yaml). Without fragments
+# the PR is closed. Merging the PR releases; see release.yml.
+# The PR is opened with a GitHub App token, because a PR opened with
+# GITHUB_TOKEN does not trigger CI.
+
+name: Prepare Release
+
+on:
+  push:
+    branches: [staging]
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  release-pr:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      # changie is installed with go install.
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
+
+      - name: Batch the changelog fragments
+        id: batch
+        run: |
+          set -euo pipefail
+          compgen -G ".changelog/unreleased/*.yaml" >/dev/null || exit 0
+          make "$PWD/.tools/changie"
+          version=$(.tools/changie next auto)
+          make release-changelog VERSION="$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      # Commit as the app's bot user, not as whoever merged the last PR.
+      - name: Resolve the bot identity
+        id: bot
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          id=$(gh api "/users/${SLUG}%5Bbot%5D" --jq .id)
+          echo "identity=${SLUG}[bot] <${id}+${SLUG}[bot]@users.noreply.github.com>" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update the release PR
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          branch: release/next
+          base: staging
+          add-paths: |
+            CHANGELOG.md
+            .changelog
+          author: ${{ steps.bot.outputs.identity }}
+          committer: ${{ steps.bot.outputs.identity }}
+          commit-message: "chore(release): ${{ steps.batch.outputs.version }}"
+          title: "Release ${{ steps.batch.outputs.version }}"
+          labels: release
+          body: |
+            Merging this PR releases benthos-umh **${{ steps.batch.outputs.version }}**, built from staging at ${{ github.sha }}. PRs merged into staging after that commit ship with the next release.
+
+            To fix an entry, fix its fragment on staging. To stop the release, request changes. Merge with a merge commit.
+          delete-branch: true

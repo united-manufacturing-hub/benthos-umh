@@ -19,13 +19,6 @@ on:
   pull_request:
     branches: [staging]
   merge_group:
-  # release.yml calls this with full_run to test the release commit.
-  workflow_call:
-    inputs:
-      full_run:
-        description: Run every plugin's tests, PLC tests included, ignoring the path filter
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -38,7 +31,9 @@ jobs:
       pull-requests: read
     outputs:
       test_plc: ${{ steps.plc-check.outputs.test_plc }}
-      all: ${{ inputs.full_run == true }}
+      # The release PR's code is the commit the release ships, so it runs every
+      # plugin's tests, PLC tests included, ignoring the path filter.
+      all: ${{ github.head_ref == 'release/next' }}
       opcua: ${{ steps.filter.outputs.opcua }}
       modbus: ${{ steps.filter.outputs.modbus }}
       s7: ${{ steps.filter.outputs.s7 }}
@@ -65,9 +60,11 @@ jobs:
           persist-credentials: false
       - name: Check if PLC tests should run
         id: plc-check
-        run: echo "test_plc=${{ github.event_name == 'merge_group' || inputs.full_run == true }}" >> "$GITHUB_OUTPUT"
+        env:
+          TEST_PLC: ${{ github.event_name == 'merge_group' || github.head_ref == 'release/next' }}
+        run: echo "test_plc=$TEST_PLC" >> "$GITHUB_OUTPUT"
       - name: Detect changes
-        if: inputs.full_run != true
+        if: github.head_ref != 'release/next'
         uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4
         id: filter
         with:

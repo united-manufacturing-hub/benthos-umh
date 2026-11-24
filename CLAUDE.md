@@ -5,13 +5,26 @@ benthos-umh extends Benthos (Redpanda Connect) with industrial protocol inputs, 
 ## Branches and pull requests
 
 - PRs target `staging`, the default branch.
-- Releases are cut from `staging`; `main` is no longer used. A release works like the ManagementConsole release:
-  1. On a branch off `staging`, run `make release-changelog VERSION=vX.Y.Z`. Merge the result into `staging` through a PR.
-  2. Publish a release on the `staging` tip, titled with the version: `gh release create vX.Y.Z --target staging --title vX.Y.Z --notes ""`. A prerelease starts nothing; for a test image, use the per-PR image CI pushes.
-  3. `release.yml` checks that the tag is the `staging` tip, that the title equals the tag, that `.changelog/vX.Y.Z.md` and the fragments in `.changelog/vX.Y.Z/` exist, and that `.changelog/unreleased/` is empty. It then runs every CI test job without the path filter, PLC tests included. Only then does it build the image and binaries, write the changelog into the release body, and open the umh-core version bump and the ManagementConsole schema PR.
-  4. If the check fails, the release turns back into a draft. Delete the draft and its tag, fix `staging`, and publish again. If the tests or the build fail, the release also turns back into a draft. Delete the draft, fix `staging`, and publish the next patch version. Do not reuse the tag: the Go module proxy may already have cached it. The failed version never shipped, so its changes go into the next patch version: before you run step 1 for it, move `.changelog/vX.Y.Z/*.yaml` back to `.changelog/unreleased/` and delete `.changelog/vX.Y.Z.md` and `.changelog/vX.Y.Z/`.
-  5. The umh-core bump PR carries a copy of each fragment in `.changelog/vX.Y.Z/`, without the Linear id. Before merging, reword or delete the fragments that umh-core users do not need. Keep at least one, or umh-core's `require-changelog-entry` check fails.
+- Releases are cut from `staging`; `main` is no longer used. See [Releases](#releases).
 - Every source file needs the Apache 2.0 license header (`make license-check`, `make license-fix`).
+
+## Releases
+
+A bot ([`prepare-release.yml`](.github/workflows/prepare-release.yml)) keeps one release PR open against `staging`, titled "Release vX.Y.Z" (branch `release/next`). It runs `make release-changelog` on every push to `staging`. changie picks the version from the fragments' kinds (`auto` in `.changie.yaml`): `fixes` bumps the patch number, `new` and `improvements` the minor number. Without fragments there is no release PR. Never create a `vX.Y.Z` tag or release by hand.
+
+1. Review the changelog in the PR's diff; CI runs every test, PLC tests included. To fix an entry, fix its fragment on `staging`. To stop the release, request changes.
+2. Approve and merge it with a merge commit. [`release.yml`](.github/workflows/release.yml) ships the commit the PR was generated from: it builds the image and binaries, then tags it, publishes the GitHub Release, moves the image's `X.Y` and `latest` tags, and opens the umh-core version bump PR and the ManagementConsole schema PR.
+3. The umh-core bump PR carries a copy of each fragment in `.changelog/vX.Y.Z/`, without the Linear id. Before merging, reword or delete the fragments that umh-core users do not need. Keep at least one, or umh-core's `require-changelog-entry` check fails.
+
+A release needs at least one fragment. To release changes that are not user-visible, merge a PR that adds only this fragment:
+
+```bash
+./.tools/changie new --kind improvements --body "Maintenance release: internal changes only, no user-visible changes. (ENG-xxxx)"
+```
+
+### When a release fails
+
+The release PR gets a comment that mentions whoever merged it. Re-run the failed jobs; every step skips what exists. If the release commit is broken, merge a fix into `staging`: the next release PR gets the next version. The failed version keeps its `CHANGELOG.md` section but gets no tag or release, and its entries are not repeated in the next release's notes or umh-core PR. Never reuse a version: the Go module proxy may have cached its tag. A squash-merged release PR fails the release; revert it and merge the regenerated PR with a merge commit.
 
 ## Changelog (changie)
 
@@ -25,7 +38,7 @@ make changelog   # installs changie into .tools/ on first use, prompts for kind 
 - Kinds: `new`, `improvements`, `fixes`. They match umh-core's kinds, so the release workflow can copy the fragments into umh-core. File a breaking change under `improvements` and say in the entry what breaks.
 - End the line with the uppercase Linear id in parentheses, e.g. `(ENG-1234)`. The release workflow removes it when it copies the entry into umh-core.
 - Describe the user-visible change in product language. No "Added"/"Fixed" lead-ins.
-- At release time, `make release-changelog VERSION=vX.Y.Z` batches the fragments into `.changelog/<version>.md`, moves them to `.changelog/<version>/` and regenerates `CHANGELOG.md`.
+- At release time, the release PR runs `make release-changelog VERSION=vX.Y.Z`, which batches the fragments into `.changelog/<version>.md`, moves them to `.changelog/<version>/` and regenerates `CHANGELOG.md`.
 
 ### Redpanda Connect updates
 

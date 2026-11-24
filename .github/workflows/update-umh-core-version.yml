@@ -52,11 +52,12 @@ jobs:
           sed -i "s/^BENTHOS_UMH_VERSION = .*/BENTHOS_UMH_VERSION = ${VERSION_WITHOUT_PREFIX}/" Makefile
           grep -q "^BENTHOS_UMH_VERSION = ${VERSION_WITHOUT_PREFIX}$" Makefile || exit 1
 
+      # The pushed commit, not the tag: the release PR adds .changelog/<version>/
+      # on top of the tagged commit.
       - name: Checkout benthos-umh changelog
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
-          ref: ${{ env.VERSION }}
           path: benthos-umh
           sparse-checkout: .changelog
 

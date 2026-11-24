@@ -33,6 +33,10 @@ inputs:
   depot-token:
     description: Depot API token
     required: true
+  version:
+    description: Release version (vX.Y.Z). If set, the image is tagged X.Y.Z only; release.yml moves X.Y and latest after publishing.
+    required: false
+    default: ""
 
 outputs:
   tags:
@@ -61,13 +65,12 @@ runs:
       with:
         images: |
           ${{ inputs.registry }}/${{ inputs.image-name }}
+        flavor: latest=false
         tags: |
-          type=semver,pattern={{version}}
-          type=semver,pattern={{major}}.{{minor}}
-          type=semver,pattern=latest,include_prereleases=false
-          type=ref,event=branch
+          type=semver,pattern={{version}},value=${{ inputs.version }},enable=${{ inputs.version != '' }}
+          type=ref,event=branch,enable=${{ inputs.version == '' }}
           type=ref,event=pr
-          type=sha
+          type=sha,enable=${{ inputs.version == '' }}
 
     # Depot occasionally drops the build stream mid-`go build` ("keepalive ping
     # failed to receive ACK"), failing the job with nothing wrong in the tree.
@@ -82,6 +85,9 @@ runs:
         attempt_delay: 15000
         with: |
           project: ${{ inputs.depot-project-id }}
+          # Build the checked-out commit. Depot's default is the commit that
+          # triggered the run, which for a release is not the one it ships.
+          context: .
           token: ${{ inputs.depot-token }}
           push: true
           platforms: linux/amd64,linux/arm64
