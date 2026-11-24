@@ -30,7 +30,7 @@ flowchart TD
   F -->|no| H["Transport or device-side reset:<br/>network path, or another client evicting this one"]
 ```
 
-A failed connect logs a `hint` field naming the likely cause, and the PLC closing the connection is reported as one of two different cases:
+A failed connect ends its log line with a `hint:` naming the likely cause, and the PLC closing the connection is reported as one of two different cases:
 
 | Log says | Meaning | Where to look |
 |----------|---------|---------------|

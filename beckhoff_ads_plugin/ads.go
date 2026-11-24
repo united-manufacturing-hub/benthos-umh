@@ -256,9 +256,10 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 		hostAMS = hostIP + ".1.1"
 	}
 
-	symbolList, symbolWarnings := CreateSymbolList(unifiedAddress, cycleTime, maxDelay)
-	for _, w := range symbolWarnings {
-		mgr.Logger().Warnf("%s", w)
+	log := mgr.Logger()
+	symbolList, symbolErrs := CreateSymbolList(unifiedAddress, cycleTime, maxDelay)
+	for _, err := range symbolErrs {
+		log.Warnf("Symbol configuration: %v", err)
 	}
 
 	m := &AdsCommInput{
@@ -272,7 +273,7 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 		MaxDelay:       maxDelay,
 		CycleTime:      cycleTime,
 		Symbols:        symbolList,
-		Log:            mgr.Logger(),
+		Log:            log,
 		IntervalTime:   intervalTime,
 		RequestTimeout: requestTimeout,
 
@@ -329,8 +330,8 @@ func (a *AdsCommInput) sessionConfig() SessionConfig {
 
 // onSessionEvent records conditions the library reports but will not repair.
 // Only stores and logs: closing the session here would deadlock its watcher.
-func (a *AdsCommInput) onSessionEvent(ev SessionEvent, reason string) {
-	switch ev {
+func (a *AdsCommInput) onSessionEvent(event SessionEvent, reason string) {
+	switch event {
 	case SessionEventSubscriptionsDead:
 		a.markDegraded(reason, "notification delivery stopped and the library is not re-subscribing (heartbeatRecovery: rebuild)")
 	case SessionEventSymbolReloadGaveUp:
@@ -338,12 +339,11 @@ func (a *AdsCommInput) onSessionEvent(ev SessionEvent, reason string) {
 	case SessionEventOther:
 		// Handled inside the library — a symbol-version reload it is already
 		// driving. Worth a line for correlation, not a restart.
-		a.Log.With("reason", reason).Debug("ADS session reported a condition the library handles itself")
+		a.Log.Debugf("ADS session reported a condition the library handles itself: %s", reason)
 	default:
 		// A SessionEvent added to client.go without a case here. Logged rather
 		// than degraded: an unknown severity is not grounds for a rebuild.
-		a.Log.With("event", int(ev), "reason", reason).
-			Warn("ADS session reported an event this input does not handle; treating it as informational")
+		a.Log.Warnf("ADS session reported event %d (%s), which this input does not handle; treating it as informational", event, reason)
 	}
 }
 
@@ -355,8 +355,7 @@ func (a *AdsCommInput) onSessionEvent(ev SessionEvent, reason string) {
 // the samples in that window. The CompareAndSwap keeps it to one line.
 func (a *AdsCommInput) markDegraded(reason string, detail string) {
 	if a.degradedReason.CompareAndSwap(nil, &reason) {
-		a.Log.With("reason", reason, "detail", detail).
-			Error("ADS session can no longer deliver; rebuilding it on the next read")
+		a.Log.Errorf("ADS session can no longer deliver (%s: %s); rebuilding it on the next read", reason, detail)
 	}
 }
 
@@ -367,7 +366,7 @@ func (a *AdsCommInput) rebuildIfDegraded() error {
 	if reason == nil {
 		return nil
 	}
-	a.Log.With("reason", *reason).Info("Closing the ADS session for a rebuild")
+	a.Log.Infof("Closing the ADS session for a rebuild: %s", *reason)
 	a.closeHandler()
 	return service.ErrNotConnected
 }
@@ -393,21 +392,15 @@ func connectHint(err error) string {
 	return "the PLC accepted the TCP connection then rejected the ADS session - check that targetAMS matches the PLC's own AMS NetID, that username/password are valid for route registration, and that runtimePort addresses a running runtime (851 on TwinCAT 3, 801 on TwinCAT 2)"
 }
 
-// connLogger attaches the connection parameters as structured fields, verbatim;
-// go-ads separately logs what "auto" resolved to.
-func (a *AdsCommInput) connLogger() *service.Logger {
+// connParams names the connection parameters as configured, verbatim; go-ads
+// separately logs what "auto" resolved to.
+func (a *AdsCommInput) connParams() string {
 	hostPort := strconv.Itoa(a.HostPort)
 	if a.HostPort == 0 {
 		hostPort = "random"
 	}
-	return a.Log.With(
-		"targetAddress", net.JoinHostPort(a.TargetIP, strconv.Itoa(a.TargetPort)),
-		"targetAMS", a.TargetAMS,
-		"runtimePort", a.RuntimePort,
-		"hostAMS", a.HostAMS,
-		"hostPort", hostPort,
-		"hostIP", a.HostIP,
-	)
+	return fmt.Sprintf("targetAddress=%s targetAMS=%s runtimePort=%d hostAMS=%s hostPort=%s hostIP=%s",
+		net.JoinHostPort(a.TargetIP, strconv.Itoa(a.TargetPort)), a.TargetAMS, a.RuntimePort, a.HostAMS, hostPort, a.HostIP)
 }
 
 // Connect establishes the ADS session, resolves symbol metadata, and (depending
@@ -431,6 +424,11 @@ func (a *AdsCommInput) Connect(ctx context.Context) error {
 	if err = a.finishConnect(ctx); err != nil {
 		a.client.Close()
 		a.client = nil
+		if shuttingDown(ctx) {
+			a.Log.Debugf("Connect aborted during shutdown: %v", err)
+			return err
+		}
+		a.logConnectFailure(err)
 		a.noteConnectFailure(err)
 		return err
 	}
@@ -446,8 +444,7 @@ func (a *AdsCommInput) awaitRetryWindow(ctx context.Context) error {
 	if wait <= 0 {
 		return nil
 	}
-	a.connLogger().With("wait", wait.Round(time.Second).String(), "failures", a.connectFailures).
-		Info("Waiting before the next connect attempt")
+	a.Log.Infof("Waiting %s before the next connect attempt after %d failures", wait.Round(time.Second), a.connectFailures)
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -467,8 +464,7 @@ func (a *AdsCommInput) noteConnectFailure(err error) {
 		first, ceiling = routeFaultRetryFirst, routeFaultRetryMax
 		if a.routeFaults >= routeSkipAfter && a.skipRouteUntil.Before(time.Now()) {
 			a.skipRouteUntil = time.Now().Add(routeSkipWindow)
-			a.connLogger().With("routeFaults", a.routeFaults, "for", routeSkipWindow.String()).
-				Warn("Not asking the PLC to register a route on the next attempts; set hostIP to the address the PLC sees (behind a NATing VPN gateway that is the gateway's own LAN address)")
+			a.Log.Warnf("Not asking the PLC to register a route for the next %s, after %d route faults; set hostIP to the address the PLC sees (behind a NATing VPN gateway that is the gateway's own LAN address)", routeSkipWindow, a.routeFaults)
 		}
 	} else {
 		a.routeFaults = 0
@@ -497,44 +493,41 @@ func backoffFor(first time.Duration, ceiling time.Duration, n int) time.Duration
 // finishConnect drives connect → symbol resolution → (optional) symbol table
 // load → (optional) notification setup; split out so Connect can clean up a.client on failure.
 func (a *AdsCommInput) finishConnect(ctx context.Context) error {
-	a.connLogger().Info("Connecting to PLC")
+	a.Log.Infof("Connecting to PLC (%s)", a.connParams())
 	if err := a.client.Connect(ctx); err != nil {
-		return a.logConnectFailure(ctx, "Connecting to PLC failed", err)
+		return fmt.Errorf("connecting to PLC (%s): %w", a.connParams(), err)
 	}
 	a.Log.Info("Connected to PLC")
 	// Before the index: resolving a user-defined type to its primitive needs the
 	// datatype table, and an unresolved BaseType is never retried afterwards.
 	if a.LoadSymbols {
 		if err := a.loadSymbolTable(ctx); err != nil {
-			return a.logConnectFailure(ctx, "Loading the symbol and datatype table failed", err)
+			return fmt.Errorf("loading the symbol and datatype table: %w", err)
 		}
 	}
 	a.initSymbolIndex(ctx)
 	if a.ReadType == "notification" {
 		if err := a.setupNotifications(ctx); err != nil {
-			return a.logConnectFailure(ctx, "Registering notifications failed", err)
+			return err
 		}
 	}
 	return nil
 }
 
-// logConnectFailure logs a failed connect step and returns err unchanged. A
-// dropped transport heals on the next Connect; a rejected session does not.
-func (a *AdsCommInput) logConnectFailure(ctx context.Context, what string, err error) error {
+// logConnectFailure logs a failed connect. A dropped transport heals on the
+// next Connect, so it is a warning; a rejected session does not.
+func (a *AdsCommInput) logConnectFailure(err error) {
 	switch {
-	case shuttingDown(ctx):
-		a.Log.Debugf("%s during shutdown: %v", what, err)
 	case isRouteFault(err):
 		// Before isTransportGone: activation wraps the probe's ErrTransportClosed,
 		// so a route the PLC will not serve would otherwise read as a blip.
-		a.connLogger().With("hint", routeFaultHint).Errorf("%s: %v", what, err)
+		a.Log.Errorf("%v; hint: %s", err, routeFaultHint)
 	case isTransportGone(err):
 		// No hint: connectHint's fallback diagnoses a rejected session.
-		a.connLogger().Warnf("%s because the PLC dropped the connection; the next connect attempt retries: %v", what, err)
+		a.Log.Warnf("%v; the PLC dropped the connection, the next connect attempt retries", err)
 	default:
-		a.connLogger().With("hint", connectHint(err)).Errorf("%s: %v", what, err)
+		a.Log.Errorf("%v; hint: %s", err, connectHint(err))
 	}
-	return err
 }
 
 // ReadBatch dispatches to the notification or pull read path per ReadType.
@@ -553,12 +546,12 @@ func (a *AdsCommInput) Close(_ context.Context) error {
 	if a.client == nil {
 		return nil
 	}
-	a.connLogger().With("readType", a.ReadType, "symbols", len(a.Symbols)).Debug("Closing connection to PLC")
+	a.Log.Debugf("Closing connection to PLC (%s, readType=%s, %d symbols)", a.connParams(), a.ReadType, len(a.Symbols))
 
 	err := a.client.Close()
 	a.client = nil
 	if err != nil {
-		a.connLogger().Errorf("Closing connection to PLC failed: %v", err)
+		a.Log.Errorf("Closing connection to PLC (%s) failed: %v", a.connParams(), err)
 		return err
 	}
 	a.Log.Debug("Closed connection to PLC")

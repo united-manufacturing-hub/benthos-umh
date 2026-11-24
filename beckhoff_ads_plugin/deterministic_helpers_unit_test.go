@@ -343,7 +343,7 @@ var _ = Describe("Plugin Internal Functions", func() {
 			Expect(symbols[0].Name).To(Equal("MAIN.Var"))
 			Expect(symbols[0].MaxDelay).To(Equal(100*time.Millisecond), "default kept")
 			Expect(symbols[0].CycleTime).To(Equal(1000*time.Millisecond), "default kept")
-			Expect(warnings).To(ContainElement(ContainSubstring("use maxDelay=100ms or cycleTime=10ms")))
+			Expect(warnings).To(ContainElement(MatchError(ContainSubstring("use maxDelay=100ms or cycleTime=10ms"))))
 		})
 
 		It("ignores an unknown option key and names it", func() {
@@ -353,10 +353,10 @@ var _ = Describe("Plugin Internal Functions", func() {
 			Expect(symbols[0].Name).To(Equal("MAIN.Var"))
 			Expect(symbols[0].CycleTime).To(Equal(1000*time.Millisecond), "default kept")
 			Expect(symbols[0].MaxDelay).To(Equal(100*time.Millisecond), "default kept")
-			Expect(warnings).To(ContainElement(SatisfyAll(
+			Expect(warnings).To(ContainElement(MatchError(SatisfyAll(
 				ContainSubstring(`ignoring unknown option "cycletime"`),
 				ContainSubstring("supported: maxDelay, cycleTime"),
-			)))
+			))))
 		})
 
 		It("keeps the default for a value that is not a duration, and applies the rest", func() {
@@ -365,7 +365,7 @@ var _ = Describe("Plugin Internal Functions", func() {
 			symbols, warnings := CreateSymbolList([]string{"MAIN.Var:cycleTime=fast:maxDelay=1h"}, 1000*time.Millisecond, 100*time.Millisecond)
 			Expect(symbols[0].CycleTime).To(Equal(1000*time.Millisecond), "unparseable value falls back to the default")
 			Expect(symbols[0].MaxDelay).To(Equal(time.Hour), "the valid option beside it still applies")
-			Expect(warnings).To(ContainElement(ContainSubstring(`ignoring invalid cycleTime value "fast"`)))
+			Expect(warnings).To(ContainElement(MatchError(ContainSubstring(`ignoring invalid cycleTime value "fast"`))))
 			Expect(warnings).To(HaveLen(1), "only the bad option warns")
 		})
 
@@ -1295,24 +1295,24 @@ var _ = Describe("logConnectFailure", func() {
 		a, recs := newInput()
 		err := fmt.Errorf("DownloadDataTypes failed: %w", adsLib.ErrTransportClosed)
 
-		Expect(a.logConnectFailure(context.Background(), "Loading the table failed", err)).To(MatchError(err))
+		a.logConnectFailure(err)
 
 		Expect(*recs).To(HaveLen(1))
 		Expect((*recs)[0].Level).To(Equal(slog.LevelWarn))
 		Expect((*recs)[0].Msg).To(ContainSubstring("retries"))
 		// The hint describes a rejected session, so it must not appear here.
-		Expect((*recs)[0].Attrs).NotTo(HaveKey("hint"))
+		Expect((*recs)[0].Msg).NotTo(ContainSubstring("hint"))
 	})
 
 	It("errors with a hint when the PLC rejected the session", func() {
 		a, recs := newInput()
 		err := errors.New("ADS error 0x706")
 
-		Expect(a.logConnectFailure(context.Background(), "Connecting to PLC failed", err)).To(MatchError(err))
+		a.logConnectFailure(err)
 
 		Expect(*recs).To(HaveLen(1))
 		Expect((*recs)[0].Level).To(Equal(slog.LevelError))
-		Expect((*recs)[0].Attrs).To(HaveKeyWithValue("hint", ContainSubstring("targetAMS")))
+		Expect((*recs)[0].Msg).To(ContainSubstring("hint: the PLC accepted the TCP connection then rejected the ADS session - check that targetAMS"))
 	})
 
 	It("errors on the activation failure, which wraps a dropped transport", func() {
@@ -1321,31 +1321,20 @@ var _ = Describe("logConnectFailure", func() {
 		a, recs := newInput()
 		err := errors.New(`route registration during connect: route "benthosADS-1.2.3.4" was registered but the PLC did not serve it within 10s (3 redials): ads: client transport closed`)
 
-		a.logConnectFailure(context.Background(), "Connecting to PLC failed", err)
+		a.logConnectFailure(err)
 
 		Expect((*recs)[0].Level).To(Equal(slog.LevelError))
-		Expect((*recs)[0].Attrs).To(HaveKeyWithValue("hint", ContainSubstring("hostIP")))
+		Expect((*recs)[0].Msg).To(ContainSubstring("hint: " + routeFaultHint))
 	})
 
 	It("keeps a route the PLC will not serve an error, since it needs a person", func() {
 		a, recs := newInput()
 		err := fmt.Errorf("connect: %w", adsLib.ErrRouteNotServed)
 
-		a.logConnectFailure(context.Background(), "Connecting to PLC failed", err)
+		a.logConnectFailure(err)
 
 		Expect((*recs)[0].Level).To(Equal(slog.LevelError))
-		Expect((*recs)[0].Attrs).To(HaveKeyWithValue("hint", ContainSubstring("hostIP")))
-	})
-
-	It("drops to debug during shutdown, like every other aborted operation", func() {
-		a, recs := newInput()
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-
-		a.logConnectFailure(ctx, "Connecting to PLC failed", adsLib.ErrTransportClosed)
-
-		Expect(*recs).To(HaveLen(1))
-		Expect((*recs)[0].Level).To(Equal(slog.LevelDebug))
+		Expect((*recs)[0].Msg).To(ContainSubstring("hint: " + routeFaultHint))
 	})
 })
 
@@ -1471,28 +1460,27 @@ var _ = Describe("logReadFailure", func() {
 		a, recs := newInput(&fakeClient{})
 		err := fmt.Errorf("batch read failed: SumRead failed: %w", context.DeadlineExceeded)
 
-		a.logReadFailure(context.Background(), 2, err)
+		a.logReadFailure(2, err)
 
 		Expect(*recs).To(HaveLen(1))
 		Expect((*recs)[0].Level).To(Equal(slog.LevelWarn))
-		Expect((*recs)[0].Msg).To(ContainSubstring("requestTimeout"))
-		Expect((*recs)[0].Attrs).To(HaveKeyWithValue("requestTimeout", "5s"))
-		Expect((*recs)[0].Attrs).To(HaveKeyWithValue("symbols", "2"))
+		Expect((*recs)[0].Msg).To(ContainSubstring("read of 2 symbols within requestTimeout (5s)"))
 	})
 
-	It("warns that it is reconnecting when the session is gone", func() {
-		a, recs := newInput(&fakeClient{closed: true})
+	It("warns that it is reconnecting when the session is gone, whatever the error", func() {
+		a, recs := newInput(&fakeClient{closed: true, multiErr: errors.New("read failed")})
 
-		a.logReadFailure(context.Background(), 2, errors.New("read failed"))
+		_, _, err := a.ReadBatchPull(context.Background())
 
-		Expect((*recs)[0].Level).To(Equal(slog.LevelWarn))
-		Expect((*recs)[0].Msg).To(ContainSubstring("reconnecting"))
+		Expect(err).To(MatchError(service.ErrNotConnected))
+		Expect(levelsOf(recs, slog.LevelWarn)).To(Equal([]slog.Level{slog.LevelWarn}))
+		Expect(*recs).To(ContainElement(HaveField("Msg", ContainSubstring("reconnecting"))))
 	})
 
 	It("warns on a dropped transport", func() {
 		a, recs := newInput(&fakeClient{})
 
-		a.logReadFailure(context.Background(), 2, fmt.Errorf("read: %w", adsLib.ErrTransportClosed))
+		a.logReadFailure(2, fmt.Errorf("read: %w", adsLib.ErrTransportClosed))
 
 		Expect((*recs)[0].Level).To(Equal(slog.LevelWarn))
 		Expect((*recs)[0].Msg).To(ContainSubstring("dropped"))
@@ -1501,19 +1489,20 @@ var _ = Describe("logReadFailure", func() {
 	It("keeps an unrecognized failure at error", func() {
 		a, recs := newInput(&fakeClient{})
 
-		a.logReadFailure(context.Background(), 2, errors.New("ADS error 0x706"))
+		a.logReadFailure(2, errors.New("ADS error 0x706"))
 
 		Expect((*recs)[0].Level).To(Equal(slog.LevelError))
 	})
 
 	It("drops to debug during shutdown", func() {
-		a, recs := newInput(&fakeClient{})
+		a, recs := newInput(&fakeClient{multiErr: context.DeadlineExceeded})
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		a.logReadFailure(ctx, 2, context.DeadlineExceeded)
+		_, _, err := a.ReadBatchPull(ctx)
 
-		Expect((*recs)[0].Level).To(Equal(slog.LevelDebug))
+		Expect(err).To(MatchError(context.Canceled))
+		Expect(levelsOf(recs, slog.LevelWarn)).To(BeEmpty())
 	})
 
 	It("reports a failed poll exactly once, and keeps polling", func() {
@@ -1588,8 +1577,7 @@ var _ = Describe("sessionConfig", func() {
 		a.onSessionEvent(SessionEvent(99), "something-new")
 
 		Expect(levelsOf(recs, slog.LevelWarn)).To(Equal([]slog.Level{slog.LevelWarn}))
-		Expect((*recs)[0].Attrs).To(HaveKeyWithValue("event", "99"))
-		Expect((*recs)[0].Attrs).To(HaveKeyWithValue("reason", "something-new"))
+		Expect((*recs)[0].Msg).To(ContainSubstring("event 99 (something-new)"))
 		Expect(a.degradedReason.Load()).To(BeNil())
 	})
 })
@@ -1618,8 +1606,8 @@ var _ = Describe("setupNotifications", func() {
 		// go-ads reports this per symbol rather than as an error, so an
 		// all-skipped batch would otherwise look like a successful connect.
 		a := newInput(&fakeClient{notifyResults: []NotifyResult{
-			{SymbolName: "MAIN.a", Skipped: true},
-			{SymbolName: "MAIN.b", Skipped: true},
+			{SymbolName: "MAIN.a", Skipped: errors.New("symbol not found")},
+			{SymbolName: "MAIN.b", Skipped: errors.New("symbol not found")},
 		}})
 
 		Expect(a.setupNotifications(context.Background())).To(MatchError(ContainSubstring("no symbols registered")))
@@ -1639,7 +1627,7 @@ var _ = Describe("setupNotifications partial success", func() {
 			Symbols:          []PlcSymbol{{Name: "MAIN.ok"}, {Name: "MAIN.typo"}, {Name: "MAIN.refused"}},
 			client: &fakeClient{notifyResults: []NotifyResult{
 				{SymbolName: "MAIN.ok", Registered: true},
-				{SymbolName: "MAIN.typo", Skipped: true},
+				{SymbolName: "MAIN.typo", Skipped: errors.New("symbol not found")},
 				{SymbolName: "MAIN.refused", Code: 0x70A},
 			}},
 		}
@@ -1695,7 +1683,7 @@ var _ = Describe("ReadBatch dispatch", func() {
 var _ = Describe("BatchReadError", func() {
 	It("counts the failures against the batch size", func() {
 		err := &BatchReadError{Requested: 40, Failed: []NotifyResult{
-			{SymbolName: "MAIN.typo", Skipped: true},
+			{SymbolName: "MAIN.typo", Skipped: errors.New("symbol not found")},
 			{SymbolName: "MAIN.gone", Code: 0x710},
 		}}
 		Expect(err.Error()).To(Equal("2 of 40 symbols failed"))
@@ -1720,15 +1708,15 @@ var _ = Describe("finishConnect failure branches", func() {
 		}, recs
 	}
 
-	DescribeTable("reports each failed step exactly once",
+	DescribeTable("returns each failed step without logging it",
 		func(client *fakeClient, readType string, wantErr string) {
 			a, recs := newInput(client, readType)
 
 			err := a.finishConnect(context.Background())
 
 			Expect(err).To(MatchError(ContainSubstring(wantErr)))
-			// One line per failure: the step used to log the error it then returned.
-			Expect(levelsOf(recs, slog.LevelWarn)).To(HaveLen(1))
+			// Connect logs the returned error once, with logConnectFailure.
+			Expect(levelsOf(recs, slog.LevelWarn)).To(BeEmpty())
 		},
 		Entry("connect refused",
 			&fakeClient{connectErr: errors.New("ADS error 0x706")}, "interval", "0x706"),
@@ -2429,7 +2417,7 @@ var _ = Describe("waitForInitialSamples", func() {
 
 		Expect(a.waitForInitialSamples(context.Background(), []NotifyResult{
 			{SymbolName: "MAIN.ok", Registered: true},
-			{SymbolName: "MAIN.rejected", Skipped: true},
+			{SymbolName: "MAIN.rejected", Skipped: errors.New("symbol not found")},
 		})).To(Succeed())
 		Expect(a.pendingInitial).To(HaveLen(1), "a rejected symbol never sends a sample")
 	})

@@ -70,8 +70,7 @@ func buildSessionOptions(ctx context.Context, cfg SessionConfig, log *service.Lo
 		routeName := fmt.Sprintf("benthosADS-%s", hostAddr)
 		// Not "registering": go-ads probes first and registers only when the PLC
 		// has no usable route, then logs which of the two it did.
-		log.With("routeName", routeName, "clientIP", hostAddr, "targetIP", cfg.TargetIP).
-			Debug("Route registration is configured for this session")
+		log.Debugf("Route registration is configured for this session: route %q, client IP %s, target IP %s", routeName, hostAddr, cfg.TargetIP)
 		opts = append(opts, adsLib.WithRoute(routeName, cfg.Username, cfg.Password), adsLib.WithHostIP(hostAddr))
 	}
 
@@ -196,7 +195,7 @@ func (c *goADSClient) ReadMultipleSymbols(ctx context.Context, names []string) (
 		for i, item := range batchErr.Items {
 			failed[i] = NotifyResult{
 				SymbolName: item.Symbol,
-				Skipped:    item.Skipped != nil,
+				Skipped:    item.Skipped,
 				Code:       uint32(item.Error),
 			}
 		}
@@ -243,7 +242,7 @@ func (c *goADSClient) AddNotifications(ctx context.Context, cfgs []NotifyConfig,
 		out[i] = NotifyResult{
 			SymbolName: cfgs[i].SymbolName,
 			Registered: r.Skipped == nil && r.Error == adsLib.ReturnCodeNoErrors,
-			Skipped:    r.Skipped != nil,
+			Skipped:    r.Skipped,
 			Code:       uint32(r.Error),
 		}
 	}

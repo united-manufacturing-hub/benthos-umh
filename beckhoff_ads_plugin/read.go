@@ -63,24 +63,20 @@ func (a *AdsCommInput) closeHandler() {
 
 // newSymbolMessage is the single message-build site: payload is typed via parse.go
 // (base type preferred, data type fallback); metadata carries symbol/type/size/timestamp.
-// logReadFailure logs a failed poll once, at the severity that matches what has
-// to happen next. Mirrors logConnectFailure: a PLC that did not answer in time
-// is retried on the next poll, anything unrecognized keeps ERROR.
-func (a *AdsCommInput) logReadFailure(ctx context.Context, symbols int, err error) {
-	log := a.Log.With("symbols", symbols, "requestTimeout", a.RequestTimeout.String())
+// logReadFailure logs a failed poll of symbols once, at the severity that
+// matches what has to happen next. Mirrors logConnectFailure: a PLC that did
+// not answer in time and a dropped connection are retried on the next poll,
+// anything else is an error.
+func (a *AdsCommInput) logReadFailure(symbols int, err error) {
 	switch {
-	case shuttingDown(ctx):
-		a.Log.Debugf("Read aborted during shutdown: %v", err)
-	case a.client != nil && a.client.IsClosed():
-		log.Warnf("Read failed because the session is gone; reconnecting: %v", err)
 	case errors.Is(err, context.DeadlineExceeded):
 		// The PLC was reachable but did not reply within requestTimeout, so the
 		// poll is lost and the next one is due immediately.
-		log.Warnf("The PLC did not answer this read within requestTimeout; retrying on the next poll: %v", err)
+		a.Log.Warnf("The PLC did not answer the read of %d symbols within requestTimeout (%s); retrying on the next poll: %v", symbols, a.RequestTimeout, err)
 	case isTransportGone(err):
-		log.Warnf("Read failed because the connection dropped; retrying on the next poll: %v", err)
+		a.Log.Warnf("Reading %d symbols failed because the connection dropped; retrying on the next poll: %v", symbols, err)
 	default:
-		log.Errorf("Read failed: %v", err)
+		a.Log.Errorf("Reading %d symbols failed: %v", symbols, err)
 	}
 }
 
@@ -123,9 +119,9 @@ func (a *AdsCommInput) logBatchFailures(e *BatchReadError) {
 			continue
 		}
 		a.warnedBatchFailures[f.SymbolName] = true
-		if f.Skipped {
-			a.Log.Warnf("Batch read produced no value for symbol %q; the other %d symbols are unaffected",
-				f.SymbolName, e.Requested-len(e.Failed))
+		if f.Skipped != nil {
+			a.Log.Warnf("Batch read produced no value for symbol %q; the other %d symbols are unaffected: %v",
+				f.SymbolName, e.Requested-len(e.Failed), f.Skipped)
 			continue
 		}
 		a.Log.Warnf("PLC refused symbol %q with ADS error 0x%X (check the symbol name); the other %d symbols are unaffected",
@@ -220,8 +216,11 @@ func (a *AdsCommInput) ReadBatchPull(ctx context.Context) (service.MessageBatch,
 	}
 	if err != nil {
 		if a.client.IsClosed() {
-			// Session permanently dead — async close to avoid blocking.
-			a.logReadFailure(ctx, len(names), err)
+			// Session permanently dead — async close to avoid blocking. The
+			// session state says what happened, not the error.
+			if !shuttingDown(ctx) {
+				a.Log.Warnf("Reading %d symbols failed because the session is gone; reconnecting: %v", len(names), err)
+			}
 			a.closeHandler()
 			return nil, nil, service.ErrNotConnected
 		}
@@ -231,7 +230,7 @@ func (a *AdsCommInput) ReadBatchPull(ctx context.Context) (service.MessageBatch,
 		}
 		// Transient: reconnecting or PLC not ready. Return empty batch immediately so
 		// the caller controls the retry rate; small sleep avoids spinning in production.
-		a.logReadFailure(ctx, len(names), err)
+		a.logReadFailure(len(names), err)
 		select {
 		case <-ctx.Done():
 			return nil, nil, ctx.Err()
