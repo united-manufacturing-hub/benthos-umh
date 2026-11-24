@@ -38,10 +38,14 @@ new_core() {
 }
 
 # Runs the script for version $1 from another directory; prints the exit code.
+# With $2, also prints whether stderr contains $2, so each failure case proves
+# which check stopped it.
 run() {
-  local rc=0
-  (cd "$ROOT" && VERSION="$1" "$SCRIPT" "$CORE" >/dev/null 2>&1) || rc=$?
-  echo "$rc"
+  local rc=0 err
+  err="$(cd "$ROOT" && VERSION="$1" "$SCRIPT" "$CORE" 2>&1 >/dev/null)" || rc=$?
+  if [ -z "${2:-}" ]; then echo "$rc"
+  elif [[ "$err" == *"$2"* ]]; then echo "$rc matched"
+  else echo "$rc stderr: $err"; fi
 }
 
 pin() { sed -n 's/^BENTHOS_UMH_VERSION = //p' "$CORE/Makefile"; }
@@ -62,32 +66,34 @@ new_core
 check "a re-run at the pinned version succeeds" "0" "$(run v0.17.0)"
 
 new_core
-check "a version without the v prefix fails" "1" "$(run 0.17.1)"
+check "a version without the v prefix fails" "1 matched" "$(run 0.17.1 "VERSION must be vX.Y.Z")"
 check "a rejected version leaves the Makefile pin alone" "0.17.0" "$(pin)"
 new_core
-check "a version that is not X.Y.Z fails" "1" "$(run v0.17)"
+check "a version that is not X.Y.Z fails" "1 matched" "$(run v0.17 "VERSION must be vX.Y.Z")"
 new_core
-check "an empty version fails" "1" "$(run "")"
+check "an empty version fails" "1 matched" "$(run "" "VERSION must be vX.Y.Z")"
 
 new_core; CORE=""
-check "a run without the umh-core directory fails" "1" "$(run v0.17.1)"
+check "a run without the umh-core directory fails" "1 matched" "$(run v0.17.1 "usage:")"
 
 new_core; sed -i.bak '/^BENTHOS_UMH_VERSION/d' "$CORE/Makefile"
-check "a Makefile without BENTHOS_UMH_VERSION fails" "1" "$(run v0.17.1)"
+check "a Makefile without BENTHOS_UMH_VERSION fails" "1 matched" "$(run v0.17.1 "no 'BENTHOS_UMH_VERSION = ' line")"
 
 new_core; rm "$CORE/pkg/benthosmetrics/testdata/VERSION"
-check "a missing metrics fixture version fails" "1" "$(run v0.17.1)"
+check "a missing metrics fixture version fails" "1 matched" "$(run v0.17.1 "did umh-core move the benthosmetrics fixture")"
 
 new_core "exit 1"
-check "a failing fixture target fails" "1" "$(run v0.17.1)"
+check "a failing fixture target fails" "1 matched" "$(run v0.17.1 "make benthosmetrics-fixture failed")"
 
 new_core "true"
-check "a fixture target that does not write the version fails" "1" "$(run v0.17.0)"
+check "a fixture target that does not write the version fails" "1 matched" "$(run v0.17.0 "did not write")"
 
 new_core "echo 0.16.2 > \$(PWD)/pkg/benthosmetrics/testdata/VERSION"
-check "a fixture target that writes another version fails" "1" "$(run v0.17.1)"
+check "a fixture target that writes another version fails" "1 matched" "$(run v0.17.1 "is '0.16.2', want '0.17.1'")"
 
 new_core; printf 'BENTHOS_UMH_VERSION = 0.17.0\n' > "$CORE/Makefile"
-check "a Makefile without the fixture target fails" "1" "$(run v0.17.1)"
+check "a Makefile without the fixture target fails" "1 matched" "$(run v0.17.1 "make benthosmetrics-fixture failed")"
+check "a failed bump leaves the metrics fixture version unwritten" "" \
+  "$(cat "$CORE/pkg/benthosmetrics/testdata/VERSION" 2>/dev/null || true)"
 
 exit "$FAILED"
