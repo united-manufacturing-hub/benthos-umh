@@ -43,8 +43,9 @@ rm Makefile.bak
 [ -f "$fixture_version" ] || fail "$dir/$fixture_version does not exist; did umh-core move the benthosmetrics fixture?"
 # Removed first, so the check below proves the target wrote it in this run.
 rm "$fixture_version"
-make benthosmetrics-fixture || fail "make benthosmetrics-fixture failed in $dir"
+make benthosmetrics-fixture \
+  || fail "make benthosmetrics-fixture failed in $dir. The log above shows whether the image did not pull or benthos did not start with pkg/benthosmetrics/testdata/capture.yaml."
 
-[ -f "$fixture_version" ] || fail "make benthosmetrics-fixture did not write $dir/$fixture_version"
+[ -f "$fixture_version" ] || fail "make benthosmetrics-fixture did not write $dir/$fixture_version; did umh-core change the target?"
 recorded="$(tr -d '[:space:]' < "$fixture_version")"
 [ "$recorded" = "$version" ] || fail "$dir/$fixture_version is '$recorded', want '$version'"

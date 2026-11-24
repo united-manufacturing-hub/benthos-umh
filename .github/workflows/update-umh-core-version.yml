@@ -25,26 +25,19 @@ on:
 jobs:
   update-umh-core:
     runs-on: depot-ubuntu-24.04
-    # Pulling the image and recording the fixture take about a minute.
+    # Covers the image pull and umh-core's fixture recording.
     timeout-minutes: 15
     env:
       VERSION: ${{ inputs.tag }}
     steps:
-      - name: Generate GitHub App Token
-        id: generate-token
-        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3
-        with:
-          app-id: ${{ secrets.PR_APP_ID }}
-          private-key: ${{ secrets.PR_APP_PK }}
-          repositories: united-manufacturing-hub
-
+      # The repository is public: no token, so umh-core's Makefile runs before
+      # the job holds one.
       - name: Checkout united-manufacturing-hub Repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
           repository: united-manufacturing-hub/united-manufacturing-hub
           ref: staging
-          token: ${{ steps.generate-token.outputs.token }}
           path: united-manufacturing-hub
 
       # The pushed commit, not the tag: the release PR adds .changelog/<version>/
@@ -58,10 +51,6 @@ jobs:
             .changelog
             .github/scripts
 
-      # Sets BENTHOS_UMH_VERSION and re-records umh-core's benthosmetrics
-      # /metrics fixture from the released image, which also writes the version
-      # to pkg/benthosmetrics/testdata/VERSION. umh-core's fixture spec fails
-      # until that file equals the Makefile pin.
       - name: Bump benthos-umh in umh-core
         run: benthos-umh/.github/scripts/bump-umh-core.sh united-manufacturing-hub/umh-core
 
@@ -86,6 +75,14 @@ jobs:
       - name: Write PR body
         run: tail -n +2 "benthos-umh/.changelog/${VERSION}.md" > pr-body.md
 
+      - name: Generate GitHub App Token
+        id: generate-token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3
+        with:
+          app-id: ${{ secrets.PR_APP_ID }}
+          private-key: ${{ secrets.PR_APP_PK }}
+          repositories: united-manufacturing-hub
+
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
         with:
@@ -103,6 +100,8 @@ jobs:
 
   update-management-console:
     runs-on: depot-ubuntu-24.04
+    # Covers building the binary for make generate-schema.
+    timeout-minutes: 20
     env:
       VERSION: ${{ inputs.tag }}
     steps:

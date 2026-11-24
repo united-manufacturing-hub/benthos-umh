@@ -14,8 +14,9 @@
 # limitations under the License.
 
 # Tests for bump-umh-core.sh in throwaway umh-core directories. Their
-# benthosmetrics-fixture target writes VERSION as umh-core's does, through
-# $(PWD), but records no fixture, so no Docker is needed.
+# benthosmetrics-fixture target only writes VERSION, so no Docker is needed. It
+# writes through $(PWD), so a run from another directory fails, as the real
+# target's capture.yaml mount would.
 # Runnable locally:
 #   .github/scripts/bump-umh-core.test.sh
 
@@ -72,6 +73,8 @@ new_core
 check "a version that is not X.Y.Z fails" "1 matched" "$(run v0.17 "VERSION must be vX.Y.Z")"
 new_core
 check "an empty version fails" "1 matched" "$(run "" "VERSION must be vX.Y.Z")"
+new_core
+check "a version with a suffix fails" "1 matched" "$(run v0.17.1-rc.1 "VERSION must be vX.Y.Z")"
 
 new_core; CORE=""
 check "a run without the umh-core directory fails" "1 matched" "$(run v0.17.1 "usage:")"
@@ -93,7 +96,8 @@ check "a fixture target that writes another version fails" "1 matched" "$(run v0
 
 new_core; printf 'BENTHOS_UMH_VERSION = 0.17.0\n' > "$CORE/Makefile"
 check "a Makefile without the fixture target fails" "1 matched" "$(run v0.17.1 "make benthosmetrics-fixture failed")"
-check "a failed bump leaves the metrics fixture version unwritten" "" \
+# The stale VERSION is gone, so umh-core's fixture spec cannot pass on it.
+check "a failed bump removes the stale metrics fixture version" "" \
   "$(cat "$CORE/pkg/benthosmetrics/testdata/VERSION" 2>/dev/null || true)"
 
 exit "$FAILED"
