@@ -17,6 +17,7 @@ package beckhoff_ads_plugin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -61,25 +62,25 @@ func (a *AdsCommInput) closeHandler() {
 	}
 }
 
-// newSymbolMessage is the single message-build site: payload is typed via parse.go
-// (base type preferred, data type fallback); metadata carries symbol/type/size/timestamp.
-// logReadFailure logs a failed poll of symbols once, at the severity that
-// matches what has to happen next. Mirrors logConnectFailure: a PLC that did
-// not answer in time and a dropped connection are retried on the next poll,
-// anything else is an error.
+// logReadFailure logs a failed poll of symbols once, at the level that
+// matches what has to happen next. Like logConnectFailure, it logs a warning
+// for a PLC that did not answer in time and for a dropped connection, because
+// the next poll retries both. Anything else is an error.
 func (a *AdsCommInput) logReadFailure(symbols int, err error) {
 	switch {
-	case errors.Is(err, context.DeadlineExceeded):
+	case isReadTimeout(err):
 		// The PLC was reachable but did not reply within requestTimeout, so the
 		// poll is lost and the next one is due immediately.
-		a.Log.Warnf("The PLC did not answer the read of %d symbols within requestTimeout (%s); retrying on the next poll: %v", symbols, a.RequestTimeout, err)
+		a.Log.Warn(fmt.Errorf("the PLC did not answer the read of %d symbols within requestTimeout (%s); retrying on the next poll: %w", symbols, a.RequestTimeout, err))
 	case isTransportGone(err):
-		a.Log.Warnf("Reading %d symbols failed because the connection dropped; retrying on the next poll: %v", symbols, err)
+		a.Log.Warn(fmt.Errorf("reading %d symbols failed because the connection dropped; retrying on the next poll: %w", symbols, err))
 	default:
-		a.Log.Errorf("Reading %d symbols failed: %v", symbols, err)
+		a.Log.Error(fmt.Errorf("reading %d symbols failed: %w", symbols, err))
 	}
 }
 
+// newSymbolMessage is the single message-build site: payload is typed via parse.go
+// (base type preferred, data type fallback); metadata carries symbol/type/size/timestamp.
 func (a *AdsCommInput) newSymbolMessage(sym *PlcSymbol, value string, ts time.Time) *service.Message {
 	typeName := sym.BaseType
 	if typeName == "" {
@@ -120,12 +121,12 @@ func (a *AdsCommInput) logBatchFailures(e *BatchReadError) {
 		}
 		a.warnedBatchFailures[f.SymbolName] = true
 		if f.Skipped != nil {
-			a.Log.Warnf("Batch read produced no value for symbol %q; the other %d symbols are unaffected: %v",
-				f.SymbolName, e.Requested-len(e.Failed), f.Skipped)
+			a.Log.Warn(fmt.Errorf("batch read produced no value for symbol %q; the other %d symbols are unaffected: %w",
+				f.SymbolName, e.Requested-len(e.Failed), f.Skipped))
 			continue
 		}
-		a.Log.Warnf("PLC refused symbol %q with ADS error 0x%X (check the symbol name); the other %d symbols are unaffected",
-			f.SymbolName, f.Code, e.Requested-len(e.Failed))
+		a.Log.Warn(kindSymbolConfig.Errorf("PLC refused symbol %q with ADS error 0x%X (check the symbol name); the other %d symbols are unaffected",
+			f.SymbolName, f.Code, e.Requested-len(e.Failed)))
 	}
 }
 
@@ -164,7 +165,7 @@ func (a *AdsCommInput) ReadBatchNotification(ctx context.Context) (service.Messa
 	select {
 	case first = <-a.NotificationChan:
 		if first == nil {
-			a.Log.Warnf("Received nil update from ADS library, skipping")
+			a.Log.Warn(kindInternalBug.Errorf("received nil update from ADS library, skipping"))
 			return nil, func(_ context.Context, _ error) error { return nil }, nil
 		}
 	case <-waitCtx.Done():
@@ -219,7 +220,7 @@ func (a *AdsCommInput) ReadBatchPull(ctx context.Context) (service.MessageBatch,
 			// Session permanently dead — async close to avoid blocking. The
 			// session state says what happened, not the error.
 			if !shuttingDown(ctx) {
-				a.Log.Warnf("Reading %d symbols failed because the session is gone; reconnecting: %v", len(names), err)
+				a.Log.Warn(kindConnectionDropped.Errorf("reading %d symbols failed because the session is gone; reconnecting: %w", len(names), err))
 			}
 			a.closeHandler()
 			return nil, nil, service.ErrNotConnected
@@ -261,7 +262,7 @@ func (a *AdsCommInput) ReadBatchPull(ctx context.Context) (service.MessageBatch,
 	// Fall back to individual reads if batch returned no results: some PLCs
 	// don't support ADS sum read commands, silently skipping all symbols.
 	if len(msgs) == 0 && len(a.Symbols) > 0 {
-		a.Log.Warnf("Batch read returned no results for %d symbols, falling back to individual reads", len(a.Symbols))
+		a.Log.Warn(kindBatchReadFallback.Errorf("batch read returned no results for %d symbols, falling back to individual reads", len(a.Symbols)))
 		for i := range a.Symbols {
 			if shuttingDown(ctx) {
 				a.Log.Debugf("Individual reads abandoned during shutdown at %q", a.Symbols[i].Name)
@@ -269,7 +270,7 @@ func (a *AdsCommInput) ReadBatchPull(ctx context.Context) (service.MessageBatch,
 			}
 			val, readErr := a.client.ReadFromSymbol(ctx, a.Symbols[i].Name)
 			if readErr != nil {
-				a.Log.Errorf("Individual read failed for %s: %v", a.Symbols[i].Name, readErr)
+				a.Log.Error(fmt.Errorf("individual read failed for %s: %w", a.Symbols[i].Name, readErr))
 				continue
 			}
 			msgs = append(msgs, a.newSymbolMessage(&a.Symbols[i], val, time.Now()))

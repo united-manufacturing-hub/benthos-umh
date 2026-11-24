@@ -14,6 +14,26 @@
 
 package beckhoff_ads_plugin
 
+import (
+	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/errclass"
+)
+
 // SanitizeSymbolName exposes the plugin's own tag-name sanitizer to the external
 // test package, which asserted against a hand-rolled copy that could drift.
 var SanitizeSymbolName = sanitize
+
+// NewLogger wraps a Benthos logger the way the plugin does, for tests that
+// build an AdsCommInput by hand.
+var NewLogger = classified
+
+// classified returns l with this input's classification, as NewAdsCommInput
+// gets it from the Benthos resources.
+func classified(l *service.Logger) *errclass.Logger {
+	return errclass.NewLogger(service.MockResources(service.MockResourcesOptUseLogger(l)), classifier)
+}
+
+// kindUnclassified is "ads::unclassified", which Classify returns for an error
+// no rule knows, and for no error at all.
+var kindUnclassified = ads.Unclassified()
