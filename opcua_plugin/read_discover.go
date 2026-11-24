@@ -329,7 +329,9 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 	if g.SubscribeEnabled {
 		g.Log.Infof("Subscription is enabled, therefore start subscribing to the selected notes...")
 
-		g.Subscription, err = g.Client.Subscribe(ctx, &opcua.SubscriptionParameters{
+		// Keep the result local until Subscribe succeeds: the nil *opcua.Subscription
+		// returned with an error would make g.Subscription != nil.
+		sub, err := g.Client.Subscribe(ctx, &opcua.SubscriptionParameters{
 			Interval: opcua.DefaultSubscriptionInterval,
 		}, g.SubNotifyChan)
 		if err != nil {
@@ -337,6 +339,7 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 			_ = g.Close(ctx) // ensure that if something fails here, the connection is always safely closed
 			return err
 		}
+		g.Subscription = sub
 
 		monitoredNodes, err := g.MonitorBatched(ctx, nodeList)
 		if err != nil {
@@ -546,7 +549,7 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 		monitoredRequests := make([]*ua.MonitoredItemCreateRequest, 0, len(batch))
 
 		numFilteredNodes := 0
-		for pos, nodeDef := range batch {
+		for _, nodeDef := range batch {
 			var filter *ua.ExtensionObject
 
 			// Only apply deadband filter if:
@@ -576,7 +579,7 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 				},
 				MonitoringMode: ua.MonitoringModeReporting,
 				RequestedParameters: &ua.MonitoringParameters{
-					ClientHandle:     uint32(batchRange.Start + pos),
+					ClientHandle:     g.handles.allocate(nodeDef),
 					DiscardOldest:    true,
 					Filter:           filter,
 					QueueSize:        g.QueueSize,
@@ -603,7 +606,18 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 			return totalMonitored, errors.New("received nil response from Monitor")
 		}
 
-		for i, result := range response.Results {
+		// The server decides how many results it sends, and nothing between
+		// the wire and here checks that against what we asked for. A longer
+		// response would index batch out of range below and panic the input,
+		// so trust only as many results as we have items for.
+		results := response.Results
+		if len(results) > len(batch) {
+			g.Log.Warnf("Server returned %d monitored item results for %d requested items; ignoring the extra ones.",
+				len(results), len(batch))
+			results = results[:len(batch)]
+		}
+
+		for i, result := range results {
 			if !errors.Is(result.StatusCode, ua.StatusOK) {
 				failedNode := batch[i].NodeID.String()
 
@@ -672,7 +686,8 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 			g.Log.Infof("DataChangeFilter trial succeeded. Server supports filter - capability confirmed and cached for this connection.")
 		}
 
-		monitoredNodes := len(response.Results)
+		// Count what we asked for, not what the server claims to have created.
+		monitoredNodes := len(results)
 		totalMonitored += monitoredNodes
 		g.Log.Infof("Successfully monitored %d nodes in current batch", monitoredNodes)
 		if g.DeadbandType != "none" {
@@ -686,8 +701,8 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 	return totalMonitored, nil
 }
 
-// UpdateNodePaths updates the node paths to use the nodeID instead of the browseName
-// if the browseName is not unique
+// UpdateNodePaths replaces the last segment of every path that more than one
+// node has with the sanitized NodeID of each of those nodes.
 func UpdateNodePaths(nodes []NodeDef) {
 	// Track which paths have been seen and how many times
 	pathCount := make(map[string][]int)
@@ -700,16 +715,10 @@ func UpdateNodePaths(nodes []NodeDef) {
 	// Update paths that have duplicates
 	for path, indices := range pathCount {
 		if len(indices) > 1 {
+			parentPath, _ := splitLast(path)
 			// This path appears multiple times, update all of them
 			for _, idx := range indices {
-				nodePathSplit := strings.Split(path, ".")
-				parentPath := ""
-				if len(nodePathSplit) > 1 {
-					parentPath = strings.Join(nodePathSplit[:len(nodePathSplit)-1], ".")
-				}
-				// Use join() to avoid leading dots for single-segment paths
-				nodePath := join(parentPath, sanitize(nodes[idx].NodeID.String()))
-				nodes[idx].Path = nodePath
+				nodes[idx].Path = join(parentPath, sanitize(nodes[idx].NodeID.String()))
 			}
 		}
 	}

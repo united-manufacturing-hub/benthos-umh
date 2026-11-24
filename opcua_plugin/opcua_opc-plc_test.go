@@ -1105,7 +1105,7 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", FlakeAttem
 				return len(messageBatch)
 			}, 10*time.Second, 100*time.Millisecond).Should(BeNumerically(">=", 1))
 
-			// for each
+			foundStepUp := false
 			for _, message := range messageBatch {
 				opcuaTagPath, err := message.MetaGet("opcua_tag_path")
 				Expect(err).To(BeTrue(), "Could not find opcua_tag_path")
@@ -1123,12 +1123,14 @@ var _ = Describe("Test Against Microsoft OPC UA simulator (opc-plc)", FlakeAttem
 				Expect(err).To(BeTrue(), "Could not find opcua_tag_type")
 				GinkgoT().Log("opcua_tag_type: ", opcuaTagType)
 
-				if opcuaTagPath == "StepUp" {
+				if opcuaTagName == "StepUp" {
+					foundStepUp = true
+					Expect(opcuaTagPath).To(Equal("OpcPlc.Telemetry.Basic"))
 					Expect(opcuaTagGroup).To(Equal("OpcPlc.Telemetry.Basic"))
-					Expect(opcuaTagName).To(Equal("StepUp"))
 					Expect(opcuaTagType).To(Equal("number"))
 				}
 			}
+			Expect(foundStepUp).To(BeTrue(), "no message with opcua_tag_name StepUp")
 
 			// Close connection
 			if input.Client != nil {
