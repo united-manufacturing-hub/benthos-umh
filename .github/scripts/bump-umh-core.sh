@@ -13,8 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Sets BENTHOS_UMH_VERSION in an umh-core checkout's Makefile to VERSION
-# (vX.Y.Z), without the v.
+# Bumps benthos-umh in an umh-core checkout to VERSION (vX.Y.Z):
+#   1. Sets BENTHOS_UMH_VERSION in umh-core/Makefile.
+#   2. Runs umh-core's `make benthosmetrics-fixture`, which re-records
+#      pkg/benthosmetrics/testdata/metrics.txt from the released image and
+#      writes the version to pkg/benthosmetrics/testdata/VERSION. umh-core's
+#      fixture spec fails until that file equals the Makefile pin.
 # Usage:
 #   VERSION=vX.Y.Z .github/scripts/bump-umh-core.sh <umh-core dir>
 
@@ -24,12 +28,23 @@ fail() { echo "::error::$*" >&2; exit 1; }
 
 dir="${1:-}"
 [ -n "$dir" ] || fail "usage: VERSION=vX.Y.Z $0 <umh-core dir>"
-version="${VERSION:-}"
-version="${version#v}"
+[[ "${VERSION:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "VERSION must be vX.Y.Z, got '${VERSION:-}'"
+version="${VERSION#v}"
+fixture_version=pkg/benthosmetrics/testdata/VERSION
 
+# cd, not make -C: the fixture target mounts its config from $(PWD).
 cd "$dir"
 
+grep -q '^BENTHOS_UMH_VERSION = ' Makefile || fail "no 'BENTHOS_UMH_VERSION = ' line in $dir/Makefile"
 # -i.bak, not -i: BSD sed needs the suffix, so the script also runs on macOS.
 sed -i.bak "s/^BENTHOS_UMH_VERSION = .*/BENTHOS_UMH_VERSION = ${version}/" Makefile
 rm Makefile.bak
-grep -q "^BENTHOS_UMH_VERSION = ${version}$" Makefile || fail "BENTHOS_UMH_VERSION in $dir/Makefile is not '${version}'"
+
+[ -f "$fixture_version" ] || fail "$dir/$fixture_version does not exist; did umh-core move the benthosmetrics fixture?"
+# Removed first, so the check below proves the target wrote it in this run.
+rm "$fixture_version"
+make benthosmetrics-fixture || fail "make benthosmetrics-fixture failed in $dir"
+
+[ -f "$fixture_version" ] || fail "make benthosmetrics-fixture did not write $dir/$fixture_version"
+recorded="$(tr -d '[:space:]' < "$fixture_version")"
+[ "$recorded" = "$version" ] || fail "$dir/$fixture_version is '$recorded', want '$version'"

@@ -14,7 +14,7 @@ A bot ([`prepare-release.yml`](.github/workflows/prepare-release.yml)) keeps one
 
 1. Review the changelog in the PR's diff; CI runs every test, PLC tests included. To fix an entry, fix its fragment on `staging`. To stop the release, request changes.
 2. Approve and merge it with a merge commit. [`release.yml`](.github/workflows/release.yml) ships the commit the PR was generated from: it builds the image and binaries, then tags it, publishes the GitHub Release, moves the image's `X.Y` and `latest` tags, and opens the umh-core version bump PR and the ManagementConsole schema PR.
-3. The umh-core bump PR carries a copy of each fragment in `.changelog/vX.Y.Z/`, without the Linear id. Before merging, reword or delete the fragments that umh-core users do not need. Keep at least one, or umh-core's `require-changelog-entry` check fails.
+3. The umh-core bump PR sets `BENTHOS_UMH_VERSION` and re-records umh-core's benthosmetrics `/metrics` fixture from the released image ([`bump-umh-core.sh`](.github/scripts/bump-umh-core.sh)), which also updates `pkg/benthosmetrics/testdata/VERSION`. It carries a copy of each fragment in `.changelog/vX.Y.Z/`, without the Linear id. Before merging, reword or delete the fragments that umh-core users do not need. Keep at least one, or umh-core's `require-changelog-entry` check fails.
 
 A release needs at least one fragment. To release changes that are not user-visible, merge a PR that adds only this fragment:
 

@@ -25,6 +25,8 @@ on:
 jobs:
   update-umh-core:
     runs-on: depot-ubuntu-24.04
+    # Pulling the image and recording the fixture take about a minute.
+    timeout-minutes: 15
     env:
       VERSION: ${{ inputs.tag }}
     steps:
@@ -56,6 +58,10 @@ jobs:
             .changelog
             .github/scripts
 
+      # Sets BENTHOS_UMH_VERSION and re-records umh-core's benthosmetrics
+      # /metrics fixture from the released image, which also writes the version
+      # to pkg/benthosmetrics/testdata/VERSION. umh-core's fixture spec fails
+      # until that file equals the Makefile pin.
       - name: Bump benthos-umh in umh-core
         run: benthos-umh/.github/scripts/bump-umh-core.sh united-manufacturing-hub/umh-core
 
