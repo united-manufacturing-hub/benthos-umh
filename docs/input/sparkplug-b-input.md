@@ -6,6 +6,20 @@ The **Sparkplug B Input plugin** allows the United Manufacturing Hub (UMH) to in
 
 This input plugin is designed to seamlessly integrate Sparkplug-enabled edge devices into the UMH **Unified Namespace**. It automatically decodes Sparkplug messages and enriches them with metadata (such as metric names, types, and timestamps) to fit the UMH-Core data model.
 
+## Sparkplug compliance
+
+The input does not yet comply with Sparkplug B 2.2 or 3.0. It differs from Sparkplug 2.2 in these points:
+
+- The `primary` role publishes the host state on `spBv1.0/STATE/<host_id>` with the text `ONLINE` or `OFFLINE`. Sparkplug 2.2 edge nodes read the host state from `STATE/<host_id>`, and Sparkplug 3.0 edge nodes expect a JSON payload. Edge nodes of either version never see the host as online.
+- The `ONLINE` message, and the `OFFLINE` message it sends on shutdown, are not retained. After an unclean stop, the retained host state on the broker stays `OFFLINE` while the host runs again.
+- The host state messages use `mqtt.qos`. Sparkplug requires QoS 1.
+- The input ignores some valid NDEATH messages, and the edge node stays online. It compares the NDEATH's bdSeq with a stored value that it does not take from the first NBIRTH of a node or from an NBIRTH with bdSeq 0.
+- A DDEATH marks the whole edge node offline instead of the one device.
+- Metrics with alias 0 are not resolved.
+- A host ID with `+`, `/` or `#` is accepted and produces an invalid STATE topic.
+
+Sparkplug 3.0 adds rules the input does not meet either, such as the JSON host state and marking metrics stale after a death. This list is updated as the fixes ship.
+
 ## Sparkplug B in UMH Architecture
 
 ### UMH's Modified Parris Method
@@ -160,7 +174,7 @@ Here's how a Sparkplug B message maps to UMH-Core using the Modified Parris Meth
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `identity.group_id` | `string` | **required** | Sparkplug B Group ID. Also acts as the default subscription filter (`spBv1.0/<group_id>/#`). Override via `subscription.groups`. |
-| `identity.edge_node_id` | `string` | `""` | Required for the `primary` role, where it is used as the Sparkplug v3.0 `host_id` in the STATE topic (`spBv1.0/STATE/<host_id>`). Optional for secondary roles. |
+| `identity.edge_node_id` | `string` | `""` | Required for the `primary` role, where it is used as the Sparkplug `host_id` in the STATE topic (`spBv1.0/STATE/<host_id>`). Optional for secondary roles. |
 
 ### Role Section
 
@@ -346,7 +360,6 @@ input:
 **When to use:**
 - ✅ **Greenfield deployments** - UMH is your only Sparkplug B application
 - ✅ **Full control needed** - You want Edge Nodes to buffer data when offline
-- ✅ **Spec compliance required** - Strict Sparkplug B v3.0 compliance
 
 **Configuration:**
 ```yaml
@@ -356,11 +369,11 @@ input:
       urls: ["tcp://localhost:1883"]
     identity:
       group_id: "FactoryA"
-      edge_node_id: "UMH_Primary"  # Used as the Sparkplug v3.0 host_id
+      edge_node_id: "UMH_Primary"  # Used as the Sparkplug host_id
     role: "primary"
 ```
 
-> For the `primary` role, `identity.edge_node_id` is the Sparkplug v3.0 `host_id`. With the config above, the plugin publishes STATE messages on `spBv1.0/STATE/UMH_Primary`. The startup logs make this explicit: `Primary Host: using identity.edge_node_id='UMH_Primary' as Sparkplug v3.0 host_id for STATE topic spBv1.0/STATE/UMH_Primary`. The field is named `edge_node_id` for consistency with the secondary roles, but in `primary` mode it identifies the host.
+> For the `primary` role, `identity.edge_node_id` is the Sparkplug `host_id`. With the config above, the plugin publishes STATE messages on `spBv1.0/STATE/UMH_Primary`. The startup logs make this explicit: `Primary Host: using identity.edge_node_id='UMH_Primary' as Sparkplug host_id for STATE topic spBv1.0/STATE/UMH_Primary`. The field is named `edge_node_id` for consistency with the secondary roles, but in `primary` mode it identifies the host.
 
 **Technical behavior:** Full Primary Host with STATE publishing and session management.
 
@@ -401,7 +414,6 @@ A cascading effect that occurs when multiple Secondary Hosts simultaneously requ
 - You're building a greenfield Sparkplug B system
 - No other Primary Hosts exist in your infrastructure
 - You need Edge Nodes to respect your online/offline state
-- You require full Sparkplug B specification compliance
 
 
 ### Advanced Configuration Options
@@ -431,7 +443,7 @@ When `subscription.groups` is omitted or empty, the plugin filters to `identity.
 
 ### STATE Topic Behavior (primary role only)
 
-When using `primary` role, the plugin publishes STATE messages according to Sparkplug B v3.0:
+When using `primary` role, the plugin publishes the text `ONLINE` or `OFFLINE` on this topic:
 
 ```
 spBv1.0/STATE/<host_id>
@@ -439,7 +451,7 @@ spBv1.0/STATE/<host_id>
 
 - The `edge_node_id` is used as the `host_id`
 - STATE topics do NOT include `group_id` (per specification)
-- This allows Edge Nodes across all groups to detect the Primary Host
+- Sparkplug 2.2 and 3.0 edge nodes do not recognize this host state; see [Sparkplug compliance](#sparkplug-compliance)
 
 ### Deployment Considerations
 
@@ -564,7 +576,6 @@ The Sparkplug B input plugin processes **bdSeq** values from incoming Edge Node 
 **Stateless Edge Nodes (like Benthos Sparkplug B Output):**
 - bdSeq may reset to 0 on Edge Node component restart
 - This is common in container-based or stateless Edge Node implementations
-- Still compliant within individual component lifecycles
 
 ### Impact on Input Processing
 
@@ -574,5 +585,5 @@ The Sparkplug B input plugin processes **bdSeq** values from incoming Edge Node 
 - This is normal behavior for stateless architectures
 
 **Recommendation:**
-The input plugin handles both persistent and stateless Edge Node bdSeq patterns correctly. No special configuration is needed - the plugin automatically adapts to different Edge Node implementations and their bdSeq behaviors.
+No special configuration is needed for either bdSeq pattern. The input does not yet process every valid NDEATH; see [Sparkplug compliance](#sparkplug-compliance).
 
