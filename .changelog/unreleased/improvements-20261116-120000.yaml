@@ -1,3 +1,0 @@
-kind: improvements
-body: Updated the bundled Redpanda Connect components from v4.116.1 to v4.117.0. Among other changes, the azure_blob_storage output no longer loses data when several writes create the same append blob at once, and parquet_encode can skip type coercion for faster encoding. See the [Redpanda Connect v4.117.0 release notes](https://github.com/redpanda-data/connect/releases/tag/v4.117.0) for the full list
-time: 2026-11-16T12:00:00.000000+01:00
