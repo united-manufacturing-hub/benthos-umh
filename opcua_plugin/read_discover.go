@@ -701,8 +701,8 @@ func (g *OPCUAInput) MonitorBatched(ctx context.Context, nodes []NodeDef) (int, 
 	return totalMonitored, nil
 }
 
-// UpdateNodePaths updates the node paths to use the nodeID instead of the browseName
-// if the browseName is not unique
+// UpdateNodePaths replaces the last segment of every path that more than one
+// node has with the sanitized NodeID of each of those nodes.
 func UpdateNodePaths(nodes []NodeDef) {
 	// Track which paths have been seen and how many times
 	pathCount := make(map[string][]int)
@@ -715,16 +715,10 @@ func UpdateNodePaths(nodes []NodeDef) {
 	// Update paths that have duplicates
 	for path, indices := range pathCount {
 		if len(indices) > 1 {
+			parentPath, _ := splitLast(path)
 			// This path appears multiple times, update all of them
 			for _, idx := range indices {
-				nodePathSplit := strings.Split(path, ".")
-				parentPath := ""
-				if len(nodePathSplit) > 1 {
-					parentPath = strings.Join(nodePathSplit[:len(nodePathSplit)-1], ".")
-				}
-				// Use join() to avoid leading dots for single-segment paths
-				nodePath := join(parentPath, sanitize(nodes[idx].NodeID.String()))
-				nodes[idx].Path = nodePath
+				nodes[idx].Path = join(parentPath, sanitize(nodes[idx].NodeID.String()))
 			}
 		}
 	}
