@@ -45,21 +45,19 @@ jobs:
           token: ${{ steps.generate-token.outputs.token }}
           path: united-manufacturing-hub
 
-      - name: Update BENTHOS_UMH_VERSION in Makefile
-        working-directory: united-manufacturing-hub/umh-core
-        run: |
-          VERSION_WITHOUT_PREFIX="${VERSION#v}"
-          sed -i "s/^BENTHOS_UMH_VERSION = .*/BENTHOS_UMH_VERSION = ${VERSION_WITHOUT_PREFIX}/" Makefile
-          grep -q "^BENTHOS_UMH_VERSION = ${VERSION_WITHOUT_PREFIX}$" Makefile || exit 1
-
       # The pushed commit, not the tag: the release PR adds .changelog/<version>/
       # on top of the tagged commit.
-      - name: Checkout benthos-umh changelog
+      - name: Checkout benthos-umh changelog and release scripts
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
           path: benthos-umh
-          sparse-checkout: .changelog
+          sparse-checkout: |
+            .changelog
+            .github/scripts
+
+      - name: Bump benthos-umh in umh-core
+        run: benthos-umh/.github/scripts/bump-umh-core.sh united-manufacturing-hub/umh-core
 
       # umh-core's require-changelog-entry check fails a PR without a fragment.
       # The kind keys match, so each fragment is copied as is, minus the trailing
