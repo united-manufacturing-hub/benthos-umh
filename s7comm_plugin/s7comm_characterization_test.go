@@ -152,6 +152,10 @@ var _ = Describe("S7Comm input behavior that must not change", func() {
 		Entry("a bit number on a word", "DB1.W0.1", "extra parameter specified but not used"),
 		Entry("unknown area", "XX1.W0", "invalid area"),
 		Entry("unknown type", "DB1.Q0", "unknown data type"),
+		Entry("a block number too large for an int", "DB99999999999999999999.W0", "invalid DB number"),
+		Entry("a start offset too large for an int", "DB1.W99999999999999999999", "invalid start address"),
+		Entry("a string length too large for an int", "DB1.S0.99999999999999999999", "invalid extra parameter"),
+		Entry("a bit number too large for an int", "DB1.X0.99999999999999999999", "invalid extra parameter"),
 	)
 
 	DescribeTable("the bytes of a read become a value",
@@ -200,6 +204,16 @@ var _ = Describe("S7Comm input behavior that must not change", func() {
 			}
 			Expect(gotPayloads).To(Equal([]string{"258", "true", "10", "abc"}))
 			Expect(gotAddresses).To(Equal(addresses))
+		})
+
+		It("hands back an acknowledgement that always succeeds", func() {
+			input := newCharacterizedInput([]string{"DB1.W0"}, recorder)
+
+			_, ack, err := input.ReadBatch(context.Background())
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ack(context.Background(), nil)).To(Succeed())
+			Expect(ack(context.Background(), errors.New("downstream failed"))).To(Succeed())
 		})
 
 		It("sends one request per batch and at most 20 items per request", func() {
@@ -532,6 +546,12 @@ var _ = Describe("S7Comm input limits and warnings that must not change", func()
 			warnings := warningsOf("s7comm:\n  " + device + "  addresses: [PE1.X0.1]")
 
 			Expect(warnings).To(ContainElement(ContainSubstring(`"PE.X0.1"`)))
+		})
+
+		It("does not warn about an address it cannot read, the parser refuses it", func() {
+			warnings := warningsOf("s7comm:\n  " + device + "  addresses: [garbage]")
+
+			Expect(warnings).NotTo(ContainElement(ContainSubstring("deprecated")))
 		})
 
 		It("does not warn about a DB address or an address without a block number", func() {
