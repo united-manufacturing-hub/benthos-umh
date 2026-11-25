@@ -122,7 +122,16 @@ func opcuaOutputConfig() *service.ConfigSpec {
 				"readbackTimeoutMs":    2000,
 				"maxWriteAttempts":     1,
 				"timeBetweenRetriesMs": 1000,
-			}))
+			})).
+		// The third conflicting pair (OUT-1): nodeMappings, the deprecated
+		// fixed write, cannot be combined with a programmable handshake —
+		// the script performs the writes. The handshake block's own rule
+		// cannot see nodeMappings (a field outside the block it is given),
+		// so this rule runs on the whole output config and restores the
+		// symmetry: every conflicting pair is refused where the config is
+		// linted, not only when the output is constructed. Like the block
+		// rule it runs on the raw config, so it never fires on defaults.
+		LintRule(nodeMappingsConflictLint)
 }
 
 // handshakeConflictLint refuses a handshake block that sets both shapes
@@ -136,6 +145,21 @@ root = if $old.length() > 0 && $new.length() > 0 {
 	"the handshake block sets both the deprecated field " + $old.index(0) + " and the programmable field " + $new.index(0) + ": configure either the deprecated read-back (enabled, readbackTimeoutMs, maxWriteAttempts, timeBetweenRetriesMs) or the programmable handshake (script, onSuccess, onError, maxScriptRuntimeMs, maxOnSuccessRuntimeMs, maxOnErrorRuntimeMs), not both"
 } else if $new.length() > 0 && !$keys.contains("script") {
 	"the handshake block sets a programmable field but no script: the script is the handshake, and the block cannot run without one"
+} else {
+	deleted()
+}`
+
+// nodeMappingsConflictLint refuses a config that sets nodeMappings — the
+// deprecated fixed write — together with any programmable handshake field,
+// as a lint error (OUT-1's third pair; see the wiring above for why it is a
+// rule on the whole output config). It fires only on a non-empty list, to
+// match the constructor exactly: an empty nodeMappings list builds with a
+// script today.
+const nodeMappingsConflictLint = `let obj = if this.type() == "object" { this } else { {} }
+let mappings = if $obj.nodeMappings.type() == "array" { $obj.nodeMappings.length() } else { 0 }
+let programmable = ["script", "onSuccess", "onError", "maxScriptRuntimeMs", "maxOnSuccessRuntimeMs", "maxOnErrorRuntimeMs"].filter(f -> $obj.exists("handshake." + f))
+root = if $mappings > 0 && $programmable.length() > 0 {
+	"nodeMappings are the deprecated fixed write, and a handshake script performs the writes itself, so the two cannot be combined: remove nodeMappings, or remove the handshake field " + $programmable.index(0)
 } else {
 	deleted()
 }`
