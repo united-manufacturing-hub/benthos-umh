@@ -609,6 +609,39 @@ func TestUAT08_ScriptCatchesAFailureAndSucceeds(t *testing.T) {
 		res, _ := runScenario(t, cfg, m, map[string]any{"payload": map[string]any{"value": 42}})
 		expectOutcome(t, res, Delivered)
 	})
+	// The reason the ruling above matters, pinned as measured: only the
+	// FIRST fault is recorded, so the same script — two caught faults, then
+	// a delivery — reports differently depending which fault came first.
+	// Do not fix before the ruling; these assert what the code does today.
+	t.Run("NEEDS-RULING transient then persistent, both caught, delivers", func(t *testing.T) {
+		m := newMachine(map[string]any{"ns=2;s=Ready": true})
+		m.plan("ns=2;s=First", &reaction{err: errors.New("machine unreachable")})
+		m.plan("ns=2;s=Second", &reaction{err: fmt.Errorf("BadTypeMismatch: %w", ErrPersistent)})
+		cfg := uatConfig(`
+		try { opcua.read({ nodeId: "ns=2;s/First" }); } catch (e) { }
+		try { opcua.read({ nodeId: "ns=2;s/Second" }); } catch (e) { }
+		opcua.write({ nodeId: "ns=2;s/Setpoint" }, 4200);
+		return opcua.success({});
+		`)
+		res, _ := runScenario(t, cfg, m, map[string]any{})
+		expectOutcome(t, res, Delivered) // measured: the unmarked first fault is the only one recorded
+		if res.Err != nil {
+			t.Errorf("a delivered run carries no Err, got %v", res.Err)
+		}
+	})
+	t.Run("NEEDS-RULING persistent then transient, both caught, is persistent", func(t *testing.T) {
+		m := newMachine(map[string]any{"ns=2;s=Ready": true})
+		m.plan("ns=2;s/First", &reaction{err: fmt.Errorf("BadTypeMismatch: %w", ErrPersistent)})
+		m.plan("ns=2;s/Second", &reaction{err: errors.New("machine unreachable")})
+		cfg := uatConfig(`
+		try { opcua.read({ nodeId: "ns=2;s/First" }); } catch (e) { }
+		try { opcua.read({ nodeId: "ns=2;s/Second" }); } catch (e) { }
+		opcua.write({ nodeId: "ns=2;s/Setpoint" }, 4200);
+		return opcua.success({});
+		`)
+		res, _ := runScenario(t, cfg, m, map[string]any{})
+		expectOutcome(t, res, Persistent) // measured: the marked first fault decides
+	})
 }
 
 // UAT-9 onError itself fails: Persistent, with CleanupErr naming onError.
