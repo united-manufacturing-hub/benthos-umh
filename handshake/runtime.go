@@ -135,7 +135,13 @@ func (e *Engine[UnifiedAddress]) namespace(rs *runState, endings bool) map[strin
 
 // readOp runs one read and records the fault if it failed. A parse failure is
 // recorded like a read failure: what a binding marks is what Run reports.
+// After the run has ended the machine is not touched again: the ending
+// functions abort the script by throwing errEnded, and a throw is catchable,
+// so the operations themselves refuse too (UAT-13).
 func (e *Engine[UnifiedAddress]) readOp(rs *runState, raw map[string]any) (any, error) {
+	if rs.end != endNone {
+		return nil, errEnded
+	}
 	addr, err := e.bind.ParseAddress(raw)
 	if err != nil {
 		rs.fail("parse address", err)
@@ -149,8 +155,13 @@ func (e *Engine[UnifiedAddress]) readOp(rs *runState, raw map[string]any) (any, 
 	return resp.Value, nil
 }
 
-// writeOp sends one value, attempted once.
+// writeOp sends one value, attempted once. After the run has ended the
+// write is refused without reaching the machine (UAT-13): the first ending
+// decided the transaction, and nothing may extend it.
 func (e *Engine[UnifiedAddress]) writeOp(rs *runState, raw map[string]any, value any) error {
+	if rs.end != endNone {
+		return errEnded
+	}
 	addr, err := e.bind.ParseAddress(raw)
 	if err != nil {
 		rs.fail("parse address", err)
@@ -168,6 +179,9 @@ func (e *Engine[UnifiedAddress]) writeOp(rs *runState, raw map[string]any, value
 func (e *Engine[UnifiedAddress]) callOp(
 	rs *runState, caller Caller[UnifiedAddress], raw map[string]any, inputs []any,
 ) (any, error) {
+	if rs.end != endNone {
+		return nil, errEnded
+	}
 	addr, err := e.bind.ParseAddress(raw)
 	if err != nil {
 		rs.fail("parse address", err)
