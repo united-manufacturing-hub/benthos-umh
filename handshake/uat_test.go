@@ -933,6 +933,45 @@ func TestUAT19_FlappingFlagReadSkew(t *testing.T) {
 	}
 }
 
+// UAT-21 A script that catches its ending and spins: the deadline kills
+// it, and the run must not be reported as the ending it recorded on the
+// way. LIB-2 puts a deadline-stopped run under onError; LIB-6 makes it
+// persistent; the delivery it half-announced is not a delivery. Found by
+// the round-2 review's probe of UAT-13.
+func TestUAT21_DeadlineOutrunsACaughtEnding(t *testing.T) {
+	m := newMachine(map[string]any{"ns=2;s=Ready": true})
+	cfg := uatConfig(`
+	const READY = { nodeId: "ns=2;s=Ready" };
+	if (opcua.read(READY) !== true) { return opcua.error_not_ready(); }
+	try {
+		return opcua.success({x: 1});
+	} catch (e) {}
+	for (;;) {}
+`)
+	cfg.MaxScriptRuntime = 150 * time.Millisecond
+	cfg.OnSuccess = `opcua.write({nodeId: "ns=2;s=SuccessMarker"}, true);`
+	cfg.OnError = `opcua.write({nodeId: "ns=2;s=ErrorMarker"}, true);`
+
+	res, wall := runScenario(t, cfg, m, map[string]any{})
+
+	expectOutcome(t, res, Persistent)
+	if res.Data != nil {
+		t.Errorf("a run the deadline stopped carries no data, got %v", res.Data)
+	}
+	if res.Err == nil || !errors.Is(res.Err, context.DeadlineExceeded) {
+		t.Errorf("the deadline should be the fault, got %v", res.Err)
+	}
+	if wall < 140*time.Millisecond || wall > 2*time.Second {
+		t.Errorf("run took %v, want ~150ms (the deadline) plus the cleanup", wall)
+	}
+	if n := m.count("write", "ns=2;s=SuccessMarker"); n != 0 {
+		t.Errorf("onSuccess ran for a run the deadline stopped:\n%s", m.log())
+	}
+	if n := m.count("write", "ns=2;s=ErrorMarker"); n != 1 {
+		t.Errorf("onError did not run:\n%s", m.log())
+	}
+}
+
 // UAT-20 A malformed address: what ParseAddress refuses. Marked persistent
 // is persistent (LIB-5); unmarked is transient, which is the letter of
 // LIB-5 and a duty on PR2's OPC UA binding to mark its parse faults.

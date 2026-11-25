@@ -10,13 +10,37 @@ import (
 // Whether the machine got the data was decided when the script ended (LIB-3);
 // only whether a failure may be repeated waits for the cleanup (LIB-4). The
 // order of the cases is the precedence: a fault's kind outranks how the script
-// reported it, and an explicit ending outranks a deadline that arrived late.
+// reported it, and a run whose own clock ran out is never a delivery — an
+// ending only decides the outcome when the script actually stopped for it,
+// because the ending functions abort by throwing and a throw is catchable
+// (UAT-13, round 2).
 func classify(rs *runState, ctx context.Context, runErr error) Result {
 	switch {
 	case rs.opErr != nil && errors.Is(rs.opErr, ErrPersistent):
 		// LIB-5: the outcome follows the fault, not whether the script
 		// returned it or a call threw it.
 		return failed(Persistent, fmt.Errorf("%s failed: %w", rs.opWhere, rs.opErr))
+	case ctx.Err() != nil:
+		// LIB-6 and LIB-2: the run's own clock ran out, so the script never
+		// finished — however it ended on the way. An ending only decides the
+		// outcome when the script actually stopped for it: the ending
+		// functions abort by throwing, a throw is catchable, and a script
+		// that catches one carries on until something stops it (UAT-13,
+		// round 2, which watched a caught success outrank the deadline and
+		// run onSuccess on a cut-in-half transaction). A deadline that
+		// arrives in the same instant as a genuine ending resolves here
+		// too, to the conservative side. An unmarked operation fault that
+		// surfaced as the clock ran out is part of the same stop, not a
+		// retryable machine fault (UAT-4).
+		what := "script stopped before it ended"
+		if rs.end != endNone {
+			what += " after an ending it did not stop for"
+		}
+		if rs.opErr != nil {
+			return failed(Persistent, fmt.Errorf(
+				"%s (%s failed: %v): %w", what, rs.opWhere, rs.opErr, ctx.Err()))
+		}
+		return failed(Persistent, fmt.Errorf("%s: %w", what, ctx.Err()))
 	case rs.end == endSuccess:
 		return Result{Outcome: Delivered, Data: rs.data}
 	case rs.end == endNotReady:
@@ -32,23 +56,9 @@ func classify(rs *runState, ctx context.Context, runErr error) Result {
 		}
 		return failed(Transient, what)
 	case rs.opErr != nil:
-		// LIB-6 outranks an unmarked fault: if the run's own clock ran out
-		// while an operation was in flight — a binding that honours its
-		// context answers with ctx's own error, or with anything else it
-		// noticed first — the deadline stopped the script mid-transaction,
-		// which repeating cannot fix. Found by UAT-4, which watched a
-		// mid-commit deadline come back Transient, retryable.
-		if ctx.Err() != nil {
-			return failed(Persistent, fmt.Errorf(
-				"script stopped before it ended (%s failed: %v): %w",
-				rs.opWhere, rs.opErr, ctx.Err()))
-		}
-		// Unmarked: LIB-5 again, the other half of the rule.
+		// Unmarked: LIB-5 again, the other half of the rule. A ctx that ran
+		// out during the operation is handled above, with the deadline.
 		return failed(Transient, fmt.Errorf("%s failed: %w", rs.opWhere, rs.opErr))
-	case ctx.Err() != nil:
-		// LIB-6: the deadline is configuration, so repeating cannot fix it;
-		// a cancelled context ends the run the same way.
-		return failed(Persistent, fmt.Errorf("script stopped before it ended: %w", ctx.Err()))
 	case runErr != nil:
 		// A script fault: an uncaught exception, or a call to a name the
 		// protocol does not offer.
