@@ -874,3 +874,92 @@ func TestCall_ConvertsInputsToTheTypesTheMethodDeclares(t *testing.T) {
 		}
 	})
 }
+
+// TestCall_DeclaredArrayInputKeepsTheGoTypeMapping pins the ValueRank guard
+// in declaredInputTypes: a method input the method declares as an ARRAY
+// (ValueRank >= 0) has no single value form, so the binding must not convert
+// the script's value to the declared SCALAR type — the Go-type mapping
+// (variantForValue) takes it, exactly as it did before the declared-type
+// conversion existed (BND-7's promise: "a declared array input keeps the
+// Go-type mapping, so a lenient server sees exactly what it saw before").
+//
+// Verified red by deleting the `if arg.ValueRank >= 0 { continue }` guard:
+// the declared scalar type ("Int32" for an Int32[] argument) then reaches
+// convertValue, which (a) converts an int64 input to an Int32 variant — the
+// server sees a value shape it never saw before — and (b) refuses a float64
+// input ("value 2.5 is not an integer") as a persistent fault, so a call
+// that works today dead-letters without anything reaching the machine.
+//
+// Why the assertions detect the hazard rather than something near it: each
+// assertion is on the variant the fake server receives (its OPC UA type and
+// value), or on the call never having been sent. Applying the declared
+// scalar type to an array-declared input is the only code path that can
+// change that variant's type or turn the call into a persistent refusal, so
+// both subtests fail exactly when the guard is gone and pass only when the
+// Go-type mapping took the input. (Stated honestly: an actual array value
+// — a script passing [1,2,3] — is refused by the Go-type mapping today as
+// well; what the guard protects is that the array-declared input keeps that
+// mapping's behaviour, including the calls it accepts.)
+//
+// The existing typedMethodFake already browses and answers the
+// InputArguments property, so no fake was extended and nothing was
+// constructed directly: the test drives Binding.Call end to end, the way a
+// script's opcua.call_method reaches the machine, because the protected
+// behaviour is what the machine receives.
+func TestCall_DeclaredArrayInputKeepsTheGoTypeMapping(t *testing.T) {
+	ctx := context.Background()
+	method := Address{NodeID: "ns=2;s=Start", ObjectID: "ns=2;s=Machine"}
+
+	// One argument declared as an array of Int32 (ValueRank >= 0 is OPC UA's
+	// "an array"): DataType names the scalar element type, Int32.
+	arrayArg := &ua.Argument{Name: "values", DataType: ua.NewNumericNodeID(0, 6), ValueRank: 1}
+
+	call := func(t *testing.T, input any) ([]*ua.Variant, error) {
+		t.Helper()
+		var received []*ua.Variant
+		fake := &typedMethodFake{fakeMachine: &fakeMachine{
+			readFn: methodReadArguments([]*ua.Argument{arrayArg}),
+			callFn: func(_ context.Context, req *ua.CallMethodRequest) (*ua.CallMethodResult, error) {
+				received = req.InputArguments
+				return &ua.CallMethodResult{StatusCode: ua.StatusOK}, nil
+			},
+		}, declared: []*ua.Argument{arrayArg}}
+		_, err := (&Binding{client: func() opcuaClient { return fake }}).Call(ctx, method, []any{input})
+		return received, err
+	}
+
+	t.Run("an int64 input is sent as the Go type, not the declared scalar type", func(t *testing.T) {
+		received, err := call(t, int64(5))
+		if err != nil {
+			t.Fatalf("a scalar to an array-declared input must keep the Go-type mapping: %v", err)
+		}
+		if len(received) != 1 {
+			t.Fatalf("the machine received %d variants, want 1", len(received))
+		}
+		// variantForValue sends an int64 as an Int64 variant. The deleted
+		// guard would make convertValue("Int32", 5) send an Int32 variant —
+		// a different value on the wire than the mapping promises.
+		if received[0].Type() != ua.TypeIDInt64 || received[0].Value() != int64(5) {
+			t.Errorf("input 0: got type %v value %v, want the Go-type mapping's Int64 5 (an array-declared input must not be converted to the declared scalar type Int32)",
+				received[0].Type(), received[0].Value())
+		}
+	})
+
+	t.Run("a float64 input that works today does not dead-letter", func(t *testing.T) {
+		// A script's non-integral number (goja exports 2.5 as float64) is
+		// convertible by the Go-type mapping today; convertValue("Int32", 2.5)
+		// refuses it as a persistent fault, so a working call dead-letters
+		// with the guard deleted.
+		received, err := call(t, 2.5)
+		if err != nil {
+			t.Fatalf("a float64 to an array-declared input must keep working: %v", err)
+		}
+		if len(received) != 1 {
+			t.Fatalf("the machine received %d variants, want 1", len(received))
+		}
+		if received[0].Type() != ua.TypeIDDouble || received[0].Value() != 2.5 {
+			t.Errorf("input 0: got type %v value %v, want the Go-type mapping's Double 2.5",
+				received[0].Type(), received[0].Value())
+		}
+	})
+}
