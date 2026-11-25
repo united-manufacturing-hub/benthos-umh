@@ -21,7 +21,6 @@ package uns_plugin
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -73,17 +72,7 @@ var _ = Describe("uns_beta counters", Label("uns_beta"), func() {
 		stream, err := sb.Build()
 		Expect(err).NotTo(HaveOccurred())
 
-		ctx, cancel := context.WithCancel(context.Background())
-		done := make(chan struct{})
-		var runErr error
-		go func() { defer close(done); runErr = stream.Run(ctx) }()
-		defer func() {
-			cancel()
-			<-done
-			if runErr != nil && !errors.Is(runErr, context.Canceled) {
-				Fail("stream run: " + runErr.Error())
-			}
-		}()
+		defer startStream(GinkgoT(), stream)()
 
 		Eventually(func() int64 {
 			return captureExporter.counterValue("dropped_keyless")
@@ -133,17 +122,7 @@ var _ = Describe("uns_beta counters", Label("uns_beta"), func() {
 		stream, err := sb.Build()
 		Expect(err).NotTo(HaveOccurred())
 
-		ctx, cancel := context.WithCancel(context.Background())
-		done := make(chan struct{})
-		var runErr error
-		go func() { defer close(done); runErr = stream.Run(ctx) }()
-		defer func() {
-			cancel()
-			<-done
-			if runErr != nil && !errors.Is(runErr, context.Canceled) {
-				Fail("stream run: " + runErr.Error())
-			}
-		}()
+		defer startStream(GinkgoT(), stream)()
 
 		Eventually(func() int64 {
 			return captureExporter.counterValue("filtered_records")

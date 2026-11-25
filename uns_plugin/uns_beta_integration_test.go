@@ -34,7 +34,8 @@ import (
 )
 
 // runUnsBetaStream starts a StreamBuilder pipeline: uns_beta input -> consumerFn.
-// consumerFn's returned error NACKs the batch. Returns a stop func.
+// consumerFn's returned error NACKs the batch. Returns a stop func (see
+// startStream).
 func runUnsBetaStream(t testingT, unsBetaYAML string, consumerFn func(context.Context, service.MessageBatch) error) func() {
 	t.Helper()
 	sb := service.NewStreamBuilder()
@@ -48,6 +49,13 @@ func runUnsBetaStream(t testingT, unsBetaYAML string, consumerFn func(context.Co
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
+	return startStream(t, stream)
+}
+
+// startStream runs a built stream in the background and returns an idempotent
+// stop func that stops the pipeline before the Run context is canceled.
+func startStream(t testingT, stream *service.Stream) func() {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	var runErr error // written before close(done), read after <-done
@@ -914,17 +922,7 @@ uns_beta:
 		stream, err := sb.Build()
 		Expect(err).NotTo(HaveOccurred())
 
-		ctx, cancel := context.WithCancel(context.Background())
-		done := make(chan struct{})
-		var runErr error // written before close(done), read after <-done
-		go func() { defer close(done); runErr = stream.Run(ctx) }()
-		defer func() {
-			cancel()
-			<-done
-			if runErr != nil && !errors.Is(runErr, context.Canceled) {
-				Fail("stream run: " + runErr.Error())
-			}
-		}()
+		defer startStream(GinkgoT(), stream)()
 
 		Eventually(func() int64 {
 			return captureExporter.counterValue("key_omitted_records")
@@ -977,17 +975,7 @@ uns_beta:
 		stream, err := sb.Build()
 		Expect(err).NotTo(HaveOccurred())
 
-		ctx, cancel := context.WithCancel(context.Background())
-		done := make(chan struct{})
-		var runErr error
-		go func() { defer close(done); runErr = stream.Run(ctx) }()
-		defer func() {
-			cancel()
-			<-done
-			if runErr != nil && !errors.Is(runErr, context.Canceled) {
-				Fail("stream run: " + runErr.Error())
-			}
-		}()
+		defer startStream(GinkgoT(), stream)()
 
 		Eventually(func() int {
 			mu.Lock()

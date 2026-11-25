@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/redpanda"
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kerr"
@@ -49,7 +50,8 @@ import (
 // corpus. The corpus must be large enough that draining outweighs the
 // consumer-group rebalance, which takes seconds. Set it with UNS_BENCH_CORPUS:
 //
-//	UNS_BENCH_CORPUS=500000 go test -tags connect_patched -run=^$ -bench=BenchmarkE2E_DrainRedpanda -benchtime=3x ./uns_plugin/
+//	make patch-connect
+//	UNS_BENCH_CORPUS=500000 go test -modfile=go.patched.mod -tags connect_patched -run=^$ -bench=BenchmarkE2E_DrainRedpanda -benchtime=3x ./uns_plugin/
 //
 // The rebalance allocates little, so allocs/op and B/op are comparable at any
 // corpus size.
@@ -91,12 +93,14 @@ func benchCorpus(n int) []*kgo.Record {
 		key := fmt.Sprintf("umh.v1.drop.line.tag%d", i)
 		recs[i] = &kgo.Record{Key: []byte(key), Value: []byte(`{"v":1}`)}
 	}
-	last := n - 1
-	recs[last] = &kgo.Record{
-		Key:   []byte(fmt.Sprintf("umh.v1.keep.line.tag%d", last)),
-		Value: []byte(`{"v":1}`),
-	}
+	recs[n-1] = &kgo.Record{Key: []byte(benchTerminalKey(n)), Value: []byte(`{"v":1}`)}
 	return recs
+}
+
+// benchTerminalKey is the key of the last record of an n-record corpus, the
+// only one select_one matches.
+func benchTerminalKey(n int) string {
+	return fmt.Sprintf("umh.v1.keep.line.tag%d", n-1)
 }
 
 // benchProduce writes the whole corpus to testTopic in chunks (one ProduceSync
@@ -187,7 +191,7 @@ func runDrainMatrix(b *testing.B, addr string) {
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					group := nextBenchGroup(pl.prefix)
-					drainOnce(b, benchInputYAML(pl.name, addr, group, sc.topics), sc.expectedDelivered)
+					drainOnce(b, benchInputYAML(pl.name, addr, group, sc.topics), benchCorpusSize, sc.expectedDelivered)
 				}
 				b.StopTimer()
 				b.ReportMetric(float64(benchCorpusSize*b.N)/b.Elapsed().Seconds(), "consumed/s")
@@ -197,13 +201,15 @@ func runDrainMatrix(b *testing.B, addr string) {
 }
 
 // startRedpandaBroker starts a redpanda container and returns its Kafka seed
-// broker address. It skips the test or benchmark when Docker is unavailable.
+// broker address. It skips the test or benchmark when Docker is unavailable,
+// and fails it when Docker runs but the container does not start.
 func startRedpandaBroker(b testing.TB) string {
 	b.Helper()
+	skipWithoutDocker(b)
 	ctx := context.Background()
 	container, err := redpanda.Run(ctx, "redpandadata/redpanda:latest")
 	if err != nil {
-		b.Skipf("redpanda container unavailable (needs Docker): %v", err)
+		b.Fatalf("start redpanda container: %v", err)
 	}
 	b.Cleanup(func() {
 		cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -217,17 +223,43 @@ func startRedpandaBroker(b testing.TB) string {
 	return addr
 }
 
-// drainOnce runs a fresh stream for the given input YAML and blocks until the
-// consumer has been delivered `want` records (by which point the corpus is
-// fully consumed), then stops the stream.
-func drainOnce(b testing.TB, inputYAML string, want int) {
+// skipWithoutDocker skips when no healthy Docker provider is reachable. It is
+// testcontainers.SkipIfProviderIsNotHealthy for testing.TB.
+func skipWithoutDocker(b testing.TB) {
 	b.Helper()
+	defer func() {
+		// GetProvider panics on some hosts without Docker.
+		if r := recover(); r != nil {
+			b.Skipf("redpanda container needs Docker: %v", r)
+		}
+	}()
+	provider, err := testcontainers.ProviderDefault.GetProvider()
+	if err != nil {
+		b.Skipf("redpanda container needs Docker: %v", err)
+	}
+	defer func() { _ = provider.Close() }()
+	if err := provider.Health(context.Background()); err != nil {
+		b.Skipf("redpanda container needs Docker: %v", err)
+	}
+}
+
+// drainOnce runs a fresh stream for the given input YAML over a corpus of
+// corpusSize records and blocks until the corpus's terminal record arrives, by
+// which point the corpus is fully consumed. It then stops the stream and fails
+// unless exactly `want` records were delivered: a delivered drop record must
+// not count towards a select_one drain.
+func drainOnce(b testing.TB, inputYAML string, corpusSize int, want int) {
+	b.Helper()
+	terminalKey := benchTerminalKey(corpusSize)
 	var delivered atomic.Int64
 	done := make(chan struct{})
 	var once sync.Once
 	stop := runUnsBetaStream(b, inputYAML, func(_ context.Context, batch service.MessageBatch) error {
-		if delivered.Add(int64(len(batch))) >= int64(want) {
-			once.Do(func() { close(done) })
+		delivered.Add(int64(len(batch)))
+		for _, m := range batch {
+			if key, _ := m.MetaGet("umh_topic"); key == terminalKey {
+				once.Do(func() { close(done) })
+			}
 		}
 		return nil
 	})
@@ -236,6 +268,9 @@ func drainOnce(b testing.TB, inputYAML string, want int) {
 		stop()
 	case <-time.After(300 * time.Second):
 		stop()
-		b.Fatalf("drain timed out: delivered %d/%d", delivered.Load(), want)
+		b.Fatalf("drain timed out before the terminal record: delivered %d/%d", delivered.Load(), want)
+	}
+	if got := delivered.Load(); got != int64(want) {
+		b.Fatalf("drain delivered %d records, want %d", got, want)
 	}
 }

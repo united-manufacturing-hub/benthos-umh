@@ -44,7 +44,7 @@ func TestUnsBetaSelectOneAllocBudget(t *testing.T) {
 	benchProduce(t, addr, benchCorpus(corpus))
 
 	drain := func() {
-		drainOnce(t, benchInputYAML("uns_beta", addr, nextBenchGroup("perf-unsbeta"), benchTopicsSelectOne), 1)
+		drainOnce(t, benchInputYAML("uns_beta", addr, nextBenchGroup("perf-unsbeta"), benchTopicsSelectOne), corpus, 1)
 	}
 	drain()
 	drain()

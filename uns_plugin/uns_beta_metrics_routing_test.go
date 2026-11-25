@@ -18,7 +18,6 @@ package uns_plugin
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -62,17 +61,7 @@ uns_beta:
 		stream, err := sb.Build()
 		Expect(err).NotTo(HaveOccurred())
 
-		ctx, cancel := context.WithCancel(context.Background())
-		done := make(chan struct{})
-		var runErr error // written before close(done), read after <-done
-		go func() { defer close(done); runErr = stream.Run(ctx) }()
-		defer func() {
-			cancel()
-			<-done
-			if runErr != nil && !errors.Is(runErr, context.Canceled) {
-				Fail("stream run: " + runErr.Error())
-			}
-		}()
+		defer startStream(GinkgoT(), stream)()
 
 		// A delivered record means the reader's poll loop, which creates
 		// redpanda_lag, is running.
