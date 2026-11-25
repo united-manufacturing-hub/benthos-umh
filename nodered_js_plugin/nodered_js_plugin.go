@@ -25,91 +25,49 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/dop251/goja"
 	"github.com/redpanda-data/benthos/v4/public/service"
 
 	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin/cache"
 	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin/protobuf"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/js_runtime"
 )
 
 // NodeREDJSProcessor defines the processor that wraps the JavaScript processor.
 type NodeREDJSProcessor struct {
-	program           *goja.Program
+	program           *js_runtime.Program
 	originalCode      string
-	vmpool            sync.Pool
+	runner            *js_runtime.Runner
 	logger            *service.Logger
 	cache             cache.Cache
 	messagesProcessed *service.MetricCounter
 	messagesDropped   *service.MetricCounter
-	vmPoolHits        *service.MetricCounter
-	vmPoolMisses      *service.MetricCounter
 }
 
 // NewNodeREDJSProcessor creates a new NodeREDJSProcessor instance.
 func NewNodeREDJSProcessor(code string, logger *service.Logger, metrics *service.Metrics, c cache.Cache) (*NodeREDJSProcessor, error) {
-	// Compile the JavaScript code once
-	program, err := goja.Compile("nodered-fn.js", code, false)
+	// Compile the JavaScript code once. js_runtime.Compile applies the
+	// (function(){ 'use strict'; ... })() wrap, so code is the raw script.
+	program, err := js_runtime.Compile("nodered-fn.js", code)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compile JavaScript code: %w", err)
 	}
 
 	processor := &NodeREDJSProcessor{
-		program:           program,
-		originalCode:      code,
-		vmpool:            sync.Pool{}, // No New function - Get() will return nil when pool is empty
+		program:      program,
+		originalCode: code,
+		// Zero Options: no deadline, no hardening, no ResetGlobals — exactly
+		// the pooled runtimes this plugin had (ENG-8128). nodered_js keeps no
+		// time limit and does not reject eval.
+		runner:            js_runtime.NewRunner(js_runtime.Options{}),
 		logger:            logger,
 		cache:             c,
 		messagesProcessed: metrics.NewCounter("messages_processed"),
 		messagesDropped:   metrics.NewCounter("messages_dropped", "reason"),
-		vmPoolHits:        metrics.NewCounter("vm_pool_hits"),
-		vmPoolMisses:      metrics.NewCounter("vm_pool_misses"),
 	}
 
 	return processor, nil
-}
-
-// GetVM acquires a VM from the pool and tracks metrics
-func (u *NodeREDJSProcessor) GetVM() *goja.Runtime {
-	poolResult := u.vmpool.Get()
-	if poolResult == nil {
-		u.vmPoolMisses.Incr(1)
-		return goja.New()
-	}
-	u.vmPoolHits.Incr(1)
-	return poolResult.(*goja.Runtime)
-}
-
-// PutVM returns a VM to the pool after comprehensive cleanup
-func (u *NodeREDJSProcessor) PutVM(vm *goja.Runtime) {
-	// Comprehensive VM cleanup to prevent state leakage
-	if err := u.clearVMState(vm); err != nil {
-		u.logger.Errorf("Failed to clear VM state: %v", err)
-		// In case of an error, we do not return the VM to the pool
-		// because it might be in an invalid state
-		return
-	}
-	// Return cleaned VM to pool for reuse
-	u.vmpool.Put(vm)
-}
-
-// clearVMState performs comprehensive cleanup of VM state
-func (u *NodeREDJSProcessor) clearVMState(vm *goja.Runtime) error {
-	// Clear any interrupt flag that might be set
-	vm.ClearInterrupt()
-
-	return vm.GlobalObject().Set("msg", nil)
-}
-
-// getVM acquires a VM from the pool and tracks metrics (internal method)
-func (u *NodeREDJSProcessor) getVM() *goja.Runtime {
-	return u.GetVM()
-}
-
-// putVM returns a VM to the pool after proper cleanup (internal method)
-func (u *NodeREDJSProcessor) putVM(vm *goja.Runtime) {
-	u.PutVM(vm)
 }
 
 // ConvertMessageToJSObject converts a Benthos message to a JavaScript-compatible object with the payload being in the payload field.
@@ -296,23 +254,25 @@ func stringify(data any, depth uint8) (string, error) {
 }
 
 // SetupJSEnvironment sets up the JavaScript VM environment.
+// Kept for callers that execute on a raw goja runtime (tag_processor's
+// condition-if path); the runner path uses JSEnvironment instead.
 func (u *NodeREDJSProcessor) SetupJSEnvironment(ctx context.Context, vm *goja.Runtime, jsMsg map[string]any) error {
 	err := vm.Set("msg", jsMsg)
 	if err != nil {
 		return fmt.Errorf("failed to set message in JS environment: %w", err)
 	}
 
-	err = u.setupConsole(vm)
+	err = vm.Set("console", u.consoleObject())
 	if err != nil {
 		return fmt.Errorf("failed to set console in JS environment: %w", err)
 	}
 
-	err = u.setupCache(ctx, vm)
+	err = vm.Set("cache", u.cacheObject(ctx))
 	if err != nil {
 		return fmt.Errorf("failed to set cache in JS environment: %w", err)
 	}
 
-	err = u.setupProtobuf(vm)
+	err = vm.Set("protobuf", protobufObject())
 	if err != nil {
 		return fmt.Errorf("failed to set protobuf in JS environment: %w", err)
 	}
@@ -320,19 +280,31 @@ func (u *NodeREDJSProcessor) SetupJSEnvironment(ctx context.Context, vm *goja.Ru
 	return nil
 }
 
-func (u *NodeREDJSProcessor) setupConsole(vm *goja.Runtime) error {
-	console := map[string]any{
+// JSEnvironment returns the per-run globals for js_runtime.Runner.Run: the
+// same msg/console/cache/protobuf SetupJSEnvironment installs on a raw
+// runtime, as a bind map. The cache functions capture ctx, so a run's cache
+// operations follow the run's context.
+func (u *NodeREDJSProcessor) JSEnvironment(ctx context.Context, jsMsg map[string]any) map[string]any {
+	return map[string]any{
+		"msg":      jsMsg,
+		"console":  u.consoleObject(),
+		"cache":    u.cacheObject(ctx),
+		"protobuf": protobufObject(),
+	}
+}
+
+func (u *NodeREDJSProcessor) consoleObject() map[string]any {
+	return map[string]any{
 		"debug": func(data ...any) { u.logger.Debug(FormatConsoleLogMsg(data)) },
 		"log":   func(data ...any) { u.logger.Info(FormatConsoleLogMsg(data)) },
 		"info":  func(data ...any) { u.logger.Info(FormatConsoleLogMsg(data)) },
 		"warn":  func(data ...any) { u.logger.Warn(FormatConsoleLogMsg(data)) },
 		"error": func(data ...any) { u.logger.Error(FormatConsoleLogMsg(data)) },
 	}
-	return vm.Set("console", console)
 }
 
-func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) error {
-	cacheObj := map[string]any{
+func (u *NodeREDJSProcessor) cacheObject(ctx context.Context) map[string]any {
+	return map[string]any{
 		"set": func(key string, value any) {
 			err := u.cache.Set(ctx, key, value)
 			if err != nil {
@@ -358,18 +330,17 @@ func (u *NodeREDJSProcessor) setupCache(ctx context.Context, vm *goja.Runtime) e
 			}
 		},
 	}
-	return vm.Set("cache", cacheObj)
 }
 
-// setupProtobuf exposes protobuf.decode/encode to the JS runtime. The functions
+// protobufObject exposes protobuf.decode/encode to the JS runtime. The functions
 // decode/encode against an inline base64 FileDescriptorSet and throw on error
 // (goja converts the Go (T, error) return into a throwing JS function). The
 // tag_processor shares this environment, so it gets `protobuf` too (ENG-5243).
-func (u *NodeREDJSProcessor) setupProtobuf(vm *goja.Runtime) error {
+func protobufObject() map[string]any {
 	// Recover any panic into an error: the descriptor set and data are untrusted, and
 	// goja does not recover Go panics from native functions, so a panic here would crash
 	// the whole process rather than throw a catchable JS error.
-	protobufObj := map[string]any{
+	return map[string]any{
 		"decode": func(dataB64 string, descriptorSetB64 string, msgName string) (_ map[string]any, err error) {
 			defer func() {
 				if r := recover(); r != nil {
@@ -387,20 +358,18 @@ func (u *NodeREDJSProcessor) setupProtobuf(vm *goja.Runtime) error {
 			return protobuf.Encode(obj, descriptorSetB64, msgName)
 		},
 	}
-	return vm.Set("protobuf", protobufObj)
 }
 
 // HandleExecutionResult converts a JS return value into output messages.
 // null/undefined drops; an array fans out (nil elements skipped, all-nil = drop).
-func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*service.Message, string, error) {
+// result is the completion value exported to Go (nil for null/undefined).
+func (u *NodeREDJSProcessor) HandleExecutionResult(result any) ([]*service.Message, string, error) {
 	// Handle null/undefined returns: drop (caller bumps messagesDropped).
-	if result.Equals(goja.Undefined()) || result.Equals(goja.Null()) {
+	if result == nil {
 		return nil, "", nil
 	}
 
-	exported := result.Export()
-
-	if arr, ok := exported.([]any); ok {
+	if arr, ok := result.([]any); ok {
 		out := make([]*service.Message, 0, len(arr))
 		for i, el := range arr {
 			if el == nil {
@@ -415,7 +384,7 @@ func (u *NodeREDJSProcessor) HandleExecutionResult(result goja.Value) ([]*servic
 		return out, "", nil
 	}
 
-	msg, err := messageFromReturnValue(exported)
+	msg, err := messageFromReturnValue(result)
 	if err != nil {
 		return nil, "bad_return", err
 	}
@@ -541,9 +510,6 @@ func (u *NodeREDJSProcessor) ProcessBatch(ctx context.Context, batch service.Mes
 // processSingleMessage runs JS on one message. Returns (messages, wasDropped, err, reason).
 // wasDropped=true for null/undefined/empty returns; err non-nil for JS throw/infra/bad-return.
 func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *service.Message) ([]*service.Message, bool, string, error) {
-	vm := u.getVM()
-	defer u.putVM(vm)
-
 	// Convert message to JS object
 	// defensive: AsBytes never errors as of benthos v4.74.0 (TODO upstream); kept for future-proofing
 	jsMsg, err := ConvertMessageToJSObject(msg)
@@ -564,15 +530,12 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 	}
 	jsMsg["meta"] = meta
 
-	// Setup JS environment
-	// defensive: vm.Set unreachable from normal messages; kept for future-proofing
-	if err = u.SetupJSEnvironment(ctx, vm, jsMsg); err != nil {
-		u.logger.Warnf("%v\nMessage content: %v", err, jsMsg)
-		return nil, false, "infra_failed", err
-	}
-
-	// Execute the compiled JavaScript program
-	result, err := vm.RunProgram(u.program)
+	// Execute the compiled JavaScript program on the pooled runtime.
+	// nodered_js has no time limit and must keep not having one: the run
+	// context is Background so the runner can never interrupt, exactly like
+	// the raw RunProgram call it replaces (the cache functions still follow
+	// the batch's own ctx, captured in the environment).
+	result, err := u.runner.Run(context.Background(), u.program, u.JSEnvironment(ctx, jsMsg))
 	if err != nil {
 		u.logJSError(err, jsMsg)
 		return nil, false, "js_throw", err
@@ -581,7 +544,7 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 	// Handle the execution result
 	newMsgs, reason, err := u.HandleExecutionResult(result)
 	if err != nil {
-		u.logger.Warnf("%v\nMessage content: %v\nReturned value: %v", err, jsMsg, result.Export())
+		u.logger.Warnf("%v\nMessage content: %v\nReturned value: %v", err, jsMsg, result)
 		return nil, false, reason, err
 	}
 
@@ -623,6 +586,9 @@ Message content: %v`,
 
 // Close gracefully shuts down the processor.
 func (u *NodeREDJSProcessor) Close(_ context.Context) error {
+	if err := u.runner.Close(); err != nil {
+		return err
+	}
 	return u.cache.Close()
 }
 
@@ -686,14 +652,9 @@ func newNodeREDJSProcessor(conf *service.ParsedConfig, mgr *service.Resources) (
 		return nil, err
 	}
 
-	wrappedCode := fmt.Sprintf(`
-		(function(){
-			'use strict';
-			%s
-		})()
-	`, code)
-
-	return NewNodeREDJSProcessor(wrappedCode, mgr.Logger(), mgr.Metrics(), cache.NewMemoryStore(0))
+	// The (function(){ 'use strict'; ... })() wrap this used to apply here
+	// now lives in js_runtime.Compile, which NewNodeREDJSProcessor calls.
+	return NewNodeREDJSProcessor(code, mgr.Logger(), mgr.Metrics(), cache.NewMemoryStore(0))
 }
 
 func init() {
