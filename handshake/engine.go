@@ -124,6 +124,23 @@ func (c Config) Validate() error {
 	if c.MaxScriptRuntime <= 0 {
 		return fmt.Errorf("MaxScriptRuntime must be positive, is %v", c.MaxScriptRuntime)
 	}
+	// A cleanup budget of zero or less means unbounded, so a non-empty
+	// block without a budget hangs Run and Close on a machine that never
+	// answers — reachable from an omitted YAML field alone (round-2
+	// review, item 3). Either block may be empty; a non-empty one must be
+	// budgeted, and the refusal names both.
+	for _, block := range []struct{ name, budgetName, source string; budget time.Duration }{
+		{"onSuccess", "MaxOnSuccessRuntime", c.OnSuccess, c.MaxOnSuccessRuntime},
+		{"onError", "MaxOnErrorRuntime", c.OnError, c.MaxOnErrorRuntime},
+	} {
+		if strings.TrimSpace(block.source) == "" {
+			continue
+		}
+		if block.budget <= 0 {
+			return fmt.Errorf("%s is not empty, so %s must be positive, is %v",
+				block.name, block.budgetName, block.budget)
+		}
+	}
 	rt := newRuntime()
 	defer func() { _ = rt.close() }()
 	for _, block := range []struct{ name, source string }{
