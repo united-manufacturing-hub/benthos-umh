@@ -15,31 +15,46 @@
 package js_engine
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/dop251/goja"
 	"github.com/redpanda-data/benthos/v4/public/service"
 
-	"github.com/united-manufacturing-hub/benthos-umh/pkg/js_runtime"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_security"
 )
 
-// JSEngine handles JavaScript expression evaluation with caching and pooling
+// JSEngine handles JavaScript expression evaluation with caching and pooling.
+//
+// NOTE (ENG-8128): mapping expressions deliberately do NOT go through
+// pkg/js_runtime. The frozen js_runtime.Compile always wraps source in
+// (function(){'use strict'; ... })(), which changes how these expressions
+// evaluate: strict mode rejects octal literals at compile time (so
+// PrecompileExpressions fails and the pipeline does not start) and undeclared
+// assignments at run time, the wrap discards the completion value (a trailing
+// semicolon turns 'press * 2;' into a nil result), and it reparses '{a: 1}'
+// as an object literal instead of a labeled block. The shipped config
+// analyzer accepts all of those shapes, so they are configs customers can
+// already be running; expression_semantics_test.go pins each one. Like
+// tag_processor's if conditions, the engine keeps the raw, non-strict compile
+// it always had, and with it its own watchdog, hardening and reset below.
 type JSEngine struct {
 	logger *service.Logger
 
-	// Shared runtime mechanism (ENG-8128). Harden installs the blocklist the
-	// pooled runtimes here always had; ResetGlobals stays off: the old reset
-	// cleared only the variables each run bound, which is what the runner does
-	// by default.
-	runner *js_runtime.Runner
+	// Goja runtime for static expression evaluation (no variables).
+	// Never pooled and never cleared, exactly as shipped: the deterministic
+	// survival of globals a static expression sets is the old behaviour.
+	staticRuntime *goja.Runtime
+
+	// Pooled runtimes for dynamic expressions (with variables). Local to the
+	// engine: the JS runtime pool this replaces lived in pools.ObjectPools,
+	// and only this engine ever used it.
+	dynamicPool sync.Pool
 
 	// Compiled expressions cache for performance - OPTIMIZATION: Store compiled programs
-	compiledExpressions map[string]*js_runtime.Program
+	compiledExpressions map[string]*goja.Program
 	compiledMutex       sync.RWMutex // Protects compiledExpressions
 
 	// Static expression results cache
@@ -47,8 +62,8 @@ type JSEngine struct {
 	staticCacheMutex      sync.RWMutex // Protects staticExpressionCache
 
 	// NEW: Pre-compiled programs for static/dynamic mappings
-	precompiledPrograms map[string]*js_runtime.Program // Pre-compiled mapping expressions
-	precompiledMutex    sync.RWMutex                   // Protects precompiledPrograms
+	precompiledPrograms map[string]*goja.Program // Pre-compiled mapping expressions
+	precompiledMutex    sync.RWMutex             // Protects precompiledPrograms
 
 	// Configuration
 	sourceNames []string // Available source variable names
@@ -65,74 +80,74 @@ type JSExecutionResult struct {
 func NewJSEngine(logger *service.Logger, sourceNames []string) *JSEngine {
 	engine := &JSEngine{
 		logger:                logger,
-		runner:                js_runtime.NewRunner(js_runtime.Options{Harden: true}),
-		compiledExpressions:   make(map[string]*js_runtime.Program),
+		staticRuntime:         goja.New(),
+		compiledExpressions:   make(map[string]*goja.Program),
 		staticExpressionCache: make(map[string]JSExecutionResult),
-		precompiledPrograms:   make(map[string]*js_runtime.Program),
+		precompiledPrograms:   make(map[string]*goja.Program),
 		sourceNames:           sourceNames,
+	}
+
+	// Configure runtimes using shared security configuration
+	js_security.ConfigureJSRuntime(engine.staticRuntime, logger)
+
+	// Pooled runtimes for dynamic expressions, hardened like the static one.
+	engine.dynamicPool.New = func() interface{} {
+		runtime := goja.New()
+		js_security.ConfigureJSRuntime(runtime, logger)
+		return runtime
 	}
 
 	return engine
 }
 
-// executionTimeout is the per-expression watchdog budget this engine has
-// always enforced.
-const executionTimeout = 5 * time.Second
+// putRuntime returns a dynamic runtime to the pool after clearing variables.
+// This is the reset ObjectPools.PutJSRuntime performed: the source variables
+// plus the common temporary names, then the interrupt state. If cleanup
+// fails, the runtime is discarded to prevent contamination.
+func (e *JSEngine) putRuntime(runtime *goja.Runtime) {
+	cleanupSuccessful := true
 
-var (
-	// errExecutionTimeout preserves the exact watchdog error text the
-	// engine's callers and tests pin.
-	errExecutionTimeout = errors.New("JavaScript execution exceeded 5 second timeout limit. Consider simplifying the expression, avoiding infinite loops, or reducing computational complexity")
-	errNilResult        = errors.New("JavaScript execution returned nil result. Please check that the expression returns a value")
-)
-
-// compileExpression compiles a mapping expression for the shared runner.
-//
-// js_runtime.Compile wraps source as (function(){'use strict'; ... })(), whose
-// return value is undefined unless the body returns, so a bare expression's
-// completion value would be lost. Single expressions — everything mapping
-// analysis lets through — compile as "return (<expr>)", which preserves the
-// completion value exactly. Sources that are not single expressions (only
-// direct engine callers can pass them: the processor's config analysis
-// rejects statements) compile as the body of an IIFE instead — the body runs
-// the same, only its completion value is discarded.
-func compileExpression(name, expression string) (*js_runtime.Program, error) {
-	// The opening paren stays on the return's line (no ASI hazard); the
-	// closing paren sits on its own line so trailing line comments do not
-	// swallow it.
-	p, err := js_runtime.Compile(name, "return (\n"+expression+"\n)")
-	if err == nil {
-		return p, nil
-	}
-	return js_runtime.Compile(name, "return (function(){\n"+expression+"\n})()")
-}
-
-// executeProgram runs prog on the shared runner under the 5-second watchdog:
-// the runner interrupts the runtime when the deadline hits, discards runtimes
-// that do not stop, and clears the globals this run bound — the reset the old
-// pooled runtimes had. The watchdog's exact error text is preserved.
-func (e *JSEngine) executeProgram(program *js_runtime.Program, globals map[string]interface{}) (interface{}, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), executionTimeout)
-	defer cancel()
-
-	val, err := e.runner.Run(ctx, program, globals)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, errExecutionTimeout
+	// Clear all variables from the runtime to prevent contamination
+	for _, sourceName := range e.sourceNames {
+		if err := runtime.Set(sourceName, goja.Undefined()); err != nil {
+			// Log cleanup failure - this is critical for pool hygiene
+			if e.logger != nil {
+				e.logger.Warnf("Failed to clear source variable '%s' from JS runtime during cleanup: %v", sourceName, err)
+			}
+			cleanupSuccessful = false
 		}
-		return nil, err
 	}
-	if val == nil {
-		// null and undefined both export to nil; so does a missing
-		// completion value. Same check the old ExportType() == nil path made.
-		return nil, errNilResult
+
+	// Also clear common temporary variables that might have been set
+	tempVars := []string{"result", "temp", "value", "data", "input", "output"}
+	for _, tempVar := range tempVars {
+		if err := runtime.Set(tempVar, goja.Undefined()); err != nil {
+			// Log cleanup failure - this is critical for pool hygiene
+			if e.logger != nil {
+				e.logger.Warnf("Failed to clear temporary variable '%s' from JS runtime during cleanup: %v", tempVar, err)
+			}
+			cleanupSuccessful = false
+		}
 	}
-	return val, nil
+
+	// Clear any interrupt state to ensure clean state for next use
+	runtime.ClearInterrupt()
+
+	// Only return to pool if cleanup was successful
+	if cleanupSuccessful {
+		e.dynamicPool.Put(runtime)
+	} else {
+		// Discard the contaminated runtime - pool will create a new one when needed
+		if e.logger != nil {
+			e.logger.Warnf("Discarding JS runtime due to cleanup failures - pool will create a new runtime when needed")
+		}
+		// Don't put the runtime back in the pool - let it be garbage collected
+	}
 }
 
 // ValidateExpression validates a JavaScript expression syntax
 func (e *JSEngine) ValidateExpression(expression string) error {
-	_, err := compileExpression("validation", expression)
+	_, err := goja.Compile("validation", expression, false)
 	if err != nil {
 		return fmt.Errorf("invalid JavaScript expression '%s': %w. Please check syntax and try again", expression, err)
 	}
@@ -150,7 +165,7 @@ func (e *JSEngine) CompileExpression(expression string) error {
 	e.compiledMutex.RUnlock()
 
 	// Compile the expression
-	program, err := compileExpression("expression", expression)
+	program, err := goja.Compile("expression", expression, false)
 	if err != nil {
 		return fmt.Errorf("failed to compile JavaScript expression '%s': %w. Please check syntax and try again", expression, err)
 	}
@@ -202,7 +217,7 @@ func (e *JSEngine) EvaluateStatic(expression string) JSExecutionResult {
 	}
 
 	// Execute the expression
-	result, err := e.runExpression(expression)
+	result, err := e.executeExpression(e.staticRuntime, expression)
 	if err != nil {
 		e.logger.Warnf("JavaScript execution failed for static expression '%s': %v", expression, err)
 		errorResult := JSExecutionResult{
@@ -250,6 +265,11 @@ func (e *JSEngine) EvaluateDynamic(expression string, variables map[string]inter
 		}
 	}
 
+	// Get a pooled runtime instance instead of creating new one
+	runtime := e.dynamicPool.Get().(*goja.Runtime)
+	runtime.ClearInterrupt() // Clear any previous interrupt state from timeout
+	defer e.putRuntime(runtime)
+
 	// Validate all variables first
 	for name := range variables {
 		if !e.isValidSourceVariable(name) {
@@ -260,8 +280,18 @@ func (e *JSEngine) EvaluateDynamic(expression string, variables map[string]inter
 		}
 	}
 
-	// Execute the expression with the variables bound on the shared runner
-	result, err := e.runExpressionWithVariables(expression, variables)
+	// Inject variables into the runtime
+	for name, value := range variables {
+		if err := runtime.Set(name, value); err != nil {
+			return JSExecutionResult{
+				Success: false,
+				Error:   fmt.Sprintf("Failed to set variable '%s' to value '%v': %v", name, value, err),
+			}
+		}
+	}
+
+	// Execute the expression
+	result, err := e.executeExpression(runtime, expression)
 	if err != nil {
 		e.logger.Warnf("JavaScript execution failed for dynamic expression '%s': %v", expression, err)
 		return JSExecutionResult{
@@ -276,8 +306,8 @@ func (e *JSEngine) EvaluateDynamic(expression string, variables map[string]inter
 	}
 }
 
-// runExpression executes a compiled JavaScript expression without variables.
-func (e *JSEngine) runExpression(expression string) (interface{}, error) {
+// executeExpression executes a compiled JavaScript expression in the given runtime
+func (e *JSEngine) executeExpression(runtime *goja.Runtime, expression string) (interface{}, error) {
 	// Get the compiled program
 	e.compiledMutex.RLock()
 	program, exists := e.compiledExpressions[expression]
@@ -287,23 +317,52 @@ func (e *JSEngine) runExpression(expression string) (interface{}, error) {
 		return nil, fmt.Errorf("JavaScript expression '%s' not compiled. Please call CompileExpression first", expression)
 	}
 
-	return e.executeProgram(program, nil)
-}
+	// Execute with timeout protection
+	done := make(chan struct{})
+	var result goja.Value
+	var err error
 
-// runExpressionWithVariables executes a compiled JavaScript expression with
-// the given variables bound as globals for the run. The runner clears them
-// again before pooling the runtime, the way PutJSRuntime used to.
-func (e *JSEngine) runExpressionWithVariables(expression string, variables map[string]interface{}) (interface{}, error) {
-	// Get the compiled program
-	e.compiledMutex.RLock()
-	program, exists := e.compiledExpressions[expression]
-	e.compiledMutex.RUnlock()
+	go func() {
+		defer close(done)
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("JavaScript execution panic: %v. Please check the expression for runtime errors", r)
+			}
+		}()
 
-	if !exists {
-		return nil, fmt.Errorf("JavaScript expression '%s' not compiled. Please call CompileExpression first", expression)
+		result, err = runtime.RunProgram(program)
+	}()
+
+	// Create timeout timer
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+
+	// Wait for execution with timeout
+	select {
+	case <-done:
+		if err != nil {
+			return nil, err
+		}
+		if result == nil {
+			return nil, fmt.Errorf("JavaScript execution returned nil result. Please check that the expression returns a value")
+		}
+		if result.ExportType() == nil {
+			return nil, fmt.Errorf("JavaScript execution returned nil result. Please check that the expression returns a value")
+		}
+		return result.Export(), nil
+	case <-timer.C:
+		// Interrupt the runtime to stop execution
+		runtime.Interrupt("execution timeout")
+		// Wait for goroutine to finish after interrupt with a second timeout
+		select {
+		case <-done:
+			// Goroutine finished after interrupt
+		case <-time.After(1 * time.Second):
+			// Goroutine didn't finish - log warning about potential resource leak
+			e.logger.Warnf("JavaScript execution goroutine may be stuck after timeout")
+		}
+		return nil, fmt.Errorf("JavaScript execution exceeded 5 second timeout limit. Consider simplifying the expression, avoiding infinite loops, or reducing computational complexity")
 	}
-
-	return e.executeProgram(program, variables)
 }
 
 // isValidSourceVariable checks if a variable name is in the configured sources
@@ -338,9 +397,10 @@ func (e *JSEngine) PrecompileExpressions(staticMappings map[string]config.Mappin
 
 	// Pre-compile static mappings
 	for virtualPath, mapping := range staticMappings {
-		program, err := compileExpression(
+		program, err := goja.Compile(
 			fmt.Sprintf("static-%s", virtualPath),
-			mapping.Expression)
+			mapping.Expression,
+			false)
 		if err != nil {
 			return fmt.Errorf("failed to pre-compile static mapping '%s' with expression '%s': %w. Please check syntax and try again", virtualPath, mapping.Expression, err)
 		}
@@ -349,9 +409,10 @@ func (e *JSEngine) PrecompileExpressions(staticMappings map[string]config.Mappin
 
 	// Pre-compile dynamic mappings
 	for virtualPath, mapping := range dynamicMappings {
-		program, err := compileExpression(
+		program, err := goja.Compile(
 			fmt.Sprintf("dynamic-%s", virtualPath),
-			mapping.Expression)
+			mapping.Expression,
+			false)
 		if err != nil {
 			return fmt.Errorf("failed to pre-compile dynamic mapping '%s' with expression '%s': %w. Please check syntax and try again", virtualPath, mapping.Expression, err)
 		}
@@ -393,7 +454,7 @@ func (e *JSEngine) EvaluateStaticPrecompiled(expression string) JSExecutionResul
 	}
 
 	// Execute pre-compiled program for optimal performance
-	result, err := e.executeProgram(program, nil)
+	result, err := e.executePrecompiledProgram(e.staticRuntime, program)
 	if err != nil {
 		e.logger.Warnf("JavaScript execution failed for static expression '%s': %v", expression, err)
 		errorResult := JSExecutionResult{
@@ -437,6 +498,11 @@ func (e *JSEngine) EvaluateDynamicPrecompiled(expression string, variables map[s
 		return e.EvaluateDynamic(expression, variables)
 	}
 
+	// Get a pooled runtime for thread safety
+	runtime := e.dynamicPool.Get().(*goja.Runtime)
+	runtime.ClearInterrupt() // Clear any previous interrupt state from timeout
+	defer e.putRuntime(runtime)
+
 	// Validate all variables first
 	for name := range variables {
 		if !e.isValidSourceVariable(name) {
@@ -447,9 +513,18 @@ func (e *JSEngine) EvaluateDynamicPrecompiled(expression string, variables map[s
 		}
 	}
 
-	// Execute pre-compiled program for optimal performance; the runner binds
-	// the variables for the run and clears them again before pooling
-	result, err := e.executeProgram(program, variables)
+	// Set variables in the runtime
+	for name, value := range variables {
+		if err := runtime.Set(name, value); err != nil {
+			return JSExecutionResult{
+				Success: false,
+				Error:   fmt.Sprintf("Failed to set variable '%s' to value '%v': %v", name, value, err),
+			}
+		}
+	}
+
+	// Execute pre-compiled program for optimal performance
+	result, err := e.executePrecompiledProgram(runtime, program)
 	if err != nil {
 		e.logger.Warnf("JavaScript execution failed for dynamic expression '%s': %v", expression, err)
 		return JSExecutionResult{
@@ -464,11 +539,60 @@ func (e *JSEngine) EvaluateDynamicPrecompiled(expression string, variables map[s
 	}
 }
 
+// executePrecompiledProgram executes a pre-compiled program with timeout protection
+func (e *JSEngine) executePrecompiledProgram(runtime *goja.Runtime, program *goja.Program) (interface{}, error) {
+	done := make(chan struct{})
+	var result goja.Value
+	var execErr error
+
+	// Run with timeout
+	go func() {
+		defer close(done)
+		defer func() {
+			if r := recover(); r != nil {
+				execErr = fmt.Errorf("JavaScript panic: %v. Please check the expression for runtime errors", r)
+			}
+		}()
+
+		result, execErr = runtime.RunProgram(program)
+	}()
+
+	// Create timeout timer
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+
+	select {
+	case <-done:
+		if execErr != nil {
+			return nil, execErr
+		}
+		if result == nil {
+			return nil, fmt.Errorf("JavaScript execution returned nil result. Please check that the expression returns a value")
+		}
+		if result.ExportType() == nil {
+			return nil, fmt.Errorf("JavaScript execution returned nil result. Please check that the expression returns a value")
+		}
+		return result.Export(), nil
+	case <-timer.C:
+		// Interrupt the runtime to stop execution
+		runtime.Interrupt("execution timeout")
+		// Wait for goroutine to finish after interrupt with a second timeout
+		select {
+		case <-done:
+			// Goroutine finished after interrupt
+		case <-time.After(1 * time.Second):
+			// Goroutine didn't finish - log warning about potential resource leak
+			e.logger.Warnf("JavaScript execution goroutine may be stuck after timeout (precompiled)")
+		}
+		return nil, fmt.Errorf("JavaScript execution exceeded 5 second timeout limit. Consider simplifying the expression, avoiding infinite loops, or reducing computational complexity")
+	}
+}
+
 // Close cleans up the JavaScript engine resources
 func (e *JSEngine) Close() error {
 	// Clear compiled expressions
 	e.compiledMutex.Lock()
-	e.compiledExpressions = make(map[string]*js_runtime.Program)
+	e.compiledExpressions = make(map[string]*goja.Program)
 	e.compiledMutex.Unlock()
 
 	// Clear static expression cache
@@ -478,9 +602,9 @@ func (e *JSEngine) Close() error {
 
 	// Clear pre-compiled programs
 	e.precompiledMutex.Lock()
-	e.precompiledPrograms = make(map[string]*js_runtime.Program)
+	e.precompiledPrograms = make(map[string]*goja.Program)
 	e.precompiledMutex.Unlock()
 
-	// Release the runner's pooled runtimes
-	return e.runner.Close()
+	// Note: Goja runtimes don't need explicit cleanup, they will be garbage collected
+	return nil
 }
