@@ -30,6 +30,7 @@ import (
 
 	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin"
 	"github.com/united-manufacturing-hub/benthos-umh/nodered_js_plugin/cache"
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/js_runtime"
 	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/topic"
 )
 
@@ -135,16 +136,24 @@ type TagProcessor struct {
 	config TagProcessorConfig
 	logger *service.Logger
 
-	// VM pooling infrastructure - Phase 1 optimization
+	// VM pooling infrastructure - Phase 1 optimization.
+	// Only the condition-if path still executes on raw goja runtimes: the if
+	// expressions compile unwrapped and non-strict (see compilePrograms), and
+	// the frozen js_runtime API has no way to run an unwrapped program. The
+	// defaults/then/advanced programs run on p.runner.
 	vmpool       sync.Pool
 	vmPoolHits   *service.MetricCounter
 	vmPoolMisses *service.MetricCounter
 
 	// Compiled programs - Phase 2 optimization
-	defaultsProgram       *goja.Program   // Pre-compiled defaults code
-	conditionPrograms     []*goja.Program // Pre-compiled condition evaluations
-	conditionThenPrograms []*goja.Program // Pre-compiled condition actions
-	advancedProgram       *goja.Program   // Pre-compiled advanced processing
+	defaultsProgram       *js_runtime.Program   // Pre-compiled defaults code
+	conditionPrograms     []*goja.Program       // Pre-compiled condition evaluations (unwrapped, non-strict: unchanged tonight)
+	conditionThenPrograms []*js_runtime.Program // Pre-compiled condition actions
+	advancedProgram       *js_runtime.Program   // Pre-compiled advanced processing
+
+	// Shared runtime mechanism (ENG-8128): zero Options, like nodered_js —
+	// no deadline, no hardening, no ResetGlobals.
+	runner *js_runtime.Runner
 
 	// Original code for error logging - Phase 2 enhancement
 	originalDefaults   string
@@ -178,6 +187,9 @@ func newTagProcessor(config TagProcessorConfig, logger *service.Logger, metrics 
 		vmPoolHits:   metrics.NewCounter("vm_pool_hits"),
 		vmPoolMisses: metrics.NewCounter("vm_pool_misses"),
 
+		// Shared runtime for defaults/then/advanced programs
+		runner: js_runtime.NewRunner(js_runtime.Options{}),
+
 		// Store original code for error logging - Phase 2 enhancement
 		originalDefaults:   config.Defaults,
 		originalConditions: config.Conditions,
@@ -200,7 +212,8 @@ func newTagProcessor(config TagProcessorConfig, logger *service.Logger, metrics 
 
 // VM Pool Management Methods - Phase 1 Optimization
 
-// getVM acquires a VM from the pool and tracks metrics
+// getVM acquires a VM from the pool and tracks metrics.
+// Only the condition-if path uses this pool (see the struct comment).
 func (p *TagProcessor) getVM() *goja.Runtime {
 	poolResult := p.vmpool.Get()
 	if poolResult == nil {
@@ -233,7 +246,7 @@ func (p *TagProcessor) clearVMState(vm *goja.Runtime) error {
 	return vm.GlobalObject().Set("msg", nil)
 }
 
-// setupMessageForVM prepares a VM with message data for execution
+// setupMessageForVM prepares a raw VM (condition-if path) with message data.
 func (p *TagProcessor) setupMessageForVM(ctx context.Context, vm *goja.Runtime, msg *service.Message, jsMsg map[string]any) error {
 	// Initialize meta if it doesn't exist
 	if _, exists := jsMsg["meta"]; !exists {
@@ -260,6 +273,27 @@ func (p *TagProcessor) setupMessageForVM(ctx context.Context, vm *goja.Runtime, 
 	}
 
 	return nil
+}
+
+// prepareJSMsg converts a message to the JS msg object and folds the message's
+// metadata into msg.meta — the same preparation setupMessageForVM does for a
+// raw VM, for programs that run on the shared runner.
+func prepareJSMsg(msg *service.Message) (map[string]any, error) {
+	jsMsg, err := nodered_js_plugin.ConvertMessageToJSObject(msg)
+	if err != nil {
+		return nil, err
+	}
+	if _, exists := jsMsg["meta"]; !exists {
+		jsMsg["meta"] = make(map[string]any)
+	}
+	meta := jsMsg["meta"].(map[string]any)
+	if err := msg.MetaWalkMut(func(key string, value any) error {
+		meta[key] = value
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("metadata extraction failed: %w", err)
+	}
+	return jsMsg, nil
 }
 
 // TODO: Each time there is any execution error, output the code where the error happened as well as the message that caused it (see nodered_js_plugin). Double-check that it is not being outputted twice.
@@ -710,9 +744,10 @@ func (p *TagProcessor) compilePrograms() error {
 
 	// Compile defaults code
 	// WHY: Defaults processing happens for every message batch, so optimization is critical
+	// js_runtime.Compile applies the (function(){'use strict'; ...})() wrap this
+	// plugin used to build inline.
 	if p.originalDefaults != "" {
-		wrappedCode := fmt.Sprintf(`(function(){'use strict';%s})()`, p.originalDefaults)
-		p.defaultsProgram, err = goja.Compile("defaults.js", wrappedCode, false)
+		p.defaultsProgram, err = js_runtime.Compile("defaults.js", p.originalDefaults)
 		if err != nil {
 			return fmt.Errorf("failed to compile defaults code: %w", err)
 		}
@@ -721,11 +756,16 @@ func (p *TagProcessor) compilePrograms() error {
 	// Compile condition programs
 	// WHY: Conditions are evaluated for every message, making this the highest impact optimization
 	p.conditionPrograms = make([]*goja.Program, len(p.originalConditions))
-	p.conditionThenPrograms = make([]*goja.Program, len(p.originalConditions))
+	p.conditionThenPrograms = make([]*js_runtime.Program, len(p.originalConditions))
 
 	for i, condition := range p.originalConditions {
-		// Compile condition evaluation code
-		// WHY: Boolean condition evaluation happens most frequently
+		// Compile condition evaluation code.
+		// NOTE (ENG-8128): the if expressions intentionally still compile
+		// unwrapped and non-strict, exactly as before this plugin moved onto
+		// pkg/js_runtime — the frozen js_runtime API only compiles wrapped
+		// programs, and wrapping them (making them strict, allowing a
+		// top-level return) would change behaviour and is out of scope
+		// tonight. They run on this plugin's raw VM pool.
 		p.conditionPrograms[i], err = goja.Compile(
 			fmt.Sprintf("condition-%d-if.js", i),
 			condition.If,
@@ -737,11 +777,9 @@ func (p *TagProcessor) compilePrograms() error {
 
 		// Compile condition action code
 		// WHY: Action code executes when conditions are true, also frequent
-		wrappedThenCode := fmt.Sprintf(`(function(){'use strict';%s})()`, condition.Then)
-		p.conditionThenPrograms[i], err = goja.Compile(
+		p.conditionThenPrograms[i], err = js_runtime.Compile(
 			fmt.Sprintf("condition-%d-then.js", i),
-			wrappedThenCode,
-			false,
+			condition.Then,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to compile condition %d 'then' code: %w", i, err)
@@ -751,8 +789,7 @@ func (p *TagProcessor) compilePrograms() error {
 	// Compile advanced processing code
 	// WHY: Advanced processing is less frequent but still benefits from compilation
 	if p.originalAdvanced != "" {
-		wrappedCode := fmt.Sprintf(`(function(){'use strict';%s})()`, p.originalAdvanced)
-		p.advancedProgram, err = goja.Compile("advanced.js", wrappedCode, false)
+		p.advancedProgram, err = js_runtime.Compile("advanced.js", p.originalAdvanced)
 		if err != nil {
 			return fmt.Errorf("failed to compile advanced processing code: %w", err)
 		}
@@ -761,34 +798,32 @@ func (p *TagProcessor) compilePrograms() error {
 	return nil
 }
 
-// executeCompiledProgram runs a pre-compiled JS program. Returns (messages, reason, err).
-// reason is the drop label when err != nil; empty for deliberate drops (null/undefined).
-func (p *TagProcessor) executeCompiledProgram(vm *goja.Runtime, program *goja.Program, jsMsg map[string]any, stageName string) ([]map[string]any, string, error) {
-	if program == nil {
+// originalCodeForStage returns the user's source for error logging.
+func (p *TagProcessor) originalCodeForStage(stageName string) string {
+	switch stageName {
+	case "defaults":
+		return p.originalDefaults
+	case "advanced":
+		return p.originalAdvanced
+	case "condition-then":
+		// The per-condition source is not threaded through here; the caller
+		// passes the exact code when it has it.
+		return fmt.Sprintf("compiled program: %s", stageName)
+	default:
+		return fmt.Sprintf("compiled program: %s", stageName)
+	}
+}
+
+// handleRunResult converts a program's completion value into result messages.
+// result is the exported completion value: nil for null/undefined (deliberate
+// drop), an array fans out, a single object is one message. reason is the drop
+// label when err != nil; empty for deliberate drops.
+func (p *TagProcessor) handleRunResult(result any, stageName string, jsMsg map[string]any) ([]map[string]any, string, error) {
+	if result == nil {
 		return nil, "", nil
 	}
 
-	result, err := vm.RunProgram(program)
-	if err != nil {
-		// Use original code for error logging context
-		var originalCode string
-		switch stageName {
-		case "defaults":
-			originalCode = p.originalDefaults
-		case "advanced":
-			originalCode = p.originalAdvanced
-		default:
-			originalCode = fmt.Sprintf("compiled program: %s", stageName)
-		}
-		p.logJSError(err, originalCode, jsMsg)
-		return nil, "js_throw", fmt.Errorf("JavaScript error in %s: %w", stageName, err)
-	}
-
-	if result == nil || goja.IsNull(result) || goja.IsUndefined(result) {
-		return nil, "", nil
-	}
-
-	switch v := result.Export().(type) {
+	switch v := result.(type) {
 	case []any:
 		messages := make([]map[string]any, 0, len(v))
 		for i, msg := range v {
@@ -809,9 +844,24 @@ func (p *TagProcessor) executeCompiledProgram(vm *goja.Runtime, program *goja.Pr
 	}
 }
 
+// runProgram executes program on the shared runner with the message's JS
+// environment bound. The runner runs on context.Background(): tag_processor has
+// no time limit today and keeps not having one (the cache functions in the
+// environment still follow ctx). Returns (messages, reason, err) like
+// handleRunResult, logging JS errors with code context first.
+func (p *TagProcessor) runProgram(ctx context.Context, program *js_runtime.Program, jsMsg map[string]any, stageName string) ([]map[string]any, string, error) {
+	result, err := p.runner.Run(context.Background(), program, p.jsProcessor.JSEnvironment(ctx, jsMsg))
+	if err != nil {
+		// Use original code for error logging context
+		p.logJSError(err, p.originalCodeForStage(stageName), jsMsg)
+		return nil, "js_throw", fmt.Errorf("JavaScript error in %s: %w", stageName, err)
+	}
+	return p.handleRunResult(result, stageName, jsMsg)
+}
+
 // processMessageBatchWithProgram runs a compiled program over a batch.
 // Per-message errors drop via RecordDrop; never returns a non-nil error.
-func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch service.MessageBatch, program *goja.Program, stageName string) (service.MessageBatch, error) {
+func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch service.MessageBatch, program *js_runtime.Program, stageName string) (service.MessageBatch, error) {
 	if program == nil {
 		return batch, nil
 	}
@@ -832,27 +882,17 @@ func (p *TagProcessor) processMessageBatchWithProgram(ctx context.Context, batch
 // This is a per-message helper so the deferred putVM fires each call,
 // not once per batch (a defer inside the loop body would hold every VM
 // until processMessageBatchWithProgram returns and starve the pool).
-func (p *TagProcessor) processMessageWithProgram(ctx context.Context, msg *service.Message, program *goja.Program, stageName string) []*service.Message {
-	vm := p.getVM()
-	defer p.putVM(vm)
-
+func (p *TagProcessor) processMessageWithProgram(ctx context.Context, msg *service.Message, program *js_runtime.Program, stageName string) []*service.Message {
 	// Convert message to JS object
 	// defensive: AsBytes never errors as of benthos v4.74.0 (TODO upstream); kept for future-proofing
-	jsMsg, err := nodered_js_plugin.ConvertMessageToJSObject(msg)
+	jsMsg, err := prepareJSMsg(msg)
 	if err != nil {
 		nodered_js_plugin.RecordDrop(p.messagesDropped, p.logger, "infra_failed", "tag_processor", stageName, msg, err)
 		return nil
 	}
 
-	// Setup VM environment
-	// defensive: MetaWalkMut callback + vm.Set unreachable from normal messages; kept for future-proofing
-	if err = p.setupMessageForVM(ctx, vm, msg, jsMsg); err != nil {
-		nodered_js_plugin.RecordDrop(p.messagesDropped, p.logger, "infra_failed", "tag_processor", stageName, msg, err)
-		return nil
-	}
-
 	// Execute compiled program for maximum performance
-	messages, reason, err := p.executeCompiledProgram(vm, program, jsMsg, stageName)
+	messages, reason, err := p.runProgram(ctx, program, jsMsg, stageName)
 	if err != nil {
 		nodered_js_plugin.RecordDrop(p.messagesDropped, p.logger, reason, "tag_processor", stageName, msg, err)
 		return nil
