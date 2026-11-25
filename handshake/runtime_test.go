@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
+	"time"
 )
 
 // LIB-7: the script's own variables are reset for every run. A script's
@@ -101,19 +103,20 @@ func TestRun_OffersCallMethodOnlyWhenTheBindingCanCall(t *testing.T) {
 	t.Run("absent when the binding cannot", func(t *testing.T) {
 		b := &fakeBinding{}
 		engine := newTestEngine(t, b, func(c *Config) {
-			c.Script = `
-				opcua.call_method({nodeId: "ns=2;s=Method"}, []);
-				return opcua.success({called: true});
-			`
+			c.Script = `return opcua.success({});`
 		})
-		res := engine.Run(t.Context(), map[string]any{})
-		// A script asking a protocol without methods is a wrong script, and a
-		// wrong script is persistent.
-		if res.Outcome != Persistent {
-			t.Fatalf("outcome %v, err %v", res.Outcome, res.Err)
+		// Assert the absence, not an outcome: the mutation pass registered
+		// call_method unconditionally but made it refuse persistently, and
+		// the old assertions stayed green, because a wrong script and a
+		// refused method look alike from the result.
+		ns := engine.namespace(&runState{}, true)
+		if _, offered := ns["call_method"]; offered {
+			t.Fatalf("call_method was offered to a binding that cannot call")
 		}
-		if res.Data != nil {
-			t.Fatalf("a failed run carries no data, got %v", res.Data)
+		for _, want := range []string{"read", "write", "wait_until", "success", "error_not_ready", "error_transient", "error_persistent"} {
+			if _, ok := ns[want]; !ok {
+				t.Fatalf("%s missing from the namespace", want)
+			}
 		}
 	})
 }
@@ -142,6 +145,51 @@ func (f fakeRuntime) run(_ context.Context, _ any, _ map[string]any) (any, error
 func (f fakeRuntime) close() error { return nil }
 
 type fakeProgram struct{ name string }
+
+// A script fault a user reads must be the fault they wrote, not a
+// placeholder. The mutation pass replaced wrapRunError's return with a
+// fixed errors.New("script fault") and all 23 tests stayed green, because
+// the only test feeding the runErr→Result.Err link used a mock error.
+// This one throws a real exception through the real runtime and demands
+// its own text back.
+func TestRun_AScriptFaultReachesTheResultUnmangled(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.Script = `throw new Error("distinctive script fault 9001");`
+	})
+
+	res := engine.Run(t.Context(), map[string]any{})
+	if res.Outcome != Persistent {
+		t.Fatalf("outcome %v, err %v", res.Outcome, res.Err)
+	}
+	if !strings.Contains(res.Err.Error(), "distinctive script fault 9001") {
+		t.Fatalf("the script's own text did not reach Result.Err: %v", res.Err)
+	}
+}
+
+// The real stand-in runtime must stop a running script when its context
+// is done. The mutation pass found nothing pinned this: the fake-runtime
+// test above exercises the fake, and the engine tests reach the runtime
+// only indirectly. This drives the seam itself.
+func TestRuntime_TheRealRuntimeStopsWhenItsContextIsDone(t *testing.T) {
+	rt := newRuntime()
+	defer func() { _ = rt.close() }()
+	program, err := rt.compile("spin", `for (;;) {}`)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, runErr := rt.run(ctx, program, nil)
+	if runErr == nil || !errors.Is(runErr, context.DeadlineExceeded) {
+		t.Fatalf("a run under an expired context must stop with ctx's own error, got %v", runErr)
+	}
+	if wall := time.Since(start); wall > 2*time.Second {
+		t.Fatalf("the runtime did not stop when ctx was done: %v", wall)
+	}
+}
 
 // A fake runtime stands in the seam: the engine drives it through the same
 // interface the real package will satisfy.

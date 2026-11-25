@@ -72,6 +72,13 @@ func (f *fakeBinding) errFor(op, addr string) error {
 }
 
 func (f *fakeBinding) Read(ctx context.Context, addr string) (ReadResponse, error) {
+	// A binding honours its context (BND-3): it does not touch the machine
+	// once ctx is done, so the operation is not recorded either. The
+	// mutation pass found the old `_ context.Context` let a cleanup run under
+	// a cancelled context without any test noticing.
+	if err := ctx.Err(); err != nil {
+		return ReadResponse{}, err
+	}
 	f.log("read " + addr)
 	if err := f.errFor("read", addr); err != nil {
 		return ReadResponse{}, err
@@ -100,7 +107,12 @@ func (f *fakeBinding) Read(ctx context.Context, addr string) (ReadResponse, erro
 	return ReadResponse{Value: value}, nil
 }
 
-func (f *fakeBinding) Write(_ context.Context, addr string, value any) error {
+func (f *fakeBinding) Write(ctx context.Context, addr string, value any) error {
+	// The read's comment, word for word: a done context means the machine
+	// was not asked.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.log(fmt.Sprintf("write %s=%v", addr, value))
 	return f.errFor("write", addr)
 }
