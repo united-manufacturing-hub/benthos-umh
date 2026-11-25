@@ -44,7 +44,20 @@ func (gojaRuntime) compile(name, source string) (any, error) {
 // done, and the returned error wraps ctx.Err(). The runtime is discarded
 // rather than pooled, so an interrupt that arrives late cannot hurt the next
 // run.
-func (gojaRuntime) run(ctx context.Context, program any, globals map[string]any) (any, error) {
+func (gojaRuntime) run(ctx context.Context, program any, globals map[string]any) (result any, err error) {
+	// No panic from a script or a binding leaves Run (round-2 review,
+	// item 2): goja fills a missing function argument with a nil func, a
+	// binding is protocol code that can blow up on a machine's bad answer,
+	// and in Benthos an escaped panic is the process — with the machine
+	// left armed and neither cleanup run. A recovered panic is a script
+	// fault: persistent, and the cleanup pair still runs, because Run
+	// reads the error like any other.
+	defer func() {
+		if r := recover(); r != nil {
+			result = nil
+			err = fmt.Errorf("the script or a binding panicked: %v", r)
+		}
+	}()
 	prog, ok := program.(*goja.Program)
 	if !ok {
 		return nil, fmt.Errorf("program was not compiled by this runtime")

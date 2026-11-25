@@ -14,6 +14,16 @@ func (e *Engine[UnifiedAddress]) waitUntil(
 	rs *runState, raw map[string]any, pred func(any) bool,
 	timeoutMs float64, opts map[string]any,
 ) (any, error) {
+	// A wait without its predicate — left off, or a name that is not a
+	// function — is a wrong script, not a nil-func call: goja fills the
+	// missing argument with a nil func, and calling it panicked straight
+	// out of Run with the machine left armed (round-2 review, item 2).
+	// A wrong script is persistent, so the fault propagates as an
+	// exception rather than being recorded as a binding fault.
+	if pred == nil {
+		return nil, fmt.Errorf(
+			"wait_until needs a predicate as its second argument, such as v => v === true")
+	}
 	// A wait after the run has ended is refused like every other operation
 	// (UAT-13): a wait that timed out is itself an ending, so a script that
 	// catches it cannot start another one under the ended transaction.

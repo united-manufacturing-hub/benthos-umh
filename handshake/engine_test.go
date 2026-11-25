@@ -386,3 +386,39 @@ func TestRun_TheDeadlineOutranksAnEndingTheScriptNeverStoppedFor(t *testing.T) {
 		t.Fatalf("onError did not run (ops: %v)", b.snapshot())
 	}
 }
+
+// No panic from a script or a binding leaves Run: the recovered value is a
+// persistent fault, and both cleanups still run, because a binding is
+// protocol code that can panic under a machine's bad answer as easily as a
+// script can call something wrongly. Found by the round-2 review, which
+// watched a nil predicate panic out of Run with the machine left armed;
+// grep found no recover anywhere in the package.
+func TestRun_ABindingPanicIsAPersistentFaultNotACrash(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.OnError = `opcua.write({nodeId: "Apply"}, false);`
+		c.Script = `
+			opcua.write({nodeId: "Setpoint"}, 42);
+			opcua.read({nodeId: "Loaded"});
+			return opcua.success({});
+		`
+	})
+	b.blockRead = func(context.Context) (ReadResponse, error) {
+		panic("machine answered a 0x0f status the driver does not map")
+	}
+
+	res := engine.Run(t.Context(), map[string]any{}) // must not take the process with it
+	if res.Outcome != Persistent {
+		t.Fatalf("outcome %v, want Persistent: a panic is not a delivery and not a retry (err %v)",
+			res.Outcome, res.Err)
+	}
+	if res.Err == nil || !strings.Contains(res.Err.Error(), "panicked") {
+		t.Fatalf("Err must say the run panicked, got %v", res.Err)
+	}
+	if n := b.count("write Setpoint=42"); n != 1 {
+		t.Fatalf("the write before the panic happened once (ops: %v)", b.snapshot())
+	}
+	if n := b.count("write Apply=false"); n != 1 {
+		t.Fatalf("onError did not run after the panic (ops: %v)", b.snapshot())
+	}
+}
