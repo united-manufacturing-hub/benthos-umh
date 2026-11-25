@@ -2,6 +2,7 @@ package handshake
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -95,6 +96,41 @@ func TestRun_DeliversWhenScriptReturnsSuccess(t *testing.T) {
 	}
 	if res.Err != nil || res.CleanupErr != nil {
 		t.Fatalf("a delivered run carries no fault: err %v, cleanup %v", res.Err, res.CleanupErr)
+	}
+}
+
+// The message reaches the script as the flow decoded it, and a JSON number
+// is json.Number in Go, the type benthos' structured messages carry. In the
+// script it must be a number: a customer's read-back guard is
+// v === msg.setpoint, and against a string-kind object it is always false
+// (UAT scenario 12).
+func TestRun_TheScriptSeesJSONNumbersAsNumbers(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.Script = `
+			if (typeof msg.setpoint !== "number") {
+				return opcua.error_persistent("msg.setpoint is a " + typeof msg.setpoint);
+			}
+			if (msg.setpoint !== 1.5) {
+				return opcua.error_persistent("msg.setpoint is " + msg.setpoint);
+			}
+			if (msg.list[0] !== 2 || msg.nested.deep !== 3.25) {
+				return opcua.error_persistent("nested numbers did not convert");
+			}
+			return opcua.success({seen: msg.setpoint});
+		`
+	})
+	res := engine.Run(t.Context(), map[string]any{
+		"setpoint": json.Number("1.5"),
+		"list":     []any{json.Number("2")},
+		"nested":   map[string]any{"deep": json.Number("3.25")},
+	})
+	if res.Outcome != Delivered {
+		t.Fatalf("outcome %v, err %v", res.Outcome, res.Err)
+	}
+	d, ok := res.Data.(map[string]any)
+	if !ok || d["seen"] != 1.5 {
+		t.Fatalf("Data is %#v", res.Data)
 	}
 }
 

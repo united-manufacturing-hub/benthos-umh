@@ -2,6 +2,7 @@ package handshake
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -64,7 +65,7 @@ func (gojaRuntime) run(ctx context.Context, program any, globals map[string]any)
 	}
 	vm := goja.New()
 	for name, value := range globals {
-		if err := vm.Set(name, value); err != nil {
+		if err := vm.Set(name, jsValue(value)); err != nil {
 			return nil, fmt.Errorf("cannot bind global %q: %w", name, err)
 		}
 	}
@@ -85,6 +86,40 @@ func (gojaRuntime) run(ctx context.Context, program any, globals map[string]any)
 		return nil, wrapRunError(err)
 	}
 	return value.Export(), nil
+}
+
+// jsValue prepares one Go value for the boundary into the script. A JSON
+// number reaches the engine as json.Number - the type a structured message
+// carries - and goja would bind that string-kind type as a string, so the
+// script would see msg.setpoint === 1.5 fail on a message that arrived as
+// JSON. A number is a number in the script, whatever Go type carried it;
+// everything else crosses as it is. Maps and slices are copied, so the
+// message the caller handed over is not written to.
+func jsValue(v any) any {
+	switch t := v.(type) {
+	case json.Number:
+		if i, err := t.Int64(); err == nil {
+			return i
+		}
+		if f, err := t.Float64(); err == nil {
+			return f
+		}
+		return t.String()
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, e := range t {
+			out[k] = jsValue(e)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, e := range t {
+			out[i] = jsValue(e)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // Close releases pooled runtimes. The stand-in pools none, so there is
