@@ -210,32 +210,72 @@ func TestResetFailureDiscardsRuntime(t *testing.T) {
 	}
 }
 
-// TestResetGlobalsClearsScriptGlobals pins the ResetGlobals option: globals a
-// script created do not survive to the next run.
+// TestResetGlobalsClearsScriptGlobals pins the ResetGlobals option: a
+// runtime the pool hands back is wiped of everything a script created.
+//
+// Caveat, stated honestly: sync.Pool does not promise that the next Run gets
+// the same runtime back (it may drop it or hand it elsewhere), so a single
+// pair of runs can pass vacuously when the probe lands on a fresh runtime.
+// The loop makes that practically impossible to miss: it went red against
+// the naive implementation that never deleted anything, because pool reuse
+// happens immediately in a tight loop, and any run that sees a reused but
+// unwiped runtime fails the probe.
 func TestResetGlobalsClearsScriptGlobals(t *testing.T) {
 	r := NewRunner(Options{ResetGlobals: true})
 	set := mustCompile(t, "set", `globalThis.marker = 42; return "set"`)
 	probe := mustCompile(t, "probe", `return typeof globalThis.marker`)
 
-	run(t, r, context.Background(), set, nil)
-	v := run(t, r, context.Background(), probe, nil)
-	if v != "undefined" {
-		t.Fatalf("ResetGlobals: typeof marker = %v, want \"undefined\"", v)
+	for i := 0; i < 50; i++ {
+		run(t, r, context.Background(), set, nil)
+		v := run(t, r, context.Background(), probe, nil)
+		if v != "undefined" {
+			t.Fatalf("ResetGlobals, iteration %d: typeof marker = %v, want %q", i, v, "undefined")
+		}
 	}
 }
 
-// TestGlobalsSurviveWithoutResetGlobals is the control for ResetGlobals and
-// pins today's behaviour for callers that do not opt in: a global a script
-// created survives into the next run on the same pooled runtime.
+// TestGlobalsSurviveWithoutResetGlobals pins what Options.ResetGlobals=false
+// actually guarantees, and nothing more: a runtime the pool hands back is NOT
+// wiped, so a global a script created survives ON A REUSED RUNTIME.
+//
+// It deliberately does not assert that the next run sees the global at all:
+// sync.Pool cannot promise reuse (it may drop a pooled runtime or hand it to
+// another P), so "the global survives into the next run" is not a guarantee
+// anyone can make — the base code already pooled with sync.Pool and cleared
+// only the message, so global survival was always reuse-limited. The probe
+// therefore tags Math (whose own properties are outside every reset: the
+// ResetGlobals wipe deletes non-pristine keys of the global object, and
+// Math is pristine) so it can tell reuse from a fresh runtime even under a
+// hypothetical always-wipe; survival is only asserted on runs that did
+// reuse, which is exactly the runner's promise. Verified red by forcing the
+// ResetGlobals wipe on for every runner: the reused runs then report the
+// marker wiped and fail. If a future change wipes globals by default, the
+// same red fires.
 func TestGlobalsSurviveWithoutResetGlobals(t *testing.T) {
 	r := NewRunner(Options{})
-	set := mustCompile(t, "set", `globalThis.marker = 42; return "set"`)
-	probe := mustCompile(t, "probe", `return typeof globalThis.marker`)
+	// Math.tagged marks the runtime as reused (survives any reset);
+	// globalThis.marker is the survival canary.
+	tag := mustCompile(t, "tag", `globalThis.marker = 42; Math.tagged = true; return "tagged"`)
+	probe := mustCompile(t, "probe", `return Math.tagged === true ? typeof globalThis.marker : "fresh"`)
 
-	run(t, r, context.Background(), set, nil)
-	v := run(t, r, context.Background(), probe, nil)
-	if v != "number" {
-		t.Fatalf("no ResetGlobals: typeof marker = %v, want \"number\"", v)
+	reused := false
+	for i := 0; i < 50; i++ {
+		run(t, r, context.Background(), tag, nil)
+		v := run(t, r, context.Background(), probe, nil)
+		if v == "fresh" {
+			// The pool handed the probe a different (or new) runtime; the
+			// survival promise says nothing about that run.
+			continue
+		}
+		reused = true
+		if v != "number" {
+			t.Fatalf("no ResetGlobals, iteration %d: reused runtime lost the script global: typeof marker = %v, want %q", i, v, "number")
+		}
+	}
+	if !reused {
+		// Not a failure: pool reuse is not promised. Logged so a vacuous pass
+		// is visible in -v output rather than silent.
+		t.Log("no runtime reuse observed in 50 iterations; the survival half of this test was unexercised")
 	}
 }
 
@@ -262,6 +302,48 @@ func TestOnSlow(t *testing.T) {
 	}
 	if got < 40*time.Millisecond {
 		t.Fatalf("OnSlow duration %v, want >= 40ms", got)
+	}
+}
+
+// TestHardenInstallsBlocklist pins Options.Harden for the seam: hardened
+// runtimes replace the blocklisted globals with functions that throw the
+// stream processor's historical TypeError, and without Harden nothing is
+// blocked (the nodered_js contract: its scripts may use eval). After the
+// round-2 fix the stream processor evaluates raw expressions on its own
+// hardened runtimes, so Harden has no in-repo caller at the moment — this
+// test and PR1's assumptions are what keep the option honest.
+func TestHardenInstallsBlocklist(t *testing.T) {
+	hardened := NewRunner(Options{Harden: true})
+
+	// The blocker is a function, where plain goja has no console at all.
+	typeofConsole := mustCompile(t, "typeof-console", `return typeof console`)
+	v := run(t, hardened, context.Background(), typeofConsole, nil)
+	if v != "function" {
+		t.Fatalf("Harden: typeof console = %v, want %q (blocker)", v, "function")
+	}
+
+	// Calling a blocked global throws the historical TypeError text.
+	callEval := mustCompile(t, "call-eval", `return eval("1+1")`)
+	_, err := hardened.Run(context.Background(), callEval, nil)
+	if err == nil {
+		t.Fatal("Harden: eval call succeeded, want the blocker TypeError")
+	}
+	if !strings.Contains(err.Error(), "is disabled for security reasons in this sandboxed environment") {
+		t.Fatalf("Harden: eval call error = %v, want the blocker TypeError text", err)
+	}
+
+	// Without Harden nothing is blocked: nodered_js's contract.
+	plain := NewRunner(Options{})
+	v, err = plain.Run(context.Background(), callEval, nil)
+	if err != nil {
+		t.Fatalf("no Harden: eval call failed: %v", err)
+	}
+	if got := toFloat(t, v); got != 2 {
+		t.Fatalf(`no Harden: eval("1+1") = %v, want 2`, got)
+	}
+	v = run(t, plain, context.Background(), typeofConsole, nil)
+	if v != "undefined" {
+		t.Fatalf("no Harden: typeof console = %v, want %q (plain goja has no console)", v, "undefined")
 	}
 }
 
