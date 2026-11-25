@@ -13,9 +13,9 @@ import (
 // through an adapter when the branches are reconciled; until then newRuntime
 // builds the goja-backed stand-in below, and nothing else changes.
 type scriptRuntime interface {
-	Compile(name, source string) (any, error)
-	Run(ctx context.Context, program any, globals map[string]any) (any, error)
-	Close() error
+	compile(name, source string) (any, error)
+	run(ctx context.Context, program any, globals map[string]any) (any, error)
+	close() error
 }
 
 // newRuntime builds the scriptRuntime an Engine runs on. It is a variable so
@@ -30,7 +30,7 @@ type gojaRuntime struct{}
 
 // Compile applies the function wrap every caller in this repo already uses,
 // (function(){ 'use strict'; ... })(), so a script may use a top-level return.
-func (gojaRuntime) Compile(name, source string) (any, error) {
+func (gojaRuntime) compile(name, source string) (any, error) {
 	wrapped := "(function(){\n'use strict';\n" + source + "\n})()"
 	program, err := goja.Compile(name, wrapped, false)
 	if err != nil {
@@ -44,7 +44,7 @@ func (gojaRuntime) Compile(name, source string) (any, error) {
 // done, and the returned error wraps ctx.Err(). The runtime is discarded
 // rather than pooled, so an interrupt that arrives late cannot hurt the next
 // run.
-func (gojaRuntime) Run(ctx context.Context, program any, globals map[string]any) (any, error) {
+func (gojaRuntime) run(ctx context.Context, program any, globals map[string]any) (any, error) {
 	prog, ok := program.(*goja.Program)
 	if !ok {
 		return nil, fmt.Errorf("program was not compiled by this runtime")
@@ -76,7 +76,7 @@ func (gojaRuntime) Run(ctx context.Context, program any, globals map[string]any)
 
 // Close releases pooled runtimes. The stand-in pools none, so there is
 // nothing to release until the reconciliation replaces it.
-func (gojaRuntime) Close() error { return nil }
+func (gojaRuntime) close() error { return nil }
 
 // wrapRunError keeps an interrupt recognizable as ctx's own error, by
 // leaving the chain intact; every other error is a script fault for the

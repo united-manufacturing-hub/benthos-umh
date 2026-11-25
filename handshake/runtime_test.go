@@ -125,21 +125,21 @@ type fakeRuntime struct {
 	runErr     error
 }
 
-func (f fakeRuntime) Compile(name, _ string) (any, error) {
+func (f fakeRuntime) compile(name, _ string) (any, error) {
 	if f.compileErr != nil {
 		return nil, fmt.Errorf("%s: %w", name, f.compileErr)
 	}
 	return &fakeProgram{name: name}, nil
 }
 
-func (f fakeRuntime) Run(_ context.Context, _ any, _ map[string]any) (any, error) {
+func (f fakeRuntime) run(_ context.Context, _ any, _ map[string]any) (any, error) {
 	if f.runErr != nil {
 		return nil, f.runErr
 	}
 	return nil, nil
 }
 
-func (f fakeRuntime) Close() error { return nil }
+func (f fakeRuntime) close() error { return nil }
 
 type fakeProgram struct{ name string }
 
