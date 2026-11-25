@@ -1,0 +1,3 @@
+kind: improvements
+body: The JavaScript processors nodered_js and tag_processor run their scripts on one shared runtime package now. This removes their vm_pool_hits and vm_pool_misses metrics, so dashboards keyed on either of the two must drop them. A failure while the script environment is prepared is now reported as js_throw, like any other script fault, instead of a separate infrastructure error (ENG-8128)
+time: 2026-11-26T09:00:00.000000+00:00
