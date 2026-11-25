@@ -60,7 +60,7 @@ numbers and manages alias mappings. It does not yet comply with Sparkplug B 2.2 
 
 Key features:
 - Always operates as Edge Node (no role configuration needed)
-- Automatic NBIRTH/DBIRTH on connect with metric definitions
+- NBIRTH on connect and a DBIRTH for each new device, with metric definitions
 - NDEATH/DDEATH Last Will Testament on disconnect
 - Sequence number management with proper wrapping
 - Alias-based metric publishing for bandwidth efficiency
@@ -373,9 +373,9 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 
 	// BDSEQ IMPLEMENTATION AND LIMITATIONS:
 	//
-	// Sparkplug B v3.0 specification (§5.4) requires:
-	// 1. Initial value: Can be any 64-bit value
-	// 2. Subsequent sessions: MUST increment by exactly +1 for each new MQTT session
+	// Sparkplug B 3.0 requires bdSeq to start at 0, to increment by 1 on every new
+	// MQTT CONNECT and to stay the same on a rebirth (topics-nbirth-bdseq-increment,
+	// payloads-nbirth-bdseq-repeat).
 	//
 	// STATELESS LIMITATION:
 	// Benthos components are stateless by design - no persistence across restarts.
@@ -1022,7 +1022,7 @@ func (s *sparkplugOutput) createDeathMessage(_ *service.Message) (string, []byte
 // Key behaviors:
 // - Accumulates all known metrics for the device (current + previously seen)
 // - Assigns unique aliases for efficient DDATA transmission
-// - Sets retained flag per Sparkplug B specification
+// - Sets the retained flag, which Sparkplug 3.0 forbids
 // - Called on first device message OR when new metrics are discovered
 func (s *sparkplugOutput) publishDBIRTH(deviceID string, data map[string]interface{}) error {
 	if deviceID == "" {
@@ -1201,14 +1201,9 @@ func (s *sparkplugOutput) publishBirthMessage() error {
 	}
 	s.stateMu.RUnlock()
 
-	// SEQUENCE COUNTER FIX FOR NBIRTH:
-	// NBIRTH must use properly incremented sequence counter, NOT hardcoded to 0.
-	// Previous bug: NBIRTH was hardcoded to seq=0, ignoring sequence progression.
-	//
-	// Fixed behavior:
-	// - Initial connection: seqCounter=255 → increment → seq=0 (NBIRTH)
-	// - Rebirth scenarios: seqCounter=X → increment → seq=X+1 (NBIRTH)
-	// This ensures NBIRTH participates in the global Edge Node sequence progression.
+	// Initial connection: seqCounter=255 → increment → seq=0 (NBIRTH).
+	// Rebirth: seqCounter=X → increment → seq=X+1, while Sparkplug 2.2 requires
+	// seq=0 on every NBIRTH.
 	s.stateMu.Lock()
 	s.seqCounter++
 	if s.seqCounter == 0 {

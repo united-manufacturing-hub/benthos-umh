@@ -49,7 +49,7 @@ make test-unit
 **Expected Results**: 189/189 tests passing, including:
 - Message type parsing and validation
 - Alias resolution logic
-- Sparkplug B specification compliance
+- Sparkplug B message handling
 - Configuration validation
 - Error handling scenarios
 
