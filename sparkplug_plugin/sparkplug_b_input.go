@@ -84,7 +84,7 @@ SPARKPLUG B HOST ROLES:
 Key features:
 - Three-role system for different deployment scenarios
 - Safe default role prevents rebirth storms
-- Automatic STATE topic management with LWT (Primary role only)
+- Automatic STATE topic management with LWT (the LWT is registered for every role)
 - Sequence number validation and rebirth coordination
 - Alias resolution using BIRTH message metadata
 - Configurable message processing (splitting, extraction, filtering)
@@ -130,7 +130,7 @@ Key features:
 				Description("Sparkplug Group ID (e.g., 'FactoryA'). Serves two purposes: it is the publishing identity, and it is the default subscription filter (subscribes to spBv1.0/<group_id>/#). Set subscription.groups to override the filter.").
 				Example("FactoryA"),
 			service.NewStringField("edge_node_id").
-				Description("For the 'primary' role this field is required and is used as the Sparkplug host_id in the STATE topic (spBv1.0/STATE/<host_id>). For the 'secondary_passive' and 'secondary_active' roles it is optional and used only for identification.").
+				Description("For the 'primary' role this field is required and is used as the Sparkplug host_id in the STATE topic (spBv1.0/STATE/<host_id>). For the 'secondary_passive' and 'secondary_active' roles it is optional, but every role registers a retained OFFLINE Will on spBv1.0/STATE/<edge_node_id>.").
 				Example("PrimaryHost").
 				Optional(),
 			service.NewStringField("device_id").

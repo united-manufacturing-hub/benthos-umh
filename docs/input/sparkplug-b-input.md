@@ -13,10 +13,11 @@ The input does not yet comply with Sparkplug B 2.2 or 3.0. It differs from Spark
 - The `primary` role publishes the host state on `spBv1.0/STATE/<host_id>` with the text `ONLINE` or `OFFLINE`. Sparkplug 2.2 edge nodes read the host state from `STATE/<host_id>`, and Sparkplug 3.0 edge nodes expect a JSON payload. Edge nodes of either version never see the host as online.
 - The `ONLINE` message, and the `OFFLINE` message it sends on shutdown, are not retained. After an unclean stop, the retained host state on the broker stays `OFFLINE` while the host runs again.
 - The host state messages use `mqtt.qos`. Sparkplug requires QoS 1.
-- The input ignores some valid NDEATH messages, and the edge node stays online. It compares the NDEATH's bdSeq with a stored value that it does not take from the first NBIRTH of a node or from an NBIRTH with bdSeq 0.
+- The input ignores some valid NDEATH messages, and the edge node stays online. It compares the NDEATH's bdSeq with a stored value that it does not update from every NBIRTH: not from the first NBIRTH of a node, an NBIRTH with bdSeq 0, or an NBIRTH without a timestamp.
 - A DDEATH marks the whole edge node offline instead of the one device.
 - Metrics with alias 0 are not resolved.
 - A host ID with `+`, `/` or `#` is accepted and produces an invalid STATE topic.
+- Every role, not only `primary`, registers a retained `OFFLINE` Will on `spBv1.0/STATE/<edge_node_id>`, or on `spBv1.0/STATE/` when `identity.edge_node_id` is empty. When a secondary host with the primary host's ID loses its connection, the broker marks the running primary host offline.
 
 Sparkplug 3.0 adds rules the input does not meet either, such as the JSON host state and marking metrics stale after a death. This list is updated as the fixes ship.
 
@@ -174,7 +175,7 @@ Here's how a Sparkplug B message maps to UMH-Core using the Modified Parris Meth
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `identity.group_id` | `string` | **required** | Sparkplug B Group ID. Also acts as the default subscription filter (`spBv1.0/<group_id>/#`). Override via `subscription.groups`. |
-| `identity.edge_node_id` | `string` | `""` | Required for the `primary` role, where it is used as the Sparkplug `host_id` in the STATE topic (`spBv1.0/STATE/<host_id>`). Optional for secondary roles. |
+| `identity.edge_node_id` | `string` | `""` | Required for the `primary` role, where it is used as the Sparkplug `host_id` in the STATE topic (`spBv1.0/STATE/<host_id>`). Optional for secondary roles, but every role registers a retained `OFFLINE` Will on this topic; see [Sparkplug compliance](#sparkplug-compliance). |
 
 ### Role Section
 
