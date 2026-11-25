@@ -32,6 +32,17 @@ func classify(rs *runState, ctx context.Context, runErr error) Result {
 		}
 		return failed(Transient, what)
 	case rs.opErr != nil:
+		// LIB-6 outranks an unmarked fault: if the run's own clock ran out
+		// while an operation was in flight — a binding that honours its
+		// context answers with ctx's own error, or with anything else it
+		// noticed first — the deadline stopped the script mid-transaction,
+		// which repeating cannot fix. Found by UAT-4, which watched a
+		// mid-commit deadline come back Transient, retryable.
+		if ctx.Err() != nil {
+			return failed(Persistent, fmt.Errorf(
+				"script stopped before it ended (%s failed: %v): %w",
+				rs.opWhere, rs.opErr, ctx.Err()))
+		}
 		// Unmarked: LIB-5 again, the other half of the rule.
 		return failed(Transient, fmt.Errorf("%s failed: %w", rs.opWhere, rs.opErr))
 	case ctx.Err() != nil:

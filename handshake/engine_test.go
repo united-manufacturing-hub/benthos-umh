@@ -275,3 +275,35 @@ func TestRun_RunsOnErrorWhenTheContextIsCancelled(t *testing.T) {
 		t.Fatalf("onError did not run after the cancellation (ops: %v)", b.snapshot())
 	}
 }
+
+// LIB-6: the deadline is configuration, so repeating cannot fix it — and a
+// binding that honours its context and returns ctx's own error when the
+// deadline fires mid-operation must not turn that stop into an unmarked,
+// retryable fault. Found by UAT-4 (a deadline that fires mid-transaction
+// was classed Transient); the fault's kind outranks nothing here, the
+// stop does.
+func TestRun_IsPersistentWhenTheDeadlineStopsAnOperation(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{"Ready": true}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.MaxScriptRuntime = 100 * time.Millisecond
+		c.Script = `
+			opcua.write({nodeId: "Apply"}, true);
+			opcua.read({nodeId: "Slow"});
+			return opcua.success({});
+		`
+	})
+	// The read blocks until the run's context is done, then answers with
+	// the context's own error, exactly as a binding that honours ctx does.
+	b.blockRead = func(ctx context.Context) (ReadResponse, error) {
+		<-ctx.Done()
+		return ReadResponse{}, ctx.Err()
+	}
+
+	res := engine.Run(t.Context(), map[string]any{})
+	if res.Outcome != Persistent {
+		t.Fatalf("outcome %v, want Persistent: a deadline that stops the script mid-operation is not retryable (err %v)", res.Outcome, res.Err)
+	}
+	if !errors.Is(res.Err, context.DeadlineExceeded) {
+		t.Fatalf("Err does not name the deadline: %v", res.Err)
+	}
+}
