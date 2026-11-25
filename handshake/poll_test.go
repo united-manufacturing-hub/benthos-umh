@@ -51,8 +51,10 @@ func TestWaitUntil_PollsAtTheConfiguredInterval(t *testing.T) {
 			`
 		})
 		engine.Run(t.Context(), map[string]any{})
-		if n := b.count("read Loaded"); n < 4 {
-			t.Fatalf("waited %d reads at a 25ms interval in 150ms", n)
+		// Seven reads at a 25ms interval in 150ms (t=0,25,...,150). The old
+		// bound, n >= 4, let the mutation pass poll at half the rate.
+		if n := b.count("read Loaded"); n < 6 || n > 9 {
+			t.Fatalf("%d reads at a 25ms interval in 150ms: not the configured rate", n)
 		}
 	})
 
@@ -66,8 +68,10 @@ func TestWaitUntil_PollsAtTheConfiguredInterval(t *testing.T) {
 			`
 		})
 		engine.Run(t.Context(), map[string]any{})
-		if n := b.count("read Loaded"); n < 2 || n > 6 {
-			t.Fatalf("pollMs override ignored: %d reads in 300ms", n)
+		// Four reads at a 100ms poll in 300ms (t=0,100,200,300). The old
+		// bound, 2..6, let the mutation pass poll at half the rate (3 reads).
+		if n := b.count("read Loaded"); n < 4 || n > 5 {
+			t.Fatalf("pollMs override ignored or wrong rate: %d reads in 300ms", n)
 		}
 	})
 

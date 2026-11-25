@@ -400,6 +400,9 @@ func TestRun_RunsOnErrorWhenTheContextIsCancelled(t *testing.T) {
 	if !errors.Is(res.Err, context.DeadlineExceeded) {
 		t.Fatalf("Err does not name the cancellation: %v", res.Err)
 	}
+	if res.CleanupErr != nil {
+		t.Fatalf("the cleanup ran on its own clock and finished: %v", res.CleanupErr)
+	}
 	if n := b.count("write Apply=false"); n != 1 {
 		t.Fatalf("onError did not run after the cancellation (ops: %v)", b.snapshot())
 	}
