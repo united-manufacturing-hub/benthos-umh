@@ -2367,6 +2367,96 @@ type noopGauge struct{}
 
 func (noopGauge) Set(int64) {}
 
+var _ = Describe("nodered_js no-limit policy (ENG-8128)", func() {
+	// nodered_js moved onto pkg/js_runtime with Options{} and runs on
+	// context.Background(): no deadline, no interrupt, no hardening. Both pins
+	// below exist because changing either would break live customer scripts on
+	// upgrade — a script may use eval, and scripts have never had a time limit.
+	BeforeEach(func() {
+		if os.Getenv("TEST_NODERED_JS") == "" {
+			Skip("Skipping Node-RED JS tests: TEST_NODERED_JS not set")
+		}
+	})
+
+	It("should still allow eval in user scripts", func() {
+		builder := service.NewStreamBuilder()
+		var msgHandler service.MessageHandlerFunc
+		msgHandler, err := builder.AddProducerFunc()
+		Expect(err).NotTo(HaveOccurred())
+
+		err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    msg.payload = eval("msg.payload + 1");
+    return msg;
+`)
+		Expect(err).NotTo(HaveOccurred())
+
+		var messages []*service.Message
+		Expect(builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+			messages = append(messages, msg)
+			return nil
+		})).To(Succeed())
+
+		stream, err := builder.Build()
+		Expect(err).NotTo(HaveOccurred())
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		go func() { _ = stream.Run(ctx) }()
+
+		testMsg := service.NewMessage(nil)
+		testMsg.SetStructured(41)
+		Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+		Eventually(func() int { return len(messages) }).Should(Equal(1))
+		structured, err := messages[0].AsStructured()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(structured).To(Equal(int64(42)))
+	})
+
+	It("should run a script that busy-loops for 300ms without a time limit", func() {
+		builder := service.NewStreamBuilder()
+		var msgHandler service.MessageHandlerFunc
+		msgHandler, err := builder.AddProducerFunc()
+		Expect(err).NotTo(HaveOccurred())
+
+		// Any future time limit shorter than a fraction of this would fail the
+		// stream (the run must survive a multi-hundred-ms busy loop).
+		err = builder.AddProcessorYAML(`
+nodered_js:
+  code: |
+    var t = Date.now();
+    while (Date.now() - t < 300) {}
+    msg.payload = "done";
+    return msg;
+`)
+		Expect(err).NotTo(HaveOccurred())
+
+		var messages []*service.Message
+		Expect(builder.AddConsumerFunc(func(_ context.Context, msg *service.Message) error {
+			messages = append(messages, msg)
+			return nil
+		})).To(Succeed())
+
+		stream, err := builder.Build()
+		Expect(err).NotTo(HaveOccurred())
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		go func() { _ = stream.Run(ctx) }()
+
+		testMsg := service.NewMessage(nil)
+		testMsg.SetStructured("ignored")
+		Expect(msgHandler(ctx, testMsg)).To(Succeed())
+
+		Eventually(func() int { return len(messages) }).Should(Equal(1))
+		structured, err := messages[0].AsStructured()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(structured).To(Equal("done"))
+	})
+})
+
 var _ = Describe("js logmessage", func() {
 	DescribeTable("format",
 		func(input []any, expected string) {
