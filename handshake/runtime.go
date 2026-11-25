@@ -87,3 +87,93 @@ func wrapRunError(err error) error {
 	}
 	return err
 }
+
+// namespace builds the object a script calls its machine through, under the
+// binding's own word for itself (Namespace, and from nowhere else). Every
+// function is a plain Go func the runtime binds by reflection, so the seam
+// carries no runtime type. Endings are offered to the script only: a cleanup
+// block returns the machine to idle and has nothing to end.
+func (e *Engine[UnifiedAddress]) namespace(rs *runState, endings bool) map[string]any {
+	ns := map[string]any{
+		"read": func(raw map[string]any) (any, error) {
+			return e.readOp(rs, raw)
+		},
+		"write": func(raw map[string]any, value any) error {
+			return e.writeOp(rs, raw, value)
+		},
+	}
+	if caller, ok := e.bind.(Caller[UnifiedAddress]); ok {
+		ns["call_method"] = func(raw map[string]any, inputs []any) (any, error) {
+			return e.callOp(rs, caller, raw, inputs)
+		}
+	}
+	if endings {
+		ns["success"] = func(data any) error {
+			if rs.finish(endSuccess, nil) {
+				rs.data = data
+			}
+			return errEnded
+		}
+		ns["error_not_ready"] = func() error {
+			rs.finish(endNotReady, nil)
+			return errEnded
+		}
+		ns["error_transient"] = func(detail any) error {
+			rs.finish(endTransient, detail)
+			return errEnded
+		}
+		ns["error_persistent"] = func(detail any) error {
+			rs.finish(endPersistent, detail)
+			return errEnded
+		}
+	}
+	return ns
+}
+
+// readOp runs one read and records the fault if it failed. A parse failure is
+// recorded like a read failure: what a binding marks is what Run reports.
+func (e *Engine[UnifiedAddress]) readOp(rs *runState, raw map[string]any) (any, error) {
+	addr, err := e.bind.ParseAddress(raw)
+	if err != nil {
+		rs.fail("parse address", err)
+		return nil, err
+	}
+	resp, err := e.bind.Read(rs.ctx, addr)
+	if err != nil {
+		rs.fail("read "+e.bind.Describe(addr), err)
+		return nil, err
+	}
+	return resp.Value, nil
+}
+
+// writeOp sends one value, attempted once.
+func (e *Engine[UnifiedAddress]) writeOp(rs *runState, raw map[string]any, value any) error {
+	addr, err := e.bind.ParseAddress(raw)
+	if err != nil {
+		rs.fail("parse address", err)
+		return err
+	}
+	if err := e.bind.Write(rs.ctx, addr, value); err != nil {
+		rs.fail("write "+e.bind.Describe(addr), err)
+		return err
+	}
+	return nil
+}
+
+// callOp invokes a callable address; a protocol without methods never reaches
+// here, because the engine offers call_method only when the binding can call.
+func (e *Engine[UnifiedAddress]) callOp(
+	rs *runState, caller Caller[UnifiedAddress], raw map[string]any, inputs []any,
+) (any, error) {
+	addr, err := e.bind.ParseAddress(raw)
+	if err != nil {
+		rs.fail("parse address", err)
+		return nil, err
+	}
+	resp, err := caller.Call(rs.ctx, addr, inputs)
+	if err != nil {
+		rs.fail("call "+e.bind.Describe(addr), err)
+		return nil, err
+	}
+	return resp.Outputs, nil
+}

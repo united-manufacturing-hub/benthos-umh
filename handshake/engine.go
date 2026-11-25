@@ -2,10 +2,61 @@ package handshake
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
+
+// ending is how a script said its run ended.
+type ending uint8
+
+const (
+	endNone        ending = iota // the script has not ended yet
+	endSuccess                   // success(obj)
+	endNotReady                  // error_not_ready()
+	endTransient                 // error_transient(detail)
+	endPersistent                // error_persistent(detail)
+	endWaitTimeout               // a wait_until ran out; see waitPersistent
+)
+
+// runState is what one run decides, from the script's calls to Run's result.
+// The ending functions abort the script once one has run, so a script cannot
+// carry on past the end of its transaction; the first ending wins.
+type runState struct {
+	ctx            context.Context // the clock the block runs under
+	deadline       time.Time       // zero when the block has no deadline
+	end            ending
+	data           any    // the object success returned
+	detail         any    // the detail an ending call passed
+	opErr          error  // a binding operation that failed
+	opWhere        string // which one, for the error message
+	waitPersistent bool   // a wait that ran out was told onTimeout persistent
+}
+
+// finish records the script's ending; the first one wins.
+func (rs *runState) finish(end ending, detail any) bool {
+	if rs.end != endNone {
+		return false
+	}
+	rs.end = end
+	rs.detail = detail
+	return true
+}
+
+// fail records a binding operation that failed; Result.Err wraps it, so a
+// caller can inspect it with errors.Is and errors.As.
+func (rs *runState) fail(where string, err error) {
+	if rs.opErr == nil {
+		rs.opErr = err
+		rs.opWhere = where
+	}
+}
+
+// errEnded aborts the script once it has ended; the engine reads the ending
+// from the run state, not from this text.
+var errEnded = errors.New("the script ended")
 
 // An Outcome is how one run ended. Transient means the machine was left ready to be
 // asked again; Persistent means it was not, or the fault will not resolve by repeating.
@@ -99,6 +150,10 @@ type Engine[UnifiedAddress any] struct {
 	bind Binding[UnifiedAddress]
 	cfg  Config
 	_    [0]func() // not comparable, and not copyable by value
+
+	rt     scriptRuntime  // the seam to pkg/js_runtime
+	blocks map[string]any // compiled script, onSuccess, onError
+	mu     sync.Mutex     // one transaction at a time; Close waits for it
 }
 
 // New compiles the configuration and returns an Engine bound to one binding. It returns
@@ -107,18 +162,46 @@ type Engine[UnifiedAddress any] struct {
 func New[UnifiedAddress any](
 	cfg Config, p Binding[UnifiedAddress],
 ) (*Engine[UnifiedAddress], error) {
-	panic("skeleton")
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	rt := newRuntime()
+	engine := &Engine[UnifiedAddress]{bind: p, cfg: cfg, rt: rt, blocks: map[string]any{}}
+	for _, block := range []struct{ name, source string }{
+		{"script", cfg.Script}, {"onSuccess", cfg.OnSuccess}, {"onError", cfg.OnError},
+	} {
+		program, err := rt.Compile(block.name, block.source)
+		if err != nil {
+			_ = rt.Close()
+			return nil, err
+		}
+		engine.blocks[block.name] = program
+	}
+	return engine, nil
 }
 
 // Run executes the handshake once for one message, where msg is the message as the
 // script sees it. It must not be called concurrently with itself on the same Engine.
 // Cancelling ctx ends the run as a deadline does; OnError still runs.
 func (e *Engine[UnifiedAddress]) Run(ctx context.Context, msg map[string]any) Result {
-	panic("skeleton")
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	rs := &runState{ctx: ctx}
+	globals := map[string]any{
+		e.bind.Namespace(): e.namespace(rs, true), // the script sees the machine
+		"msg":              msg,
+	}
+	_, runErr := e.rt.Run(ctx, e.blocks["script"], globals)
+	return classify(rs, ctx, runErr)
 }
 
 // Close releases the runtimes the Engine pooled. A Run already in flight finishes first.
-func (e *Engine[UnifiedAddress]) Close() error { panic("skeleton") }
+func (e *Engine[UnifiedAddress]) Close() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.rt.Close()
+}
 
 // literalWaitTotal sums the literal timeouts of a script's wait_until calls.
 // A timeout that is not a plain number is computed, hence a person's to check
