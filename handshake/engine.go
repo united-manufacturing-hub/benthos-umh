@@ -187,13 +187,55 @@ func (e *Engine[UnifiedAddress]) Run(ctx context.Context, msg map[string]any) Re
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	rs := &runState{ctx: ctx}
+	// The script's own deadline, which a cancelled caller ends the same way.
+	// It stops a runaway, not paces a machine (SCR-4).
+	scriptCtx, cancel := context.WithTimeout(ctx, e.cfg.MaxScriptRuntime)
+	defer cancel()
+	deadline, _ := scriptCtx.Deadline()
+	rs := &runState{ctx: scriptCtx, deadline: deadline}
 	globals := map[string]any{
 		e.bind.Namespace(): e.namespace(rs, true), // the script sees the machine
 		"msg":              msg,
 	}
-	_, runErr := e.rt.Run(ctx, e.blocks["script"], globals)
-	return classify(rs, ctx, runErr)
+	_, runErr := e.rt.Run(scriptCtx, e.blocks["script"], globals)
+	result := classify(rs, scriptCtx, runErr)
+
+	// Exactly one of the two blocks runs after every run, including one the
+	// deadline stopped (LIB-2). The block runs on its own clock, not the
+	// caller's, so a cancelled parent does not stop the machine being handed
+	// back; and the cleanup blocks see nothing but the machine.
+	block, budget := "onError", e.cfg.MaxOnErrorRuntime
+	if result.Outcome == Delivered {
+		block, budget = "onSuccess", e.cfg.MaxOnSuccessRuntime
+	}
+	if err := e.runCleanup(block, budget); err != nil {
+		// LIB-11: a delivery stands, carrying the cleanup failure beside it.
+		// LIB-4: anything else is persistent, whatever the fault was.
+		result.CleanupErr = err
+		if result.Outcome != Delivered {
+			result.Outcome = Persistent
+		}
+	}
+	return result
+}
+
+// runCleanup runs one cleanup block once, with a budget of zero or less
+// meaning the block runs unbounded.
+func (e *Engine[UnifiedAddress]) runCleanup(block string, budget time.Duration) error {
+	ctx := context.Background()
+	if budget > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, budget)
+		defer cancel()
+	}
+	cleanupDeadline, _ := ctx.Deadline()
+	rs := &runState{ctx: ctx, deadline: cleanupDeadline}
+	globals := map[string]any{e.bind.Namespace(): e.namespace(rs, false)}
+	_, err := e.rt.Run(ctx, e.blocks[block], globals)
+	if err != nil {
+		return fmt.Errorf("%s did not finish: %w", block, err)
+	}
+	return nil
 }
 
 // Close releases the runtimes the Engine pooled. A Run already in flight finishes first.
