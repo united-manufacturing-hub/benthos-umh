@@ -32,15 +32,15 @@ The output does not yet comply with Sparkplug B 2.2 or 3.0. It differs from Spar
 
 - After a reconnect, and after a rebirth the output starts itself for a new metric, it publishes no DBIRTH for the devices it has already announced. Hosts then receive DDATA without the birth that defines it. A rebirth that a host requests does republish every DBIRTH.
 - The NBIRTH of a rebirth carries the next sequence number instead of 0.
-- The aliases the output assigns to metrics start at 1, which is also the alias of the `Node Control/Rebirth` metric. Two metrics share alias 1.
-- Unsigned integer values and negative integer values are published with neither a value nor the null flag.
+- The `Node Control/Rebirth` metric has alias 1, and another metric gets alias 1 as well: the first metric the output assigns an alias to, or a configured metric with alias 1.
+- Negative integer values, and the values of metrics configured with an unsigned type (`uint8` to `uint64`), are published with neither a value nor the null flag.
 - With `identity.device_id` set, the output publishes no NBIRTH, and its Will is a DDEATH instead of an NDEATH.
 - The output publishes no DDEATH when a device stops.
 - bdSeq increases on every rebirth but not on a reconnect. The NDEATH Will keeps the bdSeq of the first connection, so after a rebirth, hosts that compare bdSeq ignore the NDEATH.
 - The output does not read the primary host's state. With several brokers, it stays on a broker the primary host is not connected to.
 - Group, edge node and device IDs with `+`, `/` or `#` are accepted and produce invalid topics.
 
-Sparkplug 3.0 adds rules the output does not meet either, such as births without the MQTT retain flag and a bdSeq that is kept across restarts. This list is updated as the fixes ship.
+Sparkplug 3.0 adds rules the output does not meet either, such as births published with QoS 0 and without the MQTT retain flag. This list is updated as the fixes ship.
 
 ## Quick Start
 
