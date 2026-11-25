@@ -232,7 +232,8 @@ changelog: $(CHANGIE)
 	$(CHANGIE) new
 
 # Batches the fragments into .changelog/<version>.md, moves them to .changelog/<version>/ and regenerates CHANGELOG.md.
-# The release workflow copies .changelog/<version>/ into umh-core. Fails if that version file already exists.
+# prepare-release.yml runs it for the release PR; the release workflow copies .changelog/<version>/ into umh-core.
+# Fails if that version file already exists.
 .PHONY: release-changelog
 release-changelog: $(CHANGIE)
 ifndef VERSION

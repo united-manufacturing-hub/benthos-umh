@@ -12,107 +12,55 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 ---
 name: Release
 
-# A published GitHub release on staging runs validate -> test -> build -> release
-# -> update-umh-core. Nothing is built or published until validate and the full
-# test suite pass. CLAUDE.md "Branches and pull requests" lists how to cut one.
+# Merging the release PR (prepare-release.yml) releases: resolve -> build ->
+# tag and publish -> umh-core and ManagementConsole PRs. The release ships the
+# staging commit the release PR was generated from (see resolve-release.sh).
+# The tag is created only after the build: the Go module proxy caches a tag
+# once fetched, so a version is never reused. If a job fails, re-run the failed
+# jobs. CLAUDE.md "Releases" lists what to do when that does not help.
 on:
-  release:
-    types: [published]
+  push:
+    branches: [staging]
+    # Only a push that adds a version file can be a release PR merge.
+    paths: [".changelog/v*.md"]
 
 # One release at a time. Never cancel a running release halfway.
 concurrency:
-  group: release
+  group: release-pipeline
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
-  validate:
-    # Prereleases are skipped, as in ManagementConsole. CI already pushes a
-    # per-PR image for testing.
-    if: >-
-      startsWith(github.event.release.tag_name, 'v') &&
-      !github.event.release.prerelease
+  resolve:
     runs-on: depot-ubuntu-24.04
-    permissions:
-      # Needed to turn a failed release back into a draft.
-      contents: write
+    timeout-minutes: 5
+    outputs:
+      release: ${{ steps.resolve.outputs.release }}
+      merge: ${{ steps.resolve.outputs.merge }}
+      base: ${{ steps.resolve.outputs.base }}
+      version: ${{ steps.resolve.outputs.version }}
     steps:
-      # The release event checks out the tag, so GITHUB_SHA is the tagged commit.
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
-
-      # The checks after this one also run when it fails, so one run reports every problem.
-      - name: Check the tag is the staging tip
+          fetch-depth: 0
+      - name: Find the release commit and version
+        id: resolve
         env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name }}
-        run: |
-          set -euo pipefail
-          staging="$(gh api "repos/$GITHUB_REPOSITORY/commits/staging" --jq .sha)"
-          if [ "$GITHUB_SHA" != "$staging" ]; then
-            echo "::error::Tag $TAG ($GITHUB_SHA) is not the staging tip ($staging). Create the release with --target staging."
-            exit 1
-          fi
-
-      - name: Check the title equals the tag
-        if: ${{ !cancelled() }}
-        env:
-          TAG: ${{ github.event.release.tag_name }}
-          TITLE: ${{ github.event.release.name }}
-        run: |
-          if [ "$TITLE" != "$TAG" ]; then
-            echo "::error::Release title '$TITLE' must equal the tag '$TAG'."
-            exit 1
-          fi
-
-      - name: Check the changelog is cut
-        if: ${{ !cancelled() }}
-        env:
-          TAG: ${{ github.event.release.tag_name }}
-        run: |
-          set -euo pipefail
-          failed=0
-          # make release-changelog writes .changelog/$TAG.md and moves its fragments to .changelog/$TAG/.
-          # The release body comes from the first, the umh-core bump PR copies the second.
-          if [ ! -f ".changelog/$TAG.md" ] || [ -z "$(find ".changelog/$TAG" -name '*.yaml' 2>/dev/null)" ]; then
-            echo "::error::.changelog/$TAG.md or the fragments in .changelog/$TAG/ are missing. Run make release-changelog VERSION=$TAG and merge it into staging first."
-            failed=1
-          fi
-          # A fragment left here belongs to a PR merged after the changelog PR.
-          # Its change would ship without appearing in these release notes.
-          # changie batch cannot add it: it refuses an existing version file, and --force overwrites the file.
-          if [ -n "$(find .changelog/unreleased -type f ! -name .gitkeep)" ]; then
-            echo "::error::.changelog/unreleased/ is not empty. Copy each fragment's entry into .changelog/$TAG.md by hand, move the fragments to .changelog/$TAG/, run ./.tools/changie merge, and merge that into staging first."
-            failed=1
-          fi
-          exit "$failed"
-
-      - name: Turn the release back into a draft
-        if: failure()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name }}
-        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft
-
-  test:
-    needs: validate
-    # A called workflow gets at most the permissions granted here, checked before
-    # any job runs. ci.yml's test-report job declares pull-requests: write, so it
-    # must be granted even though test-report only runs on pull requests.
-    permissions:
-      contents: read
-      pull-requests: write
-    uses: ./.github/workflows/ci.yml
-    with:
-      full_run: true
-    secrets: inherit
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: .github/scripts/resolve-release.sh
 
   build-docker:
-    needs: test
+    needs: resolve
+    if: needs.resolve.outputs.release == 'true'
     permissions:
       packages: write
       contents: read
@@ -123,6 +71,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
+          ref: ${{ needs.resolve.outputs.base }}
       - name: Build and Push Docker Image
         uses: ./.github/actions/build-docker
         with:
@@ -130,9 +79,11 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           depot-project-id: ${{ secrets.DEPOT_PROJECT_ID }}
           depot-token: ${{ secrets.DEPOT_TOKEN }}
+          version: ${{ needs.resolve.outputs.version }}
 
   build-binaries:
-    needs: test
+    needs: resolve
+    if: needs.resolve.outputs.release == 'true'
     permissions:
       contents: read
     timeout-minutes: 20
@@ -157,12 +108,13 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
+          ref: ${{ needs.resolve.outputs.base }}
       - name: Setup Go
         uses: ./.github/actions/setup-go
 
       - name: Set up Build Environment
         run: |
-          VERSION="${{ github.ref_name }}"
+          VERSION="${{ needs.resolve.outputs.version }}"
           echo "GOOS=${{ matrix.goos }}" >> $GITHUB_ENV
           echo "GOARCH=${{ matrix.goarch }}" >> $GITHUB_ENV
           echo "APP_VERSION=${VERSION#v}" >> $GITHUB_ENV
@@ -187,76 +139,101 @@ jobs:
             -o ./dist/${{ env.OUTPUT_NAME }} \
             cmd/benthos/main.go
 
+      # A re-run of this job replaces the binary of the earlier attempt.
       - name: Upload Artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: artifact-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: binary-${{ matrix.goos }}-${{ matrix.goarch }}
           path: ./dist/${{ env.OUTPUT_NAME }}
+          overwrite: true
 
   release:
-    needs: [build-binaries, build-docker]
+    needs: [resolve, build-binaries, build-docker]
     permissions:
       contents: write
+      packages: write
     runs-on: depot-ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      TAG: ${{ needs.resolve.outputs.version }}
+      IMAGE: ghcr.io/${{ github.repository }}
     steps:
+      # The release PR merge holds the version file; the base does not.
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
-      - name: Extract release notes
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          # Drop the "## [vX.Y.Z]" heading; the release title already shows it.
-          BODY=$(tail -n +2 ".changelog/$TAG.md")
-          {
-            echo "RELEASE_BODY<<EOF"
-            echo "$BODY"
-            echo "EOF"
-          } >> "$GITHUB_ENV"
+          ref: ${{ needs.resolve.outputs.merge }}
 
       - name: Download Artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          pattern: "artifact-*-${{ github.run_id }}-${{ github.run_attempt }}"
+          pattern: binary-*
           path: ./artifacts
+          merge-multiple: true
 
-      - name: Create or Update Release
-        uses: ncipollo/release-action@b7eabc95ff50cbeeedec83973935c8f306dfcd0b # v1.20.0
-        with:
-          tag: ${{ github.ref_name }}
-          artifacts: "./artifacts/artifact-*-${{ github.run_id }}-${{ github.run_attempt }}/*"
-          token: ${{ secrets.GITHUB_TOKEN }}
-          allowUpdates: true
-          body: ${{ env.RELEASE_BODY }}
-
-  # A failed test or build leaves a published release with no image or binaries.
-  # Turn it back into a draft, as validate does for its own failures.
-  revert-to-draft:
-    needs: [validate, test, build-docker, build-binaries, release]
-    if: >-
-      always() &&
-      needs.validate.result == 'success' &&
-      (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled'))
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Turn the release back into a draft
+      # The tag is created first and the release on top of it: creating a
+      # release whose target commit has other workflow files than staging needs
+      # a token that may change workflows, which GITHUB_TOKEN never may. Both
+      # steps skip what exists, so a re-run continues where a failed run stopped.
+      - name: Tag and publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name }}
-        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft
+          GH_REPO: ${{ github.repository }}
+          BASE: ${{ needs.resolve.outputs.base }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1 \
+            || gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$BASE" >/dev/null
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            # Drop the "## [vX.Y.Z]" heading; the release title already shows it.
+            tail -n +2 ".changelog/$TAG.md" > notes.md
+            gh release create "$TAG" --verify-tag --title "$TAG" --notes-file notes.md
+          fi
+          gh release upload "$TAG" ./artifacts/* --clobber
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # X.Y and latest move only once the release is published.
+      - name: Tag the image as X.Y and latest
+        run: |
+          version="${TAG#v}"
+          docker buildx imagetools create -t "$IMAGE:${version%.*}" -t "$IMAGE:latest" "$IMAGE:$version"
 
   update-umh-core:
-    needs: release
-    if: needs.release.result == 'success'
+    needs: [resolve, release]
     # Checks out benthos-umh with github.token. Writes to umh-core and
     # ManagementConsole go through a GitHub App token.
-    permissions:
-      contents: read
     uses: ./.github/workflows/update-umh-core-version.yml
     with:
-      tag: ${{ github.ref_name }}
+      tag: ${{ needs.resolve.outputs.version }}
     secrets: inherit
+
+  # Tells whoever merged the release PR that the release failed.
+  alert:
+    needs: [resolve, build-docker, build-binaries, release, update-umh-core]
+    if: failure() && needs.resolve.outputs.merge != ''
+    # Only calls the GitHub API, so the faster-starting GitHub runner is enough.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Comment on the release PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          MERGE: ${{ needs.resolve.outputs.merge }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$MERGE/pulls" --jq '.[0].number')
+          merged_by=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq .merged_by.login)
+          gh pr comment "$pr" --body "@$merged_by The release failed: $RUN_URL. Re-run the failed jobs; see CLAUDE.md, \"When a release fails\"."
