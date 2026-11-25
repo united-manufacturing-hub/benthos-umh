@@ -1,6 +1,7 @@
 package handshake
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,82 @@ func validConfig() Config {
 		MaxOnSuccessRuntime: time.Second,
 		MaxOnErrorRuntime:   time.Second,
 		PollInterval:        100 * time.Millisecond,
+	}
+}
+
+// newTestEngine builds an engine around a fake machine and a configuration.
+func newTestEngine(t *testing.T, b Binding[string], mutate func(*Config)) *Engine[string] {
+	t.Helper()
+	cfg := validConfig()
+	if mutate != nil {
+		mutate(&cfg)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("test config does not validate: %v", err)
+	}
+	engine, err := New(cfg, b)
+	if err != nil {
+		t.Fatalf("New refused a valid config: %v", err)
+	}
+	t.Cleanup(func() { _ = engine.Close() })
+	return engine
+}
+
+// LIB-1: the script runs exactly once per write request. A repeat is a new
+// delivery decided by the flow, never by the library.
+func TestRun_RunsTheScriptOncePerMessage(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{"Ready": true}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.Script = `
+			if (opcua.read({nodeId: "Ready"}) !== true) { return opcua.error_not_ready(); }
+			opcua.write({nodeId: "Apply"}, true);
+			return opcua.success({done: true});
+		`
+	})
+
+	res := engine.Run(t.Context(), map[string]any{})
+	if res.Outcome != Delivered {
+		t.Fatalf("first run: outcome %v, err %v", res.Outcome, res.Err)
+	}
+	res = engine.Run(t.Context(), map[string]any{})
+	if res.Outcome != Delivered {
+		t.Fatalf("second run: outcome %v, err %v", res.Outcome, res.Err)
+	}
+
+	// Two write requests, so the script ran twice and only twice: one read and
+	// one write each, and nothing the engine added on top.
+	if n := b.count("read Ready"); n != 2 {
+		t.Fatalf("script ran %d times, not once per message", n)
+	}
+	if n := b.count("write Apply=true"); n != 2 {
+		t.Fatalf("script wrote %d times, not once per message", n)
+	}
+	if ops := b.snapshot(); len(ops) != 4 {
+		t.Fatalf("machine saw %d operations, want 4: %v", len(ops), ops)
+	}
+}
+
+// LIB-10: a script that returns success is Delivered, and the object it
+// returns is carried in Result.Data.
+func TestRun_DeliversWhenScriptReturnsSuccess(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{"Ready": true}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.Script = `
+			const ready = opcua.read({nodeId: "Ready"});
+			return opcua.success({ready: ready, tag: "42", ok: true});
+		`
+	})
+
+	res := engine.Run(t.Context(), map[string]any{"payload": map[string]any{"value": 42}})
+	if res.Outcome != Delivered {
+		t.Fatalf("outcome %v, err %v", res.Outcome, res.Err)
+	}
+	want := map[string]any{"ready": true, "tag": "42", "ok": true}
+	if !reflect.DeepEqual(res.Data, want) {
+		t.Fatalf("Data is %v, want %v", res.Data, want)
+	}
+	if res.Err != nil || res.CleanupErr != nil {
+		t.Fatalf("a delivered run carries no fault: err %v, cleanup %v", res.Err, res.CleanupErr)
 	}
 }
 
