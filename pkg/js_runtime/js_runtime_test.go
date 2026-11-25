@@ -188,6 +188,94 @@ func TestDeadlineInterruptsAndSurfacesCallerError(t *testing.T) {
 	}
 }
 
+// TestRunDiscardsRuntimeWhenScriptDoesNotStopAfterInterrupt pins the
+// release guard for the interrupt-grace branch: a run whose script does NOT
+// stop after vm.Interrupt must never return its runtime to the pool, because
+// the abandoned goroutine still executes on it and goja runtimes are not
+// safe for two goroutines — the failure mode is memory corruption, not an
+// error. No other test enters this branch: the deadline test's script does
+// stop on interrupt, so finished is always true there.
+//
+// Reaching the branch: goja reads the interrupt flag only in its bytecode
+// loop, so a script parked inside a Go function bound as a global cannot be
+// interrupted at all. block() sleeps well past the 1s grace, so Run times out
+// of the grace with finished == false and gives up on the runtime.
+//
+// Why the assertion detects the hazard rather than something near it: there
+// is no error to catch (corruption, not a failure), and asserting that Run
+// returned the caller's ctx error or returned within the grace passes under
+// the mutation too, because those happen before release. The observable that
+// exists ONLY when the runtime was pooled is the abandoned script's own
+// footprint: it sets globalThis.marker = "poisoned" before it parks in
+// block(), so the runtime it is executing on already carries the marker when
+// Run gives up. The probes run immediately after Run returns, with no
+// blocking operation in between (a parked goroutine can migrate to another
+// P and miss the pool's private slot), so the next runtime the pool hands
+// out IS the one release just pooled: a probe reading typeof
+// globalThis.marker == "string" is executing on the poisoned runtime, in
+// reach only if release pooled it. A fresh runtime — what the guard
+// guarantees — has no marker. (Options are the zero value on purpose:
+// ResetGlobals would wipe the marker and hide the hazard; the probes are
+// not racing the abandoned goroutine, which is parked in time.Sleep and
+// touches the runtime again only at 3s, long after the probes are done.)
+func TestRunDiscardsRuntimeWhenScriptDoesNotStopAfterInterrupt(t *testing.T) {
+	r := NewRunner(Options{})
+
+	blockReturned := make(chan struct{})
+	globals := map[string]any{
+		"block": func() {
+			// Well past interruptGrace (1s): the grace expires while the
+			// script is parked here, invisible to the interrupt flag.
+			time.Sleep(3 * time.Second)
+			close(blockReturned)
+		},
+	}
+	poison := mustCompile(t, "poison", `globalThis.marker = "poisoned"; block(); return 1`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := r.Run(ctx, poison, globals)
+	elapsed := time.Since(start)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Run: %v", err)
+	}
+	// 200ms deadline + at most the 1s interrupt grace.
+	if elapsed > 2*time.Second {
+		t.Fatalf("Run took %v, want it back within 2s", elapsed)
+	}
+	// The grace branch, not the script finishing, must be what ended the
+	// wait: if the script had stopped, finished would be true and the
+	// guard under test would not be on this path at all.
+	select {
+	case <-blockReturned:
+		t.Fatal("Run returned after the script finished; the interrupt-grace branch was never entered")
+	default:
+	}
+
+	// Probe the pool immediately, before any blocking operation can move
+	// this goroutine to another P. The first probe is the next Get after
+	// release's Put, so it executes on the poisoned runtime if — and only
+	// if — the guard was deleted.
+	probe := mustCompile(t, "probe", `return typeof globalThis.marker`)
+	for i := 0; i < 50; i++ {
+		v, err := r.Run(context.Background(), probe, nil)
+		if err != nil {
+			t.Fatalf("probe run %d: %v", i, err)
+		}
+		if v == "string" {
+			t.Fatalf("probe run %d executed on the poisoned runtime: typeof globalThis.marker = %q, want %q — the runtime a script was still running on was pooled", i, v, "undefined")
+		}
+		if v != "undefined" {
+			t.Fatalf("probe run %d: typeof globalThis.marker = %v, want %q", i, v, "undefined")
+		}
+	}
+
+	// Let the abandoned goroutine finish before the test ends, so no script
+	// is left executing on a discarded (or pooled) runtime by a later test.
+	<-blockReturned
+}
+
 // TestResetFailureDiscardsRuntime pins pool hygiene: if cleaning a runtime
 // after a run fails, the runtime is discarded instead of pooled. A script can
 // make the reset fail by freezing the global object.
