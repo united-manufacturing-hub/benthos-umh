@@ -13,7 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Tests for bump-umh-core.sh in throwaway umh-core directories.
+# Tests for bump-umh-core.sh in throwaway umh-core directories. Their
+# benthosmetrics-fixture target only writes VERSION, so no Docker is needed. It
+# writes through $(PWD), so a run from another directory fails, as the real
+# target's capture.yaml mount would.
 # Runnable locally:
 #   .github/scripts/bump-umh-core.test.sh
 
@@ -24,10 +27,15 @@ ROOT="$(mktemp -d)"
 trap 'rm -rf "$ROOT"' EXIT
 FAILED=0
 
-# A umh-core directory pinned to 0.17.0.
+# A umh-core directory pinned to 0.17.0. $1 is the fixture target's recipe;
+# the default writes the pinned version the way umh-core's target does.
 new_core() {
+  local recipe="${1:-echo \$(BENTHOS_UMH_VERSION) > \$(PWD)/pkg/benthosmetrics/testdata/VERSION}"
   CORE="$(mktemp -d "$ROOT/core.XXXXXX")"
-  printf 'REDPANDA_VERSION = 24.3.18\nBENTHOS_UMH_VERSION = 0.17.0\nBUF_VERSION = 1.55.1\n' > "$CORE/Makefile"
+  mkdir -p "$CORE/pkg/benthosmetrics/testdata"
+  echo 0.17.0 > "$CORE/pkg/benthosmetrics/testdata/VERSION"
+  printf 'REDPANDA_VERSION = 24.3.18\nBENTHOS_UMH_VERSION = 0.17.0\nBUF_VERSION = 1.55.1\n\nbenthosmetrics-fixture:\n\t%s\n' \
+    "$recipe" > "$CORE/Makefile"
 }
 
 # Runs the script for version $1 from another directory; prints the exit code.
@@ -42,6 +50,7 @@ run() {
 }
 
 pin() { sed -n 's/^BENTHOS_UMH_VERSION = //p' "$CORE/Makefile"; }
+fixture() { cat "$CORE/pkg/benthosmetrics/testdata/VERSION"; }
 
 check() {
   if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: want '$2', got '$3'"; FAILED=1; fi
@@ -50,16 +59,45 @@ check() {
 new_core
 check "a bump succeeds" "0" "$(run v0.17.1)"
 check "a bump sets the Makefile pin without the v" "0.17.1" "$(pin)"
+check "a bump writes the metrics fixture version without the v" "0.17.1" "$(fixture)"
 check "a bump leaves the other Makefile lines alone" "REDPANDA_VERSION = 24.3.18 BUF_VERSION = 1.55.1" \
   "$(grep -E '^(REDPANDA|BUF)_VERSION' "$CORE/Makefile" | tr '\n' ' ' | sed 's/ $//')"
 
 new_core
 check "a re-run at the pinned version succeeds" "0" "$(run v0.17.0)"
 
-new_core; sed -i.bak '/^BENTHOS_UMH_VERSION/d' "$CORE/Makefile"
-check "a Makefile without BENTHOS_UMH_VERSION fails" "1 matched" "$(run v0.17.1 "BENTHOS_UMH_VERSION in $CORE/Makefile is not '0.17.1'")"
+new_core
+check "a version without the v prefix fails" "1 matched" "$(run 0.17.1 "VERSION must be vX.Y.Z")"
+check "a rejected version leaves the Makefile pin alone" "0.17.0" "$(pin)"
+new_core
+check "a version that is not X.Y.Z fails" "1 matched" "$(run v0.17 "VERSION must be vX.Y.Z")"
+new_core
+check "an empty version fails" "1 matched" "$(run "" "VERSION must be vX.Y.Z")"
+new_core
+check "a version with a suffix fails" "1 matched" "$(run v0.17.1-rc.1 "VERSION must be vX.Y.Z")"
 
 new_core; CORE=""
 check "a run without the umh-core directory fails" "1 matched" "$(run v0.17.1 "usage:")"
+
+new_core; sed -i.bak '/^BENTHOS_UMH_VERSION/d' "$CORE/Makefile"
+check "a Makefile without BENTHOS_UMH_VERSION fails" "1 matched" "$(run v0.17.1 "no 'BENTHOS_UMH_VERSION = ' line")"
+
+new_core; rm "$CORE/pkg/benthosmetrics/testdata/VERSION"
+check "a missing metrics fixture version fails" "1 matched" "$(run v0.17.1 "did umh-core move the benthosmetrics fixture")"
+
+new_core "exit 1"
+check "a failing fixture target fails" "1 matched" "$(run v0.17.1 "make benthosmetrics-fixture failed")"
+
+new_core "true"
+check "a fixture target that does not write the version fails" "1 matched" "$(run v0.17.0 "did not write")"
+
+new_core "echo 0.16.2 > \$(PWD)/pkg/benthosmetrics/testdata/VERSION"
+check "a fixture target that writes another version fails" "1 matched" "$(run v0.17.1 "is '0.16.2', want '0.17.1'")"
+
+new_core; printf 'BENTHOS_UMH_VERSION = 0.17.0\n' > "$CORE/Makefile"
+check "a Makefile without the fixture target fails" "1 matched" "$(run v0.17.1 "make benthosmetrics-fixture failed")"
+# The stale VERSION is gone, so umh-core's fixture spec cannot pass on it.
+check "a failed bump removes the stale metrics fixture version" "" \
+  "$(cat "$CORE/pkg/benthosmetrics/testdata/VERSION" 2>/dev/null || true)"
 
 exit "$FAILED"

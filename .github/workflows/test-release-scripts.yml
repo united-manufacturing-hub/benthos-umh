@@ -17,10 +17,16 @@ name: Test Release Scripts
 
 on:
   pull_request:
-    paths: [".github/scripts/**"]
+    paths:
+      - ".github/scripts/**"
+      - ".github/workflows/test-release-scripts.yml"
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
