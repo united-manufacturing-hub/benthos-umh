@@ -17,6 +17,7 @@ package opcua_plugin
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
@@ -344,6 +345,64 @@ handshake:
 	}
 	if !strings.Contains(err.Error(), "node mapping") {
 		t.Errorf("the error must still speak of node mappings: %v", err)
+	}
+}
+
+// The three deadlines are positive whenever they reach the engine. Omitted,
+// they fall back to the documented defaults; set to zero or below, the
+// config is refused, because the engine reads a zero cleanup budget as "no
+// limit" and a cleanup that hangs would hang the output with nothing
+// logged. This is the config surface's half of that engine defect's fix.
+func TestHandshakeConfig_DeadlinesArePositiveWhenTheyReachTheEngine(t *testing.T) {
+	conf, err := opcuaOutputConfig().ParseYAML(`
+endpoint: "opc.tcp://localhost:4840"
+handshake:
+  script: |
+    return opcua.success({});
+`, nil)
+	if err != nil {
+		t.Fatalf("the config must parse: %v", err)
+	}
+	cfg, err := parseProgrammableHandshake(conf.Namespace("handshake"))
+	if err != nil {
+		t.Fatalf("a config that omits every deadline must parse: %v", err)
+	}
+	if cfg.MaxScriptRuntime != 120*time.Second {
+		t.Errorf("MaxScriptRuntime: got %v, want the documented default 120s", cfg.MaxScriptRuntime)
+	}
+	if cfg.MaxOnSuccessRuntime != 15*time.Second {
+		t.Errorf("MaxOnSuccessRuntime: got %v, want the documented default 15s", cfg.MaxOnSuccessRuntime)
+	}
+	if cfg.MaxOnErrorRuntime != 15*time.Second {
+		t.Errorf("MaxOnErrorRuntime: got %v, want the documented default 15s", cfg.MaxOnErrorRuntime)
+	}
+	if cfg.PollInterval != 100*time.Millisecond {
+		t.Errorf("PollInterval: got %v, want the documented 100ms", cfg.PollInterval)
+	}
+
+	// Set to zero or below: refused, naming the field. Zero is the one a
+	// user reaches for when they want "no deadline", and the one the engine
+	// would read as unbounded.
+	for _, field := range []string{"maxScriptRuntimeMs", "maxOnSuccessRuntimeMs", "maxOnErrorRuntimeMs"} {
+		for _, value := range []string{"0", "-1"} {
+			yamlConfig := `
+endpoint: "opc.tcp://localhost:4840"
+handshake:
+  script: |
+    return opcua.success({});
+  ` + field + `: ` + value + "\n"
+			_, err := parseOutputForTest(t, yamlConfig)
+			if err == nil {
+				t.Errorf("handshake.%s: %s must be refused", field, value)
+				continue
+			}
+			if !strings.Contains(err.Error(), field) {
+				t.Errorf("the error must name %q: %v", field, err)
+			}
+			if !strings.Contains(err.Error(), "positive") {
+				t.Errorf("the error must say the deadlines must be positive: %v", err)
+			}
+		}
 	}
 }
 
