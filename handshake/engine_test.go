@@ -1,6 +1,8 @@
 package handshake
 
 import (
+	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -180,5 +182,96 @@ func TestConfig_ValidateRefusesWaitsThatExceedTheScriptDeadline(t *testing.T) {
 				t.Fatalf("refusal does not name the deadline it violated: %v", err)
 			}
 		})
+	}
+}
+
+// LIB-2: exactly one of onSuccess/onError runs after every run, including one
+// the deadline stopped and one a cancelled context ended.
+func TestRun_RunsOnSuccessAfterSuccessAndOnErrorAfterEverythingElse(t *testing.T) {
+	cleanup := `
+		opcua.write({nodeId: "Apply"}, true);
+	`
+	onSuccess := `
+		opcua.write({nodeId: "SuccessMarker"}, true);
+	`
+	onError := `
+		opcua.write({nodeId: "ErrorMarker"}, true);
+	`
+	ends := map[string]struct {
+		script string
+		want   string // the marker the machine must have seen
+		not    string // the one it must not
+	}{
+		"success":          {`return opcua.success({});`, "SuccessMarker", "ErrorMarker"},
+		"not_ready":        {`return opcua.error_not_ready();`, "ErrorMarker", "SuccessMarker"},
+		"error_transient":  {`return opcua.error_transient("detail");`, "ErrorMarker", "SuccessMarker"},
+		"error_persistent": {`return opcua.error_persistent("detail");`, "ErrorMarker", "SuccessMarker"},
+		"a thrown fault":   {`throw new Error("script bug");`, "ErrorMarker", "SuccessMarker"},
+	}
+
+	for name, end := range ends {
+		t.Run(name, func(t *testing.T) {
+			b := &fakeBinding{values: map[string]any{}}
+			engine := newTestEngine(t, b, func(c *Config) {
+				c.Script = end.script
+				c.OnSuccess = onSuccess
+				c.OnError = onError
+				_ = cleanup
+			})
+			res := engine.Run(t.Context(), map[string]any{})
+			if res.Outcome == Delivered && end.want != "SuccessMarker" {
+				t.Fatalf("outcome %v, err %v", res.Outcome, res.Err)
+			}
+			if n := b.count("write " + end.want + "=true"); n != 1 {
+				t.Fatalf("the %s block did not run (ops: %v)", end.want, b.snapshot())
+			}
+			if n := b.count("write " + end.not + "=true"); n != 0 {
+				t.Fatalf("both cleanup blocks ran (ops: %v)", b.snapshot())
+			}
+		})
+	}
+}
+
+// LIB-2: onError also runs when the deadline stops the script, which a
+// JavaScript finally cannot.
+func TestRun_RunsOnErrorWhenTheScriptIsStoppedByItsDeadline(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{"Ready": true}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.MaxScriptRuntime = 100 * time.Millisecond
+		c.OnError = `opcua.write({nodeId: "Apply"}, false);`
+		c.Script = `
+			opcua.read({nodeId: "Ready"});
+			for (;;) {}
+		`
+	})
+
+	res := engine.Run(t.Context(), map[string]any{})
+	if res.Outcome != Persistent {
+		t.Fatalf("outcome %v, err %v", res.Outcome, res.Err)
+	}
+	if n := b.count("write Apply=false"); n != 1 {
+		t.Fatalf("onError did not run after the deadline (ops: %v)", b.snapshot())
+	}
+}
+
+// LIB-2: onError runs when a cancelled context ends the run.
+func TestRun_RunsOnErrorWhenTheContextIsCancelled(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.OnError = `opcua.write({nodeId: "Apply"}, false);`
+		c.Script = `for (;;) {}`
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	res := engine.Run(ctx, map[string]any{})
+	if res.Outcome != Persistent {
+		t.Fatalf("outcome %v, err %v", res.Outcome, res.Err)
+	}
+	if !errors.Is(res.Err, context.DeadlineExceeded) {
+		t.Fatalf("Err does not name the cancellation: %v", res.Err)
+	}
+	if n := b.count("write Apply=false"); n != 1 {
+		t.Fatalf("onError did not run after the cancellation (ops: %v)", b.snapshot())
 	}
 }
