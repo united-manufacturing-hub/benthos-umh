@@ -55,7 +55,7 @@ type Role string
 const (
 	// INPUT plugin roles - Three-mode system for Sparkplug B Hosts
 	RoleSecondaryPassive Role = "secondary_passive" // Secondary Host Passive (default): Read-only consumer, no rebirth commands, safe for brownfield
-	RoleSecondaryActive  Role = "secondary_active"  // Secondary Host Active: Can send rebirth commands, no STATE publishing
+	RoleSecondaryActive  Role = "secondary_active"  // Secondary Host Active: Can send rebirth commands, no STATE births
 	RolePrimaryHost      Role = "primary"           // Primary Host: Full host with STATE publishing and session management
 
 	// OUTPUT plugin role (internal use only)

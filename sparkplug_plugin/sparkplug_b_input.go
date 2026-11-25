@@ -78,7 +78,7 @@ func init() {
 
 SPARKPLUG B HOST ROLES:
 - secondary_passive (default): Read-only consumer, no rebirth commands, safe for brownfield
-- secondary_active: Active consumer, sends rebirth commands, no STATE publishing
+- secondary_active: Active consumer, sends rebirth commands, no STATE births (every role registers the STATE Will)
 - primary: Full Primary Host with STATE publishing and session management
 
 Key features:

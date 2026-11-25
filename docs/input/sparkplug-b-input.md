@@ -12,14 +12,14 @@ The input does not yet comply with Sparkplug B 2.2 or 3.0. It differs from Spark
 
 - The `primary` role publishes the host state on `spBv1.0/STATE/<host_id>` with the text `ONLINE` or `OFFLINE`. Sparkplug 2.2 edge nodes read the host state from `STATE/<host_id>`, and Sparkplug 3.0 edge nodes expect a JSON payload. Edge nodes of either version never see the host as online.
 - The `ONLINE` message, and the `OFFLINE` message it sends on shutdown, are not retained. After an unclean stop, the retained host state on the broker stays `OFFLINE` while the host runs again.
-- The host state messages use `mqtt.qos`. Sparkplug requires QoS 1.
-- The input ignores some valid NDEATH messages, and the edge node stays online. It compares the NDEATH's bdSeq with a stored value that it does not update from every NBIRTH: not from the first NBIRTH of a node, an NBIRTH with bdSeq 0, or an NBIRTH without a timestamp.
-- A DDEATH marks the whole edge node offline instead of the one device.
+- The host state messages use `mqtt.qos` (default 1). Sparkplug requires QoS 1, so another `mqtt.qos` value breaks the host state.
+- The input marks no metrics stale after an NDEATH or a DDEATH. It emits a `DeviceOffline` event for each death message instead.
+- The input emits the `DeviceOffline` event for every NDEATH, also for a late NDEATH from an earlier session of the edge node, whose bdSeq does not match the current session. A host uses bdSeq to tell these apart.
 - Metrics with alias 0 are not resolved.
 - A host ID with `+`, `/` or `#` is accepted and produces an invalid STATE topic.
 - Every role, not only `primary`, registers a retained `OFFLINE` Will on `spBv1.0/STATE/<edge_node_id>`, or on `spBv1.0/STATE/` when `identity.edge_node_id` is empty. When a secondary host with the primary host's ID loses its connection, the broker marks the running primary host offline.
 
-Sparkplug 3.0 adds rules the input does not meet either, such as the JSON host state and marking metrics stale after a death. This list is updated as the fixes ship.
+Sparkplug 3.0 adds rules the input does not meet either, such as the JSON host state, and turns the recommendation to mark metrics stale into a requirement. This list is updated as the fixes ship.
 
 ## Sparkplug B in UMH Architecture
 
@@ -299,7 +299,7 @@ The Sparkplug B input plugin offers three operating roles that automatically con
 **What it does:**
 - Operates as a read-only Secondary Host
 - **Does NOT send rebirth commands** (fully passive)
-- Does NOT publish STATE messages
+- Does NOT publish STATE births, but registers a retained `OFFLINE` Will on the STATE topic; see [Sparkplug compliance](#sparkplug-compliance)
 - Safe to run multiple instances for scalability
 - Consumes Sparkplug B messages from the configured group without interfering (set `subscription.groups: ["+"]` to consume every group)
 
@@ -327,7 +327,7 @@ input:
 **What it does:**
 - Operates as an active Secondary Host
 - **Can send rebirth commands** when needed
-- Does NOT publish STATE messages
+- Does NOT publish STATE births, but registers a retained `OFFLINE` Will on the STATE topic; see [Sparkplug compliance](#sparkplug-compliance)
 - Can run multiple instances (though rebirth storms possible)
 - Actively manages alias resolution through rebirth requests
 
@@ -353,7 +353,7 @@ input:
 
 **What it does:**
 - Operates as the Primary Host per Sparkplug B specification
-- Publishes STATE messages for Edge Node coordination
+- Publishes STATE messages for Edge Node coordination, which Sparkplug 2.2 and 3.0 edge nodes do not recognize yet; see [Sparkplug compliance](#sparkplug-compliance)
 - Monitors sequence numbers and manages sessions
 - Single instance only (multiple Primary Hosts conflict)
 - Full control over Edge Node behavior
@@ -442,7 +442,7 @@ input:
 
 When `subscription.groups` is omitted or empty, the plugin filters to `identity.group_id` (`spBv1.0/<group_id>/#`). Set this field only when you need to listen to groups other than your identity, or to opt back into the all-groups behavior with `["+"]`.
 
-### STATE Topic Behavior (primary role only)
+### STATE Topic Behavior
 
 When using `primary` role, the plugin publishes the text `ONLINE` or `OFFLINE` on this topic:
 
@@ -459,7 +459,7 @@ spBv1.0/STATE/<host_id>
 #### Multiple Instance Support
 
 **`secondary_passive` role (default)**:
-✅ **Safe for multiple instances** - No STATE conflicts, no rebirth storms, load balancing friendly
+✅ **Safe for multiple instances** - No STATE births, no rebirth storms, load balancing friendly. Give each instance its own `identity.edge_node_id` or none, because every role registers a STATE Will
 
 **`secondary_active` role**:
 ✅ **Can run multiple instances** - But be aware of potential rebirth storms
