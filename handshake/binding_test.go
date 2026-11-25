@@ -15,6 +15,9 @@ type fakeBinding struct {
 	ops    []string       // every operation, in the order the machine saw them
 	values map[string]any // what Read answers, by nodeId
 	errs   map[string]error
+	// flipAfter makes one address answer false until its nth read, then true.
+	flipAfter map[string]int
+	reads     map[string]int
 }
 
 func (f *fakeBinding) Namespace() string { return "opcua" }
@@ -76,6 +79,13 @@ func (f *fakeBinding) Read(_ context.Context, addr string) (ReadResponse, error)
 		// broken test, not a machine answering.
 		return ReadResponse{}, fmt.Errorf("no value configured for %s: %w", addr, ErrPersistent)
 	}
+	if after, flips := f.flipAfter[addr]; flips {
+		f.reads[addr]++
+		if f.reads[addr] > after {
+			return ReadResponse{Value: true}, nil
+		}
+		return ReadResponse{Value: false}, nil
+	}
 	return ReadResponse{Value: value}, nil
 }
 
@@ -93,6 +103,9 @@ type fakeCaller struct {
 	callErr  error
 	outputs  []any
 	lastCall []any
+	// flipAfter makes one address answer false until its nth read, then true.
+	flipAfter map[string]int
+	reads     map[string]int
 }
 
 func (f *fakeCaller) Call(_ context.Context, addr string, inputs []any) (CallResponse, error) {
@@ -104,4 +117,18 @@ func (f *fakeCaller) Call(_ context.Context, addr string, inputs []any) (CallRes
 		return CallResponse{}, f.callErr
 	}
 	return CallResponse{Outputs: f.outputs}, nil
+}
+
+// flipAfter makes one address answer false until its nth read, then true, so
+// a wait_until can be shown re-reading until its predicate holds.
+func (f *fakeBinding) flip(addr string, after int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.flipAfter == nil {
+		f.flipAfter = map[string]int{}
+	}
+	if f.reads == nil {
+		f.reads = map[string]int{}
+	}
+	f.flipAfter[addr] = after
 }

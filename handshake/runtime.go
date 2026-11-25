@@ -101,6 +101,9 @@ func (e *Engine[UnifiedAddress]) namespace(rs *runState, endings bool) map[strin
 		"write": func(raw map[string]any, value any) error {
 			return e.writeOp(rs, raw, value)
 		},
+		"wait_until": func(raw map[string]any, pred func(any) bool, timeoutMs float64, opts map[string]any) (any, error) {
+			return e.waitUntil(rs, raw, pred, timeoutMs, opts)
+		},
 	}
 	if caller, ok := e.bind.(Caller[UnifiedAddress]); ok {
 		ns["call_method"] = func(raw map[string]any, inputs []any) (any, error) {
