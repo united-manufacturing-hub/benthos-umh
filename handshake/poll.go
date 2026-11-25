@@ -14,6 +14,12 @@ func (e *Engine[UnifiedAddress]) waitUntil(
 	rs *runState, raw map[string]any, pred func(any) bool,
 	timeoutMs float64, opts map[string]any,
 ) (any, error) {
+	// A wait after the run has ended is refused like every other operation
+	// (UAT-13): a wait that timed out is itself an ending, so a script that
+	// catches it cannot start another one under the ended transaction.
+	if rs.end != endNone {
+		return nil, errEnded
+	}
 	addr, err := e.bind.ParseAddress(raw)
 	if err != nil {
 		rs.fail("parse address", err)

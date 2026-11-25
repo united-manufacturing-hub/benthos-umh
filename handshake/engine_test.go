@@ -307,3 +307,41 @@ func TestRun_IsPersistentWhenTheDeadlineStopsAnOperation(t *testing.T) {
 		t.Fatalf("Err does not name the deadline: %v", res.Err)
 	}
 }
+
+// The ending functions abort the script by throwing, and a throw is
+// catchable — so a script that catches its own ending must not be able to
+// carry the transaction on. Found by UAT-13: a caught success throw let a
+// script write to the machine again, under a run that had already been
+// decided. The first ending wins, and the machine is not touched after it.
+func TestRun_RefusesOperationsAfterTheScriptEnded(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{"Ready": true}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.Script = `
+			if (opcua.read({nodeId: "Ready"}) !== true) { return opcua.error_not_ready(); }
+			opcua.write({nodeId: "Apply"}, true);
+			try {
+				return opcua.success({done: true});
+			} catch (e) {
+				// The ending threw; a buggy script carries on.
+			}
+			opcua.write({nodeId: "Extra"}, 7);
+			opcua.read({nodeId: "Ready"});
+			return opcua.error_transient("unreachable in practice");
+		`
+	})
+
+	res := engine.Run(t.Context(), map[string]any{})
+	// The first ending decides, and is the outcome.
+	if res.Outcome != Delivered {
+		t.Fatalf("outcome %v, want Delivered: the first ending wins (err %v)", res.Outcome, res.Err)
+	}
+	if n := b.count("write Extra=7"); n != 0 {
+		t.Fatalf("the machine was written after the transaction ended (ops: %v)", b.snapshot())
+	}
+	if n := b.count("read Ready"); n != 1 {
+		t.Fatalf("the guard read before the ending is the only read (ops: %v)", b.snapshot())
+	}
+	if n := b.count("write Apply=true"); n != 1 {
+		t.Fatalf("the committing write happened once (ops: %v)", b.snapshot())
+	}
+}
