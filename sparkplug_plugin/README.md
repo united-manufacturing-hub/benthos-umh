@@ -6,7 +6,6 @@ Developer documentation for the Sparkplug B Benthos plugin. For user documentati
 
 - ✅ **189/189 Unit Tests Passing**
 - ✅ **Integration Tests Validated** 
-- ⚠️ **Not yet compliant with Sparkplug B 2.2 or 3.0**: see the compliance sections of the [input](../docs/input/sparkplug-b-input.md#sparkplug-compliance) and [output](../docs/output/sparkplug-b-output.md#sparkplug-compliance) docs
 - ✅ **Production Ready**
 
 ## Quick Development Setup
@@ -49,7 +48,7 @@ make test-unit
 **Expected Results**: 189/189 tests passing, including:
 - Message type parsing and validation
 - Alias resolution logic
-- Sparkplug B message handling
+- Sparkplug B specification compliance
 - Configuration validation
 - Error handling scenarios
 
@@ -206,7 +205,6 @@ sparkplug_plugin/
 - **Device-Level PARRIS**: Exclusive focus on DBIRTH/DDATA (no NBIRTH/NDATA)
 - **UMH Integration**: `location_path` metadata → Sparkplug Device ID conversion
 - **Alias Management**: Automatic alias assignment and resolution
-- **STATE Topic**: the primary host publishes `ONLINE` or `OFFLINE` as text on `spBv1.0/STATE/<host_id>`, which neither Sparkplug 2.2 nor 3.0 edge nodes recognize
 
 ### Testing Configuration Files
 
@@ -303,10 +301,6 @@ This implementation focuses exclusively on device-level messaging (DBIRTH/DDATA)
 - **UMH Alignment**: Perfect mapping of `location_path` → Device ID
 - **Industrial Focus**: Most IoT scenarios operate at device/asset level
 - **Maintenance**: Easier to debug and maintain
-
-### Sparkplug B Compliance
-
-The plugins do not yet comply with Sparkplug B 2.2 or 3.0. The user docs list every known difference: [input](../docs/input/sparkplug-b-input.md#sparkplug-compliance), [output](../docs/output/sparkplug-b-output.md#sparkplug-compliance). Update those lists when a change fixes or adds a difference.
 
 ## License
 
