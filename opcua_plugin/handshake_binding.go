@@ -63,6 +63,106 @@ type opcuaClient interface {
 	Call(ctx context.Context, req *ua.CallMethodRequest) (*ua.CallMethodResult, error)
 }
 
+// A browser is a client that can browse the address space. *opcua.Client is
+// one; the binding asks for the interface rather than assuming it, so a
+// client that cannot browse keeps the Go-type mapping of method inputs.
+type browser interface {
+	Browse(ctx context.Context, req *ua.BrowseRequest) (*ua.BrowseResponse, error)
+}
+
+// declaredInputTypes reads the types a method declares for its inputs, in
+// declaration order, from the InputArguments property every OPC UA method
+// carries. An entry the binding cannot convert — a non-built-in type, or an
+// array — comes back as "", and Call falls back to the Go-type mapping for
+// that input. A method whose property cannot be read at all reports ok=false.
+func (b *Binding) declaredInputTypes(ctx context.Context, c opcuaClient, methodID *ua.NodeID) ([]string, bool) {
+	bc, ok := c.(browser)
+	if !ok {
+		return nil, false
+	}
+	resp, err := bc.Browse(ctx, &ua.BrowseRequest{
+		NodesToBrowse: []*ua.BrowseDescription{{
+			NodeID:          methodID,
+			BrowseDirection: ua.BrowseDirectionForward,
+			ReferenceTypeID: ua.NewNumericNodeID(0, 46), // HasProperty
+			IncludeSubtypes: true,
+			ResultMask:      uint32(ua.BrowseResultMaskAll),
+		}},
+	})
+	if err != nil || len(resp.Results) == 0 {
+		return nil, false
+	}
+	var propertyID *ua.NodeID
+	for _, ref := range resp.Results[0].References {
+		if ref.BrowseName != nil && ref.BrowseName.Name == "InputArguments" {
+			propertyID = ref.NodeID.NodeID
+			break
+		}
+	}
+	if propertyID == nil {
+		return nil, false
+	}
+	readResp, err := c.Read(ctx, &ua.ReadRequest{NodesToRead: []*ua.ReadValueID{
+		{NodeID: propertyID, AttributeID: ua.AttributeIDValue},
+	}})
+	if err != nil || len(readResp.Results) == 0 || readResp.Results[0].Value == nil {
+		return nil, false
+	}
+	eos, ok := readResp.Results[0].Value.Value().([]*ua.ExtensionObject)
+	if !ok {
+		return nil, false
+	}
+	types := make([]string, len(eos))
+	for i, eo := range eos {
+		arg, ok := eo.Value.(*ua.Argument)
+		if !ok || arg.DataType == nil {
+			return nil, false
+		}
+		// An array input has no single value form, so the declared type
+		// cannot guide the conversion; the Go-type mapping takes it.
+		if arg.ValueRank >= 0 {
+			continue
+		}
+		types[i] = builtinTypeName(arg.DataType.IntID())
+	}
+	return types, true
+}
+
+// builtinTypeName maps a built-in data type id to the name convertValue
+// converts, and "" to what the binding cannot use.
+func builtinTypeName(id uint32) string {
+	switch id {
+	case 1:
+		return "Boolean"
+	case 2:
+		return "SByte"
+	case 3:
+		return "Byte"
+	case 4:
+		return "Int16"
+	case 5:
+		return "UInt16"
+	case 6:
+		return "Int32"
+	case 7:
+		return "UInt32"
+	case 8:
+		return "Int64"
+	case 9:
+		return "UInt64"
+	case 10:
+		return "Float"
+	case 11:
+		return "Double"
+	case 12:
+		return "String"
+	case 13:
+		return "DateTime"
+	default:
+		return ""
+	}
+}
+
 // NewBinding binds the handshake engine to one OPC UA connection. The
 // connection is read per operation, so the binding follows a reconnect and
 // stays valid for the output's lifetime.
@@ -246,8 +346,23 @@ func (b *Binding) Call(ctx context.Context, t Address, inputs []any) (handshake.
 	if err != nil {
 		return handshake.CallResponse{}, persistentErr("call %s: nodeId %q is not a node id: %v", b.Describe(t), t.NodeID, err)
 	}
+	// BND-7: a method declares its own argument types, and a strict server —
+	// opc-plc among them — refuses a call whose variants are not those exact
+	// types, so the binding converts each input to the declared type before
+	// it sends. A client that cannot introspect, or a method that does not
+	// declare its inputs, keeps the Go-type mapping below, which a lenient
+	// server accepts.
+	types, ok := b.declaredInputTypes(ctx, c, methodID)
 	args := make([]*ua.Variant, len(inputs))
 	for i, input := range inputs {
+		if ok && i < len(types) && types[i] != "" {
+			variant, err := convertValue(types[i], input)
+			if err != nil {
+				return handshake.CallResponse{}, persistentErr("call %s: input %d: %v", b.Describe(t), i, err)
+			}
+			args[i] = variant
+			continue
+		}
 		variant, err := variantForValue(input)
 		if err != nil {
 			return handshake.CallResponse{}, persistentErr("call %s: input %d: %v", b.Describe(t), i, err)
@@ -537,8 +652,10 @@ func parseDateTime(s string) (time.Time, error) {
 
 // variantForValue converts one method input, whose type the address does not
 // declare, to the closest variant the Go type names: bool, int64, float64
-// and string. A json.Number keeps its integer shape when it has one, so a
-// method taking an Int32 is not handed a Double.
+// and string. A json.Number keeps its integer shape when it has one, so an
+// integer reaches the method as an integer, never as a double. A method whose
+// declared input type is narrower than the Go type needs the conversion to
+// the declared type in Call; this fallback serves the lenient server.
 func variantForValue(value any) (*ua.Variant, error) {
 	switch v := value.(type) {
 	case bool:

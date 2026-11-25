@@ -665,3 +665,116 @@ func TestBinding_Call(t *testing.T) {
 		}
 	})
 }
+
+// typedMethodFake is a machine that declares its method's inputs the way a
+// real server does — a HasProperty reference named InputArguments whose value
+// is the argument list — and refuses any call whose variants are not the
+// declared types, the way opc-plc does (BND-7, UAT scenario 7).
+type typedMethodFake struct {
+	*fakeMachine
+	declared []*ua.Argument
+}
+
+func (f *typedMethodFake) Browse(ctx context.Context, req *ua.BrowseRequest) (*ua.BrowseResponse, error) {
+	f.record(ctx, "browse "+req.NodesToBrowse[0].NodeID.String())
+	return &ua.BrowseResponse{Results: []*ua.BrowseResult{{
+		References: []*ua.ReferenceDescription{{
+			NodeID:     ua.NewExpandedNodeID(ua.NewStringNodeID(2, "Start.InArgs"), "", 0),
+			BrowseName: &ua.QualifiedName{Name: "InputArguments"},
+			NodeClass:  ua.NodeClassVariable,
+		}},
+	}}}, nil
+}
+
+// methodReadArguments answers the read of the InputArguments property with
+// the fake's declared argument list.
+func methodReadArguments(declared []*ua.Argument) func(context.Context, *ua.ReadRequest) (*ua.ReadResponse, error) {
+	return func(_ context.Context, req *ua.ReadRequest) (*ua.ReadResponse, error) {
+		eos := make([]*ua.ExtensionObject, len(declared))
+		for i, a := range declared {
+			eos[i] = ua.NewExtensionObject(a)
+		}
+		return &ua.ReadResponse{Results: []*ua.DataValue{{
+			Status: ua.StatusOK,
+			Value:  mustVariant(ua.NewVariant(eos)),
+		}}}, nil
+	}
+}
+
+// strictCall answers a call by checking every input variant against the
+// declared type, as a strict server does.
+func strictCall(declared []*ua.Argument, output *ua.Variant) func(context.Context, *ua.CallMethodRequest) (*ua.CallMethodResult, error) {
+	return func(_ context.Context, req *ua.CallMethodRequest) (*ua.CallMethodResult, error) {
+		if len(req.InputArguments) != len(declared) {
+			return &ua.CallMethodResult{StatusCode: ua.StatusBadArgumentsMissing}, nil
+		}
+		for i, arg := range req.InputArguments {
+			if arg.Type() != ua.TypeID(declared[i].DataType.IntID()) {
+				return &ua.CallMethodResult{
+					StatusCode:           ua.StatusBadInvalidArgument,
+					InputArgumentResults: []ua.StatusCode{ua.StatusBadTypeMismatch},
+				}, nil
+			}
+		}
+		return &ua.CallMethodResult{StatusCode: ua.StatusOK, OutputArguments: []*ua.Variant{output}}, nil
+	}
+}
+
+func TestCall_ConvertsInputsToTheTypesTheMethodDeclares(t *testing.T) {
+	ctx := context.Background()
+	method := Address{NodeID: "ns=2;s=Start", ObjectID: "ns=2;s=Machine"}
+
+	t.Run("a method that declares Float and UInt32 accepts a float64 and an int64 from the script", func(t *testing.T) {
+		fake := &typedMethodFake{fakeMachine: &fakeMachine{
+			readFn: methodReadArguments([]*ua.Argument{
+				{Name: "Float value", DataType: ua.NewNumericNodeID(0, 10), ValueRank: -1},
+				{Name: "UInt32 value", DataType: ua.NewNumericNodeID(0, 7), ValueRank: -1},
+			}),
+			callFn: strictCall([]*ua.Argument{
+				{Name: "Float value", DataType: ua.NewNumericNodeID(0, 10), ValueRank: -1},
+				{Name: "UInt32 value", DataType: ua.NewNumericNodeID(0, 7), ValueRank: -1},
+			}, mustVariant(ua.NewVariant(float32(5.5)))),
+		}, declared: []*ua.Argument{
+			{Name: "Float value", DataType: ua.NewNumericNodeID(0, 10), ValueRank: -1},
+			{Name: "UInt32 value", DataType: ua.NewNumericNodeID(0, 7), ValueRank: -1},
+		}}
+		resp, err := (&Binding{client: func() opcuaClient { return fake }}).Call(ctx, method, []any{2.5, int64(3)})
+		if err != nil {
+			t.Fatalf("the call must invoke the method with its declared types: %v", err)
+		}
+		if len(resp.Outputs) != 1 || resp.Outputs[0] != float64(5.5) {
+			t.Errorf("outputs: got %#v", resp.Outputs)
+		}
+	})
+
+	t.Run("a value that will not convert to the declared type is persistent and never sent", func(t *testing.T) {
+		declared := []*ua.Argument{{Name: "Float value", DataType: ua.NewNumericNodeID(0, 10), ValueRank: -1}}
+		fake := &typedMethodFake{fakeMachine: &fakeMachine{
+			readFn: methodReadArguments(declared),
+			callFn: strictCall(declared, nil),
+		}}
+		_, err := (&Binding{client: func() opcuaClient { return fake }}).Call(ctx, method, []any{"not a number"})
+		if err == nil || !errors.Is(err, handshake.ErrPersistent) {
+			t.Fatalf("expected a persistent error, got %v", err)
+		}
+		for _, op := range fake.ops {
+			if strings.HasPrefix(op, "call ") {
+				t.Errorf("nothing may reach the machine: %v", fake.ops)
+			}
+		}
+	})
+
+	t.Run("a client that cannot browse keeps the Go-type mapping", func(t *testing.T) {
+		var got []*ua.Variant
+		fake := &fakeMachine{callFn: func(_ context.Context, req *ua.CallMethodRequest) (*ua.CallMethodResult, error) {
+			got = req.InputArguments
+			return &ua.CallMethodResult{StatusCode: ua.StatusOK}, nil
+		}}
+		if _, err := newTestBinding(fake).Call(ctx, method, []any{2.5}); err != nil {
+			t.Fatal(err)
+		}
+		if got[0].Type() != ua.TypeIDDouble || got[0].Value() != 2.5 {
+			t.Errorf("input 0: got %T(%v), want a float64 double", got[0].Value(), got[0].Value())
+		}
+	})
+}
