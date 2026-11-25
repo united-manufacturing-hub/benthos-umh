@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/gopcua/opcua/ua"
@@ -423,22 +424,33 @@ func isBadStatus(code ua.StatusCode) bool {
 	return code&statusSeverityMask == 0x80000000
 }
 
-// recurringStatuses are the ones the server gives again for the same request,
-// so repeating cannot fix them (BND-2). Transport faults, timeouts and
-// session losses are absent on purpose: those are the ones a retry can fix.
+// recurringStatuses are the ones the server will give again for the same
+// request, so repeating cannot fix them (BND-2). The rule applied: would
+// the server answer the same way if this request were sent again unchanged?
+// Transport faults, timeouts, session losses and overload are absent on
+// purpose — those are the ones a retry can fix. Every entry carries its
+// reason in TestClassify_MarksRecurringStatusesPersistent, which refuses a
+// map entry without a row there.
 var recurringStatuses = map[ua.StatusCode]bool{
 	ua.StatusBadTypeMismatch:       true,
 	ua.StatusBadNodeIDUnknown:      true,
+	ua.StatusBadNodeIDInvalid:      true,
 	ua.StatusBadAttributeIDInvalid: true,
 	ua.StatusBadIndexRangeInvalid:  true,
 	ua.StatusBadIndexRangeNoData:   true,
 	ua.StatusBadNotWritable:        true,
 	ua.StatusBadNotReadable:        true,
+	ua.StatusBadOutOfRange:         true,
+	ua.StatusBadNotSupported:       true,
+	ua.StatusBadNotFound:           true,
+	ua.StatusBadObjectDeleted:      true,
+	ua.StatusBadWriteNotSupported:  true,
 	ua.StatusBadUserAccessDenied:   true,
 	ua.StatusBadServiceUnsupported: true,
 	ua.StatusBadMethodInvalid:      true,
 	ua.StatusBadArgumentsMissing:   true,
 	ua.StatusBadInvalidArgument:    true,
+	ua.StatusBadTooManyArguments:   true,
 }
 
 // statusErr renders a status the server sent, marking the ones it will give
@@ -519,14 +531,11 @@ func convertValue(dataType string, value any) (*ua.Variant, error) {
 		return ua.NewVariant(v)
 
 	case "UInt64":
-		v, err := int64Value(value)
+		v, err := uint64Value(value)
 		if err != nil {
 			return nil, err
 		}
-		if v < 0 {
-			return nil, persistentErr("value %v is out of range for UInt64", value)
-		}
-		return ua.NewVariant(uint64(v))
+		return ua.NewVariant(v)
 
 	case "Float":
 		v, err := float64Value(value)
@@ -574,6 +583,19 @@ func typeErr(value any, dataType string) error {
 }
 
 // int64Value reads a value as an integer, refusing what is not one.
+// maxInt64Float is 2^63 as a float64: the smallest float no int64 can hold.
+// A value at or above it, or below -2^63, is refused before the conversion,
+// because Go leaves an out-of-range float→int conversion implementation-
+// defined: a host that saturates would otherwise write the clamped value to
+// the machine and report success, and hosts differ (arm64 saturates to
+// MaxInt64, amd64 to MinInt64), so the plugin would behave differently per
+// build architecture. An integral float inside the range converts exactly —
+// a float64 is a precise number, and if it is whole and in range it is the
+// value; the 2^53 fidelity limit belongs to whatever decoded the message,
+// which is why json.Number's digits are preferred wherever the value
+// arrives that way.
+const maxInt64Float = 9223372036854775808.0 // 2^63
+
 func int64Value(value any) (int64, error) {
 	switch v := value.(type) {
 	case int64:
@@ -582,8 +604,12 @@ func int64Value(value any) (int64, error) {
 		if v != math.Trunc(v) {
 			return 0, persistentErr("value %v is not an integer", value)
 		}
+		if v >= maxInt64Float || v < -maxInt64Float {
+			return 0, persistentErr("value %v is out of range", value)
+		}
 		return int64(v), nil
 	case json.Number:
+		// The digits are exact; prefer them over the float.
 		if i, err := v.Int64(); err == nil {
 			return i, nil
 		}
@@ -594,9 +620,55 @@ func int64Value(value any) (int64, error) {
 		if f != math.Trunc(f) {
 			return 0, persistentErr("value %v is not an integer", value)
 		}
+		if f >= maxInt64Float || f < -maxInt64Float {
+			return 0, persistentErr("value %v is out of range", value)
+		}
 		return int64(f), nil
 	default:
 		return 0, typeErr(value, "an integer")
+	}
+}
+
+// maxUint64Float is 2^64 as a float64: the smallest float no uint64 can
+// hold. UInt64 is checked against the uint64 range, not the int64 one, so a
+// value between MaxInt64 and MaxUint64 — legal for a UInt64 tag — still
+// converts instead of being refused as out of int64 range.
+const maxUint64Float = 18446744073709551616.0 // 2^64
+
+// uint64Value reads a value as an unsigned 64-bit integer.
+func uint64Value(value any) (uint64, error) {
+	switch v := value.(type) {
+	case int64:
+		if v < 0 {
+			return 0, persistentErr("value %v is out of range", value)
+		}
+		return uint64(v), nil
+	case float64:
+		if v != math.Trunc(v) {
+			return 0, persistentErr("value %v is not an integer", value)
+		}
+		if v < 0 || v >= maxUint64Float {
+			return 0, persistentErr("value %v is out of range", value)
+		}
+		return uint64(v), nil
+	case json.Number:
+		// The digits carry the exact value for the whole uint64 range.
+		if u, err := strconv.ParseUint(v.String(), 10, 64); err == nil {
+			return u, nil
+		}
+		f, err := v.Float64()
+		if err != nil {
+			return 0, persistentErr("value %v cannot be converted to a number", value)
+		}
+		if f != math.Trunc(f) {
+			return 0, persistentErr("value %v is not an integer", value)
+		}
+		if f < 0 || f >= maxUint64Float {
+			return 0, persistentErr("value %v is out of range", value)
+		}
+		return uint64(f), nil
+	default:
+		return 0, typeErr(value, "an unsigned integer")
 	}
 }
 
