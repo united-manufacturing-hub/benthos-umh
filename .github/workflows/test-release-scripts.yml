@@ -31,3 +31,4 @@ jobs:
         with:
           persist-credentials: false
       - run: .github/scripts/resolve-release.test.sh
+      - run: .github/scripts/bump-umh-core.test.sh
