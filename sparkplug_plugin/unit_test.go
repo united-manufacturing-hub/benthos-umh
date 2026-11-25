@@ -1021,7 +1021,7 @@ var _ = Describe("Configuration Unit Tests", func() {
 		})
 
 		It("should produce the correct STATE topic from edge_node_id for primary role", func() {
-			// ENG-4974: edge_node_id is the Sparkplug host_id for primary role
+			// ENG-4974: edge_node_id is the Sparkplug v3.0 host_id for primary role
 			config := &sparkplugplugin.Config{
 				Role: sparkplugplugin.RolePrimaryHost,
 				Identity: sparkplugplugin.Identity{

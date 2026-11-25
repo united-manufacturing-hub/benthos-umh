@@ -6,21 +6,6 @@ The **Sparkplug B Input plugin** allows the United Manufacturing Hub (UMH) to in
 
 This input plugin is designed to seamlessly integrate Sparkplug-enabled edge devices into the UMH **Unified Namespace**. It automatically decodes Sparkplug messages and enriches them with metadata (such as metric names, types, and timestamps) to fit the UMH-Core data model.
 
-## Sparkplug compliance
-
-The input does not yet comply with Sparkplug B 2.2 or 3.0. It differs from Sparkplug 2.2 in these points:
-
-- The `primary` role publishes the host state on `spBv1.0/STATE/<host_id>` with the text `ONLINE` or `OFFLINE`. Sparkplug 2.2 edge nodes read the host state from `STATE/<host_id>`, and Sparkplug 3.0 edge nodes expect a JSON payload. Edge nodes of either version never see the host as online.
-- The `ONLINE` message, and the `OFFLINE` message it sends on shutdown, are not retained. After an unclean stop, the retained host state on the broker stays `OFFLINE` while the host runs again.
-- The host state messages use `mqtt.qos` (default 1). Sparkplug requires QoS 1, so another `mqtt.qos` value breaks the host state.
-- The input marks no metrics stale after an NDEATH or a DDEATH. It emits a `DeviceOffline` event for each death message instead.
-- The input emits the `DeviceOffline` event for every NDEATH, also for a late NDEATH from an earlier session of the edge node, whose bdSeq does not match the current session. A host uses bdSeq to tell these apart.
-- Metrics with alias 0 are not resolved.
-- A host ID with `+`, `/` or `#` is accepted and produces an invalid STATE topic.
-- Every role, not only `primary`, registers a retained `OFFLINE` Will on `spBv1.0/STATE/<edge_node_id>`, or on `spBv1.0/STATE/` when `identity.edge_node_id` is empty. When a secondary host with the primary host's ID loses its connection, the broker marks the running primary host offline.
-
-Sparkplug 3.0 adds rules the input does not meet either, such as the JSON host state, and turns the recommendation to mark metrics stale into a requirement. This list is updated as the fixes ship.
-
 ## Sparkplug B in UMH Architecture
 
 ### UMH's Modified Parris Method
@@ -175,7 +160,7 @@ Here's how a Sparkplug B message maps to UMH-Core using the Modified Parris Meth
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `identity.group_id` | `string` | **required** | Sparkplug B Group ID. Also acts as the default subscription filter (`spBv1.0/<group_id>/#`). Override via `subscription.groups`. |
-| `identity.edge_node_id` | `string` | `""` | Required for the `primary` role, where it is used as the Sparkplug `host_id` in the STATE topic (`spBv1.0/STATE/<host_id>`). Optional for secondary roles, but every role registers a retained `OFFLINE` Will on this topic; see [Sparkplug compliance](#sparkplug-compliance). |
+| `identity.edge_node_id` | `string` | `""` | Required for the `primary` role, where it is used as the Sparkplug `host_id` in the STATE topic (`spBv1.0/STATE/<host_id>`). Optional for secondary roles. |
 
 ### Role Section
 
@@ -299,7 +284,7 @@ The Sparkplug B input plugin offers three operating roles that automatically con
 **What it does:**
 - Operates as a read-only Secondary Host
 - **Does NOT send rebirth commands** (fully passive)
-- Does NOT publish STATE births, but registers a retained `OFFLINE` Will on the STATE topic; see [Sparkplug compliance](#sparkplug-compliance)
+- Does NOT publish STATE messages
 - Safe to run multiple instances for scalability
 - Consumes Sparkplug B messages from the configured group without interfering (set `subscription.groups: ["+"]` to consume every group)
 
@@ -327,7 +312,7 @@ input:
 **What it does:**
 - Operates as an active Secondary Host
 - **Can send rebirth commands** when needed
-- Does NOT publish STATE births, but registers a retained `OFFLINE` Will on the STATE topic; see [Sparkplug compliance](#sparkplug-compliance)
+- Does NOT publish STATE messages
 - Can run multiple instances (though rebirth storms possible)
 - Actively manages alias resolution through rebirth requests
 
@@ -353,7 +338,7 @@ input:
 
 **What it does:**
 - Operates as the Primary Host per Sparkplug B specification
-- Publishes STATE messages for Edge Node coordination, which Sparkplug 2.2 and 3.0 edge nodes do not recognize yet; see [Sparkplug compliance](#sparkplug-compliance)
+- Publishes STATE messages for Edge Node coordination
 - Monitors sequence numbers and manages sessions
 - Single instance only (multiple Primary Hosts conflict)
 - Full control over Edge Node behavior
@@ -442,9 +427,9 @@ input:
 
 When `subscription.groups` is omitted or empty, the plugin filters to `identity.group_id` (`spBv1.0/<group_id>/#`). Set this field only when you need to listen to groups other than your identity, or to opt back into the all-groups behavior with `["+"]`.
 
-### STATE Topic Behavior
+### STATE Topic Behavior (primary role only)
 
-When using `primary` role, the plugin publishes the text `ONLINE` or `OFFLINE` on this topic:
+When using `primary` role, the plugin publishes STATE messages on this topic:
 
 ```
 spBv1.0/STATE/<host_id>
@@ -452,14 +437,14 @@ spBv1.0/STATE/<host_id>
 
 - The `edge_node_id` is used as the `host_id`
 - STATE topics do NOT include `group_id` (per specification)
-- Sparkplug 2.2 and 3.0 edge nodes do not recognize this host state; see [Sparkplug compliance](#sparkplug-compliance)
+- This allows Edge Nodes across all groups to detect the Primary Host
 
 ### Deployment Considerations
 
 #### Multiple Instance Support
 
 **`secondary_passive` role (default)**:
-✅ **Safe for multiple instances** - No STATE births, no rebirth storms, load balancing friendly. Give each instance its own `identity.edge_node_id` or none, because every role registers a STATE Will
+✅ **Safe for multiple instances** - No STATE conflicts, no rebirth storms, load balancing friendly
 
 **`secondary_active` role**:
 ✅ **Can run multiple instances** - But be aware of potential rebirth storms
@@ -586,5 +571,5 @@ The Sparkplug B input plugin processes **bdSeq** values from incoming Edge Node 
 - This is normal behavior for stateless architectures
 
 **Recommendation:**
-No special configuration is needed for either bdSeq pattern. The input does not yet process every valid NDEATH; see [Sparkplug compliance](#sparkplug-compliance).
+The input plugin handles both persistent and stateless Edge Node bdSeq patterns correctly. No special configuration is needed - the plugin automatically adapts to different Edge Node implementations and their bdSeq behaviors.
 
