@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -215,41 +216,114 @@ func TestBinding_Describe(t *testing.T) {
 	}
 }
 
-// BND-2: a status the server will give again is marked persistent; a
-// transport fault is not.
+// BND-2: a status the server will give again for the same request is marked
+// persistent; a fault of the moment is not. The rule applied: will the
+// server answer the same way if the request is sent again unchanged? The
+// table is written from the OPC UA meaning of each code, independently of
+// the map it checks, so a code missing from the map is caught, and the codes
+// that stay transient make that refusal visible too.
 func TestClassify_MarksRecurringStatusesPersistent(t *testing.T) {
-	recurring := []ua.StatusCode{
-		ua.StatusBadTypeMismatch,
-		ua.StatusBadNodeIDUnknown,
-		ua.StatusBadAttributeIDInvalid,
-		ua.StatusBadIndexRangeInvalid,
-		ua.StatusBadIndexRangeNoData,
-		ua.StatusBadNotWritable,
-		ua.StatusBadNotReadable,
-		ua.StatusBadUserAccessDenied,
-		ua.StatusBadServiceUnsupported,
-		ua.StatusBadMethodInvalid,
-		ua.StatusBadArgumentsMissing,
-		ua.StatusBadInvalidArgument,
+	cases := []struct {
+		status     ua.StatusCode
+		persistent bool
+		why        string
+	}{
+		// The server refuses the request itself and will refuse it again.
+		{ua.StatusBadTypeMismatch, true, "the value supplied is not of the attribute's type"},
+		{ua.StatusBadNodeIDUnknown, true, "there is no such node in the address space"},
+		{ua.StatusBadNodeIDInvalid, true, "the node id's syntax is not valid — a typo in the script"},
+		{ua.StatusBadAttributeIDInvalid, true, "the node has no such attribute"},
+		{ua.StatusBadIndexRangeInvalid, true, "the index range's syntax is invalid"},
+		{ua.StatusBadIndexRangeNoData, true, "no data exists in the requested range"},
+		{ua.StatusBadNotReadable, true, "the access level does not allow reading the node"},
+		{ua.StatusBadNotWritable, true, "the access level does not allow writing the node"},
+		{ua.StatusBadOutOfRange, true, "the value is out of range for the node — the server's own refusal of the request"},
+		{ua.StatusBadNotSupported, true, "the requested operation is not supported"},
+		{ua.StatusBadNotFound, true, "a requested item was not found"},
+		{ua.StatusBadObjectDeleted, true, "the node was deleted; the request will never reach it again"},
+		{ua.StatusBadWriteNotSupported, true, "the server does not support writing this combination of value, status and timestamps"},
+		{ua.StatusBadUserAccessDenied, true, "the configured user may not perform the operation"},
+		{ua.StatusBadServiceUnsupported, true, "the server does not offer the service"},
+		{ua.StatusBadMethodInvalid, true, "the method id does not refer to a method of the object"},
+		{ua.StatusBadArgumentsMissing, true, "the script did not pass all of the method's inputs"},
+		{ua.StatusBadInvalidArgument, true, "one of the arguments is invalid"},
+		{ua.StatusBadTooManyArguments, true, "the script passed more inputs than the method takes"},
+		// Faults of the moment: a retry can fix these.
+		{ua.StatusBadTimeout, false, "the operation timed out"},
+		{ua.StatusBadCommunicationError, false, "a low-level communication error occurred"},
+		{ua.StatusBadNoCommunication, false, "communication with the data source is defined but not established right now"},
+		{ua.StatusBadNotConnected, false, "the official text reads as a permanent configuration gap, but a source that is not connected now may be connected later; left transient so a reconnected device is picked up"},
+		{ua.StatusBadSessionIDInvalid, false, "the session was lost; a reconnect re-establishes it"},
+		{ua.StatusBadSecureChannelClosed, false, "the secure channel closed; a reconnect re-establishes it"},
+		{ua.StatusBadOutOfMemory, false, "a resource of the moment"},
+		{ua.StatusBadResourceUnavailable, false, "a resource of the moment"},
+		{ua.StatusBadTCPNotEnoughResources, false, "a resource of the moment"},
+		{ua.StatusBadTooManyPublishRequests, false, "server overload of the moment"},
+		{ua.StatusBadTooManyOperations, false, "server overload of the moment"},
+		{ua.StatusBadInternalError, false, "an internal error occurred; the cause is unknown, so repeating may fix it"},
+		{ua.StatusBadUnexpectedError, false, "an unexpected error; the cause is unknown"},
+		{ua.StatusBadShutdown, false, "the server is shutting down; it comes back"},
+		{ua.StatusBadServerHalted, false, "the server stopped; it comes back"},
+		{ua.StatusBadDeviceFailure, false, "the device behind the node failed; it may be repaired"},
+		{ua.StatusBadOutOfService, false, "the data source is not operational right now"},
+		{ua.StatusBadNotExecutable, false, "the method's executable attribute says whether it can run *currently*; the machine may allow it later"},
+		// Never classified at all: these carry a value.
+		{ua.StatusOK, false, "Good carries a value"},
+		{ua.StatusUncertain, false, "Uncertain carries a value — how KEPServerEX answers the first read of a healthy tag"},
 	}
-	for _, code := range recurring {
-		err := statusErr("write", "ns=2;s=Setpoint (Int32)", code)
-		if !errors.Is(err, handshake.ErrPersistent) {
-			t.Errorf("%s must be persistent: %v", code, err)
+	seen := map[ua.StatusCode]bool{}
+	for _, tc := range cases {
+		if seen[tc.status] {
+			t.Errorf("%s appears twice in the table", tc.status)
+		}
+		seen[tc.status] = true
+		err := statusErr("write", "ns=2;s=Setpoint (Int32)", tc.status)
+		if got := errors.Is(err, handshake.ErrPersistent); got != tc.persistent {
+			t.Errorf("%s: persistent=%v, want %v (%s): %v", tc.status, got, tc.persistent, tc.why, err)
 		}
 	}
-	transient := []ua.StatusCode{
-		ua.StatusOK, // never classified, but must not be persistent if it is
-		ua.StatusUncertain,
-		ua.StatusBadTimeout,
-		ua.StatusBadConnectionClosed,
-		ua.StatusBadTooManyPublishRequests,
-	}
-	for _, code := range transient {
-		err := statusErr("write", "ns=2;s=Setpoint (Int32)", code)
-		if errors.Is(err, handshake.ErrPersistent) {
-			t.Errorf("%s must not be persistent: %v", code, err)
+	// No status may enter the map without a row here: every classification
+	// must carry its reason in this table.
+	for code := range recurringStatuses {
+		if !seen[code] {
+			t.Errorf("%s is classified persistent but has no row in the table; add it with its reason", code)
 		}
+	}
+}
+
+// The docs page promises that read, write and call_method are one round
+// trip each, and this pins it: the fake machine records every call, and a
+// Browse or a Read smuggled into Call — the defect the assembled-stack
+// review found in the UAT's variant of this file, which is not in this
+// branch — would break it.
+func TestBinding_EachOperationIsOneRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeMachine{
+		readFn:  readValue(ua.StatusOK, mustVariant(ua.NewVariant(true))),
+		writeFn: writeStatus(ua.StatusOK),
+		callFn: func(context.Context, *ua.CallMethodRequest) (*ua.CallMethodResult, error) {
+			return &ua.CallMethodResult{StatusCode: ua.StatusOK}, nil
+		},
+	}
+	b := newTestBinding(fake)
+
+	if _, err := b.Read(ctx, Address{NodeID: "ns=2;s=Ready"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Write(ctx, Address{NodeID: "ns=2;s=Setpoint", DataType: "Int32"}, int64(42)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Call(ctx, Address{NodeID: "ns=2;s=Start", ObjectID: "ns=2;s=Machine"}, []any{true}); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"read ns=2;s=Ready",
+		"write ns=2;s=Setpoint",
+		"call ns=2;s=Start on ns=2;s=Machine",
+	}
+	if strings.Join(fake.ops, "|") != strings.Join(want, "|") {
+		t.Errorf("the machine saw %v, want exactly %v", fake.ops, want)
 	}
 }
 
@@ -312,6 +386,13 @@ func TestConvert_ConvertsTheDocumentedTypes(t *testing.T) {
 		{"string to DateTime", "DateTime", "2024-03-15T12:00:00Z", time.Date(2024, 3, 15, 12, 0, 0, 0, time.UTC)},
 		{"json.Number integer to Int32", "Int32", json.Number("42"), int32(42)},
 		{"json.Number float to Double", "Double", json.Number("42.5"), 42.5},
+		{"float64 2^53 to Int64", "Int64", 9007199254740992.0, int64(9007199254740992)},
+		{"float64 2^53+2 to Int64", "Int64", 9007199254740994.0, int64(9007199254740994)},
+		{"float64 MinInt64 boundary to Int64", "Int64", -9223372036854775808.0, int64(math.MinInt64)},
+		{"json.Number MaxInt64 to Int64", "Int64", json.Number("9223372036854775807"), int64(math.MaxInt64)},
+		{"json.Number MinInt64 to Int64", "Int64", json.Number("-9223372036854775808"), int64(math.MinInt64)},
+		{"float64 above MaxInt64 to UInt64", "UInt64", 1e19, uint64(10000000000000000000)},
+		{"json.Number MaxUint64 to UInt64", "UInt64", json.Number("18446744073709551615"), uint64(math.MaxUint64)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -338,6 +419,21 @@ func TestConvert_ConvertsTheDocumentedTypes(t *testing.T) {
 		{"int64 to UInt32 out of range", "UInt32", int64(-1)},
 		{"float64 to Int32 fractional", "Int32", 42.5},
 		{"float64 to Float out of range", "Float", 1e300},
+		// Int64 and UInt64 refused a value the smaller types always refused:
+		// an out-of-range float→int conversion is implementation-defined in
+		// Go, and a host that saturates writes the clamped value to the
+		// machine with a success. Measured on arm64: UInt64 1e19 wrote
+		// 9223372036854775807; amd64 lands on MinInt64 instead, so the
+		// plugin's behaviour differed by build architecture.
+		{"float64 above the range to Int64", "Int64", 1e19},
+		{"float64 below the range to Int64", "Int64", -1e19},
+		{"float64 at 2^63 to Int64", "Int64", 9223372036854775808.0},
+		{"json.Number above the range to Int64", "Int64", json.Number("9223372036854775808")},
+		{"float64 at 2^64 to UInt64", "UInt64", 18446744073709551616.0},
+		{"float64 far above the range to UInt64", "UInt64", 1.8446744073709552e19},
+		{"json.Number above the range to UInt64", "UInt64", json.Number("18446744073709551616")},
+		{"float64 negative to UInt64", "UInt64", -42.0},
+		{"json.Number negative to UInt64", "UInt64", json.Number("-42")},
 	}
 	for _, tc := range outOfRange {
 		t.Run(tc.name, func(t *testing.T) {
