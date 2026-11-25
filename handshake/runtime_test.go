@@ -8,8 +8,8 @@ import (
 )
 
 // LIB-7: the script's own variables are reset for every run. A script's
-// globals must not reach the next message, which is what the idempotency
-// limit rests on.
+// globals must not reach the next message, which is the fact the spec's
+// no-memory limit rests on.
 func TestRun_CarriesNothingBetweenRuns(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{}}
 	engine := newTestEngine(t, b, func(c *Config) {

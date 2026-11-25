@@ -9,7 +9,8 @@ import (
 // fakeBinding is one machine for tests: it records every operation in order
 // and answers reads from a table. Its address is the nodeId a script passes.
 // It is the protocol the engine is tested against, so it is deliberately
-// ordinary: no retries, no batching, nothing the seam does not describe.
+// ordinary: one operation is one request, answered once, and nothing the
+// seam does not describe is added.
 type fakeBinding struct {
 	mu     sync.Mutex
 	ops    []string       // every operation, in the order the machine saw them
