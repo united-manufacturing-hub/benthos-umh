@@ -125,11 +125,11 @@ func (c Config) Validate() error {
 		return fmt.Errorf("MaxScriptRuntime must be positive, is %v", c.MaxScriptRuntime)
 	}
 	rt := newRuntime()
-	defer func() { _ = rt.Close() }()
+	defer func() { _ = rt.close() }()
 	for _, block := range []struct{ name, source string }{
 		{"script", c.Script}, {"onSuccess", c.OnSuccess}, {"onError", c.OnError},
 	} {
-		if _, err := rt.Compile(block.name, block.source); err != nil {
+		if _, err := rt.compile(block.name, block.source); err != nil {
 			return err
 		}
 	}
@@ -170,9 +170,9 @@ func New[UnifiedAddress any](
 	for _, block := range []struct{ name, source string }{
 		{"script", cfg.Script}, {"onSuccess", cfg.OnSuccess}, {"onError", cfg.OnError},
 	} {
-		program, err := rt.Compile(block.name, block.source)
+		program, err := rt.compile(block.name, block.source)
 		if err != nil {
-			_ = rt.Close()
+			_ = rt.close()
 			return nil, err
 		}
 		engine.blocks[block.name] = program
@@ -197,7 +197,7 @@ func (e *Engine[UnifiedAddress]) Run(ctx context.Context, msg map[string]any) Re
 		e.bind.Namespace(): e.namespace(rs, true), // the script sees the machine
 		"msg":              msg,
 	}
-	_, runErr := e.rt.Run(scriptCtx, e.blocks["script"], globals)
+	_, runErr := e.rt.run(scriptCtx, e.blocks["script"], globals)
 	result := classify(rs, scriptCtx, runErr)
 
 	// Exactly one of the two blocks runs after every run, including one the
@@ -231,7 +231,7 @@ func (e *Engine[UnifiedAddress]) runCleanup(block string, budget time.Duration) 
 	cleanupDeadline, _ := ctx.Deadline()
 	rs := &runState{ctx: ctx, deadline: cleanupDeadline}
 	globals := map[string]any{e.bind.Namespace(): e.namespace(rs, false)}
-	_, err := e.rt.Run(ctx, e.blocks[block], globals)
+	_, err := e.rt.run(ctx, e.blocks[block], globals)
 	if err != nil {
 		return fmt.Errorf("%s did not finish: %w", block, err)
 	}
@@ -242,7 +242,7 @@ func (e *Engine[UnifiedAddress]) runCleanup(block string, budget time.Duration) 
 func (e *Engine[UnifiedAddress]) Close() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.rt.Close()
+	return e.rt.close()
 }
 
 // literalWaitTotal sums the literal timeouts of a script's wait_until calls.

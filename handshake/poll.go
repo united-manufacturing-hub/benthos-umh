@@ -7,10 +7,9 @@ import (
 
 // waitUntil re-reads one address until the predicate holds or the clock runs
 // out (LIB-12). Its timeout is its own, clamped to the time remaining before
-// the block's deadline, so the deadline never fires in the middle of a
-// transaction: LIB-6 makes that persistent and leaves the machine blocked.
-// A wait that runs out ends transient (LIB-18), unless the call passed
-// { onTimeout: "persistent" }.
+// the block's deadline, so the deadline never fires mid-transaction: LIB-6
+// makes that persistent and leaves the machine blocked. A wait that runs out
+// ends transient (LIB-18), unless the call passed { onTimeout: "persistent" }.
 func (e *Engine[UnifiedAddress]) waitUntil(
 	rs *runState, raw map[string]any, pred func(any) bool,
 	timeoutMs float64, opts map[string]any,
