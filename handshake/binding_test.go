@@ -19,6 +19,10 @@ type fakeBinding struct {
 	// flipAfter makes one address answer false until its nth read, then true.
 	flipAfter map[string]int
 	reads     map[string]int
+	// blockRead, when set, replaces the table lookup: one address's reads
+	// go to it, so a test can block until ctx is done and answer with ctx's
+	// own error, exactly as a binding that honours its context does.
+	blockRead func(ctx context.Context) (ReadResponse, error)
 }
 
 func (f *fakeBinding) Namespace() string { return "opcua" }
@@ -67,10 +71,16 @@ func (f *fakeBinding) errFor(op, addr string) error {
 	return f.errs[op+":"+addr]
 }
 
-func (f *fakeBinding) Read(_ context.Context, addr string) (ReadResponse, error) {
+func (f *fakeBinding) Read(ctx context.Context, addr string) (ReadResponse, error) {
 	f.log("read " + addr)
 	if err := f.errFor("read", addr); err != nil {
 		return ReadResponse{}, err
+	}
+	f.mu.Lock()
+	block := f.blockRead
+	f.mu.Unlock()
+	if block != nil {
+		return block(ctx)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
