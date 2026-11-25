@@ -18,13 +18,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"regexp"
 	"strconv"
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
-	"github.com/robinson/gos7" // gos7 is a Go client library for interacting with Siemens S7 PLCs.
 )
 
 const (
@@ -62,7 +60,7 @@ var (
 type S7DataItemWithAddressAndConverter struct {
 	Address       string
 	ConverterFunc converterFunc
-	Item          gos7.S7DataItem
+	Item          Item
 }
 
 //------------------------------------------------------------------------------
@@ -74,12 +72,14 @@ type S7CommInput struct {
 	Slot             int
 	TimeBetweenReads time.Duration
 	Timeout          time.Duration
-	Client           gos7.Client
-	Handler          *gos7.TCPClientHandler
+	Client           Client
 	Log              *service.Logger
 	ParsedAddresses  []S7DataItemWithAddressAndConverter   // All parsed addresses (before batching)
 	Batches          [][]S7DataItemWithAddressAndConverter // Batches calculated after connect with actual PDU
 	DisableCPUInfo   bool
+
+	// newClient opens the connection. It is the gos7 adapter unless a test sets another.
+	newClient clientFactory
 }
 
 type converterFunc func([]byte) interface{}
@@ -134,17 +134,7 @@ var S7CommConfigSpec = service.NewConfigSpec().
 // newS7CommInput is the constructor function for S7CommInput. It parses the plugin configuration,
 // establishes a connection with the S7 PLC, and initializes the input plugin instance.
 func newS7CommInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
-	tcpDevice, err := conf.FieldString("tcpDevice")
-	if err != nil {
-		return nil, err
-	}
-
-	rack, err := conf.FieldInt("rack")
-	if err != nil {
-		return nil, err
-	}
-
-	slot, err := conf.FieldInt("slot")
+	connection, err := parseConnectionConfig(conf)
 	if err != nil {
 		return nil, err
 	}
@@ -160,11 +150,6 @@ func newS7CommInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	}
 
 	addresses, err := conf.FieldStringList("addresses")
-	if err != nil {
-		return nil, err
-	}
-
-	timeoutInt, err := conf.FieldInt("timeout")
 	if err != nil {
 		return nil, err
 	}
@@ -191,13 +176,13 @@ func newS7CommInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	}
 
 	m := &S7CommInput{
-		TcpDevice:        tcpDevice,
-		Rack:             rack,
-		Slot:             slot,
+		TcpDevice:        connection.tcpDevice,
+		Rack:             connection.rack,
+		Slot:             connection.slot,
 		TimeBetweenReads: timeBetweenReads,
 		Log:              mgr.Logger(),
 		ParsedAddresses:  parsedAddresses,
-		Timeout:          time.Duration(timeoutInt) * time.Second,
+		Timeout:          connection.timeout,
 		DisableCPUInfo:   disableCPUInfo,
 	}
 
@@ -262,7 +247,7 @@ func ParseAddresses(addresses []string) ([]S7DataItemWithAddressAndConverter, er
 			if i == j {
 				continue
 			}
-			if reflect.DeepEqual(a.Item, b.Item) {
+			if a.Item.sameRead(b.Item) {
 				return nil, fmt.Errorf("duplicate address %v", a)
 			}
 		}
@@ -334,31 +319,32 @@ func init() {
 	}
 }
 
-func (s *S7CommInput) Connect(_ context.Context) error {
-	s.Handler = gos7.NewTCPClientHandler(s.TcpDevice, s.Rack, s.Slot)
-	s.Handler.Timeout = s.Timeout
-	s.Handler.IdleTimeout = s.Timeout
+func (s *S7CommInput) Connect(ctx context.Context) error {
+	newClient := s.newClient
+	if newClient == nil {
+		newClient = newGos7Client
+	}
 
-	err := s.Handler.Connect()
+	client, err := newClient(ctx, connectionConfig{tcpDevice: s.TcpDevice, rack: s.Rack, slot: s.Slot, timeout: s.Timeout})
 	if err != nil {
 		s.Log.Errorf("Failed to connect to S7 PLC at %s: %v", s.TcpDevice, err)
 		return err
 	}
 
-	s.Client = gos7.NewClient(s.Handler)
+	s.Client = client
 	s.Log.Infof("Successfully connected to S7 PLC at %s", s.TcpDevice)
 
 	// Build batches using the PDU size negotiated with the PLC
-	batches, err := BuildBatches(s.ParsedAddresses, s.Handler.PDULength)
+	batches, err := BuildBatches(s.ParsedAddresses, client.PDULength())
 	if err != nil {
 		return fmt.Errorf("failed to build batches: %w", err)
 	}
 	s.Batches = batches
-	s.Log.Infof("Created %d batches for %d addresses (PDU size: %d)", len(s.Batches), len(s.ParsedAddresses), s.Handler.PDULength)
+	s.Log.Infof("Created %d batches for %d addresses (PDU size: %d)", len(s.Batches), len(s.ParsedAddresses), client.PDULength())
 
 	// Fetch and show CPU information, but only if the user has not disabled it
 	if !s.DisableCPUInfo {
-		cpuInfo, err := s.Client.GetCPUInfo()
+		cpuInfo, err := client.CPUInfo()
 		if err != nil {
 			s.Log.Warnf("Failed to get CPU information: %v", err)
 		} else {
@@ -384,14 +370,15 @@ func (s *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 	msgs := make(service.MessageBatch, 0)
 	for i, b := range s.Batches {
 		// Create a new batch to read
-		batchToRead := make([]gos7.S7DataItem, len(b))
+		batchToRead := make([]Item, len(b))
 		for i, item := range b {
 			batchToRead[i] = item.Item
 		}
 
-		// Read the batch
+		// Read the batch. A refused item is reported in its Err, which is not
+		// looked at: the value is then converted from the zeroed buffer.
 		s.Log.Debugf("Reading batch %d...", i+1)
-		if err := s.Client.AGReadMulti(batchToRead, len(batchToRead)); err != nil {
+		if err := s.Client.ReadItems(ctx, batchToRead); err != nil {
 			// Try to reconnect and skip this gather cycle to avoid hammering
 			// the network if the server is down or under load.
 			s.Log.Errorf("Failed to read batch %d: %v", i+1, err)
@@ -436,16 +423,15 @@ func (s *S7CommInput) pause(ctx context.Context) error {
 }
 
 func (s *S7CommInput) Close(_ context.Context) error {
-	if s.Handler != nil {
-		s.Handler.Close()
-		s.Handler = nil
+	if s.Client != nil {
+		_ = s.Client.Close()
 		s.Client = nil
 	}
 
 	return nil
 }
 
-func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error) {
+func handleFieldAddress(address string) (*Item, converterFunc, error) {
 	// Parse the address into the different parts
 	if !regexAddr.MatchString(address) {
 		return nil, nil, fmt.Errorf("invalid address %q", address)
@@ -564,17 +550,29 @@ func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error)
 	}
 
 	// Setup the data item
-	item := &gos7.S7DataItem{
-		Area:     area,
-		WordLen:  wordlen,
-		Bit:      bit,
-		DBNumber: areaidx,
-		Start:    start,
-		Amount:   amount,
-		Data:     make([]byte, buflen),
+	item := &Item{
+		Area:       area,
+		WordLength: wordlen,
+		Bit:        bit,
+		DBNumber:   areaidx,
+		ByteOffset: start,
+		Amount:     amount,
+		Data:       make([]byte, buflen),
 	}
 
 	// Determine the type converter function
 	f := determineConversion(dtype)
 	return item, f, nil
+}
+
+// sameRead reports whether two items read the same bytes: the same area, block,
+// offset, bit, word length, amount and buffer size.
+func (i Item) sameRead(other Item) bool {
+	return i.Area == other.Area &&
+		i.WordLength == other.WordLength &&
+		i.DBNumber == other.DBNumber &&
+		i.ByteOffset == other.ByteOffset &&
+		i.Bit == other.Bit &&
+		i.Amount == other.Amount &&
+		len(i.Data) == len(other.Data)
 }

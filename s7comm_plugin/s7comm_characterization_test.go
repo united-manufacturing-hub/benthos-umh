@@ -88,7 +88,7 @@ func newCharacterizedInput(addresses []string, recorder *readRecorder) *s7comm_p
 	Expect(err).NotTo(HaveOccurred())
 
 	return &s7comm_plugin.S7CommInput{
-		Client:           recorder,
+		Client:           s7comm_plugin.NewGos7ClientForTest(recorder, 240),
 		Log:              service.MockResources().Logger(),
 		ParsedAddresses:  parsed,
 		Batches:          batches,
@@ -115,7 +115,7 @@ var _ = Describe("S7Comm input behavior that must not change", func() {
 			Expect(parsed).To(HaveLen(1))
 
 			item := parsed[0].Item
-			got := parsedItem{item.Area, item.WordLen, item.DBNumber, item.Start, item.Amount, item.Bit, len(item.Data)}
+			got := parsedItem{item.Area, item.WordLength, item.DBNumber, item.ByteOffset, item.Amount, item.Bit, len(item.Data)}
 			Expect(got).To(Equal(want))
 			Expect(parsed[0].Address).To(Equal(address))
 		},
@@ -499,7 +499,7 @@ var _ = Describe("S7Comm input limits and warnings that must not change", func()
 			Expect(err).NotTo(HaveOccurred())
 
 			item := parsed[0].Item
-			Expect(parsedEdge{item.WordLen, item.Bit, item.Amount, len(item.Data)}).To(Equal(want))
+			Expect(parsedEdge{item.WordLength, item.Bit, item.Amount, len(item.Data)}).To(Equal(want))
 		},
 		Entry("the highest bit", "DB1.X0.7", parsedEdge{0x01, 7, 1, 1}),
 		Entry("the lowest bit", "DB1.X0.0", parsedEdge{0x01, 0, 1, 1}),
@@ -578,3 +578,156 @@ var _ = Describe("S7Comm input limits and warnings that must not change", func()
 type parsedEdge struct {
 	wordLen, bit, amount, dataLength int
 }
+
+// fakeClient is a connected Client that records how it is used.
+type fakeClient struct {
+	pduLength int
+	cpuInfo   string
+	cpuErr    error
+	cpuCalls  int
+	closed    int
+}
+
+func (c *fakeClient) ReadItems(context.Context, []s7comm_plugin.Item) error { return nil }
+func (c *fakeClient) PDULength() int                                        { return c.pduLength }
+func (c *fakeClient) Close() error {
+	c.closed++
+	return nil
+}
+
+func (c *fakeClient) CPUInfo() (string, error) {
+	c.cpuCalls++
+	return c.cpuInfo, c.cpuErr
+}
+
+var _ = Describe("S7Comm input connection that must not change", func() {
+	BeforeEach(func() {
+		testActive, ok := os.LookupEnv("TEST_S7COMM_UNITTEST")
+		if !ok || strings.ToLower(testActive) == "false" {
+			Skip("Skipping test: TEST_S7COMM_UNITTEST env variable is not set or is FALSE")
+		}
+	})
+
+	newInput := func(addresses []string, client *fakeClient) *s7comm_plugin.S7CommInput {
+		parsed, err := s7comm_plugin.ParseAddresses(addresses)
+		Expect(err).NotTo(HaveOccurred())
+
+		input := &s7comm_plugin.S7CommInput{
+			TcpDevice:        "plc.local:102",
+			Rack:             2,
+			Slot:             3,
+			Timeout:          7 * time.Second,
+			TimeBetweenReads: time.Millisecond,
+			ParsedAddresses:  parsed,
+			Log:              service.MockResources().Logger(),
+		}
+		input.UseClientFactoryForTest(func(string, int, int, time.Duration) (s7comm_plugin.Client, error) { return client, nil })
+
+		return input
+	}
+
+	It("opens the connection with the configured device, rack, slot and timeout", func() {
+		var got struct {
+			device       string
+			rack, slot   int
+			timeout      time.Duration
+			factoryCalls int
+		}
+		input := newInput([]string{"DB1.W0"}, &fakeClient{pduLength: 240})
+		input.UseClientFactoryForTest(func(device string, rack int, slot int, timeout time.Duration) (s7comm_plugin.Client, error) {
+			got.device, got.rack, got.slot, got.timeout = device, rack, slot, timeout
+			got.factoryCalls++
+			return &fakeClient{pduLength: 240}, nil
+		})
+
+		Expect(input.Connect(context.Background())).To(Succeed())
+
+		Expect(got.factoryCalls).To(Equal(1))
+		Expect(got.device).To(Equal("plc.local:102"))
+		Expect([]int{got.rack, got.slot}).To(Equal([]int{2, 3}))
+		Expect(got.timeout).To(Equal(7 * time.Second))
+	})
+
+	It("splits the addresses by the PDU size the PLC negotiated", func() {
+		input := newInput(byteAddresses(30), &fakeClient{pduLength: 55})
+
+		Expect(input.Connect(context.Background())).To(Succeed())
+
+		Expect(input.Batches).To(HaveLen(10))
+		for _, batch := range input.Batches {
+			Expect(batch).To(HaveLen(3))
+		}
+	})
+
+	It("returns the error of a failed connect unchanged and stays unconnected", func() {
+		refused := errors.New("dial tcp: connection refused")
+		input := newInput([]string{"DB1.W0"}, nil)
+		input.UseClientFactoryForTest(func(string, int, int, time.Duration) (s7comm_plugin.Client, error) { return nil, refused })
+
+		err := input.Connect(context.Background())
+
+		Expect(err).To(MatchError(refused))
+		_, _, readErr := input.ReadBatch(context.Background())
+		Expect(readErr).To(MatchError(ContainSubstring("not initialized")))
+	})
+
+	It("fails when an address does not fit the negotiated PDU", func() {
+		input := newInput(stringAddresses(1, 100), &fakeClient{pduLength: 126})
+
+		err := input.Connect(context.Background())
+
+		Expect(err).To(MatchError(ContainSubstring("failed to build batches")))
+	})
+
+	It("asks the CPU for its information, and a failure does not stop the connect", func() {
+		client := &fakeClient{pduLength: 240, cpuErr: errors.New("function refused by CPU")}
+		input := newInput([]string{"DB1.W0"}, client)
+
+		Expect(input.Connect(context.Background())).To(Succeed())
+
+		Expect(client.cpuCalls).To(Equal(1))
+	})
+
+	It("does not ask the CPU when the user disabled it", func() {
+		client := &fakeClient{pduLength: 240}
+		input := newInput([]string{"DB1.W0"}, client)
+		input.DisableCPUInfo = true
+
+		Expect(input.Connect(context.Background())).To(Succeed())
+
+		Expect(client.cpuCalls).To(BeZero())
+	})
+
+	It("closes the connection once, and reading afterwards fails", func() {
+		client := &fakeClient{pduLength: 240}
+		input := newInput([]string{"DB1.W0"}, client)
+		Expect(input.Connect(context.Background())).To(Succeed())
+
+		Expect(input.Close(context.Background())).To(Succeed())
+		Expect(input.Close(context.Background())).To(Succeed())
+
+		Expect(client.closed).To(Equal(1))
+		_, _, err := input.ReadBatch(context.Background())
+		Expect(err).To(MatchError(ContainSubstring("not initialized")))
+	})
+
+	It("reads the connection fields of the config, with their defaults", func() {
+		conf, err := s7comm_plugin.S7CommConfigSpec.ParseYAML("tcpDevice: plc.local\naddresses: [DB1.W0]", nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		connection, err := s7comm_plugin.ParseConnectionForTest(conf)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(connection).To(Equal(s7comm_plugin.ConnectionForTest{TCPDevice: "plc.local", Rack: 0, Slot: 1, Timeout: 10 * time.Second}))
+	})
+
+	It("reads the timeout of the config in seconds", func() {
+		conf, err := s7comm_plugin.S7CommConfigSpec.ParseYAML("tcpDevice: plc.local\nrack: 1\nslot: 4\ntimeout: 5\naddresses: [DB1.W0]", nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		connection, err := s7comm_plugin.ParseConnectionForTest(conf)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(connection).To(Equal(s7comm_plugin.ConnectionForTest{TCPDevice: "plc.local", Rack: 1, Slot: 4, Timeout: 5 * time.Second}))
+	})
+})
