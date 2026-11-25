@@ -30,17 +30,17 @@ This output plugin implements the **Edge Node** role that complements the **Host
 
 The output does not yet comply with Sparkplug B 2.2 or 3.0. It differs from Sparkplug 2.2 in these points:
 
-- After a reconnect, and after a rebirth the output starts itself for a new metric, it publishes no DBIRTH for the devices it has already announced. Hosts then receive DDATA without the birth that defines it. A rebirth that a host requests does republish every DBIRTH.
+- After a reconnect, the output publishes no DBIRTH for the devices it has already announced. Hosts then receive DDATA without the birth that defines it. A rebirth that a host requests does republish every DBIRTH.
 - The NBIRTH of a rebirth carries the next sequence number instead of 0.
 - The `Node Control/Rebirth` metric has alias 1, and another metric gets alias 1 as well: the first metric the output assigns an alias to, or a configured metric with alias 1.
-- Negative integer values, and the values of metrics configured with an unsigned type (`uint8` to `uint64`), are published with neither a value nor the null flag.
+- A value that the output cannot convert to the metric's type is published with neither a value nor the null flag. This happens for every negative whole number, for every metric configured with an unsigned type (`uint8` to `uint64`), and for some other combinations, for example a whole number from a Bloblang mapping in a `double` metric.
 - With `identity.device_id` set, the output publishes no NBIRTH, and its Will is a DDEATH instead of an NDEATH.
 - The output publishes no DDEATH when a device stops.
 - bdSeq increases on every rebirth but not on a reconnect. The NDEATH Will keeps the bdSeq of the first connection, so after a rebirth, hosts that compare bdSeq ignore the NDEATH.
 - The output does not read the primary host's state. With several brokers, it stays on a broker the primary host is not connected to.
 - Group, edge node and device IDs with `+`, `/` or `#` are accepted and produce invalid topics.
 
-Sparkplug 3.0 adds rules the output does not meet either, such as births published with QoS 0 and without the MQTT retain flag. This list is updated as the fixes ship.
+Sparkplug 3.0 adds rules the output does not meet either, such as births published with QoS 0, and births and the NDEATH without the MQTT retain flag. This list is updated as the fixes ship.
 
 ## Quick Start
 
@@ -161,7 +161,7 @@ Each metric in the `metrics` array supports:
 
 As a Sparkplug B Edge Node, this plugin handles the complete session lifecycle:
 
-1. **Connection**: Publishes NBIRTH with all configured metrics and bdSeq
+1. **Connection**: Publishes NBIRTH with all configured metrics and bdSeq (a DBIRTH when `identity.device_id` is set)
 2. **Device Discovery**: Publishes DBIRTH when new devices (location_paths) appear
 3. **Data Flow**: Publishes DDATA with efficient alias-based encoding
 4. **Disconnection**: NDEATH published automatically via MQTT Last Will Testament (a DDEATH when `identity.device_id` is set)
