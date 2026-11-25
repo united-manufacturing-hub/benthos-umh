@@ -23,22 +23,19 @@ import (
 
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_engine"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
 )
 
 var _ = Describe("JSEngine", func() {
 	var (
-		jsEngine    *js_engine.JSEngine
-		logger      *service.Logger
-		objectPools *pools.ObjectPools
-		resources   *service.Resources
+		jsEngine  *js_engine.JSEngine
+		logger    *service.Logger
+		resources *service.Resources
 	)
 
 	BeforeEach(func() {
 		resources = service.MockResources()
 		logger = resources.Logger()
-		objectPools = pools.NewObjectPools([]string{"press", "temp", "flow"}, logger)
-		jsEngine = js_engine.NewJSEngine(logger, []string{"press", "temp", "flow"}, objectPools)
+		jsEngine = js_engine.NewJSEngine(logger, []string{"press", "temp", "flow"})
 	})
 
 	AfterEach(func() {
@@ -424,7 +421,7 @@ var _ = Describe("JSEngine", func() {
 	Describe("Security and Configuration", func() {
 		It("should handle configuration with nil logger", func() {
 			// Test JS engine with nil logger to improve coverage
-			engineWithNilLogger := js_engine.NewJSEngine(nil, []string{"temp", "press"}, objectPools)
+			engineWithNilLogger := js_engine.NewJSEngine(nil, []string{"temp", "press"})
 			Expect(engineWithNilLogger).ToNot(BeNil())
 
 			// Should still work without logger

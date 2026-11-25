@@ -26,7 +26,6 @@ import (
 
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_engine"
-	pools2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
 	processor2 "github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/processor"
 )
 
@@ -635,9 +634,10 @@ var _ = Describe("Integration Tests - Message Processing", func() {
 				"console.log('test')",
 			}
 
-			// Create a simple JS engine to test directly
-			pools := pools2.NewObjectPools([]string{"press"}, resources.Logger())
-			jsEngine := js_engine.NewJSEngine(resources.Logger(), []string{"press"}, pools)
+			// Create a simple JS engine to test directly (the JS runtime pool
+			// used to live in ObjectPools; it moved into the engine's
+			// js_runtime.Runner, ENG-8128)
+			jsEngine := js_engine.NewJSEngine(resources.Logger(), []string{"press"})
 			defer func() {
 				err := jsEngine.Close()
 				Expect(err).ToNot(HaveOccurred())

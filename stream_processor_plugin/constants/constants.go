@@ -58,7 +58,9 @@ const (
 
 // Constants for JavaScript runtime configuration
 const (
-	// JavaScript engine configuration
+	// JavaScript engine configuration. JSCallStackSize and DangerousGlobals moved to
+	// pkg/js_runtime with the hardening port (ENG-8128); SlowExecutionThreshold
+	// stays because js_security.LogSlowExecution uses it.
 	JSCallStackSize        = 1000                  // Maximum call stack size to prevent stack overflow
 	SlowExecutionThreshold = 10 * time.Millisecond // Threshold for logging slow JavaScript execution
 
@@ -67,64 +69,3 @@ const (
 	MaxPooledBufferSize        = 4096 // Maximum buffer size to keep in pool
 	MaxPooledStringBuilderSize = 1024 // Maximum string builder size to keep in pool
 )
-
-// DangerousGlobals contains a comprehensive list of JavaScript globals that should be disabled
-// for security reasons in a sandboxed environment. This combines and consolidates the lists
-// from both js_engine.go and pools.go to ensure consistent security configuration.
-var DangerousGlobals = []string{
-	// ===== CODE EXECUTION - CRITICAL SECURITY RISK =====
-	"eval",     // Direct code evaluation - MUST block for security
-	"Function", // Function constructor (can execute strings as code)
-
-	// ===== MODULE SYSTEM (Node.js specific - may not exist in Goja) =====
-	"require",    // Node.js module loader
-	"module",     // Current module object
-	"exports",    // Module exports object
-	"__dirname",  // Current directory path
-	"__filename", // Current file path
-
-	// ===== GLOBAL SCOPE ACCESS =====
-	"global",     // Node.js global object
-	"globalThis", // ES2020 universal global object reference
-
-	// ===== PROCESS AND ENVIRONMENT (Node.js specific) =====
-	"process", // Node.js process object (exit, env vars, etc.)
-
-	// ===== ASYNC OPERATIONS (Browser/Node.js APIs) =====
-	"setTimeout",     // Schedule delayed execution
-	"setInterval",    // Schedule repeated execution
-	"setImmediate",   // Schedule immediate execution (Node.js)
-	"clearTimeout",   // Clear scheduled timeout
-	"clearInterval",  // Clear scheduled interval
-	"clearImmediate", // Clear scheduled immediate (Node.js)
-
-	// ===== I/O AND DEBUGGING =====
-	"console", // Console output (already in your built-ins, consider if you want it)
-
-	// ===== PROTOTYPE MANIPULATION - SANDBOX ESCAPE RISKS =====
-	"__proto__",        // Prototype chain access (major security risk)
-	"__defineGetter__", // Define property getters (deprecated)
-	"__defineSetter__", // Define property setters (deprecated)
-	"__lookupGetter__", // Lookup property getters (deprecated)
-	"__lookupSetter__", // Lookup property setters (deprecated)
-	"constructor",      // Constructor property (can be used for prototype manipulation)
-
-	// ===== IMPORT/DYNAMIC LOADING (ES6+ features) =====
-	"import",        // Dynamic import (ES2020)
-	"importScripts", // Web Worker script import (Browser API)
-
-	// ===== REFLECTION APIS THAT COULD BE DANGEROUS =====
-	// Note: These are legitimate ES6 features but could be used for sandbox escapes
-	"Reflect", // ES6 Reflect API - consider if you need this
-	"Proxy",   // ES6 Proxy API - can intercept operations, consider security implications
-
-	// ===== OBJECT MANIPULATION METHODS =====
-	"defineProperty",           // Object.defineProperty access
-	"getOwnPropertyDescriptor", // Object.getOwnPropertyDescriptor access
-	"getPrototypeOf",           // Object.getPrototypeOf access
-	"setPrototypeOf",           // Object.setPrototypeOf access
-
-	// ===== DEPRECATED BUT POTENTIALLY DANGEROUS =====
-	"escape",   // Deprecated URL encoding function
-	"unescape", // Deprecated URL decoding function
-}
