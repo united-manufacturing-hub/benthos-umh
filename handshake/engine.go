@@ -150,14 +150,27 @@ func (c Config) Validate() error {
 			return err
 		}
 	}
-	// LIB-9, literal waits only: a script whose waits add up to more than its
-	// own limit is killed on a slow day, mid-commit. An early friendly error;
-	// the safety mechanism is wait_until clamping its timeout to the deadline.
-	waits := literalWaitTotal(c.Script)
-	if waits > c.MaxScriptRuntime {
-		return fmt.Errorf(
-			"script's literal waits total %v, which exceeds MaxScriptRuntime %v",
-			waits, c.MaxScriptRuntime)
+	// LIB-9, literal waits only, and only live ones: a script whose waits
+	// add up to more than its own limit is killed on a slow day, mid-commit.
+	// An early friendly error; the safety mechanism is wait_until clamping
+	// its timeout to the deadline. Every block's waits are summed against
+	// that block's own budget, comments are not code, and a backtick
+	// template literal no longer desynchronises the scanner (round-2
+	// review, item 4).
+	for _, block := range []struct {
+		name, budgetName, source string
+		budget                 time.Duration
+	}{
+		{"script", "MaxScriptRuntime", c.Script, c.MaxScriptRuntime},
+		{"onSuccess", "MaxOnSuccessRuntime", c.OnSuccess, c.MaxOnSuccessRuntime},
+		{"onError", "MaxOnErrorRuntime", c.OnError, c.MaxOnErrorRuntime},
+	} {
+		waits := literalWaitTotal(block.source)
+		if waits > block.budget {
+			return fmt.Errorf(
+				"%s's literal waits total %v, which exceeds %s %v",
+				block.name, waits, block.budgetName, block.budget)
+		}
 	}
 	return nil
 }
@@ -262,12 +275,13 @@ func (e *Engine[UnifiedAddress]) Close() error {
 	return e.rt.close()
 }
 
-// literalWaitTotal sums the literal timeouts of a script's wait_until calls.
+// literalWaitTotal sums the literal timeouts of a block's wait_until calls.
 // A timeout that is not a plain number is computed, hence a person's to check
 // (SCR-4), and counts as nothing rather than refusing what it cannot read.
-func literalWaitTotal(script string) time.Duration {
+// Waits inside comments are not code and are not counted.
+func literalWaitTotal(source string) time.Duration {
 	total := time.Duration(0)
-	for _, args := range waitCalls(script) {
+	for _, args := range waitCalls(stripComments(source)) {
 		if len(args) < 3 {
 			continue
 		}
@@ -278,6 +292,39 @@ func literalWaitTotal(script string) time.Duration {
 		total += time.Duration(ms) * time.Millisecond
 	}
 	return total
+}
+
+// stripComments removes // and /* */ comments, leaving strings intact,
+// so the literal-wait scanner does not count a wait that is commented out.
+// A regex literal that contains // would be misread as a comment start; a
+// handshake script has no reason for one, and the scanner is the friendly
+// early error, not the safety mechanism, so it is not armoured further.
+func stripComments(script string) string {
+	var b strings.Builder
+	for i := 0; i < len(script); {
+		switch {
+		case strings.HasPrefix(script[i:], "//"):
+			nl := strings.IndexByte(script[i:], '\n')
+			if nl < 0 {
+				return b.String() // comment to the end; nothing live remains
+			}
+			i += nl // keep the newline: it ends the comment
+		case strings.HasPrefix(script[i:], "/*"):
+			end := strings.Index(script[i:], "*/")
+			if end < 0 {
+				return b.String()
+			}
+			i += end + 2
+		case script[i] == '"' || script[i] == '\'' || script[i] == '`':
+			end := skipString(script, i)
+			b.WriteString(script[i : end+1])
+			i = end + 1
+		default:
+			b.WriteByte(script[i])
+			i++
+		}
+	}
+	return b.String()
 }
 
 // waitCalls finds every wait_until( in a script and returns its arguments,
@@ -313,7 +360,7 @@ func splitCall(script string, open int) (end int, args []string, ok bool) {
 			if depth == 0 {
 				return i, splitCommas(script[start:i]), true
 			}
-		case '"', '\'':
+		case '"', '\'', '`':
 			i = skipString(script, i)
 		}
 	}
@@ -330,7 +377,7 @@ func splitCommas(s string) []string {
 			depth++
 		case ')', ']', '}':
 			depth--
-		case '"', '\'':
+		case '"', '\'', '`':
 			i = skipString(s, i)
 		case ',':
 			if depth == 0 {

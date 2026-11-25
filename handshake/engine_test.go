@@ -229,6 +229,91 @@ func TestConfig_ValidateRefusesWaitsThatExceedTheScriptDeadline(t *testing.T) {
 	}
 }
 
+// LIB-9's scanner, against three holes the round-2 review measured (item
+// 4): a wait inside a comment is live code to the scanner, a backtick
+// template literal desynchronises the argument splitter (the dangerous
+// direction: a 600s wait under a 2s deadline was accepted), and the
+// cleanup blocks' waits were never summed against their own budgets.
+// The scanner is the friendly early error, not the safety mechanism, so
+// the guard is that each hole is closed once, not over-built.
+func TestConfig_ValidateScansOnlyLiveWaitsInEveryBlock(t *testing.T) {
+	accepts := func(t *testing.T, mutate func(*Config)) {
+		t.Helper()
+		cfg := validConfig()
+		mutate(&cfg)
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate refused a config that can run: %v", err)
+		}
+	}
+	refuses := func(t *testing.T, mutate func(*Config), want ...string) {
+		t.Helper()
+		cfg := validConfig()
+		mutate(&cfg)
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatalf("Validate accepted a config whose waits exceed their deadline")
+		}
+		for _, name := range want {
+			if !strings.Contains(err.Error(), name) {
+				t.Fatalf("the refusal must name %s, got: %v", name, err)
+			}
+		}
+	}
+
+	t.Run("a wait inside a line comment is not live code", func(t *testing.T) {
+		accepts(t, func(c *Config) {
+			c.MaxScriptRuntime = 2 * time.Second
+			c.Script = `
+				// opcua.wait_until({nodeId: "ns=2;s=Loaded"}, v => v === true, 600000);
+				return opcua.success({});
+			`
+		})
+	})
+	t.Run("a wait inside a block comment is not live code", func(t *testing.T) {
+		accepts(t, func(c *Config) {
+			c.MaxScriptRuntime = 2 * time.Second
+			c.Script = `
+				/* opcua.wait_until({nodeId: "ns=2;s=Loaded"}, v => v === true, 600000); */
+				return opcua.success({});
+			`
+		})
+	})
+	t.Run("a backtick template literal does not desynchronise the scanner", func(t *testing.T) {
+		refuses(t, func(c *Config) {
+			c.MaxScriptRuntime = 2 * time.Second
+			c.Script = "opcua.wait_until({nodeId: `A) B`}, v => v === true, 600000); return opcua.success({});"
+		}, "MaxScriptRuntime")
+	})
+	t.Run("a string with a // inside is still scanned as code", func(t *testing.T) {
+		refuses(t, func(c *Config) {
+			c.MaxScriptRuntime = 2 * time.Second
+			c.Script = `
+				const where = "see // docs";
+				opcua.wait_until({nodeId: "ns=2;s=Loaded"}, v => v === true, 600000);
+				return opcua.success({where: where});
+			`
+		}, "MaxScriptRuntime")
+	})
+	t.Run("onError's waits are summed against its own budget", func(t *testing.T) {
+		refuses(t, func(c *Config) {
+			c.OnError = `opcua.wait_until({nodeId: "ns=2;s=Idle"}, v => v === true, 600000);`
+			c.MaxOnErrorRuntime = 500 * time.Millisecond
+		}, "onError", "MaxOnErrorRuntime")
+	})
+	t.Run("onSuccess's waits are summed against its own budget", func(t *testing.T) {
+		refuses(t, func(c *Config) {
+			c.OnSuccess = `opcua.wait_until({nodeId: "ns=2;s=Idle"}, v => v === true, 600000);`
+			c.MaxOnSuccessRuntime = 500 * time.Millisecond
+		}, "onSuccess", "MaxOnSuccessRuntime")
+	})
+	t.Run("a cleanup wait inside its budget is accepted", func(t *testing.T) {
+		accepts(t, func(c *Config) {
+			c.OnError = `opcua.wait_until({nodeId: "ns=2;s=Idle"}, v => v === true, 500);`
+			c.MaxOnErrorRuntime = 5 * time.Second
+		})
+	})
+}
+
 // LIB-2: exactly one of onSuccess/onError runs after every run, including one
 // the deadline stopped and one a cancelled context ended.
 func TestRun_RunsOnSuccessAfterSuccessAndOnErrorAfterEverythingElse(t *testing.T) {
