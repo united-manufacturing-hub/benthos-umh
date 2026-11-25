@@ -65,6 +65,7 @@ type reaction struct {
 	err       error
 	delay     time.Duration
 	ignoreCtx bool // the delay stands whatever ctx says
+	panicWith any  // the machine's driver blows up instead of answering
 }
 
 // machine is a Binding whose every operation is scripted per call. It
@@ -156,6 +157,15 @@ func (m *machine) act(ctx context.Context, op string, a uatAddr, sent any) (any,
 	m.mu.Unlock()
 
 	enter := time.Now()
+	if r != nil && r.panicWith != nil {
+		// The machine's own driver blows up; recorded like any other
+		// answer, because the machine was asked.
+		m.mu.Lock()
+		m.recs = append(m.recs, rec{Seq: len(m.recs) + 1, Op: op, Addr: a.NodeID,
+			Value: sent, At: enter.Sub(start)})
+		m.mu.Unlock()
+		panic(r.panicWith)
+	}
 	var answered any
 	var err error
 	switch {
@@ -969,6 +979,80 @@ func TestUAT21_DeadlineOutrunsACaughtEnding(t *testing.T) {
 	}
 	if n := m.count("write", "ns=2;s=ErrorMarker"); n != 1 {
 		t.Errorf("onError did not run:\n%s", m.log())
+	}
+}
+
+// UAT-22 A wait without its predicate — a customer's typo — must be a
+// readable persistent fault with the cleanup run, not a panic that takes
+// the process and leaves the machine armed. Found by the round-2 review.
+func TestUAT22_WaitWithoutAPredicateIsAFaultNotAPanic(t *testing.T) {
+	m := newMachine(map[string]any{"ns=2;s=Loaded": false})
+	cfg := uatConfig(`
+	const LOADED = { nodeId: "ns=2;s=Loaded" };
+	opcua.write({nodeId: "ns=2;s=Apply"}, true);
+	opcua.wait_until(LOADED);
+	return opcua.success({});
+`)
+	cfg.OnError = `opcua.write({nodeId: "ns=2;s=Reset"}, false);`
+
+	res, _ := runScenario(t, cfg, m, map[string]any{})
+
+	expectOutcome(t, res, Persistent)
+	if res.Err == nil || !strings.Contains(res.Err.Error(), "predicate") {
+		t.Errorf("Err must say the predicate is missing, got %v", res.Err)
+	}
+	if n := m.count("write", "ns=2;s=Reset"); n != 1 {
+		t.Errorf("onError did not run:\n%s", m.log())
+	}
+}
+
+// UAT-23 A machine whose driver panics mid-handshake: the run is a
+// persistent fault, the machine is handed back by onError, and the process
+// survives. The recover lives at the runtime seam, so nothing a script or a
+// binding can do takes the host with it.
+func TestUAT23_AMachineThatPanicsIsAFaultNotACrash(t *testing.T) {
+	m := newMachine(map[string]any{"ns=2;s=Ready": true})
+	m.plan("ns=2;s=Loaded", &reaction{panicWith: "driver bug: unmapped status 0x0f"})
+	cfg := uatConfig(`
+	const READY  = { nodeId: "ns=2;s=Ready" };
+	const APPLY  = { nodeId: "ns=2;s=Apply" };
+	const LOADED = { nodeId: "ns=2;s=Loaded" };
+	if (opcua.read(READY) !== true) { return opcua.error_not_ready(); }
+	opcua.write(APPLY, true);
+	opcua.read(LOADED);
+	return opcua.success({});
+`)
+	cfg.OnError = `opcua.write({nodeId: "ns=2;s=Reset"}, false);`
+
+	res, _ := runScenario(t, cfg, m, map[string]any{})
+
+	expectOutcome(t, res, Persistent)
+	if res.Err == nil || !strings.Contains(res.Err.Error(), "panicked") {
+		t.Errorf("Err must say the run panicked, got %v", res.Err)
+	}
+	if n := m.count("write", "ns=2;s=Reset"); n != 1 {
+		t.Errorf("onError did not run after the panic:\n%s", m.log())
+	}
+}
+
+// UAT-24 A cleanup with no budget would wait forever: an omitted deadline
+// field in the YAML is all it takes, so it is refused at deploy, with both
+// names in the error. Found by the round-2 review; the worst of the eight
+// because a config alone reaches it.
+func TestUAT24_AnUnbudgetedCleanupIsRefusedAtDeploy(t *testing.T) {
+	m := newMachine(map[string]any{})
+	cfg := uatConfig(`return opcua.error_not_ready();`)
+	cfg.OnError = `opcua.wait_until({nodeId: "ns=2;s=Idle"}, v => v === true, 86400000);`
+	cfg.MaxOnErrorRuntime = 0
+
+	_, err := New(cfg, m)
+	if err == nil {
+		t.Fatalf("New accepted an onError with no deadline: a machine that never idles would hang Run and Close")
+	}
+	for _, want := range []string{"onError", "MaxOnErrorRuntime"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal must name %s, got: %v", want, err)
+		}
 	}
 }
 

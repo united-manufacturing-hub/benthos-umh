@@ -111,6 +111,35 @@ func TestWaitUntil_TimeoutIsTransient(t *testing.T) {
 	}
 }
 
+// A wait_until without its predicate — left off, or a name that is not a
+// function — must be a script fault a caller can read, not a panic out of
+// Run. goja fills the missing func argument with a nil func and poll.go
+// called it; in Benthos that panic is the process, and neither cleanup
+// block runs, so the machine is left armed. Found by the round-2 review.
+func TestWaitUntil_RefusesAMissingPredicate(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{"Loaded": false}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.OnError = `opcua.write({nodeId: "Apply"}, false);`
+		c.Script = `
+			opcua.wait_until({nodeId: "Loaded"});
+			return opcua.success({waited: true});
+		`
+	})
+
+	res := engine.Run(t.Context(), map[string]any{})
+	if res.Outcome != Persistent {
+		t.Fatalf("outcome %v, want Persistent: a wait without a predicate is a wrong script (err %v)",
+			res.Outcome, res.Err)
+	}
+	if res.Err == nil || !strings.Contains(res.Err.Error(), "predicate") {
+		t.Fatalf("Err must say the predicate is missing, got %v", res.Err)
+	}
+	// The machine was handed back, so the panic did not skip the cleanup.
+	if n := b.count("write Apply=false"); n != 1 {
+		t.Fatalf("onError did not run (ops: %v)", b.snapshot())
+	}
+}
+
 // LIB-18 again: only the script's author knows the flag is never coming.
 func TestWaitUntil_OnTimeoutPersistentOverridesIt(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{"Loaded": false}}
