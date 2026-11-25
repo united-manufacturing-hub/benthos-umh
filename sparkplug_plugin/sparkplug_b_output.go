@@ -32,7 +32,7 @@
 // 4. DBIRTH published with complete metric definitions (first time OR new metrics)
 // 5. DDATA published with aliases for efficient transmission
 //
-// This approach eliminates NBIRTH/NDATA complexity while maintaining full Sparkplug B compliance.
+// This approach eliminates NBIRTH/NDATA complexity.
 package sparkplug_plugin
 
 import (
@@ -56,7 +56,7 @@ var SparkplugConfigSpec = service.NewConfigSpec().
 	Summary("Sparkplug B MQTT output acting as Edge Node").
 	Description(`The Sparkplug B output acts as an Edge Node, publishing data to Sparkplug MQTT topics
 with complete session lifecycle management. It handles BIRTH/DEATH certificates, maintains sequence
-numbers, manages alias mappings, and ensures full Sparkplug B compliance.
+numbers and manages alias mappings. It does not yet comply with Sparkplug B 2.2 or 3.0; the plugin docs list the differences.
 
 Key features:
 - Always operates as Edge Node (no role configuration needed)
@@ -66,7 +66,7 @@ Key features:
 - Alias-based metric publishing for bandwidth efficiency
 - Automatic type detection and conversion
 - Configurable metric definitions with aliases
-- Robust reconnection handling with proper rebirth
+- Reconnection handling that republishes the NBIRTH
 - UNS metadata integration for seamless data flow
 
 The output connects to an MQTT broker, publishes BIRTH certificates to announce available metrics,
@@ -380,7 +380,7 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 	// STATELESS LIMITATION:
 	// Benthos components are stateless by design - no persistence across restarts.
 	// Therefore, bdSeq behavior is:
-	// - Within component lifetime: 0 → 1 → 2 → 3 → ... (spec compliant)
+	// - Within component lifetime: +1 on every rebirth, unchanged on a reconnect (not spec compliant)
 	// - Across component restarts: Resets to 0 (limitation of stateless architecture)
 	//
 	// This is acceptable for many Sparkplug deployments where Edge Nodes reset
@@ -1129,7 +1129,7 @@ func (s *sparkplugOutput) publishDBIRTH(deviceID string, data map[string]interfa
 		return fmt.Errorf("failed to marshal DBIRTH payload: %w", err)
 	}
 
-	// DBIRTH messages MUST be retained per Sparkplug B specification
+	// retained, which Sparkplug 3.0 forbids (payloads-dbirth-retain)
 	token := s.client.Publish(topic, s.config.MQTT.QoS, true, payloadBytes)
 	if token.Wait() && token.Error() != nil {
 		return fmt.Errorf("failed to publish DBIRTH message: %w", token.Error())
@@ -1228,7 +1228,7 @@ func (s *sparkplugOutput) publishBirthMessage() error {
 		return fmt.Errorf("failed to marshal BIRTH payload: %w", err)
 	}
 
-	// BIRTH messages MUST be retained per Sparkplug B specification
+	// retained, which Sparkplug 3.0 forbids (payloads-nbirth-retain)
 	// This allows Primary Hosts to receive current state when they connect
 	token := s.client.Publish(topic, s.config.MQTT.QoS, true, payloadBytes)
 	if token.Wait() && token.Error() != nil {
