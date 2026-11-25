@@ -1,3 +1,3 @@
 kind: fixes
-body: 'Sparkplug B input and output (sparkplug_b): the docs no longer claim Sparkplug B 3.0 compliance. They now list where the plugins differ from Sparkplug 2.2, and recommend the downsampler before the output, because the output publishes every message it receives (ENG-8053)'
+body: 'Sparkplug B input and output (sparkplug_b): the docs and the output''s description no longer claim Sparkplug B 3.0 compliance, which the plugins do not meet yet (ENG-8053)'
 time: 2026-11-24T15:14:55.692049+01:00
