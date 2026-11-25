@@ -1,0 +1,89 @@
+package handshake
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/dop251/goja"
+)
+
+// scriptRuntime is the seam to pkg/js_runtime (PR0, ENG-8128): Compile once,
+// run pooled, interrupt on ctx, close. The real package satisfies this shape
+// through an adapter when the branches are reconciled; until then newRuntime
+// builds the goja-backed stand-in below, and nothing else changes.
+type scriptRuntime interface {
+	Compile(name, source string) (any, error)
+	Run(ctx context.Context, program any, globals map[string]any) (any, error)
+	Close() error
+}
+
+// newRuntime builds the scriptRuntime an Engine runs on. It is a variable so
+// the reconciliation with pkg/js_runtime swaps the implementation in one
+// place, and so tests substitute a fake where a real runtime would be slow.
+var newRuntime = func() scriptRuntime { return gojaRuntime{} }
+
+// gojaRuntime is the stand-in for pkg/js_runtime. It builds a fresh goja
+// runtime per run, which is the strict reset LIB-7 requires; pooling with a
+// global reset is PR0's to bring, not something this package re-invents.
+type gojaRuntime struct{}
+
+// Compile applies the function wrap every caller in this repo already uses,
+// (function(){ 'use strict'; ... })(), so a script may use a top-level return.
+func (gojaRuntime) Compile(name, source string) (any, error) {
+	wrapped := "(function(){\n'use strict';\n" + source + "\n})()"
+	program, err := goja.Compile(name, wrapped, false)
+	if err != nil {
+		return nil, fmt.Errorf("%s does not compile: %w", name, err)
+	}
+	return program, nil
+}
+
+// Run binds globals into a fresh runtime and executes program. The deadline
+// comes from ctx: the watcher goroutine interrupts the runtime when ctx is
+// done, and the returned error wraps ctx.Err(). The runtime is discarded
+// rather than pooled, so an interrupt that arrives late cannot hurt the next
+// run.
+func (gojaRuntime) Run(ctx context.Context, program any, globals map[string]any) (any, error) {
+	prog, ok := program.(*goja.Program)
+	if !ok {
+		return nil, fmt.Errorf("program was not compiled by this runtime")
+	}
+	vm := goja.New()
+	for name, value := range globals {
+		if err := vm.Set(name, value); err != nil {
+			return nil, fmt.Errorf("cannot bind global %q: %w", name, err)
+		}
+	}
+	stop := make(chan struct{})
+	watchDone := make(chan struct{})
+	go func() {
+		defer close(watchDone)
+		select {
+		case <-ctx.Done():
+			vm.Interrupt(ctx.Err())
+		case <-stop:
+		}
+	}()
+	value, err := vm.RunProgram(prog)
+	close(stop)
+	<-watchDone
+	if err != nil {
+		return nil, wrapRunError(err)
+	}
+	return value.Export(), nil
+}
+
+// Close releases pooled runtimes. The stand-in pools none, so there is
+// nothing to release until the reconciliation replaces it.
+func (gojaRuntime) Close() error { return nil }
+
+// wrapRunError keeps an interrupt recognizable as ctx's own error, by
+// leaving the chain intact; every other error is a script fault for the
+// engine to classify.
+func wrapRunError(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return fmt.Errorf("script was stopped before it ended: %w", err)
+	}
+	return err
+}
