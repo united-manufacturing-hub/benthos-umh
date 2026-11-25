@@ -131,6 +131,11 @@ func runOnVM(vm *goja.Runtime, p *Program) (out runOutcome) {
 	return runOutcome{val: v.Export()}
 }
 
+// interruptGrace is how long Run waits for a script to stop after the
+// context deadline hit and the runtime was interrupted, before giving up on
+// the runtime. Matches the grace the stream processor's watchdog had.
+const interruptGrace = time.Second
+
 // bindGlobals sets every entry of globals on the runtime's global object.
 func bindGlobals(vm *goja.Runtime, globals map[string]any) error {
 	for name, value := range globals {
@@ -146,8 +151,32 @@ func bindGlobals(vm *goja.Runtime, globals map[string]any) error {
 // interrupts the runtime when ctx is done and returns ctx.Err() wrapped. A
 // runtime that does not stop after the interrupt is discarded rather than
 // pooled.
+//
+// A context with no deadline runs inline on the calling goroutine, with no
+// interruption at all — the no-time-limit path nodered_js and tag_processor
+// use. Interruption requires a deadline: a cancelable-but-undated context is
+// ignored, like the callers' own contexts are today.
 func (r *Runner) Run(ctx context.Context, p *Program, globals map[string]any) (any, error) {
 	start := time.Now()
+	defer func() {
+		if r.opts.OnSlow == nil || r.opts.Slow <= 0 {
+			return
+		}
+		if d := time.Since(start); d > r.opts.Slow {
+			r.opts.OnSlow(d)
+		}
+	}()
+
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		return r.runInline(ctx, p, globals)
+	}
+	return r.runWithDeadline(ctx, p, globals)
+}
+
+// runInline is the zero-deadline path: no goroutine, no watcher, no
+// interruption. (ctx is deliberately unused: without a deadline it cannot
+// stop a run, and today's no-limit callers never stopped one.)
+func (r *Runner) runInline(_ context.Context, p *Program, globals map[string]any) (any, error) {
 	pr := r.pool.Get().(*pooledRuntime)
 
 	if err := bindGlobals(pr.vm, globals); err != nil {
@@ -156,17 +185,105 @@ func (r *Runner) Run(ctx context.Context, p *Program, globals map[string]any) (a
 	}
 
 	out := runOnVM(pr.vm, p)
+	r.release(pr, globals, true)
+	return out.val, out.err
+}
 
-	// TODO(ENG-8128): reset the bound globals, honour the ctx deadline by
-	// interrupting, and discard runtimes that do not stop or do not reset.
-	r.pool.Put(pr)
+// runWithDeadline is the watchdog path: the program runs on its own
+// goroutine; when ctx is done the runtime is interrupted and given the
+// grace period to stop. A runtime that does not stop is discarded.
+func (r *Runner) runWithDeadline(ctx context.Context, p *Program, globals map[string]any) (any, error) {
+	if err := ctx.Err(); err != nil {
+		// Already done: do not even start. Nothing was bound; the contract
+		// says the caller gets ctx.Err() wrapped.
+		return nil, wrapCtxErr(err)
+	}
 
-	if r.opts.OnSlow != nil && r.opts.Slow > 0 {
-		if d := time.Since(start); d > r.opts.Slow {
-			r.opts.OnSlow(d)
+	pr := r.pool.Get().(*pooledRuntime)
+
+	if err := bindGlobals(pr.vm, globals); err != nil {
+		// The runtime may be half-bound; do not pool it.
+		return nil, err
+	}
+
+	done := make(chan runOutcome, 1)
+	go func() {
+		done <- runOnVM(pr.vm, p)
+	}()
+
+	var out runOutcome
+	finished := false
+	select {
+	case out = <-done:
+		finished = true
+	case <-ctx.Done():
+		// Interrupt the interpreter; it checks the flag at loop boundaries
+		// and on function calls.
+		pr.vm.Interrupt("js_runtime: context done")
+		select {
+		case out = <-done:
+			finished = true
+		case <-time.After(interruptGrace):
+			// The script did not stop after the interrupt. Drop the runtime
+			// on the floor: the leaked goroutine still references it, so it
+			// must never be pooled.
 		}
 	}
+
+	// ctx.Err() != nil means the run was aborted by the caller's context
+	// (even if the script happened to finish at the same moment): the
+	// contract says Run returns ctx.Err() wrapped.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		r.release(pr, globals, finished)
+		return nil, wrapCtxErr(ctxErr)
+	}
+
+	r.release(pr, globals, finished)
 	return out.val, out.err
+}
+
+// release returns a finished runtime to the pool, or discards it. A runtime
+// is discarded when the script did not stop after the interrupt (finished ==
+// false, the goroutine may still be running on it) or when the reset fails —
+// a runtime whose state could not be restored must not be reused.
+func (r *Runner) release(pr *pooledRuntime, globals map[string]any, finished bool) {
+	if !finished {
+		return
+	}
+	if !r.reset(pr, globals) {
+		return
+	}
+	pr.vm.ClearInterrupt()
+	r.pool.Put(pr)
+}
+
+// reset restores the runtime's state after a run: the globals the run bound
+// (the "message") are set back to undefined, and with ResetGlobals every
+// global object property that was not there at creation is deleted. It
+// reports whether the runtime is clean again.
+func (r *Runner) reset(pr *pooledRuntime, globals map[string]any) bool {
+	vm := pr.vm
+	for name := range globals {
+		if err := vm.Set(name, goja.Undefined()); err != nil {
+			return false
+		}
+	}
+	if r.opts.ResetGlobals {
+		global := vm.GlobalObject()
+		for _, name := range global.GetOwnPropertyNames() {
+			if _, pristine := pr.pristine[name]; pristine {
+				continue
+			}
+			if err := global.Delete(name); err != nil {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func wrapCtxErr(err error) error {
+	return fmt.Errorf("js_runtime: run aborted by the context: %w", err)
 }
 
 // Close releases pooled runtimes.
