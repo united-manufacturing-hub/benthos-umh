@@ -44,8 +44,7 @@
 //    - Solution: Implemented proper timeout-based disconnection simulation
 //    - Impact: Tests now properly validate MQTT will message functionality
 //
-// These fixes ensure the plugin is fully compliant with Sparkplug B v3.0 specification
-// and can handle production-grade scenarios including concurrent connections, proper
+// These fixes ensure the plugin can handle production-grade scenarios including concurrent connections, proper
 // sequence management, and real MQTT broker integration.
 
 package sparkplug_plugin_test

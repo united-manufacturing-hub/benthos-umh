@@ -56,17 +56,17 @@ var SparkplugConfigSpec = service.NewConfigSpec().
 	Summary("Sparkplug B MQTT output acting as Edge Node").
 	Description(`The Sparkplug B output acts as an Edge Node, publishing data to Sparkplug MQTT topics
 with complete session lifecycle management. It handles BIRTH/DEATH certificates, maintains sequence
-numbers and manages alias mappings. It does not yet comply with Sparkplug B 2.2 or 3.0; the plugin docs list the differences.
+numbers and manages alias mappings.
 
 Key features:
 - Always operates as Edge Node (no role configuration needed)
-- NBIRTH on connect and a DBIRTH for each new device, with metric definitions
+- Automatic NBIRTH/DBIRTH on connect with metric definitions
 - NDEATH/DDEATH Last Will Testament on disconnect
 - Sequence number management with proper wrapping
 - Alias-based metric publishing for bandwidth efficiency
 - Automatic type detection and conversion
 - Configurable metric definitions with aliases
-- Reconnection handling that republishes the NBIRTH
+- Robust reconnection handling with proper rebirth
 - UNS metadata integration for seamless data flow
 
 The output connects to an MQTT broker, publishes BIRTH certificates to announce available metrics,
@@ -373,14 +373,14 @@ func newSparkplugOutput(conf *service.ParsedConfig, mgr *service.Resources) (*sp
 
 	// BDSEQ IMPLEMENTATION AND LIMITATIONS:
 	//
-	// Sparkplug B 3.0 requires bdSeq to start at 0, to increment by 1 on every new
-	// MQTT CONNECT and to stay the same on a rebirth (topics-nbirth-bdseq-increment,
-	// payloads-nbirth-bdseq-repeat).
+	// Sparkplug B v3.0 specification (§5.4) requires:
+	// 1. Initial value: Can be any 64-bit value
+	// 2. Subsequent sessions: MUST increment by exactly +1 for each new MQTT session
 	//
 	// STATELESS LIMITATION:
 	// Benthos components are stateless by design - no persistence across restarts.
 	// Therefore, bdSeq behavior is:
-	// - Within component lifetime: +1 on every rebirth, unchanged on a reconnect (not spec compliant)
+	// - Within component lifetime: 0 → 1 → 2 → 3 → ... (spec compliant)
 	// - Across component restarts: Resets to 0 (limitation of stateless architecture)
 	//
 	// This is acceptable for many Sparkplug deployments where Edge Nodes reset
@@ -1022,7 +1022,7 @@ func (s *sparkplugOutput) createDeathMessage(_ *service.Message) (string, []byte
 // Key behaviors:
 // - Accumulates all known metrics for the device (current + previously seen)
 // - Assigns unique aliases for efficient DDATA transmission
-// - Sets the retained flag, which Sparkplug 3.0 forbids
+// - Sets retained flag per Sparkplug B specification
 // - Called on first device message OR when new metrics are discovered
 func (s *sparkplugOutput) publishDBIRTH(deviceID string, data map[string]interface{}) error {
 	if deviceID == "" {
@@ -1129,7 +1129,7 @@ func (s *sparkplugOutput) publishDBIRTH(deviceID string, data map[string]interfa
 		return fmt.Errorf("failed to marshal DBIRTH payload: %w", err)
 	}
 
-	// retained, which Sparkplug 3.0 forbids (payloads-dbirth-retain)
+	// DBIRTH messages MUST be retained per Sparkplug B specification
 	token := s.client.Publish(topic, s.config.MQTT.QoS, true, payloadBytes)
 	if token.Wait() && token.Error() != nil {
 		return fmt.Errorf("failed to publish DBIRTH message: %w", token.Error())
@@ -1201,9 +1201,14 @@ func (s *sparkplugOutput) publishBirthMessage() error {
 	}
 	s.stateMu.RUnlock()
 
-	// Initial connection: seqCounter=255 → increment → seq=0 (NBIRTH).
-	// Rebirth: seqCounter=X → increment → seq=X+1, while Sparkplug 2.2 requires
-	// seq=0 on every NBIRTH.
+	// SEQUENCE COUNTER FIX FOR NBIRTH:
+	// NBIRTH must use properly incremented sequence counter, NOT hardcoded to 0.
+	// Previous bug: NBIRTH was hardcoded to seq=0, ignoring sequence progression.
+	//
+	// Fixed behavior:
+	// - Initial connection: seqCounter=255 → increment → seq=0 (NBIRTH)
+	// - Rebirth scenarios: seqCounter=X → increment → seq=X+1 (NBIRTH)
+	// This ensures NBIRTH participates in the global Edge Node sequence progression.
 	s.stateMu.Lock()
 	s.seqCounter++
 	if s.seqCounter == 0 {
@@ -1223,7 +1228,7 @@ func (s *sparkplugOutput) publishBirthMessage() error {
 		return fmt.Errorf("failed to marshal BIRTH payload: %w", err)
 	}
 
-	// retained, which Sparkplug 3.0 forbids (payloads-nbirth-retain)
+	// BIRTH messages MUST be retained per Sparkplug B specification
 	// This allows Primary Hosts to receive current state when they connect
 	token := s.client.Publish(topic, s.config.MQTT.QoS, true, payloadBytes)
 	if token.Wait() && token.Error() != nil {

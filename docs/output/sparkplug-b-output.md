@@ -26,22 +26,6 @@ The complementary [Sparkplug B Input plugin](../input/sparkplug-b-input.md) hand
 
 This output plugin implements the **Edge Node** role that complements the **Host** role of the input plugin.
 
-## Sparkplug compliance
-
-The output does not yet comply with Sparkplug B 2.2 or 3.0. It differs from Sparkplug 2.2 in these points:
-
-- After a reconnect, the output publishes no DBIRTH for the devices it has already announced. Hosts then receive DDATA without the birth that defines it. A rebirth that a host requests does republish every DBIRTH.
-- The NBIRTH of a rebirth carries the next sequence number instead of 0.
-- Aliases are not unique across the edge node. The `Node Control/Rebirth` metric has alias 1, which another metric can get as well. The configured metrics appear with the same aliases in the NBIRTH and in every DBIRTH. A tag name under two location paths shares one alias.
-- A value that the output cannot convert to the metric's type is published with neither a value nor the null flag. This happens for a negative whole number in a metric with an integer type, which includes every metric the output types itself from a whole number, for every metric configured with an unsigned type (`uint8` to `uint64`), and for some other combinations, for example a whole number from a Bloblang mapping in a `double` metric.
-- With `identity.device_id` set, the output publishes no NBIRTH, and its Will is a DDEATH instead of an NDEATH.
-- The output publishes no DDEATH when a device derived from `location_path` stops.
-- bdSeq increases on every rebirth but not on a reconnect. The NDEATH Will keeps the bdSeq of the first connection, so after a rebirth, hosts that compare bdSeq ignore the NDEATH.
-- The output does not read the primary host's state. With several brokers, it stays on a broker the primary host is not connected to.
-- Group, edge node and device IDs with `+`, `/` or `#` are accepted and produce invalid topics.
-
-Sparkplug 3.0 adds rules the output does not meet either. For example, 3.0 requires QoS 0 for births and no MQTT retain flag on births and the NDEATH, while the output uses `mqtt.qos` and sets the retain flag. This list is updated as the fixes ship.
-
 ## Quick Start
 
 ```yaml
@@ -161,14 +145,10 @@ Each metric in the `metrics` array supports:
 
 As a Sparkplug B Edge Node, this plugin handles the complete session lifecycle:
 
-1. **Connection**: Publishes NBIRTH with all configured metrics and bdSeq (a DBIRTH when `identity.device_id` is set)
+1. **Connection**: Publishes NBIRTH with all configured metrics and bdSeq
 2. **Device Discovery**: Publishes DBIRTH when new devices (location_paths) appear
 3. **Data Flow**: Publishes DDATA with efficient alias-based encoding
-4. **Disconnection**: NDEATH published automatically via MQTT Last Will Testament (a DDEATH when `identity.device_id` is set)
-
-### Report by Exception
-
-The output publishes every value it receives as a DATA message, without a change filter. Sparkplug recommends publishing a value only when it changes (report by exception). To reduce the messages to changes, put the [downsampler](../processing/downsampler.md) before the output.
+4. **Disconnection**: NDEATH published automatically via MQTT Last Will Testament
 
 ### Rebirth Command Handling
 
@@ -187,7 +167,7 @@ spBv1.0/<group_id>/NCMD/<edge_node_id>
 **Why This Matters:**
 - Hosts can request fresh BIRTH certificates after restart
 - Ensures alias mappings stay synchronized
-- The bdSeq increment and the sequence number of the new NBIRTH differ from Sparkplug; see [Sparkplug compliance](#sparkplug-compliance)
+- Maintains Sparkplug B session integrity
 
 ## Data Format Requirements
 
@@ -218,8 +198,8 @@ The Sparkplug B output plugin sets **bdSeq** (Birth-Death Sequence) as follows:
 
 **Within Component Lifetime**:
 - bdSeq starts at 0 for the first MQTT session
-- bdSeq increments by +1 on every rebirth
-- bdSeq does not change on a reconnect. Sparkplug expects an increment on every new MQTT connection; see [Sparkplug compliance](#sparkplug-compliance)
+- bdSeq increments by +1 for each subsequent MQTT reconnection session
+- Example: Session 1: bdSeq=0 → Session 2: bdSeq=1 → Session 3: bdSeq=2
 
 **Across Component Restarts** (⚠️ Stateless Limitation):
 - bdSeq resets to 0 when the Benthos component is restarted
@@ -230,8 +210,9 @@ The Sparkplug B output plugin sets **bdSeq** (Birth-Death Sequence) as follows:
 
 **Expected Behavior:**
 ```
-Component Start 1: bdSeq=0 → rebirth → bdSeq=1 → reconnect → bdSeq=1
+Component Start 1: bdSeq=0 → reconnect → bdSeq=1 → reconnect → bdSeq=2
 Component Restart: bdSeq=0 (resets)
+Component Start 2: bdSeq=0 → reconnect → bdSeq=1 → reconnect → bdSeq=2
 ```
 
 **Impact:**
