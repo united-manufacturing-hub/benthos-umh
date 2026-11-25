@@ -345,3 +345,44 @@ func TestRun_RefusesOperationsAfterTheScriptEnded(t *testing.T) {
 		t.Fatalf("the committing write happened once (ops: %v)", b.snapshot())
 	}
 }
+
+// The ending functions abort the script by throwing, and a throw is
+// catchable — so a script that catches its ending and carries on is
+// stopped by the deadline, not by the ending it recorded on the way.
+// That run is not a delivery: LIB-2 puts a deadline-stopped run under
+// onError, LIB-6 makes it persistent, and LIB-3 decides the outcome when
+// the script ends — a script the deadline killed never ended for the
+// ending it recorded first. Found by the round-2 review's probe of
+// UAT-13: try { success } catch {} for(;;){} came back Delivered and ran
+// onSuccess on a machine whose transaction was cut in half.
+func TestRun_TheDeadlineOutranksAnEndingTheScriptNeverStoppedFor(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.MaxScriptRuntime = 150 * time.Millisecond
+		c.OnSuccess = `opcua.write({nodeId: "SuccessMarker"}, true);`
+		c.OnError = `opcua.write({nodeId: "ErrorMarker"}, true);`
+		c.Script = `
+			try {
+				return opcua.success({x: 1});
+			} catch (e) {}
+			for (;;) {}
+		`
+	})
+
+	res := engine.Run(t.Context(), map[string]any{})
+	if res.Outcome != Persistent {
+		t.Fatalf("outcome %v, want Persistent: the deadline stopped the script (err %v)", res.Outcome, res.Err)
+	}
+	if res.Data != nil {
+		t.Fatalf("a run the deadline stopped carries no data, got %v", res.Data)
+	}
+	if !errors.Is(res.Err, context.DeadlineExceeded) {
+		t.Fatalf("Err does not name the deadline: %v", res.Err)
+	}
+	if n := b.count("write SuccessMarker=true"); n != 0 {
+		t.Fatalf("onSuccess ran for a run the deadline stopped (ops: %v)", b.snapshot())
+	}
+	if n := b.count("write ErrorMarker=true"); n != 1 {
+		t.Fatalf("onError did not run (ops: %v)", b.snapshot())
+	}
+}
