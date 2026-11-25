@@ -121,6 +121,50 @@ func TestConfig_ValidateRefusesAScriptThatDoesNotCompile(t *testing.T) {
 	}
 }
 
+// A cleanup block with no deadline would run unbounded: runCleanup reads a
+// budget of zero or less as 'no limit', and nothing checked the two cleanup
+// budgets, so an omitted YAML field plus a machine that never goes idle
+// hung Run and Close forever with nothing logged. Found by the round-2
+// review (item 3): the worst of the eight, because a config alone reaches
+// it. Either block may be empty; a non-empty one must be budgeted.
+func TestConfig_ValidateRefusesAnUnbudgetedCleanup(t *testing.T) {
+	refuses := func(t *testing.T, mutate func(*Config), want ...string) {
+		t.Helper()
+		cfg := validConfig()
+		mutate(&cfg)
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatalf("Validate accepted a cleanup block with no deadline")
+		}
+		for _, name := range want {
+			if !strings.Contains(err.Error(), name) {
+				t.Fatalf("the refusal must name %s, got: %v", name, err)
+			}
+		}
+	}
+
+	t.Run("onError with no budget", func(t *testing.T) {
+		refuses(t, func(c *Config) {
+			c.OnError = `opcua.write({nodeId: "Apply"}, false);`
+			c.MaxOnErrorRuntime = 0
+		}, "onError", "MaxOnErrorRuntime")
+	})
+	t.Run("onSuccess with no budget", func(t *testing.T) {
+		refuses(t, func(c *Config) {
+			c.OnSuccess = `opcua.write({nodeId: "Apply"}, false);`
+			c.MaxOnSuccessRuntime = 0
+		}, "onSuccess", "MaxOnSuccessRuntime")
+	})
+	t.Run("an empty block needs no budget", func(t *testing.T) {
+		cfg := validConfig()
+		cfg.MaxOnSuccessRuntime = 0
+		cfg.MaxOnErrorRuntime = 0
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("an empty cleanup block needs no deadline: %v", err)
+		}
+	})
+}
+
 // LIB-9: a configuration whose literal waits do not clear the script deadline
 // is refused. Literal waits only; a computed wait is beyond it (SCR-4).
 func TestConfig_ValidateRefusesWaitsThatExceedTheScriptDeadline(t *testing.T) {
