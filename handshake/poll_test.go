@@ -22,10 +22,6 @@ import (
 
 // waitScript is a handshake whose whole job is one wait on Loaded, which the
 // fake machine holds false until it is told to flip.
-const waitScript = `
-	opcua.wait_until({nodeId: "Loaded"}, v => v === true, %d%s);
-	return opcua.success({waited: true});
-`
 
 // LIB-12: wait_until re-reads at the configured interval, which a script
 // overrides per call with { pollMs }, and stops at its own timeout rather than

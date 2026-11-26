@@ -365,7 +365,7 @@ func TestConfig_ValidateScansOnlyLiveWaitsInEveryBlock(t *testing.T) {
 }
 
 // LIB-2: exactly one of onSuccess/onError runs after every run, including one
-// the deadline stopped and one a cancelled context ended.
+// the deadline stopped and one a canceled context ended.
 func TestRun_RunsOnSuccessAfterSuccessAndOnErrorAfterEverythingElse(t *testing.T) {
 	cleanup := `
 		opcua.write({nodeId: "Apply"}, true);
@@ -433,7 +433,7 @@ func TestRun_RunsOnErrorWhenTheScriptIsStoppedByItsDeadline(t *testing.T) {
 	}
 }
 
-// LIB-2: onError runs when a cancelled context ends the run.
+// LIB-2: onError runs when a canceled context ends the run.
 func TestRun_RunsOnErrorWhenTheContextIsCancelled(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{}}
 	engine := newTestEngine(t, b, func(c *Config) {
@@ -459,7 +459,7 @@ func TestRun_RunsOnErrorWhenTheContextIsCancelled(t *testing.T) {
 }
 
 // LIB-6: the deadline is configuration, so repeating cannot fix it — and a
-// binding that honours its context and returns ctx's own error when the
+// binding that honors its context and returns ctx's own error when the
 // deadline fires mid-operation must not turn that stop into an unmarked,
 // retryable fault. Found by UAT-4 (a deadline that fires mid-transaction
 // was classed Transient); the fault's kind outranks nothing here, the
@@ -475,7 +475,7 @@ func TestRun_IsPersistentWhenTheDeadlineStopsAnOperation(t *testing.T) {
 		`
 	})
 	// The read blocks until the run's context is done, then answers with
-	// the context's own error, exactly as a binding that honours ctx does.
+	// the context's own error, exactly as a binding that honors ctx does.
 	b.blockRead = func(ctx context.Context) (ReadResponse, error) {
 		<-ctx.Done()
 		return ReadResponse{}, ctx.Err()
@@ -703,7 +703,7 @@ func TestLiteralWaitScanner_AnEscapedQuoteDoesNotEndAString(t *testing.T) {
 // real unterminated string does not compile, so the way a script reaches this
 // is a regex literal containing a quote, such as /"/ — the desync the
 // scanner's own comment accepts. Pinned twice: the function's own contract,
-// and the end-to-end behaviour that follows from it (the comment after the
+// and the end-to-end behavior that follows from it (the comment after the
 // regex is string content to the scanner, so a wait inside it still counts —
 // the conservative direction for a safety check).
 func TestLiteralWaitScanner_AnUnterminatedStringEndsTheScanWhereItStands(t *testing.T) {

@@ -35,7 +35,7 @@ type fakeBinding struct {
 	reads     map[string]int
 	// blockRead, when set, replaces the table lookup: one address's reads
 	// go to it, so a test can block until ctx is done and answer with ctx's
-	// own error, exactly as a binding that honours its context does.
+	// own error, exactly as a binding that honors its context does.
 	blockRead func(ctx context.Context) (ReadResponse, error)
 }
 
@@ -76,7 +76,7 @@ func (f *fakeBinding) snapshot() []string {
 }
 
 // errFor returns the injected error for one operation on one address, if any.
-func (f *fakeBinding) errFor(op, addr string) error {
+func (f *fakeBinding) errFor(op string, addr string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.errs == nil {
@@ -86,7 +86,7 @@ func (f *fakeBinding) errFor(op, addr string) error {
 }
 
 func (f *fakeBinding) Read(ctx context.Context, addr string) (ReadResponse, error) {
-	// A binding honours its context (BND-3): it does not touch the machine
+	// A binding honors its context (BND-3): it does not touch the machine
 	// once ctx is done, so the operation is not recorded either. The
 	// mutation pass found the old `_ context.Context` let a cleanup run under
 	// a cancelled context without any test noticing.
@@ -140,9 +140,10 @@ type fakeCaller struct {
 	callErr  error
 	outputs  []any
 	lastCall []any
-	// flipAfter makes one address answer false until its nth read, then true.
-	flipAfter map[string]int
-	reads     map[string]int
+	// flipAfter and reads live on the embedded fakeBinding. Declaring them
+	// again here shadowed it: a test writing fakeCaller{flipAfter: ...}
+	// would have set this copy while Read consulted the embedded one, so
+	// the fake would have ignored its own configuration without saying so.
 }
 
 func (f *fakeCaller) Call(_ context.Context, addr string, inputs []any) (CallResponse, error) {

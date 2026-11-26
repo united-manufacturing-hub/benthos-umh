@@ -46,8 +46,20 @@ type gojaRuntime struct{}
 
 // Compile applies the function wrap every caller in this repo already uses,
 // (function(){ 'use strict'; ... })(), so a script may use a top-level return.
-func (gojaRuntime) compile(name, source string) (any, error) {
-	wrapped := "(function(){\n'use strict';\n" + source + "\n})()"
+//
+// The prefix is three lines so a user's first line is line 4, the same as
+// pkg/js_runtime. That number is not cosmetic: a handshake script that
+// throws reaches the flow as "handshake ended persistent: Error: boom at
+// script:4:7", so it is in the dead-letter reason and in the operator's
+// logs, and it is how someone finds the fault in a long script.
+//
+// It matters most for what has not happened yet. When this stand-in is
+// swapped for pkg/js_runtime, a different prefix length would move every
+// line number a customer has ever seen, silently, with nothing failing.
+// Matching now means the swap changes nothing. TestCompile_AUsersFirstLine
+// goes red if either side drifts.
+func (gojaRuntime) compile(name string, source string) (any, error) {
+	wrapped := "\n\n(function(){'use strict';\n" + source + "\n})()"
 	program, err := goja.Compile(name, wrapped, false)
 	if err != nil {
 		return nil, fmt.Errorf("%s does not compile: %w", name, err)
@@ -60,7 +72,7 @@ func (gojaRuntime) compile(name, source string) (any, error) {
 // done, and the returned error wraps ctx.Err(). The runtime is discarded
 // rather than pooled, so an interrupt that arrives late cannot hurt the next
 // run.
-func (gojaRuntime) run(ctx context.Context, program any, globals map[string]any) (result any, err error) {
+func (gojaRuntime) run(ctx context.Context, program any, globals map[string]any) (result any, err error) { //nolint:nonamedreturns // a deferred recover assigns to it; naming is the mechanism
 	// No panic from a script or a binding leaves Run (round-2 review,
 	// item 2): goja fills a missing function argument with a nil func, a
 	// binding is protocol code that can blow up on a machine's bad answer,
@@ -80,8 +92,8 @@ func (gojaRuntime) run(ctx context.Context, program any, globals map[string]any)
 	}
 	vm := goja.New()
 	for name, value := range globals {
-		if err := vm.Set(name, jsValue(value)); err != nil {
-			return nil, fmt.Errorf("cannot bind global %q: %w", name, err)
+		if bindErr := vm.Set(name, jsValue(value)); bindErr != nil {
+			return nil, fmt.Errorf("cannot bind global %q: %w", name, bindErr)
 		}
 	}
 	stop := make(chan struct{})
@@ -205,7 +217,7 @@ func (e *Engine[UnifiedAddress]) namespace(rs *runState, endings bool) map[strin
 			}
 			return vm.ToValue(v)
 		},
-		"write": func(call goja.FunctionCall, vm *goja.Runtime) (ret goja.Value) {
+		"write": func(call goja.FunctionCall, vm *goja.Runtime) (ret goja.Value) { //nolint:nonamedreturns // a deferred recover assigns to it; naming is the mechanism
 			own := false
 			defer rs.recoverEvidence("write", &own)
 			raw, convErr := argObject(call, 0)
@@ -222,7 +234,7 @@ func (e *Engine[UnifiedAddress]) namespace(rs *runState, endings bool) map[strin
 			}
 			return goja.Undefined()
 		},
-		"wait_until": func(call goja.FunctionCall, vm *goja.Runtime) (ret goja.Value) {
+		"wait_until": func(call goja.FunctionCall, vm *goja.Runtime) (ret goja.Value) { //nolint:nonamedreturns // a deferred recover assigns to it; naming is the mechanism
 			own := false
 			defer rs.recoverEvidence("wait_until", &own)
 			raw, convErr := argObject(call, 0)
@@ -253,7 +265,7 @@ func (e *Engine[UnifiedAddress]) namespace(rs *runState, endings bool) map[strin
 		},
 	}
 	if caller, ok := e.bind.(Caller[UnifiedAddress]); ok {
-		ns["call_method"] = func(call goja.FunctionCall, vm *goja.Runtime) (ret goja.Value) {
+		ns["call_method"] = func(call goja.FunctionCall, vm *goja.Runtime) (ret goja.Value) { //nolint:nonamedreturns // a deferred recover assigns to it; naming is the mechanism
 			own := false
 			defer rs.recoverEvidence("call_method", &own)
 			raw, convErr := argObject(call, 0)
@@ -282,7 +294,7 @@ func (e *Engine[UnifiedAddress]) namespace(rs *runState, endings bool) map[strin
 			}
 			panic(vm.NewGoError(errEnded))
 		}
-		ns["error_not_ready"] = func(call goja.FunctionCall, vm *goja.Runtime) goja.Value {
+		ns["error_not_ready"] = func(_ goja.FunctionCall, vm *goja.Runtime) goja.Value {
 			rs.finish(endNotReady, nil)
 			panic(vm.NewGoError(errEnded))
 		}

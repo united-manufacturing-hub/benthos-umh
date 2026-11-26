@@ -204,11 +204,40 @@ type Config struct {
 	PollInterval time.Duration
 }
 
+// MaxInterval is the longest a handshake may wait for anything: its own
+// deadline, a cleanup budget, or a single wait_until. A handshake is one
+// machine acknowledging one instruction, so an hour is not a long handshake,
+// it is a mistake -- and the engine refuses it rather than letting a message
+// sit on a machine while a bridge looks healthy.
+const MaxInterval = time.Hour
+
 // Validate reports whether the configuration can run. It compiles all three blocks, so
 // a script that does not parse is caught at deploy time rather than against a machine.
 func (c Config) Validate() error {
 	if c.MaxScriptRuntime <= 0 {
 		return fmt.Errorf("MaxScriptRuntime must be positive, is %v", c.MaxScriptRuntime)
+	}
+	// Nobody means an hour. A handshake is one machine's acknowledgement of
+	// one instruction, measured in seconds; an hour-long budget is a unit
+	// mistake -- milliseconds typed as microseconds, or a value carried from
+	// somewhere that meant something else -- and the cost of accepting it is
+	// a message that sits on a machine for an hour before anyone learns it
+	// failed. Refusing at config time is the only place this is cheap: once
+	// the pipeline is running, the symptom is a bridge that looks healthy
+	// and delivers nothing (Jeremy, 2026-11-26).
+	for _, budget := range []struct {
+		name  string
+		value time.Duration
+	}{
+		{"MaxScriptRuntime", c.MaxScriptRuntime},
+		{"MaxOnSuccessRuntime", c.MaxOnSuccessRuntime},
+		{"MaxOnErrorRuntime", c.MaxOnErrorRuntime},
+	} {
+		if budget.value > MaxInterval {
+			return fmt.Errorf(
+				"%s is %v, longer than the %v a handshake is allowed: a budget this long is a unit mistake far more often than an intention, and a message would sit on the machine that long before anyone learned it failed",
+				budget.name, budget.value, MaxInterval)
+		}
 	}
 	// A cleanup budget of zero or less means unbounded, so a non-empty
 	// block without a budget hangs Run and Close on a machine that never
@@ -301,12 +330,12 @@ func New[UnifiedAddress any](
 
 // Run executes the handshake once for one message, where msg is the message as the
 // script sees it. It must not be called concurrently with itself on the same Engine.
-// Cancelling ctx ends the run as a deadline does; OnError still runs.
+// Canceling ctx ends the run as a deadline does; OnError still runs.
 func (e *Engine[UnifiedAddress]) Run(ctx context.Context, msg map[string]any) Result {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	// The script's own deadline, which a cancelled caller ends the same way.
+	// The script's own deadline, which a canceled caller ends the same way.
 	// It stops a runaway, not paces a machine (SCR-4).
 	scriptCtx, cancel := context.WithTimeout(ctx, e.cfg.MaxScriptRuntime)
 	defer cancel()
@@ -317,11 +346,11 @@ func (e *Engine[UnifiedAddress]) Run(ctx context.Context, msg map[string]any) Re
 		"msg":              msg,
 	}
 	_, runErr := e.rt.run(scriptCtx, e.blocks["script"], globals)
-	result := classify(rs, scriptCtx, runErr)
+	result := classify(scriptCtx, rs, runErr)
 
 	// Exactly one of the two blocks runs after every run, including one the
 	// deadline stopped (LIB-2). The block runs on its own clock, not the
-	// caller's, so a cancelled parent does not stop the machine being handed
+	// caller's, so a canceled parent does not stop the machine being handed
 	// back; and the cleanup blocks see nothing but the machine.
 	block, budget := "onError", e.cfg.MaxOnErrorRuntime
 	if result.Outcome == Delivered {
@@ -400,7 +429,7 @@ func literalWaitTotal(source string) time.Duration {
 // so the literal-wait scanner does not count a wait that is commented out.
 // A regex literal that contains // would be misread as a comment start; a
 // handshake script has no reason for one, and the scanner is the friendly
-// early error, not the safety mechanism, so it is not armoured further.
+// early error, not the safety mechanism, so it is not armored further.
 func stripComments(script string) string {
 	var b strings.Builder
 	for i := 0; i < len(script); {
@@ -451,7 +480,7 @@ func waitCalls(script string) [][]string {
 
 // splitCall takes the index of a '(' and splits the call's arguments on the
 // commas that sit outside every bracket and string, up to the matching ')'.
-func splitCall(script string, open int) (end int, args []string, ok bool) {
+func splitCall(script string, open int) (int, []string, bool) {
 	depth, start := 0, open+1
 	for i := open; i < len(script); i++ {
 		switch script[i] {
