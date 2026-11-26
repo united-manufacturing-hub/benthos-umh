@@ -212,10 +212,32 @@ The script sees the incoming message as `msg` — the message’s JSON, so a mes
 |---|---|---|
 | `opcua.read(address)` | the node’s value | `true`/`false` for `Boolean`, a number for the numeric types, a string for `String`, an RFC 3339 string for `DateTime`, an array for an array node. A *Bad* status ends the run by itself; an *Uncertain* status still returns the value — that is how KEPServerEX answers the first read of a healthy tag. |
 | `opcua.write(address, value)` | nothing | Sends one value, converted to the address’s `dataType`. Only whole numbers convert to the integer types (`42.0` is fine, `42.5` is refused); `Boolean` takes only `true`/`false`; `String` only a string; `DateTime` a string like `"2024-03-15T12:00:00Z"`. A value that does not convert, or that lies outside the declared type’s range, ends the run as persistent and nothing is sent — it is refused, never rounded or clamped. Large integers keep every digit when the message carries them as JSON numbers (the digits are parsed exactly, over the whole `Int64` and `UInt64` range); values your script *computes* with JavaScript arithmetic are exact up to 2^53, which is the language’s own limit. |
-| `opcua.wait_until(address, predicate, timeoutMs, options?)` | the value that satisfied the predicate | Re-reads the node until `predicate(value)` is true, or `timeoutMs` passes. It polls every 100 ms; pass `{ pollMs: 250 }` as the fourth argument for a faster machine. A wait that runs out ends the run as transient (try again later) — pass `{ onTimeout: "persistent" }` when you know the flag will never come. A wait never runs past the script’s deadline. |
+| `opcua.wait_until(address, predicate, timeoutMs, options?)` | the value that satisfied the predicate | Re-reads the node until `predicate(value)` is true, or `timeoutMs` passes. It polls every 100 ms; pass a smaller `{ pollMs: 20 }` as the fourth argument to answer a fast machine sooner, or a larger one to go easier on a slow server. A wait that runs out ends the run as transient (try again later) — pass `{ onTimeout: "persistent" }` when you know the flag will never come. A wait never runs past the script’s deadline. |
 | `opcua.call_method(address, [inputs])` | the method’s output arguments | Calls the OPC UA method `address.nodeId` on `address.objectId`, passing the inputs in order, and returns the outputs as an array, in the order the machine declares them. |
 
 `read`, `write` and `call_method` are one round trip each. A failed call ends the run by itself; you do not need to handle it: a machine that is briefly unreachable ends the run as transient, a wrong address, a wrong type or a value the server refuses ends it as persistent.
+
+**If you want to handle a failure yourself, catch it.** A failed call throws, so an ordinary
+`try`/`catch` around it keeps the script running:
+
+```javascript
+let serial = null;
+try {
+  serial = opcua.read({ nodeId: "ns=2;s=Serial" });   // not fitted on every machine
+} catch (e) {
+  // this line is optional on this press; carry on without it
+}
+opcua.write(SETPOINT, msg.payload.value);
+return opcua.success({ serial: serial });
+```
+
+Catching tells the output the failure was expected, and the ending your script returns is
+then the answer the flow gets. The example above delivers the message even though the read
+failed.
+
+That cuts both ways, so catch the calls you know can fail rather than wrapping the whole
+script. A `catch` around a write that the machine refused hides a refusal that should have
+parked the message, and the flow is told the machine got data it never got.
 
 ### The four endings, and what each one makes the flow do
 
@@ -302,7 +324,7 @@ output:
         opcua.write(APPLY, true);
 
         // Production is released only on the machine’s own confirmation.
-        opcua.wait_until(LOADED, v => v === true, 10000, { pollMs: 250 });
+        opcua.wait_until(LOADED, v => v === true, 10000, { pollMs: 20 });
 
         return opcua.success({ parameters: p.length, released: true });
 
@@ -411,7 +433,7 @@ For many industrial use cases, you might need more than just writing a value and
    * _Script path_: Write a unique command ID to a node, read it back as part of the handshake, and refuse a message whose ID was already taken — the programmable handshake is where that check lives.
    * _Fixed path_: Implement a unique command ID (UUID) in your message and let the PLC store/ignore duplicates. Or handle it in your Benthos pipeline (e.g., a “dedupe” processor).
 2. **Time-Window Checks**: Only accept a command if it arrives before a certain expiration.
-   * _Script path_: Read a timestamp node in the script and end `error_not_ready` when the command is too old — or drop old messages before they reach the output.
+   * _Script path_: Read a timestamp node in the script and end `error_persistent` when the command is too old — or drop old messages before they reach the output. Use `error_persistent` and not `error_not_ready` here: a command that is too old cannot become less old, so “try again later” sends the message round the retry loop until the flow gives up, re-running the script against the machine every time.
    * _Fixed path_: Use a preceding nodered\_js processor or Bloblang to drop the message if `timestamp_now - msg.timestamp > threshold`.
 3. **Separate Acknowledgment Node**: Some PLCs use a separate ack node (e.g., `CommandAck`) that signals the command was _processed_.
    * _Shipped_: The [programmable handshake](#the-programmable-handshake) is exactly this — request flags, ack nodes, waits on the machine’s own confirmation, all as reads, writes and `wait_until` in the script.
