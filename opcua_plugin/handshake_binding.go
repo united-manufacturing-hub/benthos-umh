@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/gopcua/opcua/ua"
+
 	"github.com/united-manufacturing-hub/benthos-umh/handshake"
 )
 
@@ -178,8 +179,10 @@ func NewBinding(conn *OPCUAConnection) *Binding {
 
 // The seam, checked at compile time rather than at the first write to a
 // press. OPC UA has methods, so this binding also satisfies the optional half.
-var _ handshake.Binding[Address] = (*Binding)(nil)
-var _ handshake.Caller[Address] = (*Binding)(nil)
+var (
+	_ handshake.Binding[Address] = (*Binding)(nil)
+	_ handshake.Caller[Address]  = (*Binding)(nil)
+)
 
 // Namespace is the word a script calls this protocol by: opcua.read,
 // opcua.write.
@@ -207,8 +210,8 @@ func (b *Binding) ParseAddress(raw map[string]any) (Address, error) {
 	if nodeID == "" {
 		return Address{}, persistentErr("an opcua address needs a nodeId, for example { nodeId: \"ns=2;s=Ready\" }")
 	}
-	if _, err := ua.ParseNodeID(nodeID); err != nil {
-		return Address{}, persistentErr("nodeId %q is not a node id: %v", nodeID, err)
+	if _, parseErr := ua.ParseNodeID(nodeID); parseErr != nil {
+		return Address{}, persistentErr("nodeId %q is not a node id: %v", nodeID, parseErr)
 	}
 	dataType, err := addressString(raw, "dataType")
 	if err != nil {
@@ -357,16 +360,16 @@ func (b *Binding) Call(ctx context.Context, t Address, inputs []any) (handshake.
 	args := make([]*ua.Variant, len(inputs))
 	for i, input := range inputs {
 		if ok && i < len(types) && types[i] != "" {
-			variant, err := convertValue(types[i], input)
-			if err != nil {
-				return handshake.CallResponse{}, persistentErr("call %s: input %d: %v", b.Describe(t), i, err)
+			variant, convErr := convertValue(types[i], input)
+			if convErr != nil {
+				return handshake.CallResponse{}, persistentErr("call %s: input %d: %v", b.Describe(t), i, convErr)
 			}
 			args[i] = variant
 			continue
 		}
-		variant, err := variantForValue(input)
-		if err != nil {
-			return handshake.CallResponse{}, persistentErr("call %s: input %d: %v", b.Describe(t), i, err)
+		variant, convErr := variantForValue(input)
+		if convErr != nil {
+			return handshake.CallResponse{}, persistentErr("call %s: input %d: %v", b.Describe(t), i, convErr)
 		}
 		args[i] = variant
 	}
@@ -455,10 +458,10 @@ var recurringStatuses = map[ua.StatusCode]bool{
 
 // statusErr renders a status the server sent, marking the ones it will give
 // again persistent.
-func statusErr(op, describe string, code ua.StatusCode) error {
+func statusErr(op string, describe string, code ua.StatusCode) error {
 	err := fmt.Errorf("%s %s: %w", op, describe, code)
 	if recurringStatuses[code] {
-		return fmt.Errorf("%w: %s", handshake.ErrPersistent, err)
+		return fmt.Errorf("%w: %w", handshake.ErrPersistent, err)
 	}
 	return err
 }
@@ -596,6 +599,11 @@ func typeErr(value any, dataType string) error {
 // arrives that way.
 const maxInt64Float = 9223372036854775808.0 // 2^63
 
+// maxExactFloat is 2^53, the largest integer a float64 represents exactly.
+// Above it the gaps between representable values exceed 1, so a different
+// integer maps to the same float and the original digits are unrecoverable.
+const maxExactFloat = float64(1 << 53)
+
 func int64Value(value any) (int64, error) {
 	switch v := value.(type) {
 	case int64:
@@ -603,6 +611,24 @@ func int64Value(value any) (int64, error) {
 	case float64:
 		if v != math.Trunc(v) {
 			return 0, persistentErr("value %v is not an integer", value)
+		}
+		// Above 2^53 a float64 cannot say which integer the message
+		// contained. Measured: MinInt64 and MinInt64+1 are the same float64,
+		// as are 2^53 and 2^53+1 -- so converting either writes a number
+		// nobody asked for and reports success, and the read-back cannot
+		// catch it because it compares the corrupted value against itself.
+		// A script that touched the value has already lost the digits inside
+		// JavaScript, and nothing here gets them back.
+		//
+		// So refuse, which is this binding's rule everywhere else: a value
+		// that does not convert is persistent and nothing is sent, never
+		// rounded or clamped. A plant engineer can act on a refusal naming
+		// the value; nobody can act on a machine quietly holding a different
+		// number (Jeremy, 2026-11-26).
+		if v > maxExactFloat || v < -maxExactFloat {
+			return 0, persistentErr(
+				"value %.0f cannot be written exactly: a number this large loses digits in "+
+					"JavaScript, so carry it through the message as a string instead", v)
 		}
 		if v >= maxInt64Float || v < -maxInt64Float {
 			return 0, persistentErr("value %v is out of range", value)
@@ -673,12 +699,12 @@ func uint64Value(value any) (uint64, error) {
 }
 
 // intValue reads a value as an integer inside the declared type's range.
-func intValue(value any, min, max int64) (int64, error) {
+func intValue(value any, lo int64, hi int64) (int64, error) {
 	v, err := int64Value(value)
 	if err != nil {
 		return 0, err
 	}
-	if v < min || v > max {
+	if v < lo || v > hi {
 		return 0, persistentErr("value %v is out of range", value)
 	}
 	return v, nil
