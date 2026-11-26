@@ -85,13 +85,23 @@ func classify(ctx context.Context, rs *runState, runErr error) Result {
 		// its own reported the machine fault and was retried, so the same
 		// bug was persistent until an unrelated try/catch appeared near it,
 		// and the dead letter named a machine fault that stopped nothing.
-		if rs.opErr != nil && errors.Is(runErr, rs.opErr) {
+		// Which recorded fault IS the run's error, if any. Matching only
+		// the latest was wrong: a fault recorded while the stack unwound --
+		// a failing operation inside a finally, or a rethrow -- displaced
+		// the fault that actually stopped the run, so an unrelated failure
+		// in an unwind path changed the class the flow branches on, and the
+		// reported error degraded to a raw goja dump naming neither the node
+		// nor the operation.
+		for _, f := range rs.faults {
+			if !errors.Is(runErr, f.err) {
+				continue
+			}
 			// LIB-5: the outcome follows the fault, not whether the script
 			// returned it or a call threw it.
-			if errors.Is(rs.opErr, ErrPersistent) {
-				return failed(Persistent, fmt.Errorf("%s failed: %w", rs.opWhere, rs.opErr))
+			if errors.Is(f.err, ErrPersistent) {
+				return failed(Persistent, fmt.Errorf("%s failed: %w", f.where, f.err))
 			}
-			return failed(Transient, fmt.Errorf("%s failed: %w", rs.opWhere, rs.opErr))
+			return failed(Transient, fmt.Errorf("%s failed: %w", f.where, f.err))
 		}
 		// A script fault: an uncaught exception, or a call to a name the
 		// protocol does not offer. A fault the script caught does not
