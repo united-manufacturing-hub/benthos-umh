@@ -825,7 +825,16 @@ func variantToValue(variant *ua.Variant) (any, error) {
 	case []int64:
 		return v, nil
 	case []uint8:
-		return nil, persistentErr("a byte string has no documented value form")
+		// Go cannot tell these apart -- a ByteString and an array of Byte
+		// both decode to []uint8 -- but the variant can, and refusing both
+		// told the owner of a perfectly ordinary Byte[] node that their tag
+		// was a byte string. Every other integer array converts; a Byte
+		// array is not special, and a single Byte already reads fine.
+		if variant.Type() == ua.TypeIDByte {
+			return int64s(v), nil
+		}
+		return nil, persistentErr("a ByteString has no documented value form: " +
+			"read it as a String, or as a Byte array if that is what the node holds")
 	case []uint16:
 		return int64s(v), nil
 	case []uint32:
@@ -855,7 +864,7 @@ func variantToValue(variant *ua.Variant) (any, error) {
 }
 
 // int64s widens a slice of any integer type into the documented int64 form.
-func int64s[T int8 | int16 | int32 | int64 | uint16 | uint32](v []T) []int64 {
+func int64s[T int8 | int16 | int32 | int64 | uint8 | uint16 | uint32](v []T) []int64 {
 	values := make([]int64, len(v))
 	for i, e := range v {
 		values[i] = int64(e)
