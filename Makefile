@@ -107,6 +107,20 @@ test-noderedjs:
 	@TEST_NODERED_JS=true \
 		$(GINKGO_CMD) $(GINKGO_FLAGS) ./nodered_js_plugin/...
 
+# The handshake engine decides whether a machine got its instruction, so its
+# tests run with -race: the engine hands a binding to a script and a cleanup
+# block, and a run that outlives its own deadline is the failure mode that
+# matters most. Plain go test, not ginkgo -- this package uses neither.
+.PHONY: test-handshake
+test-handshake:
+	@go test -race -count=1 ./handshake/ ./pkg/js_runtime/
+
+# The scenario suite drives the engine against a server that misbehaves
+# (opcua_plugin/internal/faultopcua). It needs no container and no network.
+.PHONY: test-handshake-faults
+test-handshake-faults:
+	@go test -race -count=1 ./opcua_plugin/internal/faultopcua/ -run 'TestFault|TestControl|TestInject'
+
 .PHONY: test-unit-opc
 test-unit-opc:
 	@TEST_OPCUA_UNIT=true \

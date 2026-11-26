@@ -24,6 +24,26 @@ on:
         type: boolean
 
 jobs:
+  # The handshake engine and the runtime under it had no CI target at all
+  # until ENG-8129: every green run came from someone running go test by
+  # hand. Both run with -race, because the engine hands a machine to a
+  # script and the failure that matters is a run outliving its own deadline.
+  test-handshake:
+    name: Handshake engine
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Test Environment
+        uses: ./.github/actions/setup-test
+      - name: Run handshake engine tests
+        run: make test-handshake
+      - name: Run handshake fault scenarios
+        run: make test-handshake-faults
+
   test-unit:
     name: OPCUA Unittest
     runs-on: depot-ubuntu-24.04
