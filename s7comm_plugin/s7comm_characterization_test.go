@@ -177,6 +177,25 @@ var _ = Describe("S7Comm input behavior that must not change", func() {
 		Entry("real", "DB1.R0", "41200000", float32(10)),
 	)
 
+	// The value of a DT address is the time as Unix nanoseconds. The S7 format
+	// is BCD with a two-digit year (90 and above is 19xx, below is 20xx) and a
+	// millisecond field that takes one digit from the last byte's high nibble.
+	DescribeTable("the bytes of a date-and-time read become Unix nanoseconds",
+		func(bytesHex string, want time.Time) {
+			parsed, err := s7comm_plugin.ParseAddresses([]string{"DB1.DT0"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(parsed[0].ConverterFunc(mustHex(bytesHex))).To(Equal(want.UnixNano()))
+		},
+		Entry("a usual time", "2401151030451230", time.Date(2024, 1, 15, 10, 30, 45, 123*int(time.Millisecond), time.UTC)),
+		Entry("the low nibble of the last byte is not used", "2401151030451239", time.Date(2024, 1, 15, 10, 30, 45, 123*int(time.Millisecond), time.UTC)),
+		Entry("year 89 is 2089, the last year of the format", "8912312359599990", time.Date(2089, 12, 31, 23, 59, 59, 999*int(time.Millisecond), time.UTC)),
+		Entry("year 90 is 1990, the first year of the format", "9001010000000000", time.Date(1990, 1, 1, 0, 0, 0, 0, time.UTC)),
+		Entry("year 00 is 2000", "0001010000000000", time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)),
+		Entry("a leap day", "2402290000000000", time.Date(2024, 2, 29, 0, 0, 0, 0, time.UTC)),
+		Entry("bytes that are no valid BCD are normalized by the calendar, not refused", "ffffffffffffffff", time.Date(2065, time.Month(165), 165, 165, 165, 165, 1665*int(time.Millisecond), time.UTC)),
+		Entry("all zero bytes", "0000000000000000", time.Date(2000, time.Month(0), 0, 0, 0, 0, 0, time.UTC)),
+	)
+
 	Describe("reading through the gos7 client", func() {
 		var recorder *readRecorder
 
