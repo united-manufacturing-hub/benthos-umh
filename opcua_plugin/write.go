@@ -332,6 +332,10 @@ func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (*OPCUAO
 		if output.ReadbackTimeoutMs, err = handshakeConf.FieldInt("readbackTimeoutMs"); err != nil {
 			return nil, err
 		}
+		if output.ReadbackTimeoutMs < 0 {
+			return nil, fmt.Errorf("handshake.readbackTimeoutMs is %d: a timeout cannot be negative",
+				output.ReadbackTimeoutMs)
+		}
 	} else {
 		output.ReadbackTimeoutMs = 2000
 	}
@@ -339,12 +343,28 @@ func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (*OPCUAO
 		if output.MaxWriteAttempts, err = handshakeConf.FieldInt("maxWriteAttempts"); err != nil {
 			return nil, err
 		}
+		// The write loop is `for attempt := 1; attempt <= MaxWriteAttempts`,
+		// so a zero or negative value runs the body no times: nothing is
+		// sent, the error it would have set stays nil, and every message is
+		// reported written. The read-back lives inside the same loop, so it
+		// does not run either. One unchecked integer turned the output into
+		// a silent acknowledger, which is the worst thing a write flow can
+		// be, so it is refused when the config loads.
+		if output.MaxWriteAttempts < 1 {
+			return nil, fmt.Errorf(
+				"handshake.maxWriteAttempts is %d: it must be at least 1, or nothing is ever written "+
+					"and every message is reported as delivered", output.MaxWriteAttempts)
+		}
 	} else {
 		output.MaxWriteAttempts = 1
 	}
 	if handshakeConf.Contains("timeBetweenRetriesMs") {
 		if output.TimeBetweenRetriesMs, err = handshakeConf.FieldInt("timeBetweenRetriesMs"); err != nil {
 			return nil, err
+		}
+		if output.TimeBetweenRetriesMs < 0 {
+			return nil, fmt.Errorf("handshake.timeBetweenRetriesMs is %d: a delay cannot be negative",
+				output.TimeBetweenRetriesMs)
 		}
 	} else {
 		output.TimeBetweenRetriesMs = 1000
