@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -661,6 +662,27 @@ func literalMillis(arg string) (int64, bool) {
 	base, digits := int64(10), arg
 	if len(arg) > 2 && arg[0] == '0' && (arg[1] == 'x' || arg[1] == 'X') {
 		base, digits = 16, arg[2:]
+	}
+	// A unary plus is applied to a literal, not computed from one, and a
+	// script that writes +5000 means 5000.
+	if base == 10 && len(digits) > 1 && digits[0] == '+' {
+		digits = digits[1:]
+	}
+	// A plain number with a decimal point or an exponent is still a plain
+	// number: 5000.0, 5e3 and .5e4 are all the same five-second wait, and
+	// all three were read as "computed" and counted as nothing -- the
+	// identical false pass that hex and 1_000 were fixed for, in four more
+	// spellings. Only these characters, so a name or an expression still
+	// falls through to the "computed" answer.
+	if base == 10 && strings.ContainsAny(digits, ".eE") {
+		f, err := strconv.ParseFloat(digits, 64)
+		if err != nil || f < 0 || math.IsNaN(f) {
+			return 0, false
+		}
+		if f >= float64(maxLiteralMillis) {
+			return math.MaxInt64, true
+		}
+		return int64(f), true
 	}
 	var n int64
 	for _, r := range digits {
