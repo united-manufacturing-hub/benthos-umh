@@ -1,0 +1,3 @@
+kind: new
+body: A new handshake engine runs a machine's own acknowledgment procedure, written in JavaScript, once per message. The script reads and writes the machine, waits for flags, calls methods and ends the message as delivered, not ready, transient or persistent, with onSuccess and onError cleanup blocks and a deadline of its own. The engine ships as a library in this release; it becomes reachable from a config through the OPC UA output's programmable handshake (ENG-8129)
+time: 2026-11-26T09:01:00.000000+00:00
