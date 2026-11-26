@@ -223,6 +223,11 @@ func (s *Server) Fired(kind Kind, node string) bool {
 	return false
 }
 
+// Dials reports how many connections clients have opened to this server.
+// A client that reconnects after a session drop shows up as another dial,
+// which is the only way to see a reconnect from outside the client.
+func (s *Server) Dials() int { return s.proxy.dialCount() }
+
 // NamespaceID is the namespace the server assigned to our nodes. The server
 // assigns it at AddNamespace, so a node identifier cannot be built until the
 // namespace exists.

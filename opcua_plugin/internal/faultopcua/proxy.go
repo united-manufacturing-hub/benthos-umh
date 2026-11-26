@@ -35,7 +35,18 @@ type proxy struct {
 
 	mu    sync.Mutex
 	conns []net.Conn
+	dials int
 	done  bool
+}
+
+// dialCount is how many connections have been accepted since the server
+// started. It is how a test sees a client RECONNECT: a client told not to
+// reconnect that comes back after a drop shows up here as a second dial,
+// with nothing else to give it away.
+func (p *proxy) dialCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.dials
 }
 
 func newProxy(backend string) (*proxy, error) {
@@ -64,6 +75,9 @@ func (p *proxy) accept() {
 			_ = client.Close()
 			continue
 		}
+		p.mu.Lock()
+		p.dials++
+		p.mu.Unlock()
 		p.track(client, server)
 		go pipe(client, server)
 		go pipe(server, client)
