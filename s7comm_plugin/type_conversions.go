@@ -21,21 +21,21 @@ import (
 	"time"
 )
 
-func determineConversion(dtype string) converterFunc {
+func determineConversion(dtype dataType) converterFunc {
 	switch dtype {
-	case "X":
+	case typeBit:
 		return func(buf []byte) interface{} {
 			return buf[0] != 0
 		}
-	case "B":
+	case typeByte:
 		return func(buf []byte) interface{} {
 			return buf[0]
 		}
-	case "C":
+	case typeChar:
 		return func(buf []byte) interface{} {
 			return string(buf[0])
 		}
-	case "S":
+	case typeString:
 		return func(buf []byte) interface{} {
 			if len(buf) <= 2 {
 				return ""
@@ -53,28 +53,28 @@ func determineConversion(dtype string) converterFunc {
 			result = bytes.TrimRight(result, "\x00")
 			return string(result)
 		}
-	case "W":
+	case typeWord:
 		return func(buf []byte) interface{} {
 			return binary.BigEndian.Uint16(buf)
 		}
-	case "I":
+	case typeInt:
 		return func(buf []byte) interface{} {
 			return int16(binary.BigEndian.Uint16(buf))
 		}
-	case "DW":
+	case typeDWord:
 		return func(buf []byte) interface{} {
 			return binary.BigEndian.Uint32(buf)
 		}
-	case "DI":
+	case typeDInt:
 		return func(buf []byte) interface{} {
 			return int32(binary.BigEndian.Uint32(buf))
 		}
-	case "R":
+	case typeReal:
 		return func(buf []byte) interface{} {
 			x := binary.BigEndian.Uint32(buf)
 			return math.Float32frombits(x)
 		}
-	case "DT":
+	case typeDateTime:
 		return func(buf []byte) interface{} {
 			return dateTimeAt(buf).UnixNano()
 		}

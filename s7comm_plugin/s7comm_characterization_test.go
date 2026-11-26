@@ -196,6 +196,45 @@ var _ = Describe("S7Comm input behavior that must not change", func() {
 		Entry("all zero bytes", "0000000000000000", time.Date(2000, time.Month(0), 0, 0, 0, 0, 0, time.UTC)),
 	)
 
+	Describe("the words of an address", func() {
+		It("keeps the expression that addresses are matched against", func() {
+			Expect(s7comm_plugin.AddressRegexpForTest()).To(Equal(
+				`^(?P<area>[A-Z]+)(?P<no>[0-9]*)\.(?P<type>[A-Z]+)(?P<start>[0-9]+)(?:\.(?P<extra>.*))?$`))
+		})
+
+		It("knows every type token: it parses, and its value converts", func() {
+			tokens := s7comm_plugin.DataTypeTokensForTest()
+			Expect(tokens).To(ConsistOf("X", "B", "C", "S", "W", "I", "DW", "DI", "R", "DT"))
+
+			for _, token := range tokens {
+				address := "DB1." + token + "0"
+				switch token {
+				case "X":
+					address += ".0"
+				case "S":
+					address += ".4"
+				}
+				parsed, err := s7comm_plugin.ParseAddresses([]string{address})
+				Expect(err).NotTo(HaveOccurred(), "type %s", token)
+				Expect(func() { parsed[0].ConverterFunc(parsed[0].Item.Data) }).NotTo(Panic(), "type %s", token)
+			}
+		})
+
+		It("knows every area token", func() {
+			tokens := s7comm_plugin.AreaTokensForTest()
+			Expect(tokens).To(ConsistOf("PE", "PA", "MK", "DB", "C", "T"))
+
+			for _, token := range tokens {
+				address := token + ".W0"
+				if token == "DB" {
+					address = "DB1.W0"
+				}
+				_, err := s7comm_plugin.ParseAddresses([]string{address})
+				Expect(err).NotTo(HaveOccurred(), "area %s", token)
+			}
+		})
+	})
+
 	Describe("reading through the gos7 client", func() {
 		var recorder *readRecorder
 

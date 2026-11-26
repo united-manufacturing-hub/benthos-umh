@@ -26,34 +26,32 @@ import (
 )
 
 const (
-	addressRegexp           = `^(?P<area>[A-Z]+)(?P<no>[0-9]*)\.(?P<type>[A-Z]+)(?P<start>[0-9]+)(?:\.(?P<extra>.*))?$`
+	addressRegexp = `^(?P<` + groupArea + `>[A-Z]+)(?P<` + groupNumber + `>[0-9]*)\.(?P<` + groupType + `>[A-Z]+)(?P<` +
+		groupStart + `>[0-9]+)(?:\.(?P<` + groupExtra + `>.*))?$`
 	defaultTimeBetweenReads = time.Second
 )
 
 var (
 	regexAddr = regexp.MustCompile(addressRegexp)
-	// Area mapping taken from https://github.com/robinson/gos7/blob/master/client.go
-	areaMap = map[string]int{
-		"PE": 0x81, // process inputs
-		"PA": 0x82, // process outputs
-		"MK": 0x83, // Merkers
-		"DB": 0x84, // DB
-		"C":  0x1C, // counters
-		"T":  0x1D, // timers
+	areaMap   = map[area]int{
+		areaProcessInput:  areaCodeProcessInput,
+		areaProcessOutput: areaCodeProcessOutput,
+		areaMerker:        areaCodeMerker,
+		areaDataBlock:     areaCodeDataBlock,
+		areaCounter:       areaCodeCounter,
+		areaTimer:         areaCodeTimer,
 	}
-	// Word-length mapping taken from https://github.com/robinson/gos7/blob/master/client.go
-	wordLenMap = map[string]int{
-		"X":  0x01, // Bit
-		"B":  0x02, // Byte (8 bit)
-		"C":  0x03, // Char (8 bit)
-		"S":  0x03, // String (8 bit)
-		"W":  0x04, // Word (16 bit)
-		"I":  0x05, // Integer (16 bit)
-		"DW": 0x06, // Double Word (32 bit)
-		"DI": 0x07, // Double integer (32 bit)
-		"R":  0x08, // IEEE 754 real (32 bit)
-		// see https://support.industry.siemens.com/cs/document/36479/date_and_time-format-for-s7-?dti=0&lc=en-DE
-		"DT": 0x0F, // Date and time (8 byte)
+	wordLenMap = map[dataType]int{
+		typeBit:      wordLengthBit,
+		typeByte:     wordLengthByte,
+		typeChar:     wordLengthChar,
+		typeString:   wordLengthChar,
+		typeWord:     wordLengthWord,
+		typeInt:      wordLengthInt,
+		typeDWord:    wordLengthDWord,
+		typeDInt:     wordLengthDInt,
+		typeReal:     wordLengthReal,
+		typeDateTime: wordLengthDateTime,
 	}
 )
 
@@ -214,15 +212,15 @@ func deprecatedAddressWarning(address string) string {
 	for i, name := range regexAddr.SubexpNames()[1:] {
 		groups[name] = regexAddr.FindStringSubmatch(address)[1:][i]
 	}
-	if groups["area"] == "DB" || groups["no"] == "" {
+	if groups[groupArea] == string(areaDataBlock) || groups[groupNumber] == "" {
 		return ""
 	}
-	suggestion := fmt.Sprintf("%s.%s%s", groups["area"], groups["type"], groups["start"])
-	if groups["extra"] != "" {
-		suggestion += "." + groups["extra"]
+	suggestion := fmt.Sprintf("%s.%s%s", groups[groupArea], groups[groupType], groups[groupStart])
+	if groups[groupExtra] != "" {
+		suggestion += "." + groups[groupExtra]
 	}
 	return fmt.Sprintf("address %q uses a deprecated format, use %q instead — block numbers are ignored for %s and will be rejected in a future version",
-		address, suggestion, groups["area"])
+		address, suggestion, groups[groupArea])
 }
 
 func ParseAddresses(addresses []string) ([]S7DataItemWithAddressAndConverter, error) {
@@ -447,20 +445,20 @@ func handleFieldAddress(address string) (*Item, converterFunc, error) {
 	}
 
 	// Check that we do have the required entries in the address
-	if _, found := groups["area"]; !found {
+	if _, found := groups[groupArea]; !found {
 		return nil, nil, errors.New("area is missing from address")
 	}
 
-	if _, found := groups["type"]; !found {
+	if _, found := groups[groupType]; !found {
 		return nil, nil, errors.New("type is missing from address")
 	}
-	if _, found := groups["start"]; !found {
+	if _, found := groups[groupStart]; !found {
 		return nil, nil, errors.New("start address is missing from address")
 	}
-	dtype := groups["type"]
+	dtype := dataType(groups[groupType])
 
 	// Lookup the item values from names and check the params
-	area, found := areaMap[groups["area"]]
+	areaCode, found := areaMap[area(groups[groupArea])]
 	if !found {
 		return nil, nil, errors.New("invalid area")
 	}
@@ -469,23 +467,23 @@ func handleFieldAddress(address string) (*Item, converterFunc, error) {
 		return nil, nil, errors.New("unknown data type")
 	}
 	// Only DB uses block numbers; PE, PA, MK, C, T have a single memory region.
-	areaName := groups["area"]
+	areaName := area(groups[groupArea])
 	var (
 		areaidx int
 		err     error
 	)
 	switch areaName {
-	case "DB":
-		if groups["no"] == "" {
+	case areaDataBlock:
+		if groups[groupNumber] == "" {
 			return nil, nil, errors.New("DB requires a block number (e.g., DB1.DW20)")
 		}
-		areaidx, err = strconv.Atoi(groups["no"])
+		areaidx, err = strconv.Atoi(groups[groupNumber])
 		if err != nil {
 			return nil, nil, fmt.Errorf("invalid DB number: %w", err)
 		}
 	default:
 	}
-	start, err := strconv.Atoi(groups["start"])
+	start, err := strconv.Atoi(groups[groupStart])
 	if err != nil {
 		return nil, nil, fmt.Errorf("invalid start address: %w", err)
 	}
@@ -493,9 +491,9 @@ func handleFieldAddress(address string) (*Item, converterFunc, error) {
 	// Check the amount parameter if any
 	var extra, bit int
 	switch dtype {
-	case "S":
+	case typeString:
 		// We require an extra parameter
-		x := groups["extra"]
+		x := groups[groupExtra]
 		if x == "" {
 			return nil, nil, errors.New("extra parameter required")
 		}
@@ -507,9 +505,9 @@ func handleFieldAddress(address string) (*Item, converterFunc, error) {
 		if extra < 1 {
 			return nil, nil, fmt.Errorf("invalid extra parameter %d", extra)
 		}
-	case "X":
+	case typeBit:
 		// We require an extra parameter
-		x := groups["extra"]
+		x := groups[groupExtra]
 		if x == "" {
 			return nil, nil, errors.New("extra parameter required")
 		}
@@ -523,7 +521,7 @@ func handleFieldAddress(address string) (*Item, converterFunc, error) {
 			return nil, nil, fmt.Errorf("invalid extra parameter: bit address %d out of range", bit)
 		}
 	default:
-		if groups["extra"] != "" {
+		if groups[groupExtra] != "" {
 			return nil, nil, errors.New("extra parameter specified but not used")
 		}
 	}
@@ -532,15 +530,15 @@ func handleFieldAddress(address string) (*Item, converterFunc, error) {
 	amount := 1
 	var buflen int
 	switch dtype {
-	case "X", "B", "C": // 8-bit types
+	case typeBit, typeByte, typeChar: // 8-bit types
 		buflen = 1
-	case "W", "I": // 16-bit types
+	case typeWord, typeInt: // 16-bit types
 		buflen = 2
-	case "DW", "DI", "R": // 32-bit types
+	case typeDWord, typeDInt, typeReal: // 32-bit types
 		buflen = 4
-	case "DT": // 8-byte
+	case typeDateTime: // 8-byte
 		buflen = 8
-	case "S":
+	case typeString:
 		amount = extra
 		// Extra bytes as the first byte is the max-length of the string and
 		// the second byte is the actual length of the string.
@@ -551,7 +549,7 @@ func handleFieldAddress(address string) (*Item, converterFunc, error) {
 
 	// Setup the data item
 	item := &Item{
-		Area:       area,
+		Area:       areaCode,
 		WordLength: wordlen,
 		Bit:        bit,
 		DBNumber:   areaidx,

@@ -57,3 +57,24 @@ func ParseConnectionForTest(conf *service.ParsedConfig) (ConnectionForTest, erro
 	conn, err := parseConnectionConfig(conf)
 	return ConnectionForTest{TCPDevice: conn.tcpDevice, Rack: conn.rack, Slot: conn.slot, Timeout: conn.timeout}, err
 }
+
+// AddressRegexpForTest is the expression an input address is matched against.
+func AddressRegexpForTest() string { return addressRegexp }
+
+// DataTypeTokensForTest lists every type token of an address.
+func DataTypeTokensForTest() []string {
+	tokens := make([]string, 0, len(wordLenMap))
+	for token := range wordLenMap {
+		tokens = append(tokens, string(token))
+	}
+	return tokens
+}
+
+// AreaTokensForTest lists every area token of an address.
+func AreaTokensForTest() []string {
+	tokens := make([]string, 0, len(areaMap))
+	for token := range areaMap {
+		tokens = append(tokens, string(token))
+	}
+	return tokens
+}
