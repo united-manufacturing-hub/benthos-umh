@@ -44,7 +44,7 @@ func TestTheControl_AnHonestServerAppliesAWrite(t *testing.T) {
 	}
 }
 
-// TestFault_AcceptsAWriteAndNeverAppliesIt is the misbehaviour the handshake
+// TestFault_AcceptsAWriteAndNeverAppliesIt is the misbehavior the handshake
 // reads a value back to catch: the machine answers Good and keeps its old
 // value. TRUMPF's press does exactly this.
 //
@@ -185,7 +185,7 @@ func readStatus(t *testing.T, c *opcua.Client, id *ua.NodeID) ua.StatusCode {
 
 // readWithContext reads under the caller's own deadline and hands back
 // whatever happened, because a fault test is usually about the failure.
-func readWithContext(c *opcua.Client, ctx context.Context, id *ua.NodeID) (*ua.ReadResponse, error) {
+func readWithContext(ctx context.Context, c *opcua.Client, id *ua.NodeID) (*ua.ReadResponse, error) {
 	return c.Read(ctx, &ua.ReadRequest{
 		NodesToRead: []*ua.ReadValueID{{NodeID: id, AttributeID: ua.AttributeIDValue}},
 	})
@@ -195,7 +195,7 @@ func readWithContext(c *opcua.Client, ctx context.Context, id *ua.NodeID) (*ua.R
 //
 // A fault matches by node name and the read side answers before the real
 // namespace is consulted, so a fault armed against a name nothing added would
-// otherwise produce its whole observable behaviour against a node that is not
+// otherwise produce its whole observable behavior against a node that is not
 // there -- refusing, stalling, flapping and dropping exactly as instructed,
 // with Fired reporting true and the scenario passing end to end. One typo
 // between AddNode and Inject is all it takes.
@@ -217,4 +217,31 @@ func TestInject_RefusesAGhostNode(t *testing.T) {
 		}
 	}()
 	srv.Inject(faultopcua.Fault{Node: "Ghost", Kind: faultopcua.RefuseRead, Status: ua.StatusBadInternalError})
+}
+
+// TestInject_RefusesAnUnknownKind pins the field beside the one the ghost
+// check validates.
+//
+// A misspelled Kind arms a fault that matches nothing in the dispatch
+// switch: the node answers honestly, nothing is recorded, and the scenario
+// author is told "the fault never fired, so this test proved nothing" --
+// true, and pointing at entirely the wrong thing.
+func TestInject_RefusesAnUnknownKind(t *testing.T) {
+	srv, err := faultopcua.New()
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	srv.AddNode("Real", true)
+	t.Cleanup(func() { _ = srv.Close() })
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("a fault kind that does not exist was accepted")
+		}
+		if msg, _ := r.(string); !strings.Contains(msg, "refus_read") {
+			t.Errorf("the panic should name the kind, got %v", r)
+		}
+	}()
+	srv.Inject(faultopcua.Fault{Node: "Real", Kind: faultopcua.Kind("refus_read")})
 }

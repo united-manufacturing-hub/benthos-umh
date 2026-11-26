@@ -76,7 +76,20 @@ const (
 	RaiseFlagLate Kind = "raise_flag_late"
 )
 
-// Fault is one misbehaviour, armed against one node. Which fields a fault
+// knownKinds is every kind Inject will accept. A kind absent here arms a
+// fault that nothing in the dispatch switch matches.
+var knownKinds = map[Kind]bool{
+	AcceptWriteNeverApply: true,
+	RefuseWrite:           true,
+	FlapValue:             true,
+	RefuseRead:            true,
+	AnswerLate:            true,
+	NeverAnswer:           true,
+	DropSession:           true,
+	RaiseFlagLate:         true,
+}
+
+// Fault is one misbehavior, armed against one node. Which fields a fault
 // reads depends on its Kind; each Kind's comment says so.
 type Fault struct {
 	// Node is the node's string identifier within this server's namespace,
@@ -176,15 +189,23 @@ func (s *Server) AddNode(name string, value any) {
 //
 // The panic is the point. A fault matches by node name, and the read side
 // answers before the real namespace is consulted, so a fault armed against a
-// name nothing added produces its whole observable behaviour against a node
+// name nothing added produces its whole observable behavior against a node
 // that is not there: the ghost refuses, stalls, flaps and drops exactly as
 // instructed, Fired reports true, and the scenario passes end to end. One
 // typo between AddNode and Inject is enough. Failing here, loudly, is the
 // only place the mistake is still visible.
 func (s *Server) Inject(f Fault) {
-	if s.ns.NodeNameSpace.Node(ua.NewStringNodeID(s.ns.ID(), f.Node)) == nil {
+	if s.ns.Node(ua.NewStringNodeID(s.ns.ID(), f.Node)) == nil {
 		panic(fmt.Sprintf(
 			"faultopcua: no node %q to arm %s against -- add it with AddNode first", f.Node, f.Kind))
+	}
+	// And the field next to it. A misspelled Kind arms a fault that matches
+	// nothing in the switch: the node answers honestly, nothing is recorded,
+	// and the scenario author is told "the fault never fired, so this test
+	// proved nothing" -- true, and pointing at the wrong thing entirely. The
+	// argument for panicking on a bad node is exactly as good here.
+	if !knownKinds[f.Kind] {
+		panic(fmt.Sprintf("faultopcua: %q is not a fault kind", f.Kind))
 	}
 	ns := s.ns
 	f.armed = time.Now()
@@ -244,7 +265,7 @@ func (s *Server) Endpoint() string {
 	return fmt.Sprintf("opc.tcp://%s:%d", s.host, s.proxy.port())
 }
 
-// Start listens and serves until ctx is cancelled or Close is called.
+// Start listens and serves until ctx is canceled or Close is called.
 func (s *Server) Start(ctx context.Context) error {
 	if err := s.srv.Start(ctx); err != nil {
 		return fmt.Errorf("faultopcua: start: %w", err)

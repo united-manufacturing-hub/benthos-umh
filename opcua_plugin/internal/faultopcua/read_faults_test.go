@@ -62,7 +62,7 @@ func TestFault_AnswersLate(t *testing.T) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
-	_, err := readWithContext(client, ctx, nodeID)
+	_, err := readWithContext(ctx, client, nodeID)
 
 	if err == nil {
 		t.Errorf("the read returned in %v, but the machine was %v late and the caller allowed 150ms",
@@ -85,7 +85,7 @@ func TestFault_NeverAnswers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { _, err := readWithContext(client, ctx, nodeID); done <- err }()
+	go func() { _, err := readWithContext(ctx, client, nodeID); done <- err }()
 
 	select {
 	case err := <-done:

@@ -123,7 +123,7 @@ func (p *proxy) close() {
 	p.cut()
 }
 
-func pipe(dst, src net.Conn) {
+func pipe(dst net.Conn, src net.Conn) {
 	_, _ = io.Copy(dst, src)
 	// One direction ending means the conversation is over, so close the
 	// other rather than leaving a half-open socket that neither side reads.

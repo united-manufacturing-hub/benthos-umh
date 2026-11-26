@@ -79,7 +79,7 @@ func TestFault_DropsTheSessionOnAWrite(t *testing.T) {
 	}
 	after, cancelAfter := context.WithTimeout(context.Background(), time.Second)
 	defer cancelAfter()
-	if _, err := readWithContext(client, after, other); err == nil {
+	if _, err := readWithContext(after, client, other); err == nil {
 		t.Error("a read came back over the connection the drop was supposed to close")
 	}
 }
