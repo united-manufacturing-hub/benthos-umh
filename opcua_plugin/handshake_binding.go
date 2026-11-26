@@ -604,6 +604,34 @@ const maxInt64Float = 9223372036854775808.0 // 2^63
 // integer maps to the same float and the original digits are unrecoverable.
 const maxExactFloat = float64(1 << 53)
 
+// refuseAmbiguousInteger refuses a float64 that cannot name one integer.
+//
+// At 2^53 the spacing between representable float64 values becomes 2, so
+// 2^53 is what BOTH 2^53 and 2^53+1 arrive as, and every magnitude above it
+// stands for a whole range. Converting writes a number nobody asked for and
+// reports success, and no read-back catches it: the script's own comparison
+// is against the same rounded literal, and the binding's is against the
+// value it just corrupted.
+//
+// Refusing is this binding's rule everywhere else: a value that does not
+// convert is persistent and nothing is sent, never rounded or clamped. A
+// plant engineer can act on a refusal naming the value; nobody can act on a
+// machine quietly holding a different number (Jeremy, 2026-11-26).
+//
+// The bound is >=, not >. An earlier > let through the one value its own
+// comment named as the reason it existed: a message carrying 2^53+1 reaches
+// here as exactly 2^53, and 2^53 > 2^53 is false, so the machine took
+// 9007199254740992 and the run reported delivered.
+func refuseAmbiguousInteger(v float64) error {
+	if v >= maxExactFloat || v <= -maxExactFloat {
+		return persistentErr(
+			"value %.0f cannot be written: a number this large has already lost its digits "+
+				"in JavaScript before the handshake sees it, so it cannot be written exactly "+
+				"and will not be written approximately", v)
+	}
+	return nil
+}
+
 func int64Value(value any) (int64, error) {
 	switch v := value.(type) {
 	case int64:
@@ -612,23 +640,8 @@ func int64Value(value any) (int64, error) {
 		if v != math.Trunc(v) {
 			return 0, persistentErr("value %v is not an integer", value)
 		}
-		// Above 2^53 a float64 cannot say which integer the message
-		// contained. Measured: MinInt64 and MinInt64+1 are the same float64,
-		// as are 2^53 and 2^53+1 -- so converting either writes a number
-		// nobody asked for and reports success, and the read-back cannot
-		// catch it because it compares the corrupted value against itself.
-		// A script that touched the value has already lost the digits inside
-		// JavaScript, and nothing here gets them back.
-		//
-		// So refuse, which is this binding's rule everywhere else: a value
-		// that does not convert is persistent and nothing is sent, never
-		// rounded or clamped. A plant engineer can act on a refusal naming
-		// the value; nobody can act on a machine quietly holding a different
-		// number (Jeremy, 2026-11-26).
-		if v > maxExactFloat || v < -maxExactFloat {
-			return 0, persistentErr(
-				"value %.0f cannot be written exactly: a number this large loses digits in "+
-					"JavaScript, so carry it through the message as a string instead", v)
+		if err := refuseAmbiguousInteger(v); err != nil {
+			return 0, err
 		}
 		if v >= maxInt64Float || v < -maxInt64Float {
 			return 0, persistentErr("value %v is out of range", value)
@@ -672,6 +685,14 @@ func uint64Value(value any) (uint64, error) {
 	case float64:
 		if v != math.Trunc(v) {
 			return 0, persistentErr("value %v is not an integer", value)
+		}
+		// The same refusal as Int64. It was missing here, so the identical
+		// value was refused as Int64 and written as UInt64 -- and 1e19,
+		// which no float64 can hold exactly, reached the machine with a
+		// success. A rule that holds for one signed type and not its
+		// unsigned twin is not a rule.
+		if err := refuseAmbiguousInteger(v); err != nil {
+			return 0, err
 		}
 		if v < 0 || v >= maxUint64Float {
 			return 0, persistentErr("value %v is out of range", value)

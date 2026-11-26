@@ -513,7 +513,10 @@ func TestDeprecatedHandshake_RefusesNumbersThatCannotWork(t *testing.T) {
 		{
 			name: "a negative readback timeout",
 			yaml: "readbackTimeoutMs: -5000",
-			says: "cannot be negative",
+			// One rule covers negative and zero now: both are a read-back
+			// that cannot succeed, and splitting them said "cannot be
+			// negative" to a user whose zero was just as dead.
+			says: "at least 1",
 		},
 		{
 			name: "a negative delay between retries",

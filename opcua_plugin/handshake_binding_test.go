@@ -387,10 +387,9 @@ func TestConvert_ConvertsTheDocumentedTypes(t *testing.T) {
 		{"string to DateTime", "DateTime", "2024-03-15T12:00:00Z", time.Date(2024, 3, 15, 12, 0, 0, 0, time.UTC)},
 		{"json.Number integer to Int32", "Int32", json.Number("42"), int32(42)},
 		{"json.Number float to Double", "Double", json.Number("42.5"), 42.5},
-		{"float64 2^53 to Int64", "Int64", 9007199254740992.0, int64(9007199254740992)},
+		{"float64 just below 2^53 to Int64", "Int64", 9007199254740991.0, int64(9007199254740991)},
 		{"json.Number MaxInt64 to Int64", "Int64", json.Number("9223372036854775807"), int64(math.MaxInt64)},
 		{"json.Number MinInt64 to Int64", "Int64", json.Number("-9223372036854775808"), int64(math.MinInt64)},
-		{"float64 above MaxInt64 to UInt64", "UInt64", 1e19, uint64(10000000000000000000)},
 		{"json.Number MaxUint64 to UInt64", "UInt64", json.Number("18446744073709551615"), uint64(math.MaxUint64)},
 	}
 	for _, tc := range cases {
@@ -455,6 +454,21 @@ func TestConvert_ConvertsTheDocumentedTypes(t *testing.T) {
 		{"float64 at 2^64 to UInt64", "UInt64", 18446744073709551616.0},
 		{"float64 far above the range to UInt64", "UInt64", 1.8446744073709552e19},
 		{"json.Number above the range to UInt64", "UInt64", json.Number("18446744073709551616")},
+		// At 2^53 the spacing between float64 values becomes 2, so 2^53 is
+		// what BOTH 2^53 and 2^53+1 arrive as -- the value is ambiguous, not
+		// merely large, and it is refused for the same reason a saturating
+		// conversion is. The earlier guard was `> 2^53`, which let through
+		// the one value its own comment named as its reason: a message
+		// carrying 2^53+1 put 9007199254740992 on the machine and reported
+		// delivered.
+		{"float64 at 2^53 to Int64", "Int64", 9007199254740992.0},
+		{"float64 at -2^53 to Int64", "Int64", -9007199254740992.0},
+		{"float64 at 2^53 to UInt64", "UInt64", 9007199254740992.0},
+		// UInt64 had no ambiguity guard at all, so the identical value was
+		// refused as Int64 and written as UInt64, and 1e19 -- which no
+		// float64 holds exactly -- reached the machine with a success.
+		{"float64 above 2^53 to UInt64", "UInt64", 1e19},
+		{"float64 above 2^53 to UInt64, the Int64 twin", "UInt64", 9007199254740994.0},
 		{"float64 negative to UInt64", "UInt64", -42.0},
 		{"json.Number negative to UInt64", "UInt64", json.Number("-42")},
 	}
