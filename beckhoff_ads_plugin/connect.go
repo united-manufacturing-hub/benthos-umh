@@ -40,7 +40,7 @@ func (a *AdsCommInput) initSymbolIndex(ctx context.Context) {
 		}
 		info, err := a.client.GetSymbol(ctx, sym.Name)
 		if err != nil {
-			a.Log.Warnf("Failed to resolve metadata for ADS symbol %q: %v", sym.Name, err)
+			a.Log.Warn(fmt.Errorf("failed to resolve metadata for ADS symbol %q: %w", sym.Name, err))
 			continue
 		}
 		sym.DataType = info.DataType
@@ -85,29 +85,40 @@ func (a *AdsCommInput) setupNotifications(ctx context.Context) error {
 	// AddNotifications returns nil errors even when all symbols fail to
 	// resolve (e.g. PLC not yet ready); detect that here so Benthos retries Connect().
 	registered := 0
-	var failed []NotifyResult
+	var failures []error
 	for _, r := range results {
 		if r.Registered {
 			registered++
 			continue
 		}
-		failed = append(failed, r)
+		failures = append(failures, notifyFailure(r))
+	}
+	for _, err := range failures {
+		a.Log.Warn(err)
 	}
 	if registered == 0 && len(cfgs) > 0 {
-		return fmt.Errorf("no symbols registered for notifications (%d symbols all failed to resolve)", len(cfgs))
-	}
-	for _, r := range failed {
-		if r.Skipped != nil {
-			a.Log.Warnf("Notification symbol %q skipped (check symbol name): %v", r.SymbolName, r.Skipped)
-			continue
+		if len(failures) == 0 {
+			return kindInternalBug.Errorf("no symbols registered for notifications: go-ads returned no result for %d symbols", len(cfgs))
 		}
-		a.Log.Warnf("Notification symbol %q rejected by PLC: ADS error 0x%X", r.SymbolName, r.Code)
+		// The error wraps the first failure, so it gets that failure's Kind:
+		// symbol_config for a symbol the PLC does not know, internal_bug for
+		// one stranded by a cache reload.
+		return fmt.Errorf("no symbols registered for notifications (%d symbols all failed), first failure: %w", len(cfgs), failures[0])
 	}
 	// Same message text the library logs after a reconnect re-subscribe, so the
 	// first connect and a recovery read identically.
 	a.Log.Infof("Registering notifications succeeded for %d/%d symbols", registered, len(cfgs))
 
 	return a.waitForInitialSamples(ctx, results)
+}
+
+// notifyFailure returns the error for a symbol whose notification go-ads did
+// not register.
+func notifyFailure(r NotifyResult) error {
+	if r.Skipped != nil {
+		return fmt.Errorf("notification symbol %q skipped (check symbol name): %w", r.SymbolName, r.Skipped)
+	}
+	return kindSymbolConfig.Errorf("notification symbol %q rejected by PLC: ADS error 0x%X", r.SymbolName, r.Code)
 }
 
 // waitForInitialSamples buffers the initial sample from each registered symbol
@@ -147,7 +158,7 @@ func (a *AdsCommInput) waitForInitialSamples(ctx context.Context, results []Noti
 			if shuttingDown(ctx) {
 				return ctx.Err()
 			}
-			a.Log.Warnf("Timed out waiting for initial samples; %d symbols not yet received: %v", len(needed), needed)
+			a.Log.Warn(kindNoInitialSamples.Errorf("timed out waiting for initial samples; %d symbols not yet received: %v", len(needed), needed))
 			return nil
 		case <-ctx.Done():
 			return ctx.Err()

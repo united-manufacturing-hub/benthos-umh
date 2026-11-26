@@ -140,17 +140,17 @@ func parseSymbolOptions(opts []string, fullSpec string, sym *PlcSymbol) []error 
 	for _, opt := range opts {
 		key, value, ok := strings.Cut(opt, "=")
 		if !ok {
-			errs = append(errs, fmt.Errorf("symbol %q: ignoring option %q (use maxDelay=100ms or cycleTime=10ms)", fullSpec, opt))
+			errs = append(errs, kindSymbolConfig.Errorf("symbol %q: ignoring option %q (use maxDelay=100ms or cycleTime=10ms)", fullSpec, opt))
 			continue
 		}
 		target, ok := targets[key]
 		if !ok {
-			errs = append(errs, fmt.Errorf("symbol %q: ignoring unknown option %q (supported: maxDelay, cycleTime)", fullSpec, key))
+			errs = append(errs, kindSymbolConfig.Errorf("symbol %q: ignoring unknown option %q (supported: maxDelay, cycleTime)", fullSpec, key))
 			continue
 		}
 		d, err := parseSymbolDuration(value)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("symbol %q: ignoring invalid %s value %q (using default): %w", fullSpec, key, value, err))
+			errs = append(errs, kindSymbolConfig.Errorf("symbol %q: ignoring invalid %s value %q (using default): %w", fullSpec, key, value, err))
 			continue
 		}
 		*target = d
