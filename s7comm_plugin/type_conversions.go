@@ -18,27 +18,24 @@ import (
 	"bytes"
 	"encoding/binary"
 	"math"
-
-	"github.com/robinson/gos7"
+	"time"
 )
 
-var helper = &gos7.Helper{}
-
-func determineConversion(dtype string) converterFunc {
+func determineConversion(dtype dataType) converterFunc {
 	switch dtype {
-	case "X":
+	case typeBit:
 		return func(buf []byte) interface{} {
 			return buf[0] != 0
 		}
-	case "B":
+	case typeByte:
 		return func(buf []byte) interface{} {
 			return buf[0]
 		}
-	case "C":
+	case typeChar:
 		return func(buf []byte) interface{} {
 			return string(buf[0])
 		}
-	case "S":
+	case typeString:
 		return func(buf []byte) interface{} {
 			if len(buf) <= 2 {
 				return ""
@@ -56,32 +53,54 @@ func determineConversion(dtype string) converterFunc {
 			result = bytes.TrimRight(result, "\x00")
 			return string(result)
 		}
-	case "W":
+	case typeWord:
 		return func(buf []byte) interface{} {
 			return binary.BigEndian.Uint16(buf)
 		}
-	case "I":
+	case typeInt:
 		return func(buf []byte) interface{} {
 			return int16(binary.BigEndian.Uint16(buf))
 		}
-	case "DW":
+	case typeDWord:
 		return func(buf []byte) interface{} {
 			return binary.BigEndian.Uint32(buf)
 		}
-	case "DI":
+	case typeDInt:
 		return func(buf []byte) interface{} {
 			return int32(binary.BigEndian.Uint32(buf))
 		}
-	case "R":
+	case typeReal:
 		return func(buf []byte) interface{} {
 			x := binary.BigEndian.Uint32(buf)
 			return math.Float32frombits(x)
 		}
-	case "DT":
+	case typeDateTime:
 		return func(buf []byte) interface{} {
-			return helper.GetDateTimeAt(buf, 0).UnixNano()
+			return dateTimeAt(buf).UnixNano()
 		}
 	}
 
 	panic("Unknown type!")
+}
+
+// dateTimeAt decodes the 8 bytes of an S7 DATE_AND_TIME: year, month, day,
+// hour, minute and second in BCD, then the milliseconds as two BCD digits
+// followed by one digit in the high nibble of the last byte. The year has two
+// digits, 90 and above is 19xx and below is 20xx. A field that is no valid
+// date is normalized by time.Date, not refused.
+func dateTimeAt(buf []byte) time.Time {
+	year := decodeBCD(buf[0])
+	if year < 90 {
+		year += 2000
+	} else {
+		year += 1900
+	}
+	milliseconds := decodeBCD(buf[6])*10 + decodeBCD(buf[7]>>4)
+
+	return time.Date(year, time.Month(decodeBCD(buf[1])), decodeBCD(buf[2]), decodeBCD(buf[3]), decodeBCD(buf[4]), decodeBCD(buf[5]), milliseconds*int(time.Millisecond), time.UTC)
+}
+
+// decodeBCD turns a byte of two decimal digits into its number.
+func decodeBCD(value byte) int {
+	return int((value>>4)*10 + (value & 0x0F))
 }

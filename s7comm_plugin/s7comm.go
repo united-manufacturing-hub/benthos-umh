@@ -18,51 +18,47 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"regexp"
 	"strconv"
 	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
-	"github.com/robinson/gos7" // gos7 is a Go client library for interacting with Siemens S7 PLCs.
 )
 
 const (
-	addressRegexp           = `^(?P<area>[A-Z]+)(?P<no>[0-9]*)\.(?P<type>[A-Z]+)(?P<start>[0-9]+)(?:\.(?P<extra>.*))?$`
+	addressRegexp = `^(?P<` + groupArea + `>[A-Z]+)(?P<` + groupNumber + `>[0-9]*)\.(?P<` + groupType + `>[A-Z]+)(?P<` +
+		groupStart + `>[0-9]+)(?:\.(?P<` + groupExtra + `>.*))?$`
 	defaultTimeBetweenReads = time.Second
 )
 
 var (
 	regexAddr = regexp.MustCompile(addressRegexp)
-	// Area mapping taken from https://github.com/robinson/gos7/blob/master/client.go
-	areaMap = map[string]int{
-		"PE": 0x81, // process inputs
-		"PA": 0x82, // process outputs
-		"MK": 0x83, // Merkers
-		"DB": 0x84, // DB
-		"C":  0x1C, // counters
-		"T":  0x1D, // timers
+	areaMap   = map[area]int{
+		areaProcessInput:  areaCodeProcessInput,
+		areaProcessOutput: areaCodeProcessOutput,
+		areaMerker:        areaCodeMerker,
+		areaDataBlock:     areaCodeDataBlock,
+		areaCounter:       areaCodeCounter,
+		areaTimer:         areaCodeTimer,
 	}
-	// Word-length mapping taken from https://github.com/robinson/gos7/blob/master/client.go
-	wordLenMap = map[string]int{
-		"X":  0x01, // Bit
-		"B":  0x02, // Byte (8 bit)
-		"C":  0x03, // Char (8 bit)
-		"S":  0x03, // String (8 bit)
-		"W":  0x04, // Word (16 bit)
-		"I":  0x05, // Integer (16 bit)
-		"DW": 0x06, // Double Word (32 bit)
-		"DI": 0x07, // Double integer (32 bit)
-		"R":  0x08, // IEEE 754 real (32 bit)
-		// see https://support.industry.siemens.com/cs/document/36479/date_and_time-format-for-s7-?dti=0&lc=en-DE
-		"DT": 0x0F, // Date and time (8 byte)
+	wordLenMap = map[dataType]int{
+		typeBit:      wordLengthBit,
+		typeByte:     wordLengthByte,
+		typeChar:     wordLengthChar,
+		typeString:   wordLengthChar,
+		typeWord:     wordLengthWord,
+		typeInt:      wordLengthInt,
+		typeDWord:    wordLengthDWord,
+		typeDInt:     wordLengthDInt,
+		typeReal:     wordLengthReal,
+		typeDateTime: wordLengthDateTime,
 	}
 )
 
 type S7DataItemWithAddressAndConverter struct {
 	Address       string
 	ConverterFunc converterFunc
-	Item          gos7.S7DataItem
+	Item          Item
 }
 
 //------------------------------------------------------------------------------
@@ -74,12 +70,14 @@ type S7CommInput struct {
 	Slot             int
 	TimeBetweenReads time.Duration
 	Timeout          time.Duration
-	Client           gos7.Client
-	Handler          *gos7.TCPClientHandler
+	Client           Client
 	Log              *service.Logger
 	ParsedAddresses  []S7DataItemWithAddressAndConverter   // All parsed addresses (before batching)
 	Batches          [][]S7DataItemWithAddressAndConverter // Batches calculated after connect with actual PDU
 	DisableCPUInfo   bool
+
+	// newClient opens the connection. It is the gos7 adapter unless a test sets another.
+	newClient clientFactory
 }
 
 type converterFunc func([]byte) interface{}
@@ -134,17 +132,7 @@ var S7CommConfigSpec = service.NewConfigSpec().
 // newS7CommInput is the constructor function for S7CommInput. It parses the plugin configuration,
 // establishes a connection with the S7 PLC, and initializes the input plugin instance.
 func newS7CommInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
-	tcpDevice, err := conf.FieldString("tcpDevice")
-	if err != nil {
-		return nil, err
-	}
-
-	rack, err := conf.FieldInt("rack")
-	if err != nil {
-		return nil, err
-	}
-
-	slot, err := conf.FieldInt("slot")
+	connection, err := parseConnectionConfig(conf)
 	if err != nil {
 		return nil, err
 	}
@@ -160,11 +148,6 @@ func newS7CommInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	}
 
 	addresses, err := conf.FieldStringList("addresses")
-	if err != nil {
-		return nil, err
-	}
-
-	timeoutInt, err := conf.FieldInt("timeout")
 	if err != nil {
 		return nil, err
 	}
@@ -191,13 +174,13 @@ func newS7CommInput(conf *service.ParsedConfig, mgr *service.Resources) (service
 	}
 
 	m := &S7CommInput{
-		TcpDevice:        tcpDevice,
-		Rack:             rack,
-		Slot:             slot,
+		TcpDevice:        connection.tcpDevice,
+		Rack:             connection.rack,
+		Slot:             connection.slot,
 		TimeBetweenReads: timeBetweenReads,
 		Log:              mgr.Logger(),
 		ParsedAddresses:  parsedAddresses,
-		Timeout:          time.Duration(timeoutInt) * time.Second,
+		Timeout:          connection.timeout,
 		DisableCPUInfo:   disableCPUInfo,
 	}
 
@@ -229,15 +212,15 @@ func deprecatedAddressWarning(address string) string {
 	for i, name := range regexAddr.SubexpNames()[1:] {
 		groups[name] = regexAddr.FindStringSubmatch(address)[1:][i]
 	}
-	if groups["area"] == "DB" || groups["no"] == "" {
+	if groups[groupArea] == string(areaDataBlock) || groups[groupNumber] == "" {
 		return ""
 	}
-	suggestion := fmt.Sprintf("%s.%s%s", groups["area"], groups["type"], groups["start"])
-	if groups["extra"] != "" {
-		suggestion += "." + groups["extra"]
+	suggestion := fmt.Sprintf("%s.%s%s", groups[groupArea], groups[groupType], groups[groupStart])
+	if groups[groupExtra] != "" {
+		suggestion += "." + groups[groupExtra]
 	}
 	return fmt.Sprintf("address %q uses a deprecated format, use %q instead — block numbers are ignored for %s and will be rejected in a future version",
-		address, suggestion, groups["area"])
+		address, suggestion, groups[groupArea])
 }
 
 func ParseAddresses(addresses []string) ([]S7DataItemWithAddressAndConverter, error) {
@@ -262,7 +245,7 @@ func ParseAddresses(addresses []string) ([]S7DataItemWithAddressAndConverter, er
 			if i == j {
 				continue
 			}
-			if reflect.DeepEqual(a.Item, b.Item) {
+			if a.Item.sameRead(b.Item) {
 				return nil, fmt.Errorf("duplicate address %v", a)
 			}
 		}
@@ -334,31 +317,32 @@ func init() {
 	}
 }
 
-func (s *S7CommInput) Connect(_ context.Context) error {
-	s.Handler = gos7.NewTCPClientHandler(s.TcpDevice, s.Rack, s.Slot)
-	s.Handler.Timeout = s.Timeout
-	s.Handler.IdleTimeout = s.Timeout
+func (s *S7CommInput) Connect(ctx context.Context) error {
+	newClient := s.newClient
+	if newClient == nil {
+		newClient = newGos7Client
+	}
 
-	err := s.Handler.Connect()
+	client, err := newClient(ctx, connectionConfig{tcpDevice: s.TcpDevice, rack: s.Rack, slot: s.Slot, timeout: s.Timeout})
 	if err != nil {
 		s.Log.Errorf("Failed to connect to S7 PLC at %s: %v", s.TcpDevice, err)
 		return err
 	}
 
-	s.Client = gos7.NewClient(s.Handler)
+	s.Client = client
 	s.Log.Infof("Successfully connected to S7 PLC at %s", s.TcpDevice)
 
 	// Build batches using the PDU size negotiated with the PLC
-	batches, err := BuildBatches(s.ParsedAddresses, s.Handler.PDULength)
+	batches, err := BuildBatches(s.ParsedAddresses, client.PDULength())
 	if err != nil {
 		return fmt.Errorf("failed to build batches: %w", err)
 	}
 	s.Batches = batches
-	s.Log.Infof("Created %d batches for %d addresses (PDU size: %d)", len(s.Batches), len(s.ParsedAddresses), s.Handler.PDULength)
+	s.Log.Infof("Created %d batches for %d addresses (PDU size: %d)", len(s.Batches), len(s.ParsedAddresses), client.PDULength())
 
 	// Fetch and show CPU information, but only if the user has not disabled it
 	if !s.DisableCPUInfo {
-		cpuInfo, err := s.Client.GetCPUInfo()
+		cpuInfo, err := client.CPUInfo()
 		if err != nil {
 			s.Log.Warnf("Failed to get CPU information: %v", err)
 		} else {
@@ -384,14 +368,15 @@ func (s *S7CommInput) ReadBatch(ctx context.Context) (service.MessageBatch, serv
 	msgs := make(service.MessageBatch, 0)
 	for i, b := range s.Batches {
 		// Create a new batch to read
-		batchToRead := make([]gos7.S7DataItem, len(b))
+		batchToRead := make([]Item, len(b))
 		for i, item := range b {
 			batchToRead[i] = item.Item
 		}
 
-		// Read the batch
+		// Read the batch. A refused item is reported in its Err, which is not
+		// looked at: the value is then converted from the zeroed buffer.
 		s.Log.Debugf("Reading batch %d...", i+1)
-		if err := s.Client.AGReadMulti(batchToRead, len(batchToRead)); err != nil {
+		if err := s.Client.ReadItems(ctx, batchToRead); err != nil {
 			// Try to reconnect and skip this gather cycle to avoid hammering
 			// the network if the server is down or under load.
 			s.Log.Errorf("Failed to read batch %d: %v", i+1, err)
@@ -436,16 +421,15 @@ func (s *S7CommInput) pause(ctx context.Context) error {
 }
 
 func (s *S7CommInput) Close(_ context.Context) error {
-	if s.Handler != nil {
-		s.Handler.Close()
-		s.Handler = nil
+	if s.Client != nil {
+		_ = s.Client.Close()
 		s.Client = nil
 	}
 
 	return nil
 }
 
-func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error) {
+func handleFieldAddress(address string) (*Item, converterFunc, error) {
 	// Parse the address into the different parts
 	if !regexAddr.MatchString(address) {
 		return nil, nil, fmt.Errorf("invalid address %q", address)
@@ -461,20 +445,20 @@ func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error)
 	}
 
 	// Check that we do have the required entries in the address
-	if _, found := groups["area"]; !found {
+	if _, found := groups[groupArea]; !found {
 		return nil, nil, errors.New("area is missing from address")
 	}
 
-	if _, found := groups["type"]; !found {
+	if _, found := groups[groupType]; !found {
 		return nil, nil, errors.New("type is missing from address")
 	}
-	if _, found := groups["start"]; !found {
+	if _, found := groups[groupStart]; !found {
 		return nil, nil, errors.New("start address is missing from address")
 	}
-	dtype := groups["type"]
+	dtype := dataType(groups[groupType])
 
 	// Lookup the item values from names and check the params
-	area, found := areaMap[groups["area"]]
+	areaCode, found := areaMap[area(groups[groupArea])]
 	if !found {
 		return nil, nil, errors.New("invalid area")
 	}
@@ -483,23 +467,23 @@ func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error)
 		return nil, nil, errors.New("unknown data type")
 	}
 	// Only DB uses block numbers; PE, PA, MK, C, T have a single memory region.
-	areaName := groups["area"]
+	areaName := area(groups[groupArea])
 	var (
 		areaidx int
 		err     error
 	)
 	switch areaName {
-	case "DB":
-		if groups["no"] == "" {
+	case areaDataBlock:
+		if groups[groupNumber] == "" {
 			return nil, nil, errors.New("DB requires a block number (e.g., DB1.DW20)")
 		}
-		areaidx, err = strconv.Atoi(groups["no"])
+		areaidx, err = strconv.Atoi(groups[groupNumber])
 		if err != nil {
 			return nil, nil, fmt.Errorf("invalid DB number: %w", err)
 		}
 	default:
 	}
-	start, err := strconv.Atoi(groups["start"])
+	start, err := strconv.Atoi(groups[groupStart])
 	if err != nil {
 		return nil, nil, fmt.Errorf("invalid start address: %w", err)
 	}
@@ -507,9 +491,9 @@ func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error)
 	// Check the amount parameter if any
 	var extra, bit int
 	switch dtype {
-	case "S":
+	case typeString:
 		// We require an extra parameter
-		x := groups["extra"]
+		x := groups[groupExtra]
 		if x == "" {
 			return nil, nil, errors.New("extra parameter required")
 		}
@@ -521,9 +505,9 @@ func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error)
 		if extra < 1 {
 			return nil, nil, fmt.Errorf("invalid extra parameter %d", extra)
 		}
-	case "X":
+	case typeBit:
 		// We require an extra parameter
-		x := groups["extra"]
+		x := groups[groupExtra]
 		if x == "" {
 			return nil, nil, errors.New("extra parameter required")
 		}
@@ -537,7 +521,7 @@ func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error)
 			return nil, nil, fmt.Errorf("invalid extra parameter: bit address %d out of range", bit)
 		}
 	default:
-		if groups["extra"] != "" {
+		if groups[groupExtra] != "" {
 			return nil, nil, errors.New("extra parameter specified but not used")
 		}
 	}
@@ -546,15 +530,15 @@ func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error)
 	amount := 1
 	var buflen int
 	switch dtype {
-	case "X", "B", "C": // 8-bit types
+	case typeBit, typeByte, typeChar: // 8-bit types
 		buflen = 1
-	case "W", "I": // 16-bit types
+	case typeWord, typeInt: // 16-bit types
 		buflen = 2
-	case "DW", "DI", "R": // 32-bit types
+	case typeDWord, typeDInt, typeReal: // 32-bit types
 		buflen = 4
-	case "DT": // 8-byte
+	case typeDateTime: // 8-byte
 		buflen = 8
-	case "S":
+	case typeString:
 		amount = extra
 		// Extra bytes as the first byte is the max-length of the string and
 		// the second byte is the actual length of the string.
@@ -564,17 +548,29 @@ func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error)
 	}
 
 	// Setup the data item
-	item := &gos7.S7DataItem{
-		Area:     area,
-		WordLen:  wordlen,
-		Bit:      bit,
-		DBNumber: areaidx,
-		Start:    start,
-		Amount:   amount,
-		Data:     make([]byte, buflen),
+	item := &Item{
+		Area:       areaCode,
+		WordLength: wordlen,
+		Bit:        bit,
+		DBNumber:   areaidx,
+		ByteOffset: start,
+		Amount:     amount,
+		Data:       make([]byte, buflen),
 	}
 
 	// Determine the type converter function
 	f := determineConversion(dtype)
 	return item, f, nil
+}
+
+// sameRead reports whether two items read the same bytes: the same area, block,
+// offset, bit, word length, amount and buffer size.
+func (i Item) sameRead(other Item) bool {
+	return i.Area == other.Area &&
+		i.WordLength == other.WordLength &&
+		i.DBNumber == other.DBNumber &&
+		i.ByteOffset == other.ByteOffset &&
+		i.Bit == other.Bit &&
+		i.Amount == other.Amount &&
+		len(i.Data) == len(other.Data)
 }
