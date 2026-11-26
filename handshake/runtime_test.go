@@ -16,6 +16,7 @@ package handshake
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -224,5 +225,213 @@ func TestRuntime_FakeStandsInTheSeam(t *testing.T) {
 	}
 	if !errors.Is(res.Err, context.Canceled) {
 		t.Fatalf("Err does not wrap the runtime's error: %v", res.Err)
+	}
+}
+
+// A json.Number that is a number to neither Go parser — 1e999 overflows
+// Float64 and is not integer syntax for Int64, and encoding/json with
+// UseNumber preserves such a literal from the wire — crosses to the script
+// as its own text rather than as a broken number. The script's author sees
+// exactly what the message carried.
+func TestRun_AJSONNumberThatIsNoNumberCrossesAsItsOwnText(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.Script = `
+			if (typeof msg.x !== "string" || msg.x !== "1e999") {
+				return opcua.error_persistent("msg.x is a " + typeof msg.x + ": " + msg.x);
+			}
+			return opcua.success({saw: msg.x});
+		`
+	})
+
+	res := engine.Run(t.Context(), map[string]any{"x": json.Number("1e999")})
+	if res.Outcome != Delivered {
+		t.Fatalf("outcome %v, err %v: an unparsable json.Number must cross as its text", res.Outcome, res.Err)
+	}
+	d, ok := res.Data.(map[string]any)
+	if !ok || d["saw"] != "1e999" {
+		t.Fatalf("Data is %#v, want the number's own text", res.Data)
+	}
+}
+
+// read's entry owns its argument conversion, so a bad address argument is a
+// TypeError with goja's own wording — the text a script that catches it
+// always read — and the machine is never asked for anything.
+func TestRead_ANonObjectAddressIsATypeErrorTheScriptCanCatch(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.Script = `
+			try {
+				opcua.read(7);
+			} catch (e) {
+				return opcua.success({caught: String(e)});
+			}
+			return opcua.error_transient("not caught");
+		`
+	})
+
+	res := engine.Run(t.Context(), map[string]any{})
+	if res.Outcome != Delivered {
+		t.Fatalf("outcome %v, err %v: the TypeError must be catchable", res.Outcome, res.Err)
+	}
+	d, ok := res.Data.(map[string]any)
+	if !ok || !strings.Contains(fmt.Sprint(d["caught"]), "could not convert function call parameter 0") {
+		t.Fatalf("the conversion failure must keep goja's own wording, got %v", d["caught"])
+	}
+	if ops := b.snapshot(); len(ops) != 0 {
+		t.Fatalf("the machine was asked for something (ops: %v)", ops)
+	}
+}
+
+// readOp records a refused parse as the run's own fault (LIB-5): what a
+// binding marks is what Run reports, and the fault wraps the binding's
+// error so errors.Is still works.
+func TestRead_AnAddressThatDoesNotParseIsTheRunsOwnFault(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.Script = `opcua.read({});` // no nodeId: ParseAddress refuses, marked persistent
+	})
+
+	res := engine.Run(t.Context(), map[string]any{})
+	if res.Outcome != Persistent {
+		t.Fatalf("outcome %v, err %v: a parse refusal the binding marked persistent is persistent", res.Outcome, res.Err)
+	}
+	if !strings.Contains(res.Err.Error(), "parse address failed") {
+		t.Fatalf("Err must name the refused parse, got %v", res.Err)
+	}
+	if !errors.Is(res.Err, ErrPersistent) {
+		t.Fatalf("Err must wrap the binding's marked error, got %v", res.Err)
+	}
+}
+
+// wait_until's predicate argument has the same rule as every other argument:
+// a value that is not a function is a conversion failure with goja's own
+// wording, not the missing-predicate error — a wrong script either way, but
+// the script's author reads the text they always read.
+func TestWaitUntil_APredicateThatIsNotAFunctionIsATypeError(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{"Loaded": false}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.Script = `
+			try {
+				opcua.wait_until({nodeId: "Loaded"}, 5, 10);
+			} catch (e) {
+				return opcua.success({caught: String(e)});
+			}
+			return opcua.error_transient("not caught");
+		`
+	})
+
+	res := engine.Run(t.Context(), map[string]any{})
+	if res.Outcome != Delivered {
+		t.Fatalf("outcome %v, err %v: the TypeError must be catchable", res.Outcome, res.Err)
+	}
+	d, ok := res.Data.(map[string]any)
+	if !ok || !strings.Contains(fmt.Sprint(d["caught"]), "could not convert function call parameter 1") {
+		t.Fatalf("the conversion failure must keep goja's own wording, got %v", d["caught"])
+	}
+	if ops := b.snapshot(); len(ops) != 0 {
+		t.Fatalf("the machine was asked for something (ops: %v)", ops)
+	}
+}
+
+// call_method's entries own their conversions, so a bad argument is evidence
+// at the dispatch boundary (door 8): a cleanup block that catches the throw
+// has still not handed the machine back (LIB-4). The machine is never asked.
+func TestCallMethod_ANonObjectArgumentIsEvidenceTheBoundaryRecords(t *testing.T) {
+	caller := &fakeCaller{fakeBinding: fakeBinding{values: map[string]any{}}}
+	engine := newTestEngine(t, caller, func(c *Config) {
+		c.Script = `return opcua.error_transient("machine busy");`
+		c.OnError = `try { opcua.call_method(42, []); } catch (err) { }`
+	})
+
+	res := engine.Run(t.Context(), map[string]any{})
+	if res.Outcome != Persistent {
+		t.Fatalf("outcome %v, err %v: a swallowed conversion failure still means the machine was not handed back",
+			res.Outcome, res.Err)
+	}
+	if res.CleanupErr == nil {
+		t.Fatalf("the boundary's evidence is not reported in CleanupErr")
+	}
+	if !strings.Contains(res.CleanupErr.Error(), "call_method") ||
+		!strings.Contains(res.CleanupErr.Error(), "could not convert") {
+		t.Fatalf("the cleanup failure must name call_method and the conversion, got %v", res.CleanupErr)
+	}
+	if ops := caller.snapshot(); len(ops) != 0 {
+		t.Fatalf("the machine was asked for something (ops: %v)", ops)
+	}
+}
+
+// call_method's inputs argument may be omitted: a method with no inputs is
+// called with none, not refused — a missing argument converts to nil, and
+// ParseAddress-style refusal belongs to the binding's Call, not the entry.
+func TestCallMethod_AnOmittedInputsArgumentMeansNoInputs(t *testing.T) {
+	caller := &fakeCaller{fakeBinding: fakeBinding{values: map[string]any{}}, outputs: []any{int64(1)}}
+	engine := newTestEngine(t, caller, func(c *Config) {
+		c.Script = `
+			const out = opcua.call_method({nodeId: "Reset"});
+			if (out[0] !== 1) { return opcua.error_persistent("wrong outputs: " + out); }
+			return opcua.success({called: true});
+		`
+	})
+
+	res := engine.Run(t.Context(), map[string]any{})
+	if res.Outcome != Delivered {
+		t.Fatalf("outcome %v, err %v: a method with no inputs must be callable", res.Outcome, res.Err)
+	}
+	if n := caller.count("call Reset([])"); n != 1 {
+		t.Fatalf("the method was called %d times, want 1 (ops: %v)", n, caller.snapshot())
+	}
+	if caller.lastCall != nil {
+		t.Fatalf("the binding received inputs %v, want none", caller.lastCall)
+	}
+}
+
+// The other half of the inputs conversion: an argument that is present but
+// not an array is a conversion failure, and in a cleanup block it is the
+// boundary's evidence — caught or not, the block did not finish.
+func TestCallMethod_ANonArrayInputsArgumentIsEvidenceTheBoundaryRecords(t *testing.T) {
+	caller := &fakeCaller{fakeBinding: fakeBinding{values: map[string]any{}}}
+	engine := newTestEngine(t, caller, func(c *Config) {
+		c.Script = `return opcua.error_transient("machine busy");`
+		c.OnError = `try { opcua.call_method({nodeId: "Reset"}, 5); } catch (err) { }`
+	})
+
+	res := engine.Run(t.Context(), map[string]any{})
+	if res.Outcome != Persistent {
+		t.Fatalf("outcome %v, err %v: a swallowed conversion failure still means the machine was not handed back",
+			res.Outcome, res.Err)
+	}
+	if res.CleanupErr == nil ||
+		!strings.Contains(res.CleanupErr.Error(), "could not convert function call parameter 1") {
+		t.Fatalf("the cleanup failure must name the conversion, got %v", res.CleanupErr)
+	}
+	if ops := caller.snapshot(); len(ops) != 0 {
+		t.Fatalf("the machine was asked for something (ops: %v)", ops)
+	}
+}
+
+// UAT-13's rule on the call seam: a call_method under a transaction that has
+// already been decided is refused before the machine is asked — the first
+// ending decided the transaction, and nothing may extend it.
+func TestCallMethod_ACallUnderAnEndedTransactionIsRefused(t *testing.T) {
+	caller := &fakeCaller{fakeBinding: fakeBinding{values: map[string]any{}}, outputs: []any{}}
+	engine := newTestEngine(t, caller, func(c *Config) {
+		c.Script = `
+			try { return opcua.success({done: true}); } catch (e) { }
+			try { opcua.call_method({nodeId: "Reset"}); } catch (e) { }
+			return opcua.error_transient("unreachable in practice");
+		`
+	})
+
+	res := engine.Run(t.Context(), map[string]any{})
+	if res.Outcome != Delivered {
+		t.Fatalf("outcome %v, err %v: the first ending wins", res.Outcome, res.Err)
+	}
+	d, ok := res.Data.(map[string]any)
+	if !ok || d["done"] != true {
+		t.Fatalf("Data is %#v, want the first ending's object", res.Data)
+	}
+	if n := caller.count("call Reset([])"); n != 0 {
+		t.Fatalf("the machine was called under a transaction that had already ended (ops: %v)", caller.snapshot())
 	}
 }
