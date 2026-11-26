@@ -123,3 +123,52 @@ func TestClassify_TheCapKeepsTheFaultThatStoppedTheRun(t *testing.T) {
 		})
 	}
 }
+
+// The fourth overflow of the same family, one field to the left of the one
+// the three above fixed: pollMs. time.Duration(1e13) * time.Millisecond
+// wraps negative, a negative poll interval is no pause at all, and the wait
+// then reads the machine as fast as the wire allows until its timeout runs
+// out. Measured before the fix: 117,761 reads in 313ms against an
+// in-process machine, where 50ms polling does 6. The outcome was never
+// wrong -- the deadline clamp holds -- so nothing in the result could have
+// caught it; the damage is what a real PLC and its network see, and the
+// hour rule means the timeout it floods for may legitimately be an hour.
+func TestWaitUntil_APollIntervalTooLargeForADurationIsRefusedNotWrapped(t *testing.T) {
+	for _, pollMs := range []string{"1e13", "1.1e13", "1e15", "Number.MAX_VALUE"} {
+		t.Run(pollMs, func(t *testing.T) {
+			b := &fakeBinding{values: map[string]any{"ns=2;s=A": false}}
+			engine := newTestEngine(t, b, func(c *Config) {
+				c.MaxScriptRuntime = 2 * time.Second
+				c.Script = fmt.Sprintf(
+					`opcua.wait_until({nodeId: "ns=2;s=A"}, v => v === true, 300, {pollMs: %s}); return opcua.success({});`,
+					pollMs)
+			})
+			res := engine.Run(t.Context(), map[string]any{})
+			if res.Outcome == Delivered {
+				t.Fatalf("a pollMs of %s was accepted", pollMs)
+			}
+			if !strings.Contains(res.Err.Error(), "longer than the") {
+				t.Fatalf("refused for the wrong reason: %v", res.Err)
+			}
+			// The refusal must happen before any reading, not after a
+			// flood that the wait's own end then cut short.
+			if n := b.count("read ns=2;s=A"); n > 1 {
+				t.Errorf("the machine was read %d times before the pollMs was refused", n)
+			}
+		})
+	}
+
+	// A sane pollMs still works, so the bound is a bound and not a ban.
+	b := &fakeBinding{values: map[string]any{"ns=2;s=A": false}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.MaxScriptRuntime = 2 * time.Second
+		c.Script = `opcua.wait_until({nodeId: "ns=2;s=A"}, v => v === true, 300, {pollMs: 50}); return opcua.success({});`
+	})
+	res := engine.Run(t.Context(), map[string]any{})
+	if res.Outcome != Transient {
+		t.Fatalf("a 50ms poll should wait and then time out transiently, got %v (%v)", res.Outcome, res.Err)
+	}
+	if n := b.count("read ns=2;s=A"); n < 2 || n > 50 {
+		t.Errorf("a 300ms wait polling every 50ms read the machine %d times", n)
+	}
+}
