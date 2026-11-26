@@ -147,3 +147,29 @@ func readValue(t *testing.T, c *opcua.Client, id *ua.NodeID) any {
 	}
 	return resp.Results[0].Value.Value()
 }
+
+// readStatus reads a node and returns the status the machine answered with,
+// rather than failing on a refusal the way readValue does.
+func readStatus(t *testing.T, c *opcua.Client, id *ua.NodeID) ua.StatusCode {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	resp, err := c.Read(ctx, &ua.ReadRequest{
+		NodesToRead: []*ua.ReadValueID{{NodeID: id, AttributeID: ua.AttributeIDValue}},
+	})
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(resp.Results) != 1 {
+		t.Fatalf("read returned %d results, want 1", len(resp.Results))
+	}
+	return resp.Results[0].Status
+}
+
+// readWithContext reads under the caller's own deadline and hands back
+// whatever happened, because a fault test is usually about the failure.
+func readWithContext(c *opcua.Client, ctx context.Context, id *ua.NodeID) (*ua.ReadResponse, error) {
+	return c.Read(ctx, &ua.ReadRequest{
+		NodesToRead: []*ua.ReadValueID{{NodeID: id, AttributeID: ua.AttributeIDValue}},
+	})
+}

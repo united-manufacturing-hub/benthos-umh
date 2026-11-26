@@ -34,14 +34,53 @@ const (
 	// holding its old value. TRUMPF's press does this, and it is the reason
 	// the handshake reads a value back after writing it.
 	AcceptWriteNeverApply Kind = "accept_write_never_apply"
+
+	// RefuseRead answers a read with Fault.Status instead of a value. The
+	// status decides what the client should do, so this is the fault that
+	// separates "try again later" from "park it": the same shape of answer
+	// carries BadCommunicationError and BadNodeIdUnknown alike.
+	RefuseRead Kind = "refuse_read"
+
+	// AnswerLate answers correctly, Fault.Delay too late. It is the fault
+	// that tests a deadline: the handshake must stop waiting and the cleanup
+	// must still run, while the machine is answering normally the whole time.
+	AnswerLate Kind = "answer_late"
+
+	// NeverAnswer does not answer at all. A client that waits on a socket
+	// rather than on its own clock hangs here forever, which is the failure
+	// this fault exists to find.
+	NeverAnswer Kind = "never_answer"
+
+	// RaiseFlagLate holds the node at Fault.Until for Fault.After, then lets
+	// the real value through. A machine that confirms late rather than never
+	// is the ordinary case wait_until exists for, and the one a test using a
+	// flag that is already up never exercises.
+	RaiseFlagLate Kind = "raise_flag_late"
 )
 
-// Fault is one misbehaviour, armed against one node.
+// Fault is one misbehaviour, armed against one node. Which fields a fault
+// reads depends on its Kind; each Kind's comment says so.
 type Fault struct {
 	// Node is the node's string identifier within this server's namespace,
 	// as passed to AddNode -- "Setpoint", not "ns=2;s=Setpoint".
 	Node string
 	Kind Kind
+
+	// Status is the refusal RefuseRead answers with.
+	Status ua.StatusCode
+
+	// Delay is how much later than it should AnswerLate answers.
+	Delay time.Duration
+
+	// After is how long RaiseFlagLate holds the node at Until, measured from
+	// the moment the fault was armed.
+	After time.Duration
+
+	// Until is the value RaiseFlagLate serves while it is holding.
+	Until any
+
+	// armed is when Inject took this fault, which is what After counts from.
+	armed time.Time
 }
 
 // Firing records that a fault actually took effect, which is the only
@@ -86,6 +125,7 @@ func New() (*Server, error) {
 	s.ns = &faultNamespace{
 		NodeNameSpace: server.NewNodeNameSpace(s.srv, "faultopcua"),
 		faults:        map[string]Fault{},
+		closed:        make(chan struct{}),
 	}
 	s.srv.AddNamespace(s.ns)
 	return s, nil
@@ -102,6 +142,7 @@ func (s *Server) AddNode(name string, value any) {
 // scenario often needs the machine to behave until a particular moment.
 func (s *Server) Inject(f Fault) {
 	ns := s.ns
+	f.armed = time.Now()
 	ns.mu.Lock()
 	defer ns.mu.Unlock()
 	ns.faults[f.Node] = f
@@ -161,11 +202,26 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 // Close stops the server.
+// Close stops the server and releases any read a fault is holding.
 func (s *Server) Close() error {
+	s.ns.release()
 	if s.srv == nil {
 		return nil
 	}
 	return s.srv.Close()
+}
+
+// release unblocks NeverAnswer and shortens AnswerLate. It tolerates being
+// called twice, because a test that closes in a defer and again by hand
+// should not panic in its teardown.
+func (ns *faultNamespace) release() {
+	ns.mu.Lock()
+	defer ns.mu.Unlock()
+	select {
+	case <-ns.closed:
+	default:
+		close(ns.closed)
+	}
 }
 
 // faultNamespace is an ordinary gopcua namespace with the faults wrapped
@@ -178,6 +234,55 @@ type faultNamespace struct {
 	mu      sync.Mutex
 	faults  map[string]Fault
 	firings []Firing
+
+	// closed releases anything NeverAnswer is holding, so a stuck read ends
+	// with the server rather than outliving the test that armed it.
+	closed chan struct{}
+}
+
+// Attribute is the read side.
+//
+// A read reaches here for every attribute, not only the value, so a fault
+// that refused all of them would also refuse the browse and type reads a
+// client makes while connecting, and the test would fail before reaching
+// what it meant to test. Faults therefore apply to the value attribute only.
+func (ns *faultNamespace) Attribute(id *ua.NodeID, attr ua.AttributeID) *ua.DataValue {
+	f, armed := ns.faultFor(id)
+	if !armed || attr != ua.AttributeIDValue {
+		return ns.NodeNameSpace.Attribute(id, attr)
+	}
+	switch f.Kind {
+	case RefuseRead:
+		ns.record(f)
+		return &ua.DataValue{
+			EncodingMask:    ua.DataValueServerTimestamp | ua.DataValueStatusCode,
+			ServerTimestamp: time.Now(),
+			Status:          f.Status,
+		}
+	case AnswerLate:
+		ns.record(f)
+		select {
+		case <-time.After(f.Delay):
+		case <-ns.closed:
+		}
+		return ns.NodeNameSpace.Attribute(id, attr)
+	case NeverAnswer:
+		ns.record(f)
+		<-ns.closed
+		return &ua.DataValue{
+			EncodingMask:    ua.DataValueServerTimestamp | ua.DataValueStatusCode,
+			ServerTimestamp: time.Now(),
+			Status:          ua.StatusBadServerHalted,
+		}
+	case RaiseFlagLate:
+		if time.Since(f.armed) < f.After {
+			ns.record(f)
+			return server.DataValueFromValue(f.Until)
+		}
+		return ns.NodeNameSpace.Attribute(id, attr)
+	default:
+		return ns.NodeNameSpace.Attribute(id, attr)
+	}
 }
 
 // SetAttribute is the write side. A node with no fault armed is written
