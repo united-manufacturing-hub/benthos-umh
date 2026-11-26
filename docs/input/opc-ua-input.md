@@ -437,3 +437,13 @@ Counter tracking OPC UA subscription failures by reason and node ID.
 | `node_id_unknown` | NodeID doesn't exist | Verify NodeID configuration |
 | `node_id_invalid` | NodeID syntax error | Fix NodeID string format |
 | `other` | Other subscription errors | Check server logs |
+
+***
+
+## Delivery guarantees
+
+- **Delivery**: at-least-once while the input is running. A batch is acknowledged by Benthos, and a nacked batch is retried from memory (`service.AutoRetryNacksBatched`), so a message can arrive downstream more than once. There is no buffer that survives a restart: the input keeps no record of what it has delivered, so nothing is replayed after one.
+- **State**: the input holds the connection, the browsed node list and, in subscription mode, the server's subscription. A failed browse closes the connection and the node list is rebuilt on the next connect. None of this is written to disk.
+- **Time**: in subscription mode the server decides when a value arrives, and the input waits at most 3 seconds for one before returning an empty batch. In pull mode the input reads every node once per `pollRate` milliseconds (default 1000). With `useHeartbeat`, ten seconds without any message closes the connection so that it is rebuilt.
+- **Errors**: a lost connection surfaces as a read error, and as "not connected" to Benthos once the browse fails or the heartbeat watchdog fires. What happens next is `autoReconnect`, which is **off** unless you turn it on: left off, the bridge stays down and is visible as down; turned on, the client rebuilds the session underneath and reading continues with nothing logged. Subscription failures for individual nodes are reported per node through the `subscription_failures` metric with a reason, and the other nodes keep working.
+- **Limits**: values missed while the input was disconnected are not recovered — the server's own history is not read, and whether a rebuilt subscription re-reports a node's current value is the server's choice, not something this plugin guarantees. Deadband filters apply to numeric types only. One connection per input; two servers need two inputs.
