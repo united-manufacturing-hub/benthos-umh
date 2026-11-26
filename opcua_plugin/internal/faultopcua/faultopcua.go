@@ -35,6 +35,18 @@ const (
 	// the handshake reads a value back after writing it.
 	AcceptWriteNeverApply Kind = "accept_write_never_apply"
 
+	// RefuseWrite answers a write with Fault.Status and changes nothing.
+	// It is the commonest persistent fault a plant produces -- a value the
+	// machine will not take -- and the one a simulator never produces,
+	// because a simulator takes everything.
+	RefuseWrite Kind = "refuse_write"
+
+	// FlapValue alternates the node between its real value and Fault.Until
+	// on every read. A flag that is up when the script looks and down when
+	// it looks again is how a machine with two controllers behaves, and it
+	// is what a single-read check mistakes for a confirmation.
+	FlapValue Kind = "flap_value"
+
 	// RefuseRead answers a read with Fault.Status instead of a value. The
 	// status decides what the client should do, so this is the fault that
 	// separates "try again later" from "park it": the same shape of answer
@@ -269,6 +281,9 @@ type faultNamespace struct {
 	// it closed, which is the evidence a DropSession test asserts.
 	onDrop func() int
 	cut    int
+
+	// flap alternates FlapValue between the real value and the fault's.
+	flap bool
 }
 
 // cuts reports how many connections this namespace's drops have closed.
@@ -331,6 +346,13 @@ func (ns *faultNamespace) Attribute(id *ua.NodeID, attr ua.AttributeID) *ua.Data
 			ServerTimestamp: time.Now(),
 			Status:          ua.StatusBadServerHalted,
 		}
+	case FlapValue:
+		ns.record(f)
+		ns.flap = !ns.flap
+		if ns.flap {
+			return server.DataValueFromValue(f.Until)
+		}
+		return ns.NodeNameSpace.Attribute(id, attr)
 	case RaiseFlagLate:
 		if time.Since(f.armed) < f.After {
 			ns.record(f)
@@ -358,6 +380,9 @@ func (ns *faultNamespace) SetAttribute(id *ua.NodeID, attr ua.AttributeID, val *
 		ns.record(f)
 		ns.drop()
 		return ua.StatusBadConnectionClosed
+	case RefuseWrite:
+		ns.record(f)
+		return f.Status
 	case AcceptWriteNeverApply:
 		// Tell the client it worked and change nothing. The client has no
 		// way to know from this answer alone, which is the point: only a

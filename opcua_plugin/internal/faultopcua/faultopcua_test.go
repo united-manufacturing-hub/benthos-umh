@@ -87,7 +87,17 @@ func startServer(t *testing.T, node string, value any) (*faultopcua.Server, *opc
 	}
 	t.Cleanup(func() { _ = srv.Close() })
 
-	client, err := opcua.NewClient(srv.Endpoint(), opcua.SecurityMode(ua.MessageSecurityModeNone))
+	// AutoReconnect off, for two reasons. A dropped session during a
+	// handshake is the thing under test, and a client that quietly rebuilt
+	// it would hide the fault. And gopcua's reconnect monitor races its own
+	// Close -- Dial writes c.conn at client.go:617 while Close reads it at
+	// :664, unguarded -- which this package's drop test reproduces under
+	// -race every time. That is gopcua's defect, recorded in
+	// DEFECT-client-close-race.md on 2026-11-02, and a caller cannot work
+	// around it except by not starting the monitor.
+	client, err := opcua.NewClient(srv.Endpoint(),
+		opcua.SecurityMode(ua.MessageSecurityModeNone),
+		opcua.AutoReconnect(false))
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
