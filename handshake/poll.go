@@ -82,6 +82,19 @@ func (e *Engine[UnifiedAddress]) waitUntil(
 		poll = 100 * time.Millisecond // the documented default
 	}
 	if ms, ok := number(opts["pollMs"]); ok && ms > 0 {
+		// Bounded before the conversion, for the same reason the timeout
+		// above is. time.Duration(1e13) * time.Millisecond wraps NEGATIVE,
+		// a negative poll interval means no pause between reads at all, and
+		// the wait then reads the machine at wire speed until its timeout
+		// runs out -- measured, 117,761 reads in 313ms against an in-process
+		// machine, and the hour rule means that timeout may legitimately BE
+		// an hour. The outcome stays right because the deadline clamp holds;
+		// what a real PLC and its network see is the damage.
+		if !(ms <= maxIntervalMillis) {
+			return nil, fmt.Errorf(
+				"wait_until on %s was given a pollMs of %.0f, longer than the %v a handshake is allowed: check the units -- this is milliseconds",
+				describe, ms, MaxInterval)
+		}
 		poll = time.Duration(ms) * time.Millisecond
 	}
 	persistent := false
