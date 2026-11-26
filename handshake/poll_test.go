@@ -78,10 +78,13 @@ func TestWaitUntil_PollsAtTheConfiguredInterval(t *testing.T) {
 			`
 		})
 		engine.Run(t.Context(), map[string]any{})
-		// Four reads at a 100ms poll in 300ms (t=0,100,200,300). The old
-		// bound, 2..6, let the mutation pass poll at half the rate (3 reads).
-		if n := b.count("read Loaded"); n < 4 || n > 5 {
-			t.Fatalf("pollMs override ignored or wrong rate: %d reads in 300ms", n)
+		// Three reads at a 100ms poll in 300ms: t=0, 100, 200. There is no
+		// read at t=300, because each read is now bounded by the wait's own
+		// end and a read starting exactly then has no time to complete --
+		// the wait cannot wait for it. Measured at half the rate the same
+		// window gives 2, so this still catches a poll that has slowed.
+		if n := b.count("read Loaded"); n != 3 {
+			t.Fatalf("pollMs override ignored or wrong rate: %d reads in 300ms, want 3", n)
 		}
 	})
 

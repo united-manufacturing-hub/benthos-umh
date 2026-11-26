@@ -89,35 +89,33 @@ func (e *Engine[UnifiedAddress]) waitUntil(
 	}
 
 	start := time.Now()
-	// How long the machine actually takes to answer. The clamp leaves a
-	// fixed margin before the run's deadline, but a read is only discovered
-	// to be too late once it returns, so a read that starts inside the
-	// margin and takes longer than it runs past the deadline -- and the
-	// deadline turns the wait's own Transient timeout into a Persistent
-	// stop (LIB-6), which is the opposite of what the clamp exists for.
-	// Measured against a machine answering in 60ms with a 50ms margin:
-	// Persistent every run, and the run blocks for the whole budget instead
-	// of returning at the clamped timeout.
+	// Each read is bounded by the wait's own end, not the run's deadline.
 	//
-	// So the margin is what this machine has shown us it needs, not a
-	// number chosen in advance. Before each read, if what is left before
-	// the deadline is less than the last read took, the wait has run out:
-	// starting that read could only produce a deadline stop.
-	var lastRead time.Duration
+	// A read is only discovered to be too late once it returns, so a read
+	// that starts near the end and overruns used to be cut off by the RUN's
+	// deadline -- turning the wait's clean Transient timeout into a
+	// Persistent stop (LIB-6), the opposite of what the clamp exists for.
+	//
+	// An earlier attempt predicted this from the previous read's duration
+	// and bailed early. That starved the wait: one slow first read -- the
+	// ordinary shape after a connect -- ended a wait 130ms before its own
+	// timeout on a machine that was ready on the second read, turning a
+	// delivery into a false "machine did not confirm". Bounding is exact
+	// where predicting was a guess about a machine we cannot predict.
+	waitEnds := start.Add(timeout)
 	for {
-		if !rs.deadline.IsZero() && lastRead > 0 && time.Until(rs.deadline) <= lastRead {
+		value, cutOff, err := e.readWithin(rs, raw, waitEnds)
+		if cutOff {
+			// The machine did not answer within the time the wait had.
 			return nil, e.waitRanOut(rs, describe, time.Since(start), persistent)
 		}
-		readStarted := time.Now()
-		value, err := e.readOp(rs, raw)
-		lastRead = time.Since(readStarted)
 		if err != nil {
-			// The read is refused and recorded by readOp itself; whether
-			// that refusal is the cleanup's failure is not this line's to
-			// decide. The dispatch boundary decides it, and it does: the
-			// error surfaces at wait_until's own entry, not at read's
-			// exempt one, so a cleanup that catches this throw cannot
-			// report a handback that never ran (cleanupEvidence).
+			// The read is refused and recorded by readWithin itself;
+			// whether that refusal is the cleanup's failure is not this
+			// line's to decide. The dispatch boundary decides it, and it
+			// does: the error surfaces at wait_until's own entry, not at
+			// read's exempt one, so a cleanup that catches this throw
+			// cannot report a handback that never ran (cleanupEvidence).
 			// Attempted once (LIB-8).
 			return nil, err
 		}

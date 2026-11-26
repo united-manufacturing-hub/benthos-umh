@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/dop251/goja"
 )
@@ -450,6 +451,38 @@ func argPredicate(vm *goja.Runtime, v goja.Value) (func(any) bool, error) {
 // After the run has ended the machine is not touched again: the ending
 // functions abort the script by throwing errEnded, and a throw is catchable,
 // so the operations themselves refuse too (UAT-13).
+// readWithin is readOp bounded by the caller's own deadline rather than the
+// run's. It reports whether the read was cut off by that bound while the run
+// still had time, which is a wait running out rather than a machine fault --
+// and so is NOT recorded as one.
+func (e *Engine[UnifiedAddress]) readWithin(
+	rs *runState, raw map[string]any, bound time.Time,
+) (value any, cutOff bool, err error) { //nolint:nonamedreturns // three results, and the middle one is the question
+	if rs.end != endNone {
+		return nil, false, errEnded
+	}
+	addr, err := e.bind.ParseAddress(raw)
+	if err != nil {
+		rs.fail("parse address", err)
+		return nil, false, err
+	}
+	ctx, cancel := context.WithDeadline(rs.ctx, bound)
+	defer cancel()
+	resp, err := e.bind.Read(ctx, addr)
+	if err != nil {
+		// The wait's own bound expired and the run's did not: the machine
+		// did not answer in the time the wait had, which is exactly what a
+		// wait running out means. Recording it as a binding fault would
+		// make the run persistent for a machine that was merely slow.
+		if ctx.Err() != nil && rs.ctx.Err() == nil {
+			return nil, true, err
+		}
+		rs.fail("read "+e.bind.Describe(addr), err)
+		return nil, false, err
+	}
+	return resp.Value, false, nil
+}
+
 func (e *Engine[UnifiedAddress]) readOp(rs *runState, raw map[string]any) (any, error) {
 	if rs.end != endNone {
 		return nil, errEnded
