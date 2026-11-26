@@ -373,7 +373,7 @@ The deprecated fields still work, and a config that only sets them behaves exact
 - **Delivery**: a message is delivered when the script ended `success` — the machine received the write request and acted on it, by the procedure you wrote. A delivered message is acknowledged, and the object the script returned is the result. After a failure the output never retries by itself: it hands the message back classed transient or persistent, and the flow around it decides (see [the endings](#the-four-endings-and-what-each-one-makes-the-flow-do)).
 - **State**: the output keeps no state about a message. A message that arrives twice runs the script again from the top, and nothing recognises the repeat — the readiness check at the top of your script is what makes a repeat safe. What the output does keep — the connection and its settings — lives as long as the output does.
 - **Time**: the three deadlines bound the script, `onSuccess` and `onError`. `wait_until` waits at most its own timeout and never past the script’s deadline. No deadline is ever taken from the message.
-- **Errors**: transient (machine unreachable, not ready, a wait that ran out) means safe to try again; persistent (wrong data, a refused write, the deadline, a cleanup that did not finish) means park it. The deprecated read-back path fails without a class — retrying it is the flow’s decision too.
+- **Errors**: transient (machine unreachable, not ready, a wait that ran out) means safe to try again; persistent (wrong data, a refused write, the deadline, a cleanup that did not finish) means park it. The deprecated read-back path fails without a class — retrying it is the flow’s decision too. A lost connection is reported as “not connected”, and what happens next is `autoReconnect`: with it on (the default), the client rebuilds the session underneath and the next message is written with nothing logged; with it off, the output stays down and is visible as down.
 - **Limits**: one message is in flight per output; two handshakes on one machine need two outputs. Every read, write and call is one round trip — there is no batching. Nothing holds two of the script’s reads to one scan cycle, so a guard that reads two flags sees them from two scans, and the PLC can change the machine between them. Writing an array is not supported; reading an array node returns an array.
 
 ***
@@ -441,14 +441,3 @@ For many industrial use cases, you might need more than just writing a value and
    * _Shipped_: The [programmable handshake](#the-programmable-handshake) is exactly this — request flags, ack nodes, waits on the machine’s own confirmation, all as reads, writes and `wait_until` in the script.
 
 With Benthos, the “at least once” acknowledgment ensures that if writing fails, the message can be retried or routed. The fixed read-back handshake remains a safe start for a single setpoint; once the machine has a procedure of its own, write it down as a script and let the output follow it.
-
-
-***
-
-## Delivery guarantees
-
-- **Delivery**: a message is delivered when the write was sent and, with the read-back enabled, the node read back as the value that was written. A failed write is retried inside the output up to `maxWriteAttempts`, with `timeBetweenRetriesMs` between attempts; only after the last one does the message go back to the flow.
-- **State**: the output keeps no state about a message. A message that arrives twice is written twice. What it does keep — the connection and its settings — lives as long as the output does.
-- **Time**: `readbackTimeoutMs` bounds the read-back, `timeBetweenRetriesMs` the pause between write attempts. No deadline is ever taken from the message.
-- **Errors**: the message the output finally hands back carries no error class, so whether to retry again or dead-letter it is the flow's decision. A lost connection surfaces as the transport error the operation hit, such as `EOF` or `write: broken pipe`. With `autoReconnect` on, the client rebuilds the session underneath and writing continues with nothing logged. With it off, which is the default, every later write fails until the output is restarted.
-- **Limits**: one message is in flight per output; two machines need two outputs. Every write and read-back is its own round trip — there is no batching. Writing an array is not supported.
