@@ -492,8 +492,14 @@ func TestRun_RefusesOperationsAfterTheScriptEnded(t *testing.T) {
 			} catch (e) {
 				// The ending threw; a buggy script carries on.
 			}
-			opcua.write({nodeId: "Extra"}, 7);
+			// The read comes first, deliberately: after the write's guard
+			// refuses and throws, nothing later in the block runs, so a
+			// read placed after it is asserted vacuously — the round-3
+			// review deleted the read's guard and every package stayed
+			// green, because the write's throw had already aborted the run.
+			// With the read first, its own guard is what the count pins.
 			opcua.read({nodeId: "Ready"});
+			opcua.write({nodeId: "Extra"}, 7);
 			return opcua.error_transient("unreachable in practice");
 		`
 	})

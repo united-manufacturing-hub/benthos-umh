@@ -10,6 +10,12 @@ import (
 // the block's deadline, so the deadline never fires mid-transaction: LIB-6
 // makes that persistent and leaves the machine blocked. A wait that runs out
 // ends transient (LIB-18), unless the call passed { onTimeout: "persistent" }.
+// Inside a cleanup block the ending functions are withheld, because a
+// cleanup has no transaction to end; a wait that fails — ran out of time,
+// was refused its read, or could not parse its address — is recorded at
+// the dispatch boundary instead (cleanupEvidence), as the cleanup's own
+// failure: the state the block waited for never came, so the machine was
+// not handed back (LIB-4), caught or not — and the block carries on.
 func (e *Engine[UnifiedAddress]) waitUntil(
 	rs *runState, raw map[string]any, pred func(any) bool,
 	timeoutMs float64, opts map[string]any,
@@ -60,18 +66,40 @@ func (e *Engine[UnifiedAddress]) waitUntil(
 	for {
 		value, err := e.readOp(rs, raw)
 		if err != nil {
-			return nil, err // recorded, and attempted once (LIB-8)
+			// The read is refused and recorded by readOp itself; whether
+			// that refusal is the cleanup's failure is not this line's to
+			// decide. The dispatch boundary decides it, and it does: the
+			// error surfaces at wait_until's own entry, not at read's
+			// exempt one, so a cleanup that catches this throw cannot
+			// report a handback that never ran (cleanupEvidence).
+			// Attempted once (LIB-8).
+			return nil, err
 		}
 		if pred(value) {
 			return value, nil
 		}
 		elapsed := time.Since(start)
 		if elapsed >= timeout {
+			err := fmt.Errorf("wait_until timed out after %v on %s",
+				elapsed.Round(time.Millisecond), describe)
+			if rs.cleanup {
+				// A cleanup has no ending to record — that is why the
+				// ending functions are withheld from it — and setting
+				// rs.end here would refuse every operation after the
+				// throw as errEnded before the block could hand the
+				// machine back: the outcome was decided before the
+				// cleanup ran, and the handback is its job. The dispatch
+				// boundary records the timeout as the cleanup's failure
+				// instead (cleanupEvidence), and the block carries on —
+				// a wait-for-idle followed by a reset has the reset as its
+				// point — while the recorded failure still makes the run
+				// persistent, so a human looks at the machine.
+				return nil, err
+			}
 			if rs.finish(endWaitTimeout, describe) {
 				rs.waitPersistent = persistent
 			}
-			return nil, fmt.Errorf("wait_until timed out after %v on %s",
-				elapsed.Round(time.Millisecond), describe)
+			return nil, err
 		}
 		next := poll
 		if left := timeout - elapsed; left < next {
