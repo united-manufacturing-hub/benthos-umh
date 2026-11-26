@@ -763,11 +763,47 @@ func TestLiteralWaitScanner_CountsOnlyRealCalls(t *testing.T) {
 		{
 			// A false pass, and the worst of the three: the literal
 			// overflowed int64, the running total went NEGATIVE, and the
-			// real wait beside it was masked. MaxInterval refuses the huge
-			// one for real when the line is reached.
-			name:   "a literal too large to be a wait does not wrap the total",
+			// real wait beside it was masked. It saturates now rather than
+			// being counted as nothing, because a wait nobody can have meant
+			// should refuse the deploy rather than be quietly ignored -- and
+			// because the runtime check it was once left to is itself a
+			// conversion this number overflows.
+			name:   "a literal too large to be a wait saturates the total",
 			script: `opcua.wait_until(a, b, 5000); opcua.wait_until(c, d, 99999999999999999999);`,
-			want:   5 * time.Second,
+			want:   maxLiteralWait,
+		},
+		{
+			// The round-4 guard stopped the digit accumulator wrapping but
+			// not the millisecond-to-nanosecond multiply underneath the sum,
+			// so a 13-digit literal -- one shorter than the case above, and
+			// one that FITS int64 milliseconds -- still turned the total
+			// negative and carried a real five-second wait past a
+			// one-second budget.
+			name:   "a literal that fits int64 milliseconds still cannot wrap the total",
+			script: `opcua.wait_until(a, b, 5000); opcua.wait_until(c, d, 9223372036855);`,
+			want:   maxLiteralWait,
+		},
+		{
+			// Both are plain numbers, which is the scanner's own test for
+			// "not computed", and both were read as computed and counted as
+			// nothing: a real one-second wait passing a 999ms budget unseen.
+			name:   "a hex literal is a plain number",
+			script: `opcua.wait_until(a, b, 0x3E8);`,
+			want:   time.Second,
+		},
+		{
+			name:   "a numeric separator does not hide the number",
+			script: `opcua.wait_until(a, b, 1_000);`,
+			want:   time.Second,
+		},
+		{
+			// goja compiles this, so the script deployed; the scanner read
+			// the byte before the name, which for a multi-byte rune is a
+			// continuation byte that matched no identifier character, and
+			// refused the deploy over a call to somebody else's function.
+			name:   "a call to a Unicode-named function is not a wait",
+			script: "\u00e9wait_until(a, b, 4000);",
+			want:   0,
 		},
 		{
 			name:   "an ordinary call still counts",

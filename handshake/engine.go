@@ -22,6 +22,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // ending is how a script said its run ended.
@@ -89,14 +91,23 @@ func (rs *runState) fail(where string, err error) {
 	//
 	// Bounded, because a script can fail as often as it likes and this is
 	// only ever searched for a match.
-	if len(rs.faults) < maxRecordedFaults {
-		rs.faults = append(rs.faults, recordedFault{where: where, err: err})
+	// The newest, not the oldest. The fault the run's error actually IS is
+	// the last one recorded, so a cap that kept the first 32 dropped the
+	// very fault this slice exists to find: with 31 caught faults the
+	// stopper was recorded and the run was Transient naming the node, with
+	// 32 it was dropped and the same machine fault became Persistent with a
+	// raw goja dump for an error. The class a flow branches on must not
+	// depend on how many times the script recovered first.
+	if len(rs.faults) == maxRecordedFaults {
+		copy(rs.faults, rs.faults[1:])
+		rs.faults = rs.faults[:maxRecordedFaults-1]
 	}
+	rs.faults = append(rs.faults, recordedFault{where: where, err: err})
 }
 
-// maxRecordedFaults bounds what one run keeps. A run that fails more than
-// this many times has told us what we need; the cap exists so a looping
-// script cannot grow the slice without limit.
+// maxRecordedFaults bounds what one run keeps: the most recent this many.
+// A run that fails more often than this has told us what we need, and the
+// cap exists so a looping script cannot grow the slice without limit.
 const maxRecordedFaults = 32
 
 // recordedFault is one failed operation, kept so classify can match the
@@ -236,6 +247,10 @@ type Config struct {
 // it is a mistake -- and the engine refuses it rather than letting a message
 // sit on a machine while a bridge looks healthy.
 const MaxInterval = time.Hour
+
+// maxIntervalMillis is MaxInterval in milliseconds, for checks that have to
+// compare before converting to a Duration.
+const maxIntervalMillis = float64(MaxInterval / time.Millisecond)
 
 // Validate reports whether the configuration can run. It compiles all three blocks, so
 // a script that does not parse is caught at deploy time rather than against a machine.
@@ -446,10 +461,34 @@ func literalWaitTotal(source string) time.Duration {
 		if !ok {
 			continue
 		}
-		total += time.Duration(ms) * time.Millisecond
+		// Saturate, never wrap. literalMillis refuses a literal too big for
+		// int64 MILLISECONDS, but the sum is a time.Duration -- int64
+		// NANOSECONDS -- so a literal that merely fits overflows here:
+		// 9223372036855 made the total negative, the budget check passed,
+		// and a five-second wait was deployed under a one-second budget with
+		// no complaint. A wait this large is over every budget, which is the
+		// answer the check wants, so saturating gives it that answer.
+		if ms > maxLiteralMillis {
+			return maxLiteralWait
+		}
+		d := time.Duration(ms) * time.Millisecond
+		if total > maxLiteralWait-d {
+			return maxLiteralWait
+		}
+		total += d
 	}
 	return total
 }
+
+const (
+	// maxLiteralWait is what the scanner reports for a literal, or a sum,
+	// that it cannot hold. It is larger than any budget, so it always loses
+	// the comparison it exists for.
+	maxLiteralWait = time.Duration(math.MaxInt64)
+	// maxLiteralMillis is the largest millisecond literal that converts to a
+	// Duration without overflowing.
+	maxLiteralMillis = int64(maxLiteralWait / time.Millisecond)
+)
 
 // stripComments removes // and /* */ comments, leaving strings intact,
 // so the literal-wait scanner does not count a wait that is commented out.
@@ -507,7 +546,7 @@ func waitCalls(script string) [][]string {
 		open := name + len(call)
 		// The name has to stand alone: mywait_until is somebody else's
 		// function and counting it refused a deploy that had no waits.
-		if name > 0 && isIdentRune(rune(script[name-1])) {
+		if name > 0 && isIdentRune(lastRune(script[:name])) {
 			i = open
 			continue
 		}
@@ -533,8 +572,22 @@ func waitCalls(script string) [][]string {
 // isIdentRune reports whether r can be part of a JavaScript identifier, so
 // the scanner can tell a call to wait_until from the tail of another name.
 func isIdentRune(r rune) bool {
-	return r == '_' || r == '$' ||
-		(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+	// unicode.IsLetter and not an ASCII range: goja compiles identifiers
+	// like ewait_until with an accent, so a call to a user's own function
+	// was counted as a wait_until and refused a deploy that had no waits in
+	// it at all. Reading the rune rather than the byte before the name is
+	// the other half -- a continuation byte matched nothing.
+	return r == '_' || r == '$' || unicode.IsLetter(r) || unicode.IsDigit(r)
+}
+
+// lastRune is the final rune of s, or -1 when s is empty. utf8 decoding and
+// not s[len(s)-1], which for a multi-byte rune is a continuation byte.
+func lastRune(s string) rune {
+	if s == "" {
+		return -1
+	}
+	r, _ := utf8.DecodeLastRuneInString(s)
+	return r
 }
 
 // splitCall takes the index of a '(' and splits the call's arguments on the
@@ -597,23 +650,41 @@ func skipString(s string, i int) int {
 // literalMillis reads a plain integer literal; anything else is computed and
 // beyond the check.
 func literalMillis(arg string) (int64, bool) {
+	// Numeric separators are part of the literal, not of the number, and a
+	// 1_000 the scanner could not read was counted as nothing -- a real
+	// one-second wait passing a 999ms budget unseen.
+	arg = strings.ReplaceAll(arg, "_", "")
 	if arg == "" {
 		return 0, false
 	}
+	// Hex is a plain number too, and 0x3E8 slipped through the same gap.
+	base, digits := int64(10), arg
+	if len(arg) > 2 && arg[0] == '0' && (arg[1] == 'x' || arg[1] == 'X') {
+		base, digits = 16, arg[2:]
+	}
 	var n int64
-	for _, r := range arg {
-		if r < '0' || r > '9' {
-			return 0, false
+	for _, r := range digits {
+		d := int64(-1)
+		switch {
+		case r >= '0' && r <= '9':
+			d = int64(r - '0')
+		case base == 16 && r >= 'a' && r <= 'f':
+			d = int64(r-'a') + 10
+		case base == 16 && r >= 'A' && r <= 'F':
+			d = int64(r-'A') + 10
 		}
-		// Stop before the multiply can wrap. A literal this large is not a
-		// wait anyone meant, and letting it wrap made the running total
-		// NEGATIVE, which masked every real wait beside it -- the scanner
-		// then accepted a five-second wait under a one-second budget.
-		// MaxInterval refuses it for real when the line is reached.
-		if n > (math.MaxInt64-int64(r-'0'))/10 {
-			return 0, false
+		if d < 0 {
+			return 0, false // not a plain number: computed, a person's to check
 		}
-		n = n*10 + int64(r-'0')
+		// Saturate rather than wrap, and saturate rather than give up: a
+		// literal too large for int64 is not a wait anyone meant, so the
+		// scanner must refuse the deploy over it instead of counting it as
+		// nothing. Letting the multiply wrap made the running total
+		// NEGATIVE, which masked every real wait beside it.
+		if n > (math.MaxInt64-d)/base {
+			return math.MaxInt64, true
+		}
+		n = n*base + d
 	}
 	return n, true
 }
