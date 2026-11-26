@@ -35,8 +35,8 @@ type rec struct {
 	Seq   int
 	Op    string // read | write
 	Addr  string
-	Value any    // what a read returned, or what a write sent
-	Err   error  // how the machine refused, if it did
+	Value any   // what a read returned, or what a write sent
+	Err   error // how the machine refused, if it did
 	At    time.Duration
 	Took  time.Duration
 }
@@ -568,12 +568,12 @@ func TestUAT07_CommitWriteFailsUnmarked(t *testing.T) {
 // UAT-8 A failure the script catches and recovers from, then succeeds. An
 // optional read fails; the script catches it, writes, and calls success.
 //
-// NEEDS-RULING: the spec's LIB-5 says the outcome follows the fault, and
-// LIB-10 says a script that returns success is Delivered. As written the
-// code answers Persistent for a caught ErrPersistent fault and Delivered
-// for a caught unmarked one — the same script shape, two answers. This
-// scenario asserts the recommendation (the ending decides; Delivered) and
-// stays red until the ruling. See UAT.md.
+// RULED 2026-11-26 (Jeremy): the script's explicit ending wins, and a fault
+// the script caught stays caught. "If you catch it, you own it" — a
+// try/catch around an operation is the script telling the engine the
+// failure was expected, so the engine stops second-guessing it. A script
+// that swallows a fault it should not is a script bug, and belongs to
+// SCR-1's human review rather than to the engine.
 func TestUAT08_ScriptCatchesAFailureAndSucceeds(t *testing.T) {
 	t.Run("persistent-marked fault, caught and recovered from", func(t *testing.T) {
 		m := newMachine(map[string]any{"ns=2;s=Ready": true})
@@ -590,9 +590,10 @@ func TestUAT08_ScriptCatchesAFailureAndSucceeds(t *testing.T) {
 		return opcua.success({ optional: optional });
 	`)
 		res, _ := runScenario(t, cfg, m, map[string]any{"payload": map[string]any{"value": 42}})
-		// RECOMMENDATION under ruling: the machine got the data; the run
-		// ended in success and should be Delivered (LIB-10, LIB-3).
 		expectOutcome(t, res, Delivered)
+		if res.Err != nil {
+			t.Errorf("a delivered run carries no Err, got %v", res.Err)
+		}
 	})
 	t.Run("unmarked fault, caught and recovered from", func(t *testing.T) {
 		m := newMachine(map[string]any{"ns=2;s=Ready": true})
@@ -609,39 +610,79 @@ func TestUAT08_ScriptCatchesAFailureAndSucceeds(t *testing.T) {
 		res, _ := runScenario(t, cfg, m, map[string]any{"payload": map[string]any{"value": 42}})
 		expectOutcome(t, res, Delivered)
 	})
-	// The reason the ruling above matters, pinned as measured: only the
-	// FIRST fault is recorded, so the same script — two caught faults, then
-	// a delivery — reports differently depending which fault came first.
-	// Do not fix before the ruling; these assert what the code does today.
-	t.Run("NEEDS-RULING transient then persistent, both caught, delivers", func(t *testing.T) {
-		m := newMachine(map[string]any{"ns=2;s=Ready": true})
-		m.plan("ns=2;s=First", &reaction{err: errors.New("machine unreachable")})
-		m.plan("ns=2;s=Second", &reaction{err: fmt.Errorf("BadTypeMismatch: %w", ErrPersistent)})
-		cfg := uatConfig(`
-		try { opcua.read({ nodeId: "ns=2;s/First" }); } catch (e) { }
-		try { opcua.read({ nodeId: "ns=2;s/Second" }); } catch (e) { }
-		opcua.write({ nodeId: "ns=2;s/Setpoint" }, 4200);
-		return opcua.success({});
-		`)
-		res, _ := runScenario(t, cfg, m, map[string]any{})
-		expectOutcome(t, res, Delivered) // measured: the unmarked first fault is the only one recorded
+	// Under the ruling the answer no longer depends on which caught fault
+	// came first, which is what the engine answered before it. Both orders
+	// are asserted, because an order-dependent answer is the defect these
+	// two tests exist to keep out.
+	t.Run("transient then persistent, both caught, delivers", func(t *testing.T) {
+		res := twoCaughtFaults(t,
+			fmt.Errorf("machine unreachable"),
+			fmt.Errorf("BadTypeMismatch: %w", ErrPersistent))
+		expectOutcome(t, res, Delivered)
 		if res.Err != nil {
 			t.Errorf("a delivered run carries no Err, got %v", res.Err)
 		}
 	})
-	t.Run("NEEDS-RULING persistent then transient, both caught, is persistent", func(t *testing.T) {
-		m := newMachine(map[string]any{"ns=2;s=Ready": true})
-		m.plan("ns=2;s/First", &reaction{err: fmt.Errorf("BadTypeMismatch: %w", ErrPersistent)})
-		m.plan("ns=2;s/Second", &reaction{err: errors.New("machine unreachable")})
-		cfg := uatConfig(`
-		try { opcua.read({ nodeId: "ns=2;s/First" }); } catch (e) { }
-		try { opcua.read({ nodeId: "ns=2;s/Second" }); } catch (e) { }
-		opcua.write({ nodeId: "ns=2;s/Setpoint" }, 4200);
+	t.Run("persistent then transient, both caught, delivers", func(t *testing.T) {
+		res := twoCaughtFaults(t,
+			fmt.Errorf("BadTypeMismatch: %w", ErrPersistent),
+			fmt.Errorf("machine unreachable"))
+		expectOutcome(t, res, Delivered)
+		if res.Err != nil {
+			t.Errorf("a delivered run carries no Err, got %v", res.Err)
+		}
+	})
+}
+
+// twoCaughtFaults runs one script shape — two reads that fail and are
+// caught, then a write and success — with the two faults in the order
+// given. Both node ids appear in the plan exactly as the script spells
+// them; an earlier version of this test planned "ns=2;s=First" against a
+// script reading "ns=2;s/First", so no reaction ever fired and the
+// subtest passed with no fault in it at all.
+func twoCaughtFaults(t *testing.T, first, second error) Result {
+	t.Helper()
+	m := newMachine(map[string]any{"ns=2;s=Ready": true})
+	m.plan("ns=2;s=First", &reaction{err: first})
+	m.plan("ns=2;s=Second", &reaction{err: second})
+	cfg := uatConfig(`
+		try { opcua.read({ nodeId: "ns=2;s=First" }); } catch (e) { }
+		try { opcua.read({ nodeId: "ns=2;s=Second" }); } catch (e) { }
+		opcua.write({ nodeId: "ns=2;s=Setpoint" }, 4200);
 		return opcua.success({});
 		`)
-		res, _ := runScenario(t, cfg, m, map[string]any{})
-		expectOutcome(t, res, Persistent) // measured: the marked first fault decides
-	})
+	res, _ := runScenario(t, cfg, m, map[string]any{})
+	if n := m.count("read", "ns=2;s=First"); n != 1 {
+		t.Fatalf("the first faulted read ran %d times, want once -- the plan did not fire:\n%s", n, m.log())
+	}
+	if n := m.count("read", "ns=2;s=Second"); n != 1 {
+		t.Fatalf("the second faulted read ran %d times, want once -- the plan did not fire:\n%s", n, m.log())
+	}
+	return res
+}
+
+// UAT-8b A fault the script does NOT catch decides the outcome, and it is
+// the fault that stopped the script -- not an earlier one it caught and
+// carried on from. Before the 2026-11-26 ruling only the first fault was
+// recorded, so a caught "machine unreachable" masked the persistent
+// refusal that actually ended the run and the message was retried forever.
+func TestUAT08b_AnUncaughtFaultDecides_NotAnEarlierCaughtOne(t *testing.T) {
+	m := newMachine(map[string]any{"ns=2;s=Ready": true})
+	m.plan("ns=2;s=First", &reaction{err: errors.New("machine unreachable")})
+	m.plan("ns=2;s=Second", &reaction{err: fmt.Errorf("BadTypeMismatch: %w", ErrPersistent)})
+	cfg := uatConfig(`
+		try { opcua.read({ nodeId: "ns=2;s=First" }); } catch (e) { }
+		opcua.read({ nodeId: "ns=2;s=Second" });
+		return opcua.success({});
+		`)
+	res, _ := runScenario(t, cfg, m, map[string]any{})
+	if n := m.count("read", "ns=2;s=First"); n != 1 {
+		t.Fatalf("the caught read ran %d times, want once -- the plan did not fire:\n%s", n, m.log())
+	}
+	expectOutcome(t, res, Persistent)
+	if !errors.Is(res.Err, ErrPersistent) {
+		t.Errorf("the uncaught persistent refusal should be the reported fault, got %v", res.Err)
+	}
 }
 
 // UAT-9 onError itself fails: Persistent, with CleanupErr naming onError.
@@ -915,7 +956,7 @@ func TestUAT18_MachineAcceptsWriteThenReportsOldValue(t *testing.T) {
 	// The write sticks in the machine's own state, but the first read-back
 	// answers with the stale value, as a PLC mid-scan-cycle does.
 	m.plan("ns=2;s=Setpoint",
-		nil,                       // the write: accepted
+		nil,                        // the write: accepted
 		&reaction{value: int64(0)}, // the read-back: stale
 	)
 	cfg := uatConfig(happyHandshake)
