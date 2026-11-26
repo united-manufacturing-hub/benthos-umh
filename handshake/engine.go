@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -472,6 +473,15 @@ func stripComments(script string) string {
 			}
 			i += end + 2
 		case script[i] == '"' || script[i] == '\'' || script[i] == '`':
+			// String contents are LIVE TEXT to this scanner, deliberately.
+			// Scanning them counts a wait inside a string literal, which
+			// can refuse a deploy for a script that has no waits -- but
+			// NOT scanning them would miss a real wait hidden by a regex
+			// literal that desyncs the quote tracking, and for a check
+			// whose job is to catch a wait that cannot fit, a false refusal
+			// is the safer error than a miss. Pinned by
+			// TestLiteralWaitScanner_AnEscapedQuoteDoesNotEndAString and
+			// its neighbor. Open on ENG-8129 if that trade is wrong.
 			end := skipString(script, i)
 			b.WriteString(script[i : end+1])
 			i = end + 1
@@ -486,14 +496,31 @@ func stripComments(script string) string {
 // waitCalls finds every wait_until( in a script and returns its arguments,
 // split on the commas that sit outside brackets and strings.
 func waitCalls(script string) [][]string {
-	const call = "wait_until("
+	const call = "wait_until"
 	var calls [][]string
 	for i := 0; ; {
 		at := strings.Index(script[i:], call)
 		if at < 0 {
 			return calls
 		}
-		open := i + at + len(call) - 1 // the '(' of the call
+		name := i + at
+		open := name + len(call)
+		// The name has to stand alone: mywait_until is somebody else's
+		// function and counting it refused a deploy that had no waits.
+		if name > 0 && isIdentRune(rune(script[name-1])) {
+			i = open
+			continue
+		}
+		// JavaScript allows space before the parenthesis, and missing those
+		// let a real wait through the friendly error entirely.
+		for open < len(script) && (script[open] == ' ' || script[open] == '\t' ||
+			script[open] == '\n' || script[open] == '\r') {
+			open++
+		}
+		if open >= len(script) || script[open] != '(' {
+			i = name + len(call)
+			continue
+		}
 		if end, args, ok := splitCall(script, open); ok {
 			calls = append(calls, args)
 			i = end
@@ -501,6 +528,13 @@ func waitCalls(script string) [][]string {
 			i = open + 1
 		}
 	}
+}
+
+// isIdentRune reports whether r can be part of a JavaScript identifier, so
+// the scanner can tell a call to wait_until from the tail of another name.
+func isIdentRune(r rune) bool {
+	return r == '_' || r == '$' ||
+		(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }
 
 // splitCall takes the index of a '(' and splits the call's arguments on the
@@ -569,6 +603,14 @@ func literalMillis(arg string) (int64, bool) {
 	var n int64
 	for _, r := range arg {
 		if r < '0' || r > '9' {
+			return 0, false
+		}
+		// Stop before the multiply can wrap. A literal this large is not a
+		// wait anyone meant, and letting it wrap made the running total
+		// NEGATIVE, which masked every real wait beside it -- the scanner
+		// then accepted a five-second wait under a one-second budget.
+		// MaxInterval refuses it for real when the line is reached.
+		if n > (math.MaxInt64-int64(r-'0'))/10 {
 			return 0, false
 		}
 		n = n*10 + int64(r-'0')
