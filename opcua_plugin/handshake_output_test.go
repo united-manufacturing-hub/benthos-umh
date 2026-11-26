@@ -23,6 +23,7 @@ import (
 
 	"github.com/gopcua/opcua/ua"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/handshake"
 )
 
@@ -32,7 +33,7 @@ import (
 
 // newHandshakeOutput builds an output whose engine runs against one fake
 // machine, the way newOPCUAOutput builds it against a connection.
-func newHandshakeOutput(t *testing.T, fake *fakeMachine, script, onSuccess, onError string) *OPCUAOutput {
+func newHandshakeOutput(t *testing.T, fake *fakeMachine, script string, onSuccess string, onError string) *OPCUAOutput {
 	t.Helper()
 	engine, err := handshake.New(handshake.Config{
 		Script:              script,
@@ -55,7 +56,7 @@ func newHandshakeOutput(t *testing.T, fake *fakeMachine, script, onSuccess, onEr
 // okMachine answers reads of Ready with true and accepts every write.
 func okMachine() *fakeMachine {
 	return &fakeMachine{
-		readFn: func(_ context.Context, req *ua.ReadRequest) (*ua.ReadResponse, error) {
+		readFn: func(_ context.Context, _ *ua.ReadRequest) (*ua.ReadResponse, error) {
 			return &ua.ReadResponse{Results: []*ua.DataValue{
 				{Status: ua.StatusOK, Value: mustVariant(ua.NewVariant(true))},
 			}}, nil

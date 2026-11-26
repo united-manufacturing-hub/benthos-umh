@@ -25,6 +25,7 @@ import (
 
 	"github.com/gopcua/opcua/ua"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
 	"github.com/united-manufacturing-hub/benthos-umh/handshake"
 )
 
@@ -306,13 +307,13 @@ func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (*OPCUAO
 		// The programmable handshake. Everything that cannot run is refused
 		// here, at config time: the engine compiles all three blocks and
 		// checks the literal waits against the deadline (LIB-9, LIB-14).
-		cfg, err := parseProgrammableHandshake(handshakeConf)
-		if err != nil {
-			return nil, err
+		cfg, cfgErr := parseProgrammableHandshake(handshakeConf)
+		if cfgErr != nil {
+			return nil, cfgErr
 		}
-		engine, err := handshake.New(cfg, NewBinding(conn))
-		if err != nil {
-			return nil, fmt.Errorf("the handshake block cannot run: %w", err)
+		engine, engineErr := handshake.New(cfg, NewBinding(conn))
+		if engineErr != nil {
+			return nil, fmt.Errorf("the handshake block cannot run: %w", engineErr)
 		}
 		output.handshakeEngine = engine
 		return output, nil
@@ -652,7 +653,7 @@ func (o *OPCUAOutput) runHandshake(ctx context.Context, content any) error {
 	default: // handshake.Persistent
 		err := fmt.Errorf("handshake ended persistent: %w", result.Err)
 		if result.CleanupErr != nil {
-			err = fmt.Errorf("%w; onError did not finish, so the machine's state is unknown: %v", err, result.CleanupErr)
+			err = fmt.Errorf("%w; onError did not finish, so the machine's state is unknown: %w", err, result.CleanupErr)
 		}
 		return err
 	}

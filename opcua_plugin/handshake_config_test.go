@@ -241,7 +241,7 @@ func TestHandshakeConfig_EveryOldFieldConflictsWithEveryNewOne(t *testing.T) {
 	oldFields := []string{"enabled", "readbackTimeoutMs", "maxWriteAttempts", "timeBetweenRetriesMs"}
 	newFields := []string{"script", "onSuccess", "onError", "maxScriptRuntimeMs", "maxOnSuccessRuntimeMs", "maxOnErrorRuntimeMs"}
 	for _, old := range oldFields {
-		for _, new := range newFields {
+		for _, field := range newFields {
 			yamlConfig := `
 endpoint: "opc.tcp://localhost:4840"
 nodeMappings:
@@ -250,15 +250,15 @@ nodeMappings:
     dataType: "Int32"
 handshake:
   ` + old + `: ` + values[old] + `
-  ` + new + `: ` + values[new] + `
+  ` + field + `: ` + values[field] + `
 `
 			_, err := parseOutputForTest(t, yamlConfig)
 			if err == nil {
-				t.Errorf("handshake.%s with handshake.%s must be refused", old, new)
+				t.Errorf("handshake.%s with handshake.%s must be refused", old, field)
 				continue
 			}
-			if !strings.Contains(err.Error(), old) || !strings.Contains(err.Error(), new) {
-				t.Errorf("the error must name both %q and %q: %v", old, new, err)
+			if !strings.Contains(err.Error(), old) || !strings.Contains(err.Error(), field) {
+				t.Errorf("the error must name both %q and %q: %v", old, field, err)
 			}
 		}
 	}

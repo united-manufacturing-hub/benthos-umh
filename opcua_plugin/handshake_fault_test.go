@@ -194,7 +194,9 @@ func startFaultServer(t *testing.T, nodes map[string]any) *faultopcua.Server {
 	if err := srv.Start(context.Background()); err != nil {
 		t.Fatalf("start fault server: %v", err)
 	}
-	t.Cleanup(func() { _ = srv.Close() })
+	// NOT registered here. runFaultHandshake registers it after the
+	// connection's cleanup, because LIFO has to run the server's close
+	// first -- see the note there.
 	return srv
 }
 
@@ -215,7 +217,16 @@ func runFaultHandshake(t *testing.T, srv *faultopcua.Server, cfg handshake.Confi
 	if err := conn.connect(ctx); err != nil {
 		t.Fatalf("connect to the fault server at %s: %v", srv.Endpoint(), err)
 	}
+	// The server closes BEFORE the connection, and LIFO makes that the
+	// reverse of how these read. gopcua's server runs one service loop, so
+	// a fault still holding it also holds this connection's CloseSession,
+	// and the client then waits out its 10s default RequestTimeout. The
+	// server's own close releases the held handler, which is why it has to
+	// go first. Measured on the answers-too-late scenario: conn.Close alone
+	// took 2.32s with the order the other way round, against 3.8ms for the
+	// srv.Close that would have freed it.
 	t.Cleanup(func() { _ = conn.Close(context.Background()) })
+	t.Cleanup(func() { _ = srv.Close() })
 
 	engine, err := handshake.New(cfg, NewBinding(conn))
 	if err != nil {

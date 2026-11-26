@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/gopcua/opcua/ua"
+
 	"github.com/united-manufacturing-hub/benthos-umh/handshake"
 )
 
@@ -387,8 +388,6 @@ func TestConvert_ConvertsTheDocumentedTypes(t *testing.T) {
 		{"json.Number integer to Int32", "Int32", json.Number("42"), int32(42)},
 		{"json.Number float to Double", "Double", json.Number("42.5"), 42.5},
 		{"float64 2^53 to Int64", "Int64", 9007199254740992.0, int64(9007199254740992)},
-		{"float64 2^53+2 to Int64", "Int64", 9007199254740994.0, int64(9007199254740994)},
-		{"float64 MinInt64 boundary to Int64", "Int64", -9223372036854775808.0, int64(math.MinInt64)},
 		{"json.Number MaxInt64 to Int64", "Int64", json.Number("9223372036854775807"), int64(math.MaxInt64)},
 		{"json.Number MinInt64 to Int64", "Int64", json.Number("-9223372036854775808"), int64(math.MinInt64)},
 		{"float64 above MaxInt64 to UInt64", "UInt64", 1e19, uint64(10000000000000000000)},
@@ -406,6 +405,30 @@ func TestConvert_ConvertsTheDocumentedTypes(t *testing.T) {
 			}
 		})
 	}
+	// Two values that used to sit in the table above, asserting that they
+	// convert. They do not any more, and that is the ruling: above 2^53 a
+	// float64 cannot say which integer the message contained. Measured --
+	// MinInt64 and MinInt64+1 are the same float64, as are 2^53 and 2^53+1 --
+	// so converting either writes a number nobody asked for and reports
+	// success. A script that needs these carries them as a string.
+	inexact := []struct {
+		name     string
+		dataType string
+		value    any
+	}{
+		{"float64 2^53+2 to Int64", "Int64", 9007199254740994.0},
+		{"float64 MinInt64 boundary to Int64", "Int64", -9223372036854775808.0},
+	}
+	for _, tc := range inexact {
+		t.Run(tc.name+" is refused", func(t *testing.T) {
+			if _, err := convertValue(tc.dataType, tc.value); err == nil {
+				t.Error("converted a value whose digits JavaScript had already lost")
+			} else if !strings.Contains(err.Error(), "cannot be written exactly") {
+				t.Errorf("refused for the wrong reason: %v", err)
+			}
+		})
+	}
+
 	outOfRange := []struct {
 		name     string
 		dataType string
@@ -424,7 +447,7 @@ func TestConvert_ConvertsTheDocumentedTypes(t *testing.T) {
 		// Go, and a host that saturates writes the clamped value to the
 		// machine with a success. Measured on arm64: UInt64 1e19 wrote
 		// 9223372036854775807; amd64 lands on MinInt64 instead, so the
-		// plugin's behaviour differed by build architecture.
+		// plugin's behavior differed by build architecture.
 		{"float64 above the range to Int64", "Int64", 1e19},
 		{"float64 below the range to Int64", "Int64", -1e19},
 		{"float64 at 2^63 to Int64", "Int64", 9223372036854775808.0},
@@ -785,7 +808,7 @@ func (f *typedMethodFake) Browse(ctx context.Context, req *ua.BrowseRequest) (*u
 // methodReadArguments answers the read of the InputArguments property with
 // the fake's declared argument list.
 func methodReadArguments(declared []*ua.Argument) func(context.Context, *ua.ReadRequest) (*ua.ReadResponse, error) {
-	return func(_ context.Context, req *ua.ReadRequest) (*ua.ReadResponse, error) {
+	return func(_ context.Context, _ *ua.ReadRequest) (*ua.ReadResponse, error) {
 		eos := make([]*ua.ExtensionObject, len(declared))
 		for i, a := range declared {
 			eos[i] = ua.NewExtensionObject(a)
@@ -899,13 +922,13 @@ func TestCall_ConvertsInputsToTheTypesTheMethodDeclares(t *testing.T) {
 // Go-type mapping took the input. (Stated honestly: an actual array value
 // — a script passing [1,2,3] — is refused by the Go-type mapping today as
 // well; what the guard protects is that the array-declared input keeps that
-// mapping's behaviour, including the calls it accepts.)
+// mapping's behavior, including the calls it accepts.)
 //
 // The existing typedMethodFake already browses and answers the
 // InputArguments property, so no fake was extended and nothing was
 // constructed directly: the test drives Binding.Call end to end, the way a
 // script's opcua.call_method reaches the machine, because the protected
-// behaviour is what the machine receives.
+// behavior is what the machine receives.
 func TestCall_DeclaredArrayInputKeepsTheGoTypeMapping(t *testing.T) {
 	ctx := context.Background()
 	method := Address{NodeID: "ns=2;s=Start", ObjectID: "ns=2;s=Machine"}
