@@ -89,8 +89,28 @@ func (e *Engine[UnifiedAddress]) waitUntil(
 	}
 
 	start := time.Now()
+	// How long the machine actually takes to answer. The clamp leaves a
+	// fixed margin before the run's deadline, but a read is only discovered
+	// to be too late once it returns, so a read that starts inside the
+	// margin and takes longer than it runs past the deadline -- and the
+	// deadline turns the wait's own Transient timeout into a Persistent
+	// stop (LIB-6), which is the opposite of what the clamp exists for.
+	// Measured against a machine answering in 60ms with a 50ms margin:
+	// Persistent every run, and the run blocks for the whole budget instead
+	// of returning at the clamped timeout.
+	//
+	// So the margin is what this machine has shown us it needs, not a
+	// number chosen in advance. Before each read, if what is left before
+	// the deadline is less than the last read took, the wait has run out:
+	// starting that read could only produce a deadline stop.
+	var lastRead time.Duration
 	for {
+		if !rs.deadline.IsZero() && lastRead > 0 && time.Until(rs.deadline) <= lastRead {
+			return nil, e.waitRanOut(rs, describe, time.Since(start), persistent)
+		}
+		readStarted := time.Now()
 		value, err := e.readOp(rs, raw)
+		lastRead = time.Since(readStarted)
 		if err != nil {
 			// The read is refused and recorded by readOp itself; whether
 			// that refusal is the cleanup's failure is not this line's to
@@ -106,26 +126,7 @@ func (e *Engine[UnifiedAddress]) waitUntil(
 		}
 		elapsed := time.Since(start)
 		if elapsed >= timeout {
-			err := fmt.Errorf("wait_until timed out after %v on %s",
-				elapsed.Round(time.Millisecond), describe)
-			if rs.cleanup {
-				// A cleanup has no ending to record — that is why the
-				// ending functions are withheld from it — and setting
-				// rs.end here would refuse every operation after the
-				// throw as errEnded before the block could hand the
-				// machine back: the outcome was decided before the
-				// cleanup ran, and the handback is its job. The dispatch
-				// boundary records the timeout as the cleanup's failure
-				// instead (cleanupEvidence), and the block carries on —
-				// a wait-for-idle followed by a reset has the reset as its
-				// point — while the recorded failure still makes the run
-				// persistent, so a human looks at the machine.
-				return nil, err
-			}
-			if rs.finish(endWaitTimeout, describe) {
-				rs.waitPersistent = persistent
-			}
-			return nil, err
+			return nil, e.waitRanOut(rs, describe, elapsed, persistent)
 		}
 		next := poll
 		if left := timeout - elapsed; left < next {
@@ -164,4 +165,28 @@ func clampWait(remaining time.Duration) time.Duration {
 		return remaining / 2
 	}
 	return remaining - margin
+}
+
+// waitRanOut ends a wait that did not see what it was waiting for.
+//
+// A cleanup has no ending to record -- that is why the ending functions are
+// withheld from it -- and setting rs.end here would refuse every operation
+// after the throw as errEnded before the block could hand the machine back:
+// the outcome was decided before the cleanup ran, and the handback is its
+// job. The dispatch boundary records the timeout as the cleanup's failure
+// instead (cleanupEvidence), and the block carries on -- a wait-for-idle
+// followed by a reset has the reset as its point -- while the recorded
+// failure still makes the run persistent, so a human looks at the machine.
+func (e *Engine[UnifiedAddress]) waitRanOut(
+	rs *runState, describe string, elapsed time.Duration, persistent bool,
+) error {
+	err := fmt.Errorf("wait_until timed out after %v on %s",
+		elapsed.Round(time.Millisecond), describe)
+	if rs.cleanup {
+		return err
+	}
+	if rs.finish(endWaitTimeout, describe) {
+		rs.waitPersistent = persistent
+	}
+	return err
 }
