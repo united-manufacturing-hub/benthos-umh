@@ -73,18 +73,29 @@ func classify(ctx context.Context, rs *runState, runErr error) Result {
 			return failed(Persistent, what)
 		}
 		return failed(Transient, what)
-	case rs.opErr != nil && errors.Is(rs.opErr, ErrPersistent):
-		// LIB-5: the outcome follows the fault, not whether the script
-		// returned it or a call threw it. Reached only when the script
-		// never ended, so this fault is the one that stopped it.
-		return failed(Persistent, fmt.Errorf("%s failed: %w", rs.opWhere, rs.opErr))
-	case rs.opErr != nil:
-		// Unmarked: LIB-5 again, the other half of the rule. A ctx that ran
-		// out during the operation is handled above, with the deadline.
-		return failed(Transient, fmt.Errorf("%s failed: %w", rs.opWhere, rs.opErr))
 	case runErr != nil:
+		// Something stopped the script. Whether the fault we recorded is
+		// that something is the question, and errors.Is answers it: an
+		// operation that failed throws into JavaScript, so if the script
+		// did NOT catch it the same error comes back out as runErr, and if
+		// it DID catch it runErr is whatever stopped the script afterwards.
+		//
+		// Ranking the recorded fault above this was a hole in the 11-26
+		// ruling. A script that caught a flaky read and then hit a bug of
+		// its own reported the machine fault and was retried, so the same
+		// bug was persistent until an unrelated try/catch appeared near it,
+		// and the dead letter named a machine fault that stopped nothing.
+		if rs.opErr != nil && errors.Is(runErr, rs.opErr) {
+			// LIB-5: the outcome follows the fault, not whether the script
+			// returned it or a call threw it.
+			if errors.Is(rs.opErr, ErrPersistent) {
+				return failed(Persistent, fmt.Errorf("%s failed: %w", rs.opWhere, rs.opErr))
+			}
+			return failed(Transient, fmt.Errorf("%s failed: %w", rs.opWhere, rs.opErr))
+		}
 		// A script fault: an uncaught exception, or a call to a name the
-		// protocol does not offer.
+		// protocol does not offer. A fault the script caught does not
+		// explain this, and saying so would send someone to the network.
 		return failed(Persistent, runErr)
 	default:
 		return failed(Persistent, errors.New(
