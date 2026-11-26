@@ -16,11 +16,13 @@ package errclass
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 )
@@ -32,9 +34,11 @@ const (
 
 // Logger is the logger of one component instance. Warn and Error take an
 // error, not a message, and add its error_kind and error_owner to the line.
-// Debug and Info lines carry neither field.
+// Trace, Debug and Info lines carry neither field.
 //
-// Create it once, in the component's constructor, with NewLogger.
+// Create it once, in the component's constructor, with NewLogger. Every
+// method of a nil *Logger does nothing, so a component that logs before its
+// Logger is set loses the line instead of panicking.
 type Logger struct {
 	out *service.Logger
 	c   *Classifier
@@ -55,14 +59,21 @@ func NewLogger(mgr *service.Resources, c *Classifier) *Logger {
 //	...
 //	log.Error(err)
 //
+// An err that Classifier.EnrichForLog returned, also after further wrapping,
+// is logged without the "[error_kind=… error_owner=…]" text in front: the
+// line carries both as fields already.
+//
 // A nil err is a bug in the caller. Error then logs an unclassified line at
 // error level, with the caller's file and line in the message.
 func (l *Logger) Error(err error) {
+	if l == nil {
+		return
+	}
 	if err == nil {
 		l.nilError("Error")
 		return
 	}
-	l.tagged(l.c.Classify(err)).Error(err.Error())
+	l.tagged(l.c.Classify(err)).Error(message(err))
 }
 
 // Warn logs err at warn level, like Error. To warn without an error at hand,
@@ -72,11 +83,24 @@ func (l *Logger) Error(err error) {
 //
 // A nil err is handled as by Error, at error level.
 func (l *Logger) Warn(err error) {
+	if l == nil {
+		return
+	}
 	if err == nil {
 		l.nilError("Warn")
 		return
 	}
-	l.tagged(l.c.Classify(err)).Warn(err.Error())
+	l.tagged(l.c.Classify(err)).Warn(message(err))
+}
+
+// message returns the text of err without the text that EnrichForLog put in
+// front of it, where err is or wraps an error that EnrichForLog returned.
+func message(err error) string {
+	var ee *enrichedError
+	if !errors.As(err, &ee) {
+		return err.Error()
+	}
+	return strings.Replace(err.Error(), ee.prefix(), "", 1)
 }
 
 // nilError logs that method was called with a nil error. It must be called
@@ -98,20 +122,53 @@ func (l *Logger) tagged(kind *Kind) *service.Logger {
 //
 //	log.With("hint", hint).Error(err)
 func (l *Logger) With(keyValues ...any) *Logger {
+	if l == nil {
+		return nil
+	}
 	return &Logger{out: l.out.With(keyValues...), c: l.c}
 }
 
+// Trace logs msg at trace level.
+func (l *Logger) Trace(msg string) {
+	if l != nil {
+		l.out.Trace(msg)
+	}
+}
+
+// Tracef logs a formatted message at trace level.
+func (l *Logger) Tracef(format string, args ...any) {
+	if l != nil {
+		l.out.Tracef(format, args...)
+	}
+}
+
 // Debug logs msg at debug level.
-func (l *Logger) Debug(msg string) { l.out.Debug(msg) }
+func (l *Logger) Debug(msg string) {
+	if l != nil {
+		l.out.Debug(msg)
+	}
+}
 
 // Debugf logs a formatted message at debug level.
-func (l *Logger) Debugf(format string, args ...any) { l.out.Debugf(format, args...) }
+func (l *Logger) Debugf(format string, args ...any) {
+	if l != nil {
+		l.out.Debugf(format, args...)
+	}
+}
 
 // Info logs msg at info level.
-func (l *Logger) Info(msg string) { l.out.Info(msg) }
+func (l *Logger) Info(msg string) {
+	if l != nil {
+		l.out.Info(msg)
+	}
+}
 
 // Infof logs a formatted message at info level.
-func (l *Logger) Infof(format string, args ...any) { l.out.Infof(format, args...) }
+func (l *Logger) Infof(format string, args ...any) {
+	if l != nil {
+		l.out.Infof(format, args...)
+	}
+}
 
 // Slog returns l as a *slog.Logger, for a library that logs through log/slog.
 // The Classifier classifies the library's warning and error records by its
@@ -124,6 +181,9 @@ func (l *Logger) Infof(format string, args ...any) { l.out.Infof(format, args...
 // Benthos log fields are flat. So the key of a field in a slog group gets the
 // group names in front, joined by dots, e.g. "conn.addr".
 func (l *Logger) Slog() *slog.Logger {
+	if l == nil {
+		return slog.New(slog.DiscardHandler)
+	}
 	return slog.New(&handler{out: l.out, c: l.c})
 }
 
@@ -154,7 +214,7 @@ func (h *handler) Handle(_ context.Context, r slog.Record) error {
 		kvs = append(kvs, a.Key, a.Value.Any())
 	}
 	if r.Level >= slog.LevelWarn {
-		kind := h.c.classifyRecord(r.Message, firstError(attrs))
+		kind := h.c.ClassifyMessage(r.Message, firstError(attrs))
 		kvs = append(kvs, errorKind, kind.name, errorOwner, kind.Owner())
 	}
 	l := h.out.With(kvs...)

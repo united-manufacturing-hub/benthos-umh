@@ -32,10 +32,10 @@ import (
 // Beckhoff PLCs over ADS, Beckhoff's protocol for its TwinCAT controllers,
 // through the go-ads client library (adsLib).
 //
-// Which line gets which Kind is part of the contract with umh-core, section
-// ADS. That document is the table of every Kind and its owner that umh-core
-// relies on:
-// https://linear.app/united-manufacturing-hub/document/plugin-error-kinds-and-owners-contract-between-benthos-umh-and-umh-e51f0744258b
+// The Kinds and owners below are the contract umh-core relies on: umh-core
+// groups and routes the lines of this input by them. Renaming a Kind or
+// changing its owner changes that contract. error_class_test.go pins every
+// Kind and owner.
 var (
 	ads = errclass.NewComponent("ads")
 
@@ -52,6 +52,7 @@ var (
 	kindSymbolConfig         = ads.UserKind("symbol_config")
 	kindInvalidHostAMS       = ads.UserKind("invalid_host_ams")
 	kindInvalidTargetAMS     = ads.UserKind("invalid_target_ams")
+	kindInvalidConfig        = ads.UserKind("invalid_config")
 	kindSessionCreateFailed  = ads.UMHKind("session_create_failed")
 	kindSymbolCacheMiss      = ads.UMHKind("symbol_cache_miss")
 	kindNoInitialSamples     = ads.UMHKind("no_initial_samples")
@@ -85,11 +86,34 @@ var classifier = ads.Classifier(
 	errclass.MessageIs("PLC closed connection, transport down", kindConnectionDropped),
 	errclass.MessageIs("listen read error, transport down", kindConnectionDropped),
 	errclass.MessageIs("no frame has arrived on either socket; treating the transport as dead and reconnecting", kindConnectionDropped),
+	errclass.MessageIs("listen body read error, transport down", kindConnectionDropped),
+	errclass.MessageIs("error setting the write deadline, transport down", kindConnectionDropped),
+	errclass.MessageIs("error sending data on conn, transport down", kindConnectionDropped),
+	errclass.MessageIs("error flushing data on conn, transport down", kindConnectionDropped),
+	errclass.MessageIs("error clearing the write deadline, transport down", kindConnectionDropped),
 	errclass.MessageIs("session disconnected, reconnecting; no data is read until it succeeds", kindSessionDisconnected),
 	errclass.MessageIs("connection flapping, applying cross-cycle cooldown before reconnect", kindSessionDisconnected),
 	errclass.MessageIs("subscriptions are missing; recovering", kindHeartbeatResubscribe),
 	errclass.MessageIs("heartbeat silent; not re-subscribing (WithHeartbeatRecovery(Observe))", kindHeartbeatObserveOnly),
 	errclass.MessageIs("notification target symbol no longer in cache; skipping parse", kindSymbolCacheMiss),
+	errclass.MessageIs("batch read result for symbol no longer in cache; skipping", kindSymbolCacheMiss),
+	// The same causes that logBatchFailures and setupNotifications log for
+	// the items of a batch read or subscribe.
+	errclass.MessageIs("no batch read result for symbol", kindReadGap),
+	errclass.MessageIs("error parsing symbol in batch read", kindReadGap),
+	errclass.MessageIs("symbol read error in batch", kindSymbolConfig),
+	errclass.MessageIs("error adding notification in batch", kindSymbolConfig),
+	errclass.MessageIs("duplicate notification rejected (already subscribed)", kindSymbolConfig),
+	errclass.MessageIs("duplicate notification rejected (within batch)", kindSymbolConfig),
+	errclass.MessageIs("notification symbol gone after reconnect, dropping subscription", kindSymbolConfig),
+	// A user-defined type needs loadSymbols: true.
+	errclass.MessageIs("cannot resolve the base type of a user-defined type; no datatype table is loaded", kindSymbolConfig),
+	errclass.MessageIs("inferring base type from size (no datatype table loaded; LoadSymbols() recommended for user-defined types)", kindSymbolConfig),
+	errclass.MessageIs("target NetID differs from the NetID this device reports for itself", kindInvalidTargetAMS),
+	errclass.MessageIs("resubscribe: dropping configs after max retries", kindResubscribeFailed),
+	errclass.MessageIs("SumReadEx not supported, using individual reads", kindBatchReadFallback),
+	errclass.MessageIs("sendRequest aborted due to timeout", kindReadTimeout),
+	errclass.MessageIs("max reconnect attempts exhausted, closing session", kindReconnectFailing),
 	errclass.MessageIs("header too short", kindProtocolDecode),
 	errclass.MessageIs("Error parsing header", kindProtocolDecode),
 	errclass.MessageIs("Error parsing body", kindProtocolDecode),
@@ -102,11 +126,29 @@ var classifier = ads.Classifier(
 	errclass.MessageIs("SumRead per-item undersize — protocol drift", kindProtocolDecode),
 	errclass.MessageIs("SumRead per-item oversize — protocol drift or wire corruption", kindProtocolDecode),
 	errclass.MessageIs("SumRead truncated — likely protocol corruption", kindProtocolDecode),
+	// A malformed symbol or datatype table uploaded from the PLC.
+	errclass.MessageIs("error during binary read", kindProtocolDecode),
+	errclass.MessageIs("makeArrayChildren: array Elements exceeds sanity cap, refusing to allocate", kindProtocolDecode),
+	errclass.MessageIs("makeArrayChildren: LBound + Elements overflows uint32, refusing", kindProtocolDecode),
+	errclass.MessageIs("collectSubtree hit depth cap; possible Children cycle or malformed symbol tree", kindProtocolDecode),
+	errclass.MessageIs("addOffset hit depth cap; possible datatype self-cycle in PLC response", kindProtocolDecode),
 	errclass.MessageIs("binary.Write failed", kindInternalBug),
 	errclass.MessageIs("notification batch callback got an out-of-range index", kindInternalBug),
 	errclass.MessageIs("notification batch: success with a zero handle", kindInternalBug),
 	errclass.MessageIs("notification send panicked — caller closed the update channel?", kindInternalBug),
 	errclass.MessageIs("orphan delete goroutine panic recovered", kindInternalBug),
+	errclass.MessageIs("Error during sendRequest encode", kindInternalBug),
+	errclass.MessageIs("endHandshake without a matching beginHandshake; clamping", kindInternalBug),
+	errclass.MessageIs("FSM invalid transition (ignoring)", kindInternalBug),
+	// Options this input builds from a validated configuration.
+	errclass.MessageIs("WithBackoff: invalid config, keeping current value", kindInternalBug),
+	errclass.MessageIs("WithHeartbeatRecovery: unrecognised mode, keeping the default", kindInternalBug), //nolint:misspell // go-ads spelling
+	// go-ads parses a value that it formatted itself.
+	errclass.MessageIs("parseTree: invalid BOOL value, defaulting to false", kindInternalBug),
+	errclass.MessageIs("parseTree: invalid signed integer value, defaulting to 0", kindInternalBug),
+	errclass.MessageIs("parseTree: invalid unsigned integer value, defaulting to 0", kindInternalBug),
+	errclass.MessageIs("parseTree: invalid float value, defaulting to 0", kindInternalBug),
+	errclass.MessageIs("parseTree: invalid numeric value, defaulting to 0", kindInternalBug),
 	errclass.MessageIs("no notification heartbeat within the allowed window; treating this session's subscriptions as dead and re-subscribing", kindHeartbeatResubscribe),
 	errclass.MessageIs("connected, but the PLC runtime is not in RUN: symbol and subscription calls will refuse until it returns", kindPLCNotRunning),
 	errclass.MessageIs("route is active but the PLC runtime is not in RUN; connecting anyway and waiting for it", kindPLCNotRunning),
@@ -128,6 +170,10 @@ var classifier = ads.Classifier(
 	// rejection by the AMS router, the message router in front of the PLC
 	// (AMSError), that carry the same code.
 	errclass.ErrorIs(adsLib.ReturnCodeGlobalTargetPortNotFound, kindTargetPortNotFound),
+	// With runtimePort 0, go-ads infers the runtime port from the TwinCAT
+	// version the device reports. Without a version, the user has to set the
+	// port. go-ads returns this only as text.
+	errclass.ErrorContains(noTwinCATVersion, kindTargetPortNotFound),
 	errclass.ErrorIs(adsLib.ReturnCodeDeviceSymbolNoFound, kindSymbolConfig),
 	errclass.ErrorIs(adsLib.ErrBatchSymbolUnresolved, kindSymbolConfig),
 	// The other reasons why go-ads returns no value for an item of a batch
@@ -165,7 +211,18 @@ var classifier = ads.Classifier(
 	// go-ads logs this with the error of the symbol lookup, which can also be
 	// a dropped connection or a timeout.
 	errclass.MessageIs("error getting symbol for batch notification", kindSymbolConfig),
+	errclass.MessageIs("error getting symbol for batch read", kindSymbolConfig),
+	errclass.MessageIs("on-demand symbol unavailable after reconnect, skipping", kindSymbolConfig),
+	errclass.MessageIs("could not dial the PLC", kindTargetUnreachable),
+	errclass.MessageIs("send aborted due to timeout", kindReadTimeout),
+	errclass.MessageIs("AddDeviceNotification fallback aborted: transport failed mid-batch", kindConnectionDropped),
 )
+
+// noTwinCATVersion is part of the text of the error that go-ads v2.3.4 returns
+// from NewSession when runtimePort is 0 and the device reports no TwinCAT
+// version:
+// https://github.com/RuneRoven/go-ads/blob/v2.3.4/session.go#L443
+const noTwinCATVersion = "reported no TwinCAT version"
 
 // reasonKinds maps the go-ads Reason of a session event to its Kind. A Reason
 // not listed here is logged as unclassified, so a new Reason shows up in
@@ -226,10 +283,10 @@ func isTransportGone(err error) bool {
 		errors.Is(err, adsLib.ErrEstablishedDropped)
 }
 
-// isReadTimeout reports whether a request ran past its deadline: the PLC was
-// reachable but did not reply within requestTimeout.
+// isReadTimeout reports whether a request or a TCP socket ran past its
+// deadline: the PLC was reachable but did not reply within requestTimeout.
 func isReadTimeout(err error) bool {
-	return errors.Is(err, context.DeadlineExceeded)
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded)
 }
 
 // untypedRouteFaults are the texts of the route faults that go-ads v2.3.4

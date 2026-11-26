@@ -30,6 +30,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/united-manufacturing-hub/benthos-umh/pkg/umh/errclass"
 )
 
 // fakeClient is a scriptable in-memory implementation of Client used to unit
@@ -345,6 +347,8 @@ var _ = Describe("Plugin Internal Functions", func() {
 			Expect(symbols[0].MaxDelay).To(Equal(100*time.Millisecond), "default kept")
 			Expect(symbols[0].CycleTime).To(Equal(1000*time.Millisecond), "default kept")
 			Expect(warnings).To(ContainElement(MatchError(ContainSubstring("use maxDelay=100ms or cycleTime=10ms"))))
+			Expect(warnings).To(HaveLen(1))
+			Expect(classifier.Classify(warnings[0])).To(Equal(kindSymbolConfig))
 		})
 
 		It("ignores an unknown option key and names it", func() {
@@ -358,6 +362,8 @@ var _ = Describe("Plugin Internal Functions", func() {
 				ContainSubstring(`ignoring unknown option "cycletime"`),
 				ContainSubstring("supported: maxDelay, cycleTime"),
 			))))
+			Expect(warnings).To(HaveLen(1))
+			Expect(classifier.Classify(warnings[0])).To(Equal(kindSymbolConfig))
 		})
 
 		It("keeps the default for a value that is not a duration, and applies the rest", func() {
@@ -368,6 +374,7 @@ var _ = Describe("Plugin Internal Functions", func() {
 			Expect(symbols[0].MaxDelay).To(Equal(time.Hour), "the valid option beside it still applies")
 			Expect(warnings).To(ContainElement(MatchError(ContainSubstring(`ignoring invalid cycleTime value "fast"`))))
 			Expect(warnings).To(HaveLen(1), "only the bad option warns")
+			Expect(classifier.Classify(warnings[0])).To(Equal(kindSymbolConfig))
 		})
 
 		It("handles keyed cycleTime only", func() {
@@ -626,6 +633,10 @@ targetAddress: "1.2.3.4"
 			Expect(ack).NotTo(BeNil(), "an empty poll still has to be ackable")
 			Expect(msgs).To(BeEmpty())
 			Expect(levelsOf(recs, slog.LevelWarn)).To(HaveLen(1), "a nil update is worth one warn")
+			Expect(*recs).To(ContainElement(SatisfyAll(
+				HaveField("Level", slog.LevelWarn),
+				haveKind(kindInternalBug),
+			)), "only a bug in go-ads sends a nil update")
 		})
 
 		It("returns an empty batch when nothing arrives before the wait expires", func() {
@@ -735,8 +746,9 @@ targetAddress: "1.2.3.4"
 				multiValues:         map[string]string{}, // empty: simulates a PLC without sum-read support
 				readFromSymbolValue: map[string]string{"MAIN.solo": "true"},
 			}
+			log, recs := capturingLogger()
 			a := &AdsCommInput{
-				Log:     classified(service.MockResources().Logger()),
+				Log:     classified(log),
 				client:  client,
 				Symbols: []PlcSymbol{{Name: "MAIN.solo", DataType: "BOOL", BaseType: "BOOL"}},
 			}
@@ -744,6 +756,10 @@ targetAddress: "1.2.3.4"
 			msgs, _, err := a.ReadBatchPull(context.Background())
 			Expect(err).NotTo(HaveOccurred())
 			Expect(msgs).To(HaveLen(1))
+			Expect(*recs).To(ContainElement(SatisfyAll(
+				HaveField("Level", slog.LevelWarn),
+				haveKind(kindBatchReadFallback),
+			)))
 			tagType, _ := msgs[0].MetaGet("ads_tag_type")
 			Expect(tagType).To(Equal("bool"))
 			b, _ := msgs[0].AsBytes()
@@ -1380,6 +1396,7 @@ var _ = Describe("connect retry gate", func() {
 		warn := (*recs)[len(*recs)-1]
 		Expect(warn.Level).To(Equal(slog.LevelWarn))
 		Expect(warn.Msg).To(ContainSubstring("hostIP"))
+		Expect(warn).To(haveKind(kindRouteFault))
 	})
 
 	It("counts only consecutive route faults toward the breaker", func() {
@@ -1589,6 +1606,38 @@ var _ = Describe("setupNotifications", func() {
 
 		Expect(a.setupNotifications(context.Background())).To(MatchError(ContainSubstring("no symbols registered")))
 	})
+
+	DescribeTable("gives the error for no registered symbol the Kind of the first failure",
+		func(results []NotifyResult, want *errclass.Kind) {
+			log, recs := capturingLogger()
+			a := newInput(&fakeClient{notifyResults: results})
+			a.Log = classified(log)
+
+			err := a.setupNotifications(context.Background())
+
+			Expect(classifier.Classify(err)).To(Equal(want))
+			Expect(levelsOf(recs, slog.LevelWarn)).To(HaveLen(len(results)))
+			Expect(*recs).To(ContainElement(SatisfyAll(HaveField("Level", slog.LevelWarn), haveKind(want))))
+		},
+		Entry("symbols the PLC does not know",
+			[]NotifyResult{
+				{SymbolName: "MAIN.a", Skipped: adsLib.ErrBatchSymbolUnresolved},
+				{SymbolName: "MAIN.b", Skipped: adsLib.ErrBatchSymbolUnresolved},
+			}, kindSymbolConfig),
+		Entry("symbols the PLC refused with an ADS code",
+			[]NotifyResult{{SymbolName: "MAIN.a", Code: 0x710}, {SymbolName: "MAIN.b", Code: 0x710}}, kindSymbolConfig),
+		Entry("symbols stranded by a cache reload",
+			[]NotifyResult{
+				{SymbolName: "MAIN.a", Skipped: adsLib.ErrNotificationStrandedByReload},
+				{SymbolName: "MAIN.b", Skipped: adsLib.ErrBatchSymbolUnresolved},
+			}, kindInternalBug),
+	)
+
+	It("calls no results for configured symbols an internal bug", func() {
+		a := newInput(&fakeClient{notifyResults: []NotifyResult{}})
+
+		Expect(classifier.Classify(a.setupNotifications(context.Background()))).To(Equal(kindInternalBug))
+	})
 })
 
 var _ = Describe("setupNotifications partial success", func() {
@@ -1787,6 +1836,17 @@ var _ = Describe("Partial batch reads", func() {
 
 		Expect(a.warnedBatchFailures).To(HaveLen(1))
 		Expect(a.warnedBatchFailures).To(HaveKey("MAIN.missing"))
+	})
+
+	It("names a failed symbol again after a reconnect", func() {
+		client, _ := partial()
+		a := newInput(client)
+		_, _, err := a.ReadBatchPull(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(a.finishConnect(context.Background())).To(Succeed())
+
+		Expect(a.warnedBatchFailures).To(BeEmpty())
 	})
 
 	It("still treats a whole-batch failure as a failed poll", func() {
@@ -2064,6 +2124,7 @@ var _ = Describe("session rebuild on a degraded session", func() {
 
 			Expect(err).To(MatchError(ContainSubstring("hostAMS")))
 			Expect(err).To(MatchError(ContainSubstring("192.168.3.52")), "the rejected value belongs in the message")
+			Expect(classifier.Classify(err)).To(Equal(kindInvalidHostAMS))
 		})
 
 		It("adds the skip-registration option when the connect gate has given up on the route", func() {
@@ -2071,6 +2132,18 @@ var _ = Describe("session rebuild on a degraded session", func() {
 			skipped.SkipRouteRegistration = true
 
 			Expect(optionCount(skipped)).To(Equal(optionCount(base) + 1))
+		})
+	})
+
+	Describe("newGoADSClient", func() {
+		It("fails before dialing when targetAMS is not a NetID", func() {
+			// The NetID is parsed before NewSession, so no PLC is needed.
+			bad := SessionConfig{TargetIP: "1.2.3.4", TargetPort: 48898, RuntimePort: 851, TargetAMS: "192.168.3.52"}
+
+			_, err := newGoADSClient(context.Background(), bad, classified(service.MockResources().Logger()))
+
+			Expect(err).To(MatchError(ContainSubstring("192.168.3.52")))
+			Expect(classifier.Classify(err)).To(Equal(kindInvalidTargetAMS))
 		})
 	})
 })

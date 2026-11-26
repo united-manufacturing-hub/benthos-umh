@@ -46,11 +46,13 @@ var (
 	kindBadConfig = component.UserKind("bad_config")
 	kindRetrying  = component.UserKind("retrying")
 	kindDataLoss  = component.UMHKind("data_loss")
+	kindNoVersion = component.UserKind("no_version")
 
 	classifier = component.Classifier(
 		errclass.MessageIs("socket closed", kindClosed),
 		errclass.ErrorIs(errTimeout, kindTimedOut),
 		errclass.ErrorIs(errClosed, kindClosed),
+		errclass.ErrorContains("reported no version", kindNoVersion),
 		errclass.MessageIs("retrying", kindRetrying),
 	)
 )
@@ -109,6 +111,18 @@ var _ = Describe("Classifier.Classify", func() {
 		Entry("the Kind the error was created with", kindBadConfig.Errorf("bad %q", "x"), kindBadConfig),
 		Entry("the Kind the error was created with, over a rule matching inside it", kindBadConfig.Errorf("x: %w", errClosed), kindBadConfig),
 		Entry("a rule, over a Kind of another component", foreignKind.Errorf("x: %w", errClosed), kindClosed),
+		Entry("the Kind the error was created with, inside a Kind of another component",
+			foreignKind.Errorf("x: %w", kindBadConfig.Errorf("y")), kindBadConfig),
+		Entry("the Kind the error was created with, inside errors.Join",
+			errors.Join(errClosed, fmt.Errorf("y: %w", kindBadConfig.Errorf("z"))), kindBadConfig),
+		Entry("the outer of two Kinds the error was created with",
+			kindBadConfig.Errorf("x: %w", foreignKind.Errorf("y: %w", kindDataLoss.Errorf("z"))), kindBadConfig),
+		Entry("the first Kind in errors.Join, depth-first",
+			errors.Join(foreignKind.Errorf("x: %w", kindDataLoss.Errorf("y")), kindBadConfig.Errorf("z")), kindDataLoss),
+		Entry("an error whose text contains an ErrorContains substring",
+			fmt.Errorf("connect: %w", errors.New("device reported no version, so the port is unknown")), kindNoVersion),
+		Entry("an ErrorContains substring in one error of errors.Join",
+			errors.Join(errors.New("boom"), errors.New("device reported no version")), kindNoVersion),
 		Entry("unclassified, over a Kind of another component", foreignOnlyKind.Errorf("x"), component.Unclassified()),
 		Entry("an error whose text equals a MessageIs rule before the error rules", errors.New("socket closed"), component.Unclassified()),
 		Entry("an error whose text equals a MessageIs rule after the error rules", errors.New("retrying"), component.Unclassified()),
@@ -140,6 +154,23 @@ var _ = Describe("Logger", func() {
 			HaveKeyWithValue("error_owner", "user"),
 			HaveKeyWithValue("symbol", "a"),
 		))
+	})
+
+	It("logs an error from EnrichForLog without the text EnrichForLog put in front", func() {
+		log, recs := capture()
+		enriched := classifier.EnrichForLog(fmt.Errorf("connect: %w", errClosed))
+		log.Error(enriched)
+		log.Warn(fmt.Errorf("retry: %w", enriched))
+
+		Expect(*recs).To(HaveLen(2))
+		Expect((*recs)[0].msg).To(Equal("connect: closed"))
+		Expect((*recs)[1].msg).To(Equal("retry: connect: closed"))
+		for _, r := range *recs {
+			Expect(r.attrs).To(SatisfyAll(
+				HaveKeyWithValue("error_kind", "test::closed"),
+				HaveKeyWithValue("error_owner", "user"),
+			))
+		}
 	})
 
 	It("logs at error level with Error", func() {
@@ -195,19 +226,40 @@ var _ = Describe("Logger", func() {
 		Expect((*recs)[0].attrs).To(HaveKeyWithValue("error_kind", "test::unclassified"))
 	})
 
-	It("leaves Debug and Info lines untagged", func() {
+	It("leaves Trace, Debug and Info lines untagged", func() {
 		log, recs := capture()
+		log.Trace("t")
+		log.Tracef("t %d", 1)
 		log.Debugf("d %d", 1)
 		log.Debug("d")
 		log.Info("i")
 		log.Infof("i %d", 1)
 
-		Expect(*recs).To(HaveLen(4))
+		Expect(*recs).To(HaveLen(6))
+		Expect((*recs)[0].msg).To(Equal("t"))
+		Expect((*recs)[1].msg).To(Equal("t 1"))
 		for _, r := range *recs {
 			Expect(r.level).To(BeNumerically("<", slog.LevelWarn))
 			Expect(r.attrs).NotTo(HaveKey("error_kind"))
 			Expect(r.attrs).NotTo(HaveKey("error_owner"))
 		}
+	})
+
+	It("does nothing on a nil Logger, so a line logged before the Logger is set cannot panic", func() {
+		var log *errclass.Logger
+		Expect(func() {
+			log.Error(errTimeout)
+			log.Warn(errTimeout)
+			log.Error(nil)
+			log.Trace("t")
+			log.Tracef("t %d", 1)
+			log.Debug("d")
+			log.Debugf("d %d", 1)
+			log.Info("i")
+			log.Infof("i %d", 1)
+			log.With("k", "v").Warn(errTimeout)
+			log.Slog().Error("e")
+		}).NotTo(Panic())
 	})
 })
 
@@ -246,6 +298,10 @@ var _ = Describe("Logger.Slog", func() {
 			"retrying", []any{"error", errors.New("boom")}, kindRetrying),
 		Entry("a MessageIs rule after the error rules, for a record without an error",
 			"retrying", []any{}, kindRetrying),
+		Entry("not an ErrorContains rule, which matches the error and not the message",
+			"device reported no version", []any{}, component.Unclassified()),
+		Entry("an ErrorContains rule, by the record's error",
+			"read failed", []any{"error", errors.New("device reported no version")}, kindNoVersion),
 		Entry("the Kind the record's error was created with, over every rule",
 			"socket closed", []any{"error", kindBadConfig.Errorf("x")}, kindBadConfig),
 	)
@@ -377,6 +433,29 @@ var _ = Describe("Logger.Slog", func() {
 	})
 })
 
+var _ = Describe("Classifier.ClassifyMessage", func() {
+	DescribeTable("picks the Kind of a library's line like Logger.Slog does",
+		func(msg string, err error, want *errclass.Kind) {
+			Expect(classifier.ClassifyMessage(msg, err)).To(Equal(want))
+		},
+		Entry("a message rule", "socket closed", nil, kindClosed),
+		Entry("an error rule, for a message no rule knows", "read failed", fmt.Errorf("read: %w", errTimeout), kindTimedOut),
+		Entry("the first rule that matches, the message before the error", "socket closed", errTimeout, kindClosed),
+		Entry("the Kind the error was created with, before every rule", "socket closed", kindDataLoss.Errorf("lost"), kindDataLoss),
+		Entry("unclassified, when nothing matches", "something new", nil, component.Unclassified()),
+	)
+
+	It("gives a line logged with its Kind that Kind", func() {
+		log, recs := capture()
+		msg, err := "socket closed", errors.New("EOF")
+
+		log.Warn(classifier.ClassifyMessage(msg, err).Errorf("%s: %w", msg, err))
+
+		Expect((*recs)[0].msg).To(Equal("socket closed: EOF"))
+		Expect((*recs)[0].attrs).To(HaveKeyWithValue("error_kind", "test::closed"))
+	})
+})
+
 var _ = Describe("Classifier.EnrichForLog", func() {
 	It("puts the error_kind and class in front of the text once and keeps the chain", func() {
 		err := classifier.EnrichForLog(classifier.EnrichForLog(fmt.Errorf("connect: %w", errClosed)))
@@ -444,6 +523,35 @@ var _ = Describe("Component", func() {
 
 	It("panics on a MessageIs rule with an empty message", func() {
 		Expect(func() { errclass.MessageIs("", kindClosed) }).To(Panic())
+	})
+
+	It("panics on an ErrorContains rule with an empty substring", func() {
+		Expect(func() { errclass.ErrorContains("", kindClosed) }).To(Panic())
+	})
+
+	DescribeTable("panics on a rule it cannot apply, so the component fails as soon as it loads",
+		func(rule errclass.Rule) {
+			c := errclass.NewComponent(newComponentName())
+			own := c.UserKind("own")
+			Expect(func() { c.Classifier(errclass.ErrorIs(errClosed, own), rule) }).To(Panic())
+		},
+		Entry("ErrorIs without a Kind", errclass.ErrorIs(errClosed, nil)),
+		Entry("MessageIs without a Kind", errclass.MessageIs("x", nil)),
+		Entry("a Kind of another component", errclass.ErrorIs(errClosed, foreignKind)),
+		Entry("a zero Rule", errclass.Rule{}),
+	)
+
+	It("accepts every kind of rule with a Kind of its own, including its unclassified Kind", func() {
+		c := errclass.NewComponent(newComponentName())
+		own := c.UserKind("own")
+		Expect(func() {
+			c.Classifier(
+				errclass.ErrorIs(errClosed, own),
+				errclass.ErrorMatches(func(error) bool { return false }, own),
+				errclass.ErrorContains("x", own),
+				errclass.MessageIs("x", c.Unclassified()),
+			)
+		}).NotTo(Panic())
 	})
 })
 

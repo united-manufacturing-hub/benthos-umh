@@ -26,6 +26,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -69,6 +70,39 @@ var _ = Describe("classifier", func() {
 		Expect(kindUnclassified.String()).To(Equal("ads::unclassified"))
 	})
 
+	// umh-core groups and routes the lines of this input by these names and
+	// owners, so a renamed Kind or a flipped owner fails here.
+	DescribeTable("pins every Kind and its owner",
+		func(kind *errclass.Kind, name, owner string) {
+			Expect(kind.String()).To(Equal("ads::" + name))
+			Expect(kind.Owner()).To(Equal(owner))
+		},
+		Entry(nil, kindConnectionDropped, "connection_dropped", "user"),
+		Entry(nil, kindSessionDisconnected, "session_disconnected", "user"),
+		Entry(nil, kindHeartbeatResubscribe, "heartbeat_resubscribe", "user"),
+		Entry(nil, kindResubscribeFailed, "resubscribe_failed", "user"),
+		Entry(nil, kindHeartbeatObserveOnly, "heartbeat_observe_only", "user"),
+		Entry(nil, kindTargetUnreachable, "target_unreachable", "user"),
+		Entry(nil, kindTargetPortNotFound, "target_port_not_found", "user"),
+		Entry(nil, kindReconnectFailing, "reconnect_failing", "user"),
+		Entry(nil, kindRouteFault, "route_fault", "user"),
+		Entry(nil, kindPLCNotRunning, "plc_not_running", "user"),
+		Entry(nil, kindSymbolConfig, "symbol_config", "user"),
+		Entry(nil, kindInvalidHostAMS, "invalid_host_ams", "user"),
+		Entry(nil, kindInvalidTargetAMS, "invalid_target_ams", "user"),
+		Entry(nil, kindInvalidConfig, "invalid_config", "user"),
+		Entry(nil, kindSessionCreateFailed, "session_create_failed", "umh"),
+		Entry(nil, kindSymbolCacheMiss, "symbol_cache_miss", "umh"),
+		Entry(nil, kindNoInitialSamples, "no_initial_samples", "umh"),
+		Entry(nil, kindReadGap, "read_gap", "umh"),
+		Entry(nil, kindBatchReadFallback, "batch_read_fallback", "user"),
+		Entry(nil, kindReadTimeout, "read_timeout", "user"),
+		Entry(nil, kindCloseFailed, "close_failed", "user"),
+		Entry(nil, kindProtocolDecode, "protocol_decode", "umh"),
+		Entry(nil, kindInternalBug, "internal_bug", "umh"),
+		Entry(nil, kindUnclassified, "unclassified", "unknown"),
+	)
+
 	DescribeTable("maps an error onto the contract by type",
 		func(err error, want *errclass.Kind) {
 			Expect(classifier.Classify(err)).To(Equal(want))
@@ -84,6 +118,11 @@ var _ = Describe("classifier", func() {
 			sessionCreateError(fmt.Errorf("discovery failed: identify: %w", udpTimeout)), kindTargetUnreachable),
 		Entry("target discovery refused while creating the session",
 			sessionCreateError(fmt.Errorf("discovery failed: identify: %w", udpRefused)), kindTargetUnreachable),
+		// The text of go-ads v2.3.4 session.go:443.
+		Entry("a device that reports no TwinCAT version, with runtimePort 0",
+			sessionCreateError(errors.New("ads: NewSession: 10.13.37.52 (CX-1234) reported no TwinCAT version, so the runtime "+
+				"AMS port cannot be inferred; set remote.AMS.Port explicitly (801 on TwinCAT 2, 851 on TwinCAT 3)")),
+			kindTargetPortNotFound),
 		Entry("a refused TCP read is not an unanswered UDP exchange",
 			&net.OpError{Op: "read", Net: "tcp", Err: &os.SyscallError{Syscall: "read", Err: syscall.ECONNREFUSED}}, kindUnclassified),
 		Entry("TCP socket timed out on a live session", &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}, kindReadTimeout),
@@ -166,6 +205,7 @@ var _ = Describe("classifier", func() {
 		Entry("session disconnected", fmt.Errorf("read: %w", adsLib.ErrDisconnected), kindConnectionDropped),
 		Entry("established connection dropped", adsLib.ErrEstablishedDropped, kindConnectionDropped),
 		Entry("request deadline", fmt.Errorf("read: %w", context.DeadlineExceeded), kindReadTimeout),
+		Entry("TCP socket deadline", &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}, kindReadTimeout),
 	)
 
 	DescribeTable("reasonKinds maps go-ads session-event reasons",
@@ -182,18 +222,17 @@ var _ = Describe("classifier", func() {
 var _ = Describe("go-ads record classification", func() {
 	decisive, fallbacks := messageRules()
 
-	It("finds the MessageIs rules in the classifier", func() {
-		Expect(decisive).To(HaveLen(31))
+	It("has an expected Kind for every MessageIs rule, and a rule for every expected Kind", func() {
+		Expect(classifier.Messages()).To(ConsistOf(slices.Collect(maps.Keys(messageKinds))))
 		Expect(classifier.Messages()).To(ContainElements(slices.Collect(maps.Keys(fallbacks))))
 	})
 
 	for _, msg := range decisive {
-		It("tags go-ads message "+strconv.Quote(msg)+" by its message, whatever its error", func() {
-			alone := goADSRecord(slog.LevelError, msg)
-			Expect(alone.Attrs).NotTo(HaveKeyWithValue("error_kind", kindUnclassified.String()))
+		want := messageKinds[msg]
+		It("tags go-ads message "+strconv.Quote(msg)+" as "+want.String()+", whatever its error", func() {
+			Expect(goADSRecord(slog.LevelError, msg)).To(haveKind(want))
 			// An error that would classify differently must not win over the message.
-			withErr := goADSRecord(slog.LevelError, msg, "error", adsLib.ErrRouterUnresponsive)
-			Expect(withErr.Attrs["error_kind"]).To(Equal(alone.Attrs["error_kind"]))
+			Expect(goADSRecord(slog.LevelError, msg, "error", adsLib.ErrRouterUnresponsive)).To(haveKind(want))
 		})
 	}
 
@@ -235,39 +274,119 @@ var _ = Describe("go-ads message table guard", func() {
 	It("finds every classified message in the pinned go-ads source", func() {
 		// A go-ads bump that rewords a message fails here instead of silently
 		// turning that message into ads::unclassified.
-		out, err := exec.Command("go", "list", "-m", "-json", "github.com/RuneRoven/go-ads/v2").Output()
-		Expect(err).NotTo(HaveOccurred())
-		var mod struct{ Dir, Version string }
-		Expect(json.Unmarshal(out, &mod)).To(Succeed())
-		Expect(mod.Dir).NotTo(BeEmpty(), "go-ads %s is not in the module cache; run go mod download", mod.Version)
-
-		files, err := filepath.Glob(filepath.Join(mod.Dir, "*.go"))
-		Expect(err).NotTo(HaveOccurred())
-		var src strings.Builder
-		for _, f := range files {
-			if strings.HasSuffix(f, "_test.go") {
-				continue
-			}
-			b, err := os.ReadFile(f)
-			Expect(err).NotTo(HaveOccurred())
-			src.Write(b)
-		}
+		src, version := goADSSource()
 
 		var missing []string
 		for _, msg := range classifier.Messages() {
-			if !strings.Contains(src.String(), strconv.Quote(msg)) {
+			if !strings.Contains(src, strconv.Quote(msg)) {
 				missing = append(missing, msg)
 			}
 		}
-		Expect(missing).To(BeEmpty(), "messages not found as string literals in go-ads %s", mod.Version)
+		Expect(missing).To(BeEmpty(), "messages not found as string literals in go-ads %s", version)
 
-		// The untyped route faults are matched by a fragment of a format string,
-		// not by a whole literal.
-		for _, text := range untypedRouteFaults {
-			Expect(src.String()).To(ContainSubstring(text), "route fault text not found in go-ads %s", mod.Version)
+		// The untyped route faults and the missing TwinCAT version are matched
+		// by a fragment of a format string, not by a whole literal.
+		for _, text := range append(slices.Clone(untypedRouteFaults), noTwinCATVersion) {
+			Expect(src).To(ContainSubstring(text), "error text not found in go-ads %s", version)
 		}
 	})
+
+	It("has a rule or a reason for every warning and error message in the pinned go-ads source", func() {
+		// A go-ads bump that adds a warning or an error fails here, so that it
+		// gets a rule or an entry in deliberatelyUnclassified.
+		src, version := goADSSource()
+		found := goADSLogMessages(src)
+		// The extraction finds a message of each call form.
+		Expect(found).To(HaveKey("header too short"), "Error")
+		Expect(found).To(HaveKey("PLC closed connection, transport down"), "Log")
+		Expect(found).To(HaveKey("reconnect step failed, retrying"), "logAttempt")
+		Expect(found).To(HaveKey(
+			"no notification heartbeat within the allowed window; treating this session's subscriptions as dead and re-subscribing"), "msg :=")
+
+		var uncovered, stale []string
+		for msg := range found {
+			_, ruled := messageKinds[msg]
+			_, listed := deliberatelyUnclassified[msg]
+			if !ruled && !listed {
+				uncovered = append(uncovered, msg)
+			}
+		}
+		for msg := range deliberatelyUnclassified {
+			if !found[msg] {
+				stale = append(stale, msg)
+			}
+		}
+		Expect(uncovered).To(BeEmpty(), "go-ads %s messages with neither a MessageIs rule nor an entry in deliberatelyUnclassified", version)
+		Expect(stale).To(BeEmpty(), "deliberatelyUnclassified entries that go-ads %s no longer logs", version)
+	})
 })
+
+// goADSSource returns the non-test Go source of the pinned go-ads module and
+// its version. It fails the spec if the module is not in the module cache.
+func goADSSource() (string, string) {
+	out, err := exec.Command("go", "list", "-m", "-json", "github.com/RuneRoven/go-ads/v2").Output()
+	Expect(err).NotTo(HaveOccurred())
+	var mod struct{ Dir, Version string }
+	Expect(json.Unmarshal(out, &mod)).To(Succeed())
+	Expect(mod.Dir).NotTo(BeEmpty(), "go-ads %s is not in the module cache; run go mod download", mod.Version)
+
+	files, err := filepath.Glob(filepath.Join(mod.Dir, "*.go"))
+	Expect(err).NotTo(HaveOccurred())
+	Expect(files).NotTo(BeEmpty(), "no Go files in %s", mod.Dir)
+	var src strings.Builder
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		Expect(err).NotTo(HaveOccurred())
+		src.Write(b)
+	}
+	return src.String(), mod.Version
+}
+
+// goLiteral matches a Go interpreted string literal.
+const goLiteral = `("(?:[^"\\\n]|\\.)*")`
+
+var (
+	// goADSLogCalls match the message of a go-ads warning or error that is a
+	// string literal: the first argument of Warn, Error and the go-ads helpers
+	// that pass their msg on to them, the second of WarnContext and
+	// ErrorContext, and a literal assigned to msg, which go-ads passes to Warn
+	// or Error later.
+	goADSLogCalls = []*regexp.Regexp{
+		regexp.MustCompile(`\.(?:Warn|Error|logAttempt|warnInferenceOnce)\(\s*` + goLiteral),
+		regexp.MustCompile(`\.(?:WarnContext|ErrorContext)\([^,()]+,\s*` + goLiteral),
+		regexp.MustCompile(`\bmsg :?= ` + goLiteral),
+	}
+	// goADSLevelLog matches Log and LogAttrs, whose level is a variable or
+	// function call as often as a constant. Only trace, debug and info
+	// constants are skipped.
+	goADSLevelLog = regexp.MustCompile(`\.Log(?:Attrs)?\([^,()]+(?:\(\))?,\s*([^,]+?),\s*` + goLiteral)
+	belowWarn     = regexp.MustCompile(`Level(?:Trace|Debug|Info)\b`)
+)
+
+// goADSLogMessages returns the literal messages of the warnings and errors in
+// src.
+func goADSLogMessages(src string) map[string]bool {
+	found := map[string]bool{}
+	add := func(lit string) {
+		msg, err := strconv.Unquote(lit)
+		Expect(err).NotTo(HaveOccurred(), lit)
+		found[msg] = true
+	}
+	for _, re := range goADSLogCalls {
+		for _, m := range re.FindAllStringSubmatch(src, -1) {
+			add(m[1])
+		}
+	}
+	for _, m := range goADSLevelLog.FindAllStringSubmatch(src, -1) {
+		if !belowWarn.MatchString(m[1]) {
+			add(m[2])
+		}
+	}
+	return found
+}
 
 var _ = Describe("plugin log lines carry their class", func() {
 	It("tags a symbol go-ads skipped in a batch read as a read gap", func() {
@@ -402,18 +521,49 @@ var _ = Describe("plugin log lines carry their class", func() {
 		Expect(warns).To(Equal(2))
 	})
 
-	It("fails the connect as symbol configuration when no notification symbol registered", func() {
+	It("fails the connect as symbol configuration when no notification symbol registered, after logging each cause", func() {
+		log, recs := capturingLogger()
 		a := &AdsCommInput{
-			Log:     classified(testLog()),
-			Symbols: []PlcSymbol{{Name: "MAIN.typo"}},
-			client:  &fakeClient{notifyResults: []NotifyResult{{SymbolName: "MAIN.typo", Skipped: fmt.Errorf("resolve symbol %q: %w", "MAIN.typo", adsLib.ReturnCodeDeviceSymbolNoFound)}}},
+			Log:     classified(log),
+			Symbols: []PlcSymbol{{Name: "MAIN.typo"}, {Name: "MAIN.stranded"}},
+			client: &fakeClient{notifyResults: []NotifyResult{
+				{SymbolName: "MAIN.typo", Skipped: fmt.Errorf("resolve symbol %q: %w", "MAIN.typo", adsLib.ReturnCodeDeviceSymbolNoFound)},
+				{SymbolName: "MAIN.stranded", Skipped: fmt.Errorf("symbol %q: %w", "MAIN.stranded", adsLib.ErrNotificationStrandedByReload)},
+			}},
 		}
 
 		err := classifier.EnrichForLog(a.setupNotifications(context.Background()))
 
 		Expect(classifier.Classify(err)).To(Equal(kindSymbolConfig))
 		Expect(err.Error()).To(HavePrefix("[error_kind=ads::symbol_config error_owner=user] "))
+		Expect(*recs).To(ContainElements(
+			SatisfyAll(HaveField("Msg", ContainSubstring("MAIN.typo")), haveKind(kindSymbolConfig)),
+			SatisfyAll(HaveField("Msg", ContainSubstring("MAIN.stranded")), haveKind(kindInternalBug)),
+		))
 	})
+
+	DescribeTable("returns a configuration error from the constructor with its Kind in the text",
+		func(yaml string, want *errclass.Kind) {
+			conf, err := adsConf.ParseYAML(yaml, nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = NewAdsCommInput(conf, service.MockResources())
+
+			Expect(err).To(HaveOccurred())
+			Expect(classifier.Classify(err)).To(Equal(want))
+			Expect(err.Error()).To(HavePrefix(fmt.Sprintf("[error_kind=%s error_owner=%s] ", want, want.Owner())))
+			Expect(strings.Count(err.Error(), "[error_kind=")).To(Equal(1))
+		},
+		Entry("hostAMS that is not a NetID", "targetAddress: 1.2.3.4\nhostAMS: 1.2\nunifiedAddress: [MAIN.a]\n", kindInvalidHostAMS),
+		Entry("targetAMS that is not a NetID", "targetAddress: 1.2.3.4\ntargetAMS: 1.2\nunifiedAddress: [MAIN.a]\n", kindInvalidTargetAMS),
+		Entry("no symbols", "targetAddress: 1.2.3.4\nunifiedAddress: []\n", kindSymbolConfig),
+		Entry("targetAddress that is not an IP", "targetAddress: plc\nunifiedAddress: [MAIN.a]\n", kindInvalidConfig),
+		Entry("runtimePort out of range", "targetAddress: 1.2.3.4\nruntimePort: 70000\nunifiedAddress: [MAIN.a]\n", kindInvalidConfig),
+		Entry("hostPort out of range", "targetAddress: 1.2.3.4\nhostPort: 70000\nunifiedAddress: [MAIN.a]\n", kindInvalidConfig),
+		Entry("hostIP that is not an IP", "targetAddress: 1.2.3.4\nhostIP: host\nunifiedAddress: [MAIN.a]\n", kindInvalidConfig),
+		Entry("negative duration", "targetAddress: 1.2.3.4\nmaxReconnectInterval: -5s\nunifiedAddress: [MAIN.a]\n", kindInvalidConfig),
+		Entry("unsupported heartbeatRecovery", "targetAddress: 1.2.3.4\nheartbeatRecovery: restart\nunifiedAddress: [MAIN.a]\n", kindInvalidConfig),
+	)
 
 	It("tags a symbol whose metadata did not resolve by its error", func() {
 		log, recs := capturingLogger()
@@ -424,17 +574,25 @@ var _ = Describe("plugin log lines carry their class", func() {
 		Expect(*recs).To(ConsistOf(haveKind(kindSymbolConfig)))
 	})
 
-	It("tags the rebuild line with the class of the go-ads reason", func() {
-		log, recs := capturingLogger()
-		a := &AdsCommInput{Log: classified(log)}
+	// Each reason in reasonKinds, since a rebuild line carrying one fixed Kind
+	// would pass for any single reason.
+	DescribeTable("tags the rebuild line with the class of the go-ads reason",
+		func(reason adsLib.Reason, want *errclass.Kind) {
+			log, recs := capturingLogger()
+			a := &AdsCommInput{Log: classified(log)}
 
-		a.onSessionEvent(SessionEventSubscriptionsDead, string(adsLib.ReasonHeartbeatSilent))
+			a.onSessionEvent(SessionEventSubscriptionsDead, string(reason))
 
-		Expect(*recs).To(ConsistOf(SatisfyAll(
-			HaveField("Level", slog.LevelError),
-			haveKind(kindHeartbeatObserveOnly),
-		)))
-	})
+			Expect(*recs).To(ConsistOf(SatisfyAll(
+				HaveField("Level", slog.LevelError),
+				haveKind(want),
+			)))
+		},
+		Entry("symbol not found", adsLib.ReasonSymbolNotFound, kindSymbolConfig),
+		Entry("symbol not active", adsLib.ReasonSymbolNotActive, kindSymbolConfig),
+		Entry("heartbeat silent", adsLib.ReasonHeartbeatSilent, kindHeartbeatObserveOnly),
+		Entry("an unmapped reason", adsLib.ReasonReloadCapExhausted, kindUnclassified),
+	)
 
 	It("tags an unhandled session event as an internal bug", func() {
 		log, recs := capturingLogger()
@@ -545,20 +703,191 @@ func testLog() *service.Logger {
 	return log
 }
 
+// messageKinds is the Kind that every MessageIs rule in classifier must give.
+// It is part of the contract with umh-core, so a rule that changes its Kind
+// fails a test.
+var messageKinds = map[string]*errclass.Kind{
+	"PLC dropped an established connection, transport down":                                                      kindConnectionDropped,
+	"PLC closed connection, transport down":                                                                      kindConnectionDropped,
+	"listen read error, transport down":                                                                          kindConnectionDropped,
+	"no frame has arrived on either socket; treating the transport as dead and reconnecting":                     kindConnectionDropped,
+	"listen body read error, transport down":                                                                     kindConnectionDropped,
+	"error setting the write deadline, transport down":                                                           kindConnectionDropped,
+	"error sending data on conn, transport down":                                                                 kindConnectionDropped,
+	"error flushing data on conn, transport down":                                                                kindConnectionDropped,
+	"error clearing the write deadline, transport down":                                                          kindConnectionDropped,
+	"session disconnected, reconnecting; no data is read until it succeeds":                                      kindSessionDisconnected,
+	"connection flapping, applying cross-cycle cooldown before reconnect":                                        kindSessionDisconnected,
+	"subscriptions are missing; recovering":                                                                      kindHeartbeatResubscribe,
+	"heartbeat silent; not re-subscribing (WithHeartbeatRecovery(Observe))":                                      kindHeartbeatObserveOnly,
+	"notification target symbol no longer in cache; skipping parse":                                              kindSymbolCacheMiss,
+	"batch read result for symbol no longer in cache; skipping":                                                  kindSymbolCacheMiss,
+	"no batch read result for symbol":                                                                            kindReadGap,
+	"error parsing symbol in batch read":                                                                         kindReadGap,
+	"symbol read error in batch":                                                                                 kindSymbolConfig,
+	"error adding notification in batch":                                                                         kindSymbolConfig,
+	"duplicate notification rejected (already subscribed)":                                                       kindSymbolConfig,
+	"duplicate notification rejected (within batch)":                                                             kindSymbolConfig,
+	"notification symbol gone after reconnect, dropping subscription":                                            kindSymbolConfig,
+	"cannot resolve the base type of a user-defined type; no datatype table is loaded":                           kindSymbolConfig,
+	"inferring base type from size (no datatype table loaded; LoadSymbols() recommended for user-defined types)": kindSymbolConfig,
+	"target NetID differs from the NetID this device reports for itself":                                         kindInvalidTargetAMS,
+	"resubscribe: dropping configs after max retries":                                                            kindResubscribeFailed,
+	"SumReadEx not supported, using individual reads":                                                            kindBatchReadFallback,
+	"sendRequest aborted due to timeout":                                                                         kindReadTimeout,
+	"max reconnect attempts exhausted, closing session":                                                          kindReconnectFailing,
+	"header too short":                                       kindProtocolDecode,
+	"Error parsing header":                                   kindProtocolDecode,
+	"Error parsing body":                                     kindProtocolDecode,
+	"device notification decode failed":                      kindProtocolDecode,
+	"failed to parse notification response":                  kindProtocolDecode,
+	"error during parse of notification":                     kindProtocolDecode,
+	"listen header decode error, transport down":             kindProtocolDecode,
+	"AMS packet length exceeds sanity limit, transport down": kindProtocolDecode,
+	"SumRead errored-item declared length exceeds remaining bytes — protocol drift":  kindProtocolDecode,
+	"SumRead per-item undersize — protocol drift":                                    kindProtocolDecode,
+	"SumRead per-item oversize — protocol drift or wire corruption":                  kindProtocolDecode,
+	"SumRead truncated — likely protocol corruption":                                 kindProtocolDecode,
+	"error during binary read":                                                       kindProtocolDecode,
+	"makeArrayChildren: array Elements exceeds sanity cap, refusing to allocate":     kindProtocolDecode,
+	"makeArrayChildren: LBound + Elements overflows uint32, refusing":                kindProtocolDecode,
+	"collectSubtree hit depth cap; possible Children cycle or malformed symbol tree": kindProtocolDecode,
+	"addOffset hit depth cap; possible datatype self-cycle in PLC response":          kindProtocolDecode,
+	"binary.Write failed": kindInternalBug,
+	"notification batch callback got an out-of-range index":                                                                 kindInternalBug,
+	"notification batch: success with a zero handle":                                                                        kindInternalBug,
+	"notification send panicked — caller closed the update channel?":                                                        kindInternalBug,
+	"orphan delete goroutine panic recovered":                                                                               kindInternalBug,
+	"Error during sendRequest encode":                                                                                       kindInternalBug,
+	"endHandshake without a matching beginHandshake; clamping":                                                              kindInternalBug,
+	"FSM invalid transition (ignoring)":                                                                                     kindInternalBug,
+	"WithBackoff: invalid config, keeping current value":                                                                    kindInternalBug,
+	"WithHeartbeatRecovery: unrecognised mode, keeping the default":                                                         kindInternalBug, //nolint:misspell // go-ads spelling
+	"parseTree: invalid BOOL value, defaulting to false":                                                                    kindInternalBug,
+	"parseTree: invalid signed integer value, defaulting to 0":                                                              kindInternalBug,
+	"parseTree: invalid unsigned integer value, defaulting to 0":                                                            kindInternalBug,
+	"parseTree: invalid float value, defaulting to 0":                                                                       kindInternalBug,
+	"parseTree: invalid numeric value, defaulting to 0":                                                                     kindInternalBug,
+	"no notification heartbeat within the allowed window; treating this session's subscriptions as dead and re-subscribing": kindHeartbeatResubscribe,
+	"connected, but the PLC runtime is not in RUN: symbol and subscription calls will refuse until it returns":              kindPLCNotRunning,
+	"route is active but the PLC runtime is not in RUN; connecting anyway and waiting for it":                               kindPLCNotRunning,
+	"re-subscribe after a heartbeat timeout failed; keeping the subscriptions on file and retrying in the next window":      kindResubscribeFailed,
+	"re-subscribe bound nothing (PLC not serving yet); keeping the subscriptions on file and retrying in the next window":   kindResubscribeFailed,
+	"reconnect dial/start failed, retrying":                                                                                 kindReconnectFailing,
+	"reconnect step failed, retrying":                                                                                       kindReconnectFailing,
+	"error getting symbol for batch notification":                                                                           kindSymbolConfig,
+	"error getting symbol for batch read":                                                                                   kindSymbolConfig,
+	"on-demand symbol unavailable after reconnect, skipping":                                                                kindSymbolConfig,
+	"could not dial the PLC":                                                                                                kindTargetUnreachable,
+	"send aborted due to timeout":                                                                                           kindReadTimeout,
+	"AddDeviceNotification fallback aborted: transport failed mid-batch":                                                    kindConnectionDropped,
+}
+
 // fallbackMessages are the MessageIs rules that come after the error rules in
 // classifier, so they apply only if no error rule matches the record's error.
-var fallbackMessages = map[string]*errclass.Kind{
-	"reconnect dial/start failed, retrying":       kindReconnectFailing,
-	"reconnect step failed, retrying":             kindReconnectFailing,
-	"error getting symbol for batch notification": kindSymbolConfig,
+var fallbackMessages = []string{
+	"reconnect dial/start failed, retrying",
+	"reconnect step failed, retrying",
+	"error getting symbol for batch notification",
+	"error getting symbol for batch read",
+	"on-demand symbol unavailable after reconnect, skipping",
+	"could not dial the PLC",
+	"send aborted due to timeout",
+	"AddDeviceNotification fallback aborted: transport failed mid-batch",
 }
 
 // messageRules returns the messages of the MessageIs rules in classifier:
 // those that decide on their own, and fallbackMessages with their Kinds.
 func messageRules() ([]string, map[string]*errclass.Kind) {
+	fallbacks := make(map[string]*errclass.Kind, len(fallbackMessages))
+	for _, msg := range fallbackMessages {
+		fallbacks[msg] = messageKinds[msg]
+	}
 	decisive := slices.DeleteFunc(classifier.Messages(), func(msg string) bool {
-		_, ok := fallbackMessages[msg]
+		_, ok := fallbacks[msg]
 		return ok
 	})
-	return decisive, fallbackMessages
+	return decisive, fallbacks
+}
+
+// deliberatelyUnclassified are the warning and error messages of go-ads that
+// have no MessageIs rule, each with the reason. A record with one of them gets
+// the Kind of its error, if an error rule matches, and ads::unclassified
+// otherwise.
+var deliberatelyUnclassified = map[string]string{
+	// The error decides the Kind.
+	"send request failed":                                                                          "classified by its error",
+	"error during read state":                                                                      "classified by its error",
+	"individual read failed in SumRead fallback":                                                   "classified by its error",
+	"individual AddDeviceNotification failed in fallback":                                          "classified by its error",
+	"route activation gave up: redial budget spent and the transport is gone":                      "classified by its error; the route fault that go-ads returns next is logged as route_fault",
+	"PLC accepted the connection but answered nothing; backing off completely before trying again": "classified by its error",
+	"could not establish the notification heartbeat; retrying, and until it succeeds a silent subscription death will go unnoticed": "classified by its error",
+	"auto-reload failed":                                         "classified by its error",
+	"Close error during stale-detection shutdown":                "classified by its error",
+	"failed to read symbol version, continuing with symbol load": "classified by its error; go-ads continues",
+	"failed to read symbol version during slow discovery":        "classified by its error; go-ads continues",
+	"failed to read symbol version during LoadSymbolList":        "classified by its error; go-ads continues",
+	"failed to add notification handler":                         "only an ADS code, which means a runtime in CONFIG as often as a bad symbol; setupNotifications logs the result with its Kind",
+	"sum command not supported by PLC, using fallback":           "covers sum reads, writes and notification commands alike; go-ads falls back and delivers",
+
+	// go-ads releases a PLC handle on a best-effort basis, after a cause
+	// that is logged with its own Kind. No Kind exists yet for a handle left
+	// on the PLC.
+	"error deleting handle":                                                           "best-effort handle release",
+	"orphan delete RPC failed":                                                        "best-effort handle release",
+	"bestEffortDelete: SumDeleteDeviceNotification failed":                            "best-effort handle release",
+	"bestEffortDelete: some handles not cleaned up":                                   "best-effort handle release",
+	"individual DeleteDeviceNotification: transport-level failure, aborting fallback": "best-effort handle release",
+	"individual DeleteDeviceNotification failed in fallback":                          "best-effort handle release",
+	"failed to release PLC handle after symbol vanished":                              "best-effort handle release",
+	"failed to release PLC handle after cache reload during subscribe":                "best-effort handle release",
+	"failed to release PLC handle after channel-mismatch reject":                      "best-effort handle release",
+	"failed to release PLC handle after duplicate-subscribe reject":                   "best-effort handle release",
+	"batch entry not committed; releasing the PLC handle":                             "best-effort handle release",
+	"released PLC notification handles the batch did not bind":                        "best-effort handle release",
+	"failed to release symbol handle":                                                 "best-effort handle release",
+	"failed to release orphan symbol handle after cache swap":                         "best-effort handle release",
+	"failed to release duplicate symbol handle":                                       "best-effort handle release",
+	"reconnect: giving up on releasing pre-reconnect notification handles":            "best-effort handle release",
+	"reconnect: keeping unreleased notification handles for the next attempt":         "best-effort handle release",
+	"resubscribe: released PLC handles for Skipped+Handle entries":                    "best-effort handle release",
+	"resubscribe rollback: deleted partial-success handles":                           "best-effort handle release",
+	"received notification for unknown handle":                                        "subscriptions of an earlier session, which go-ads deletes itself",
+
+	// Values dropped because this input reads them too slowly. No Kind
+	// exists yet for that.
+	"recvQueue full, dropping inbound packet (PLC overrun or slow handler)": "data dropped under load; no Kind yet",
+	"notification dropped (channel full, receiver too slow)":                "data dropped under load; no Kind yet",
+	"early notification sample dropped (buffer full)":                       "data dropped under load; no Kind yet",
+	"getJSON marshal error": "a struct value that JSON cannot encode, such as a NaN float; no Kind yet",
+
+	// go-ads works around the cause and goes on.
+	"send aborted due to shutdown": "logged only while this input closes",
+	"PLC returned a heartbeat handle that is already in use by a subscription; not using it":       "go-ads works around the PLC",
+	"InContext mode not available for symbol (ContextMask=0), falling back":                        "go-ads falls back to the plain transmission mode and delivers",
+	"notifications swept mid-batch; committed entries reported as stranded":                        "the stranded entries carry ErrNotificationStrandedByReload, which setupNotifications logs as internal_bug",
+	"TCP and UDP source IPs differ — possible NAT/Docker/VPN":                                      "a hint for hostIP; the connect may still succeed",
+	"could not bind the inbound AMS port for a device known to need it; requests may all time out": "a local port conflict; no Kind yet",
+	"route probe was silent, but the PLC answers on a connection it opens to us; continuing":       "go-ads recovered the connection",
+	"PLC answers on a connection it opens to us, not on ours; using that connection":               "go-ads recovered the connection",
+	"stale-cache detection":                                           "go-ads reloads the symbols itself; a failed reload is logged on its own",
+	"reload cap exhausted - degrading to Ignore":                      "go-ads reports ReasonReloadCapExhausted as a session event, which onSessionEvent logs",
+	"Close proceeded without waiting out the in-flight reconnect":     "go-ads lifecycle detail; the reconnect exits by itself",
+	"taking over a reconnect state left behind by an earlier attempt": "go-ads lifecycle detail",
+
+	// Code this input does not reach.
+	"error during send request for write":                                                           "this input never writes",
+	"SumWrite not supported by PLC, using individual writes":                                        "this input never writes",
+	"individual write failed in SumWrite fallback":                                                  "this input never writes",
+	"error getting symbol for batch write":                                                          "this input never writes",
+	"error serializing symbol for batch write":                                                      "this input never writes",
+	"no batch write result for symbol":                                                              "this input never writes",
+	"inferring base type from size for write (no datatype table loaded; LoadSymbols() recommended)": "this input never writes",
+	"GetJSON marshal error":                                                                         "this input does not call SymbolView.GetJSON",
+	"WithLocalBindIP: invalid IP, ignoring (using OS-default routing)":                              "this input does not set the option",
+	"invalid SymbolVersionStrategy, using AutoReload":                                               "this input does not set the option",
+	"WithMaxSymbolVersionReloadAttempts: n<1 rejected, keeping current value":                       "this input does not set the option",
+	"WithSymbolVersionReloadWindow: d<=0 rejected, keeping current value":                           "this input does not set the option",
+	"heartbeat interval exceeds what ADS can express; clamping":                                     "this input does not set WithNotificationHeartbeat",
 }

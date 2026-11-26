@@ -17,10 +17,12 @@ package errclass
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Rule gives a Kind to the errors or log records it matches. Create it with
-// ErrorIs, ErrorMatches or MessageIs, and pass it to Component.Classifier.
+// ErrorIs, ErrorMatches, ErrorContains or MessageIs, and pass it to
+// Component.Classifier.
 type Rule struct {
 	kind *Kind
 	// matches is set for a rule that matches an error.
@@ -40,6 +42,19 @@ func ErrorIs(target error, kind *Kind) Rule {
 // call errors.As or to look at the error's fields.
 func ErrorMatches(matches func(error) bool, kind *Kind) Rule {
 	return Rule{kind: kind, matches: matches}
+}
+
+// ErrorContains returns the Rule that gives kind to every error that has an
+// error in its chain whose text contains substr. Use it for a library that
+// reports a failure only as text, without a sentinel error or a type to
+// match. Like the other error rules, it never applies to the message of a log
+// record. ErrorContains panics if substr is empty.
+func ErrorContains(substr string, kind *Kind) Rule {
+	if substr == "" {
+		panic("errclass: ErrorContains rule with an empty substring")
+	}
+	contains := func(err error) bool { return strings.Contains(err.Error(), substr) }
+	return Rule{kind: kind, matches: func(err error) bool { return walk(err, contains) }}
 }
 
 // MessageIs returns the Rule that gives kind to every warning and error
@@ -66,12 +81,28 @@ type Classifier struct {
 // rule. Put the rule for the wrapping error first, because it names the more
 // specific cause.
 //
-// An error is matched by the ErrorIs and ErrorMatches rules only. A log record
-// of a library is matched by every rule: a MessageIs rule matches the record's
-// message, and the other rules match the error among its fields. So a
-// MessageIs rule placed before the error rules decides by the message alone,
-// and one placed after them applies only if no error rule matched.
+// An error is matched by the ErrorIs, ErrorMatches and ErrorContains rules
+// only. A log record of a library is matched by every rule: a MessageIs rule
+// matches the record's message, and the other rules match the error among its
+// fields. So a MessageIs rule placed before the error rules decides by the
+// message alone, and one placed after them applies only if no error rule
+// matched.
+//
+// Classifier panics if a rule has no Kind, a Kind of another component, or
+// neither an error to match nor a message, such as a zero Rule. Declare the
+// Classifier as a package variable, so that such a rule fails every test of
+// the component.
 func (c *Component) Classifier(rules ...Rule) *Classifier {
+	for i, r := range rules {
+		switch {
+		case r.kind == nil:
+			panic(fmt.Sprintf("errclass: rule %d of component %q has no Kind", i, c.name))
+		case !c.owns(r.kind):
+			panic(fmt.Sprintf("errclass: rule %d of component %q has the Kind %s of another component", i, c.name, r.kind.name))
+		case r.matches == nil && r.msg == "":
+			panic(fmt.Sprintf("errclass: rule %d of component %q matches neither an error nor a message; create rules with ErrorIs, ErrorMatches, ErrorContains or MessageIs", i, c.name))
+		}
+	}
 	return &Classifier{component: c, rules: rules}
 }
 
@@ -113,10 +144,18 @@ func (c *Classifier) Classify(err error) *Kind {
 	return c.component.unclassified
 }
 
-// classifyRecord returns the Kind of a log record with msg that carries err,
-// which may be nil. It tries the Kind err was created with and then every rule
-// in order, and falls back to the component's unclassified Kind.
-func (c *Classifier) classifyRecord(msg string, err error) *Kind {
+// ClassifyMessage returns the Kind of a library's log line with the message
+// msg that carries err, which may be nil. It returns the first of the Kind err
+// was created with, the Kind of the first rule that matches msg or err, and
+// the component's unclassified Kind.
+//
+// Logger.Slog classifies the records of a library that logs through log/slog
+// with it. For a library that logs through anything else, call it from the
+// library's log callback and log the line with the Kind it returns:
+//
+//	kind := classifier.ClassifyMessage(msg, err)
+//	log.Warn(kind.Errorf("%s: %w", msg, err))
+func (c *Classifier) ClassifyMessage(msg string, err error) *Kind {
 	if kind := c.createdKind(err); kind != nil {
 		return kind
 	}
@@ -133,13 +172,44 @@ func (c *Classifier) classifyRecord(msg string, err error) *Kind {
 }
 
 // createdKind returns the Kind err was created with by Kind.Errorf, if it is
-// one of this component's Kinds, or nil.
+// one of this component's Kinds, or nil. It searches the whole tree of err,
+// outer errors first, so a Kind of another component that wraps one of this
+// component's errors does not hide its Kind.
 func (c *Classifier) createdKind(err error) *Kind {
-	var ke *kindError
-	if errors.As(err, &ke) && c.component.owns(ke.kind) {
-		return ke.kind
+	var kind *Kind
+	walk(err, func(e error) bool {
+		if ke, ok := e.(*kindError); ok && c.component.owns(ke.kind) { //nolint:errorlint // walk visits every wrapped error itself
+			kind = ke.kind
+			return true
+		}
+		return false
+	})
+	return kind
+}
+
+// walk calls visit for err and every error it wraps, depth-first and outer
+// errors first, following both Unwrap() error and Unwrap() []error, as
+// errors.Is does. It stops and returns true as soon as visit returns true.
+func walk(err error, visit func(error) bool) bool {
+	for err != nil {
+		if visit(err) {
+			return true
+		}
+		switch u := err.(type) { //nolint:errorlint // walk unwraps err itself
+		case interface{ Unwrap() error }:
+			err = u.Unwrap()
+		case interface{ Unwrap() []error }:
+			for _, e := range u.Unwrap() {
+				if walk(e, visit) {
+					return true
+				}
+			}
+			return false
+		default:
+			return false
+		}
 	}
-	return nil
+	return false
 }
 
 // EnrichForLog returns err with its error_kind and error_owner in front of its
@@ -166,8 +236,11 @@ type enrichedError struct {
 	err  error
 }
 
-func (e *enrichedError) Error() string {
-	return fmt.Sprintf("[error_kind=%s error_owner=%s] %v", e.kind.name, e.kind.Owner(), e.err)
+func (e *enrichedError) Error() string { return e.prefix() + e.err.Error() }
+
+// prefix is the text in front of the text of the wrapped error.
+func (e *enrichedError) prefix() string {
+	return fmt.Sprintf("[error_kind=%s error_owner=%s] ", e.kind.name, e.kind.Owner())
 }
 
 func (e *enrichedError) Unwrap() error { return e.err }

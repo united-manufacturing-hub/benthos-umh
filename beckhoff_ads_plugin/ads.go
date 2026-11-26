@@ -111,8 +111,22 @@ func transmissionModeValue(s string) int {
 	}
 }
 
-// NewAdsCommInput creates a new ADS input plugin from parsed Benthos configuration.
+// NewAdsCommInput creates a new ADS input plugin from parsed Benthos
+// configuration. A failure is returned with its error_kind and error_owner in
+// the text, because Benthos logs it without fields. A configuration error
+// without a more specific Kind gets kindInvalidConfig.
 func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
+	in, err := newAdsCommInput(conf, mgr)
+	if err != nil {
+		if classifier.Classify(err) == ads.Unclassified() {
+			err = kindInvalidConfig.Errorf("%w", err)
+		}
+		return nil, classifier.EnrichForLog(err)
+	}
+	return in, nil
+}
+
+func newAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
 	targetAddress, err := conf.FieldString("targetAddress")
 	if err != nil {
 		return nil, err
@@ -130,7 +144,7 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 	// Empty is legal: go-ads then asks the PLC for its own NetID on connect.
 	if targetAMS != "" {
 		if err = validateAMSNetID(targetAMS); err != nil {
-			return nil, fmt.Errorf("targetAMS: %w", err)
+			return nil, kindInvalidTargetAMS.Errorf("targetAMS: %w", err)
 		}
 	}
 
@@ -149,7 +163,7 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 
 	if !isAuto(hostAMS) {
 		if err = validateAMSNetID(hostAMS); err != nil {
-			return nil, fmt.Errorf("hostAMS: %w", err)
+			return nil, kindInvalidHostAMS.Errorf("hostAMS: %w", err)
 		}
 	}
 
@@ -182,7 +196,7 @@ func NewAdsCommInput(conf *service.ParsedConfig, mgr *service.Resources) (servic
 	}
 
 	if len(unifiedAddress) == 0 {
-		return nil, fmt.Errorf("unifiedAddress is required")
+		return nil, kindSymbolConfig.Errorf("unifiedAddress is required")
 	}
 
 	intervalTime, err := conf.FieldDuration("intervalTime")
@@ -499,6 +513,8 @@ func backoffFor(first time.Duration, ceiling time.Duration, n int) time.Duration
 // finishConnect drives connect → symbol resolution → (optional) symbol table
 // load → (optional) notification setup; split out so Connect can clean up a.client on failure.
 func (a *AdsCommInput) finishConnect(ctx context.Context) error {
+	// A symbol that fails again in the new session is warned about again.
+	a.warnedBatchFailures = nil
 	a.Log.Infof("Connecting to PLC (%s)", a.connParams())
 	if err := a.client.Connect(ctx); err != nil {
 		return fmt.Errorf("connecting to PLC (%s): %w", a.connParams(), err)

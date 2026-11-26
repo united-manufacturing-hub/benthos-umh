@@ -47,7 +47,4 @@
 //
 // Kinds are for logs only. Code that decides whether to retry checks the
 // error itself, for example with errors.Is.
-//
-// The contract with umh-core lists every Kind and its owner:
-// https://linear.app/united-manufacturing-hub/document/plugin-error-kinds-and-owners-contract-between-benthos-umh-and-umh-e51f0744258b
 package errclass
