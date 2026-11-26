@@ -240,7 +240,9 @@ func runFaultHandshake(t *testing.T, srv *faultopcua.Server, cfg handshake.Confi
 
 // assertOutcome reads the outcome off the error the output hands the flow,
 // which is the only place the class appears -- an output is a sink, so the
-// class travels as a prefix on an error (MORNING.md question 4).
+// class travels as a prefix on an error. A benthos output terminates a
+// pipeline and has no downstream, so there is nowhere else for it to go;
+// giving the class a channel of its own is open on ENG-8130.
 func assertOutcome(t *testing.T, err error, want string) {
 	t.Helper()
 	switch want {
