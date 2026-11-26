@@ -78,3 +78,49 @@ func TestCaughtFault_DoesNotExplainAScriptBug(t *testing.T) {
 		})
 	}
 }
+
+// A fault recorded while the stack unwinds must not displace the fault that
+// stopped the run.
+//
+// classify finds which recorded fault the run's error IS. Keeping only the
+// latest meant a failing operation inside a `finally`, or a rethrow, took
+// the place of the stopper: the identical machine fault was Transient until
+// an unrelated caught write in an unwind path also failed, and then it was
+// Persistent with an error that named neither the node nor the operation.
+// The flow branches on that class.
+func TestUnwindFault_DoesNotDisplaceTheFaultThatStopped(t *testing.T) {
+	const script = `
+		try {
+			opcua.read({ nodeId: "ns=2;s=Flaky" });
+		} finally {
+			try { opcua.write({ nodeId: "ns=2;s=Other" }, 1); } catch (e) { }
+		}
+	`
+	for _, tc := range []struct {
+		name       string
+		otherFails bool
+	}{
+		{"the write in the finally succeeds", false},
+		{"the write in the finally also fails", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newMachine(map[string]any{"ns=2;s=Other": int64(0)})
+			m.plan("ns=2;s=Flaky", &reaction{err: errors.New("machine unreachable")})
+			if tc.otherFails {
+				m.plan("ns=2;s=Other", &reaction{err: errors.New("write refused")})
+			}
+			res, _ := runScenario(t, uatConfig(script), m, map[string]any{})
+
+			// The read is what stopped the run, it is unmarked, and an
+			// unmarked fault is worth retrying. What happened in the
+			// unwind path does not change that.
+			expectOutcome(t, res, Transient)
+			if res.Err == nil || !strings.Contains(res.Err.Error(), "machine unreachable") {
+				t.Errorf("the reported fault should be the read that stopped the run, got %v", res.Err)
+			}
+			if res.Err != nil && !strings.Contains(res.Err.Error(), "ns=2;s=Flaky") {
+				t.Errorf("the error should name the node, got %v", res.Err)
+			}
+		})
+	}
+}

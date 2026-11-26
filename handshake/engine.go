@@ -42,14 +42,15 @@ type runState struct {
 	ctx            context.Context // the clock the block runs under
 	deadline       time.Time       // zero when the block has no deadline
 	end            ending
-	data           any    // the object success returned
-	detail         any    // the detail an ending call passed
-	opErr          error  // the most recent binding operation that failed
-	opWhere        string // which one, for the error message and for cleanupEvidence's pairing
-	mutErr         error  // an operation a cleanup block asked for that came back with an error: the evidence the machine was not handed back, recorded at the dispatch boundary (cleanupEvidence)
-	mutWhere       string // which one, for the cleanup's error message
-	waitPersistent bool   // a wait that ran out was told onTimeout persistent
-	cleanup        bool   // this run is a cleanup block: no ending to record, so a wait that runs out is cleanup-failure evidence instead
+	data           any             // the object success returned
+	detail         any             // the detail an ending call passed
+	opErr          error           // the most recent binding operation that failed
+	faults         []recordedFault // every fault this run recorded, for classify to match the run's error against
+	opWhere        string          // which one, for the error message and for cleanupEvidence's pairing
+	mutErr         error           // an operation a cleanup block asked for that came back with an error: the evidence the machine was not handed back, recorded at the dispatch boundary (cleanupEvidence)
+	mutWhere       string          // which one, for the cleanup's error message
+	waitPersistent bool            // a wait that ran out was told onTimeout persistent
+	cleanup        bool            // this run is a cleanup block: no ending to record, so a wait that runs out is cleanup-failure evidence instead
 }
 
 // finish records the script's ending; the first one wins.
@@ -78,6 +79,30 @@ func (rs *runState) finish(end ending, detail any) bool {
 func (rs *runState) fail(where string, err error) {
 	rs.opErr = err
 	rs.opWhere = where
+	// Every fault, not only the latest, because classify has to find the
+	// one the run's error actually is. Keeping only the latest meant a
+	// fault recorded while the stack unwound -- a failing operation inside
+	// a finally, or a rethrow -- displaced the fault that stopped the run,
+	// and the outcome then depended on whether an unrelated operation in an
+	// unwind path also failed.
+	//
+	// Bounded, because a script can fail as often as it likes and this is
+	// only ever searched for a match.
+	if len(rs.faults) < maxRecordedFaults {
+		rs.faults = append(rs.faults, recordedFault{where: where, err: err})
+	}
+}
+
+// maxRecordedFaults bounds what one run keeps. A run that fails more than
+// this many times has told us what we need; the cap exists so a looping
+// script cannot grow the slice without limit.
+const maxRecordedFaults = 32
+
+// recordedFault is one failed operation, kept so classify can match the
+// run's own error against it.
+type recordedFault struct {
+	where string
+	err   error
 }
 
 // failMutating records the evidence that a cleanup block did not hand the
