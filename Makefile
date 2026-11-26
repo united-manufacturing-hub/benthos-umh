@@ -117,9 +117,16 @@ test-handshake:
 
 # The scenario suite drives the engine against a server that misbehaves
 # (opcua_plugin/internal/faultopcua). It needs no container and no network.
+#
+# The whole package, with no -run filter. The filter this target shipped with
+# -- 'TestFault|TestControl|TestInject' -- silently excluded
+# TestTheControl_AnHonestServerAppliesAWrite, because "TestControl" is not a
+# substring of "TestTheControl". The one test it dropped was the control: the
+# test that proves the server behaves honestly when nothing is armed, which
+# is what makes every fault result mean anything.
 .PHONY: test-handshake-faults
 test-handshake-faults:
-	@go test -race -count=1 ./opcua_plugin/internal/faultopcua/ -run 'TestFault|TestControl|TestInject'
+	@go test -race -count=1 ./opcua_plugin/internal/faultopcua/
 
 .PHONY: test-unit-opc
 test-unit-opc:
