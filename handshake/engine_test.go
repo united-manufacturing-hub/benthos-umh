@@ -797,6 +797,47 @@ func TestLiteralWaitScanner_CountsOnlyRealCalls(t *testing.T) {
 			want:   time.Second,
 		},
 		{
+			// Four more spellings of a plain number that were read as
+			// computed and counted as nothing, which is the same false pass
+			// hex and 1_000 were fixed for: a real five-second wait
+			// deploying under a 999ms budget with no complaint.
+			name:   "a float literal is a plain number",
+			script: `opcua.wait_until(a, b, 5000.0);`,
+			want:   5 * time.Second,
+		},
+		{
+			name:   "an exponent is a plain number",
+			script: `opcua.wait_until(a, b, 5e3);`,
+			want:   5 * time.Second,
+		},
+		{
+			name:   "a leading-dot exponent is a plain number",
+			script: `opcua.wait_until(a, b, .5e4);`,
+			want:   5 * time.Second,
+		},
+		{
+			name:   "a unary plus is applied to a literal, not computed from one",
+			script: `opcua.wait_until(a, b, +5000);`,
+			want:   5 * time.Second,
+		},
+		{
+			// Still computed, so still counted as nothing: the scanner must
+			// not start guessing at expressions.
+			name:   "a name is still computed",
+			script: `opcua.wait_until(a, b, timeoutMs);`,
+			want:   0,
+		},
+		{
+			name:   "arithmetic is still computed",
+			script: `opcua.wait_until(a, b, 5 * 1000);`,
+			want:   0,
+		},
+		{
+			name:   "a float too large for a Duration saturates like an integer one",
+			script: `opcua.wait_until(a, b, 1e300);`,
+			want:   maxLiteralWait,
+		},
+		{
 			// goja compiles this, so the script deployed; the scanner read
 			// the byte before the name, which for a multi-byte rune is a
 			// continuation byte that matched no identifier character, and
