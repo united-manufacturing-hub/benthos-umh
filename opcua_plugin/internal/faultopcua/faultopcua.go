@@ -51,6 +51,12 @@ const (
 	// this fault exists to find.
 	NeverAnswer Kind = "never_answer"
 
+	// DropSession closes the connection underneath the client at the moment
+	// the node is touched. It is the half-state the handshake's onError block
+	// exists for: the write may have landed and the read-back that would have
+	// said so can no longer be asked.
+	DropSession Kind = "drop_session"
+
 	// RaiseFlagLate holds the node at Fault.Until for Fault.After, then lets
 	// the real value through. A machine that confirms late rather than never
 	// is the ordinary case wait_until exists for, and the one a test using a
@@ -100,10 +106,11 @@ func (f Firing) String() string {
 // Server is a running OPC UA server with a programmable set of faults.
 // The zero value is not usable; call New.
 type Server struct {
-	srv  *server.Server
-	ns   *faultNamespace
-	host string
-	port int
+	srv   *server.Server
+	ns    *faultNamespace
+	proxy *proxy
+	host  string
+	port  int // where the OPC UA server listens, behind the proxy
 }
 
 // New builds a server with no faults armed: an honest machine, which is the
@@ -116,7 +123,7 @@ func New() (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("faultopcua: no free port: %w", err)
 	}
-	s := &Server{host: "localhost", port: port}
+	s := &Server{host: "127.0.0.1", port: port}
 	s.srv = server.New(
 		server.EndPoint(s.host, s.port),
 		server.EnableSecurity("None", ua.MessageSecurityModeNone),
@@ -128,8 +135,23 @@ func New() (*Server, error) {
 		closed:        make(chan struct{}),
 	}
 	s.srv.AddNamespace(s.ns)
+
+	// Every client reaches the server through the proxy, so a session drop
+	// is a real socket close rather than a polite error, and there is one
+	// code path whether or not a drop is armed.
+	px, err := newProxy(fmt.Sprintf("%s:%d", s.host, s.port))
+	if err != nil {
+		return nil, fmt.Errorf("faultopcua: proxy: %w", err)
+	}
+	s.proxy = px
+	s.ns.onDrop = px.cut
 	return s, nil
 }
+
+// Cuts reports how many connections a session drop actually closed. A test
+// that only watched the client fail could not tell a drop that reached a
+// socket from one that never fired.
+func (s *Server) Cuts() int { return s.ns.cuts() }
 
 // AddNode gives the server a readable and writable variable node holding
 // value. The node's identifier is its name, so AddNode("Setpoint", 0) is
@@ -188,9 +210,10 @@ func (s *Server) NodeID(name string) string {
 	return fmt.Sprintf("ns=%d;s=%s", s.NamespaceID(), name)
 }
 
-// Endpoint is the URL a client connects to. Valid once Start has returned.
+// Endpoint is the URL a client connects to: the proxy's address, not the
+// server's. Valid as soon as New has returned.
 func (s *Server) Endpoint() string {
-	return fmt.Sprintf("opc.tcp://%s:%d", s.host, s.port)
+	return fmt.Sprintf("opc.tcp://%s:%d", s.host, s.proxy.port())
 }
 
 // Start listens and serves until ctx is cancelled or Close is called.
@@ -205,6 +228,9 @@ func (s *Server) Start(ctx context.Context) error {
 // Close stops the server and releases any read a fault is holding.
 func (s *Server) Close() error {
 	s.ns.release()
+	if s.proxy != nil {
+		s.proxy.close()
+	}
 	if s.srv == nil {
 		return nil
 	}
@@ -238,6 +264,29 @@ type faultNamespace struct {
 	// closed releases anything NeverAnswer is holding, so a stuck read ends
 	// with the server rather than outliving the test that armed it.
 	closed chan struct{}
+
+	// onDrop cuts the connections underneath the client. It returns how many
+	// it closed, which is the evidence a DropSession test asserts.
+	onDrop func() int
+	cut    int
+}
+
+// cuts reports how many connections this namespace's drops have closed.
+func (ns *faultNamespace) cuts() int {
+	ns.mu.Lock()
+	defer ns.mu.Unlock()
+	return ns.cut
+}
+
+// drop cuts the client's connection and keeps the count.
+func (ns *faultNamespace) drop() {
+	if ns.onDrop == nil {
+		return
+	}
+	n := ns.onDrop()
+	ns.mu.Lock()
+	ns.cut += n
+	ns.mu.Unlock()
 }
 
 // Attribute is the read side.
@@ -252,6 +301,14 @@ func (ns *faultNamespace) Attribute(id *ua.NodeID, attr ua.AttributeID) *ua.Data
 		return ns.NodeNameSpace.Attribute(id, attr)
 	}
 	switch f.Kind {
+	case DropSession:
+		ns.record(f)
+		ns.drop()
+		return &ua.DataValue{
+			EncodingMask:    ua.DataValueServerTimestamp | ua.DataValueStatusCode,
+			ServerTimestamp: time.Now(),
+			Status:          ua.StatusBadConnectionClosed,
+		}
 	case RefuseRead:
 		ns.record(f)
 		return &ua.DataValue{
@@ -294,6 +351,13 @@ func (ns *faultNamespace) SetAttribute(id *ua.NodeID, attr ua.AttributeID, val *
 		return ns.NodeNameSpace.SetAttribute(id, attr, val)
 	}
 	switch f.Kind {
+	case DropSession:
+		// Record and cut before the value is stored, because the question
+		// this fault asks is what a caller does when it cannot find out
+		// whether the write landed. Storing it first would answer that.
+		ns.record(f)
+		ns.drop()
+		return ua.StatusBadConnectionClosed
 	case AcceptWriteNeverApply:
 		// Tell the client it worked and change nothing. The client has no
 		// way to know from this answer alone, which is the point: only a
@@ -327,7 +391,7 @@ func (ns *faultNamespace) record(f Fault) {
 // Another process can take it in between; a test that cannot bind should say
 // so rather than retry forever, so the window is left visible here.
 func freePort() (int, error) {
-	l, err := net.Listen("tcp", "localhost:0")
+	l, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		return 0, err
 	}
