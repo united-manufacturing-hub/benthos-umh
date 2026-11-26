@@ -1,0 +1,3 @@
+kind: fixes
+body: OPC UA input and output now honour autoReconnect; setting it to false previously left the connection reconnecting anyway, which is what the documented default was supposed to give you. A bridge configured not to reconnect will now stay down after a dropped session instead of silently recovering (ENG-8155)
+time: 2026-11-26T11:00:00.000000+01:00
