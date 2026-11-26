@@ -986,3 +986,42 @@ func TestCall_DeclaredArrayInputKeepsTheGoTypeMapping(t *testing.T) {
 		}
 	})
 }
+
+// TestVariantToValue_ByteStringAndByteArrayAreNotTheSameThing
+//
+// Go cannot tell them apart: a ByteString and an array of Byte both decode
+// to []uint8. Refusing both told the owner of an ordinary Byte[] node that
+// their tag was a byte string, while every other integer array converted
+// and a single Byte read fine. The variant's own type says which it is.
+//
+// Only the ByteString half can be built in this process -- ua.NewVariant
+// gives []byte the ByteString type id, and a Byte array arrives that way
+// only off the wire. The Byte[] half was measured end to end by round
+// three's adversary lane against a real server, reading
+// "a byte string has no documented value form" from a Byte[] node, which
+// is what this change fixes.
+func TestVariantToValue_ByteStringAndByteArrayAreNotTheSameThing(t *testing.T) {
+	byteString, err := ua.NewVariant([]byte{1, 2, 250})
+	if err != nil {
+		t.Fatalf("could not build the variant: %v", err)
+	}
+	if byteString.Type() != ua.TypeIDByteString {
+		t.Fatalf("expected a ByteString, got %v -- this test's premise has moved", byteString.Type())
+	}
+
+	// A ByteString still has no documented value form, and the refusal now
+	// says ByteString rather than accusing a Byte array of being one.
+	_, convErr := variantToValue(byteString)
+	if convErr == nil {
+		t.Fatal("a ByteString was converted; it has no documented value form")
+	}
+	if !strings.Contains(convErr.Error(), "ByteString") {
+		t.Errorf("the refusal should name what it refused, got %v", convErr)
+	}
+
+	// And the conversion a Byte array takes is the one every other integer
+	// array takes, so it cannot drift apart from them unnoticed.
+	if got := int64s([]uint8{1, 2, 250}); len(got) != 3 || got[0] != 1 || got[2] != 250 {
+		t.Errorf("a Byte array converts like any integer array, got %v", got)
+	}
+}
