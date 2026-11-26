@@ -172,9 +172,20 @@ func (s *Server) AddNode(name string, value any) {
 	s.ns.AddNewVariableStringNode(name, value)
 }
 
-// Inject arms a fault. Faults can be armed before or after Start, because a
-// scenario often needs the machine to behave until a particular moment.
+// Inject arms a fault, and panics if the node does not exist.
+//
+// The panic is the point. A fault matches by node name, and the read side
+// answers before the real namespace is consulted, so a fault armed against a
+// name nothing added produces its whole observable behaviour against a node
+// that is not there: the ghost refuses, stalls, flaps and drops exactly as
+// instructed, Fired reports true, and the scenario passes end to end. One
+// typo between AddNode and Inject is enough. Failing here, loudly, is the
+// only place the mistake is still visible.
 func (s *Server) Inject(f Fault) {
+	if s.ns.NodeNameSpace.Node(ua.NewStringNodeID(s.ns.ID(), f.Node)) == nil {
+		panic(fmt.Sprintf(
+			"faultopcua: no node %q to arm %s against -- add it with AddNode first", f.Node, f.Kind))
+	}
 	ns := s.ns
 	f.armed = time.Now()
 	ns.mu.Lock()

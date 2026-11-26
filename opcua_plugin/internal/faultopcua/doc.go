@@ -39,6 +39,23 @@
 // happened on the wire. A test that asserts only the client's reaction is not
 // finished; it has to assert the firing too.
 //
+// # One service loop
+//
+// gopcua's server handles every service request in a single loop, so a fault
+// that blocks -- NeverAnswer, or AnswerLate while it is sleeping -- holds up
+// every later request from every client, not only the node it is armed on.
+// Two consequences worth knowing before writing a scenario:
+//
+// A scenario cannot arm NeverAnswer on one node and expect another node to
+// answer meanwhile. It will not.
+//
+// Close the server before the client. Closing the client first sends a
+// CloseSession that queues behind the blocked handler, and the client then
+// waits out gopcua's 10s default RequestTimeout: measured at 10.56s against
+// 0.30s the other way round. The helpers in this package's tests register
+// their cleanups accordingly, and LIFO makes that the reverse of how it
+// reads.
+//
 // This is a test instrument. It is not an OPC UA server anyone should point a
 // plant at, and it implements only what a fault needs.
 package faultopcua

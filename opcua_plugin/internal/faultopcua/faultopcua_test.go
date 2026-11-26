@@ -16,6 +16,7 @@ package faultopcua_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -85,7 +86,6 @@ func startServer(t *testing.T, node string, value any) (*faultopcua.Server, *opc
 	if err := srv.Start(ctx); err != nil {
 		t.Fatalf("start server: %v", err)
 	}
-	t.Cleanup(func() { _ = srv.Close() })
 
 	// AutoReconnect off, for two reasons. A dropped session during a
 	// handshake is the thing under test, and a client that quietly rebuilt
@@ -106,7 +106,14 @@ func startServer(t *testing.T, node string, value any) (*faultopcua.Server, *opc
 	if err := client.Connect(connectCtx); err != nil {
 		t.Fatalf("connect to %s: %v", srv.Endpoint(), err)
 	}
+	// Order matters, and LIFO makes it the opposite of how it reads. These
+	// run last-registered-first, so the server closes BEFORE the client.
+	// gopcua's server handles every request in one loop, so a fault holding
+	// that loop also holds the client's CloseSession, and the client then
+	// waits out its 10s default RequestTimeout. Measured: 10.56s closing the
+	// client first, 0.30s closing the server first.
 	t.Cleanup(func() { _ = client.Close(context.Background()) })
+	t.Cleanup(func() { _ = srv.Close() })
 
 	id, err := ua.ParseNodeID(srv.NodeID(node))
 	if err != nil {
@@ -182,4 +189,32 @@ func readWithContext(c *opcua.Client, ctx context.Context, id *ua.NodeID) (*ua.R
 	return c.Read(ctx, &ua.ReadRequest{
 		NodesToRead: []*ua.ReadValueID{{NodeID: id, AttributeID: ua.AttributeIDValue}},
 	})
+}
+
+// TestInject_RefusesAGhostNode pins the loudest thing this package does.
+//
+// A fault matches by node name and the read side answers before the real
+// namespace is consulted, so a fault armed against a name nothing added would
+// otherwise produce its whole observable behaviour against a node that is not
+// there -- refusing, stalling, flapping and dropping exactly as instructed,
+// with Fired reporting true and the scenario passing end to end. One typo
+// between AddNode and Inject is all it takes.
+func TestInject_RefusesAGhostNode(t *testing.T) {
+	srv, err := faultopcua.New()
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	srv.AddNode("Real", true)
+	t.Cleanup(func() { _ = srv.Close() })
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("arming a fault against a node that does not exist was accepted")
+		}
+		if msg, _ := r.(string); !strings.Contains(msg, "Ghost") {
+			t.Errorf("the panic should name the node, got %v", r)
+		}
+	}()
+	srv.Inject(faultopcua.Fault{Node: "Ghost", Kind: faultopcua.RefuseRead, Status: ua.StatusBadInternalError})
 }
