@@ -212,7 +212,7 @@ The script sees the incoming message as `msg` — the message’s JSON, so a mes
 |---|---|---|
 | `opcua.read(address)` | the node’s value | `true`/`false` for `Boolean`, a number for the numeric types, a string for `String`, an RFC 3339 string for `DateTime`, an array for an array node. A *Bad* status ends the run by itself; an *Uncertain* status still returns the value — that is how KEPServerEX answers the first read of a healthy tag. |
 | `opcua.write(address, value)` | nothing | Sends one value, converted to the address’s `dataType`. Only whole numbers convert to the integer types (`42.0` is fine, `42.5` is refused); `Boolean` takes only `true`/`false`; `String` only a string; `DateTime` a string like `"2024-03-15T12:00:00Z"`. A value that does not convert, or that lies outside the declared type’s range, ends the run as persistent and nothing is sent — it is refused, never rounded or clamped. Large integers keep every digit when the message carries them as JSON numbers (the digits are parsed exactly, over the whole `Int64` and `UInt64` range); values your script *computes* with JavaScript arithmetic are exact up to 2^53, which is the language’s own limit. |
-| `opcua.wait_until(address, predicate, timeoutMs, options?)` | the value that satisfied the predicate | Re-reads the node until `predicate(value)` is true, or `timeoutMs` passes. It polls every 100 ms; pass a smaller `{ pollMs: 20 }` as the fourth argument to answer a fast machine sooner, or a larger one to go easier on a slow server. A wait that runs out ends the run as transient (try again later) — pass `{ onTimeout: "persistent" }` when you know the flag will never come. A wait never runs past the script’s deadline. |
+| `opcua.wait_until(address, predicate, timeoutMs, options?)` | the value that satisfied the predicate | Re-reads the node until `predicate(value)` is true, or `timeoutMs` passes. It polls every 100 ms; pass a smaller `{ pollMs: 20 }` as the fourth argument to answer a fast machine sooner, or a larger one to go easier on a slow server. A wait that runs out ends the run as transient (try again later) — pass `{ onTimeout: "persistent" }` when you know the flag will never come. **Inside `onSuccess` or `onError` it is always persistent**, whatever `onTimeout` says, because a wait that runs out in a cleanup block means the machine was never handed back. A wait never runs past the script’s deadline. |
 | `opcua.call_method(address, [inputs])` | the method’s output arguments | Calls the OPC UA method `address.nodeId` on `address.objectId`, passing the inputs in order, and returns the outputs as an array, in the order the machine declares them. |
 
 `read`, `write` and `call_method` are one round trip each. A failed call ends the run by itself; you do not need to handle it: a machine that is briefly unreachable ends the run as transient, a wrong address, a wrong type or a value the server refuses ends it as persistent.
@@ -271,10 +271,12 @@ Exactly one of the two blocks runs after every message:
 
 The blocks see nothing but the machine: no `msg`, and no variables from the script. They use the same four `opcua.*` functions, and they cannot end a run — their only job is to return the machine to its idle state.
 
-A block that does not finish within its deadline changes the outcome:
+A block that does not finish changes the outcome. It has not finished if its deadline ran out, if a write or a `call_method` it asked for came back with an error, or if a `wait_until` inside it ran out: in each case the machine was not returned to its idle state, and nothing afterwards can say what state it is in.
 
 - after a **failure**, the run becomes persistent no matter what the failure was, because the machine’s state is now unknown;
 - after a **delivery**, the delivery stands — the machine has the data — and the cleanup failure is logged beside it.
+
+A **read** is the exception. A read cannot change the machine, so a block may probe a node, catch the refusal and carry on; that is how a cleanup says “I expected this one to fail”. A read inside a `wait_until` is not exempt, because the wait was abandoned and the work the block meant to do after it never ran.
 
 So write `onError` for the worst moment, not the happy path: it must be safe to run when the script wrote nothing, and when the machine already acted.
 
@@ -340,7 +342,7 @@ output:
 1. The script reads `Apply` and `Loaded`. If either is up — the machine is still working on the last set — it ends `error_not_ready`, and the message is handed back for the flow to try again later.
 2. It writes each parameter to its own node, in the type the address declares.
 3. It raises `Apply`. The machine acts only on this write, which is why it goes last.
-4. It waits for `Loaded`, polling every 250 ms, and returns `success` when the machine confirms.
+4. It waits for `Loaded`, polling every 20 ms, and returns `success` when the machine confirms.
 5. `onSuccess` drops `Apply` again, leaving the machine ready for the next message. The message is acknowledged; the result object goes to the success flow.
 6. If anything along the way fails — the machine unreachable, the wait runs out, a value the server refuses — `onError` drops `Apply`, and the message is handed back carrying the class of the failure, so the flow can retry it or park it.
 

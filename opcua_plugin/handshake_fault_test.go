@@ -16,6 +16,7 @@ package opcua_plugin
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -241,7 +242,13 @@ func assertOutcome(t *testing.T, err error, want string) {
 			t.Errorf("the run should have ended %s, but the message was acknowledged", want)
 			return
 		}
-		if !strings.Contains(err.Error(), want) {
+		// The prefix, not the whole string. runHandshake puts the real
+		// outcome at the front ("handshake ended transient: ..."), and
+		// everything after it is the script's own detail. Matching anywhere
+		// let a run that ended transient satisfy a "persistent" assertion
+		// whenever the detail happened to contain the word -- which is
+		// exactly the direction a misclassification regression needs.
+		if !outcomeIs(err, want) {
 			t.Errorf("the run should have ended %s, got %v", want, err)
 		}
 	}
@@ -374,5 +381,31 @@ func TestFaultUAT19_AFlagThatFlaps(t *testing.T) {
 	}
 	if reads < 2 {
 		t.Errorf("the flag was read %d time(s); the wait was satisfied without ever seeing it down", reads)
+	}
+}
+
+// outcomeIs reads the outcome class off the error the output hands the flow.
+//
+// The prefix, not the whole string. runHandshake puts the real outcome at
+// the front ("handshake ended transient: ..."), and everything after it is
+// the script's own detail. Matching anywhere in the string let a run that
+// ended transient satisfy a "persistent" assertion whenever the detail
+// happened to contain the word, which is exactly the direction a
+// misclassification regression needs. TestOutcomeIs pins both halves.
+func outcomeIs(err error, want string) bool {
+	return err != nil && strings.HasPrefix(err.Error(), "handshake ended "+want+":")
+}
+
+func TestOutcomeIs_ReadsTheClassAndNotTheDetail(t *testing.T) {
+	transientRunWithAMisleadingDetail := errors.New(
+		"handshake ended transient: script reported a transient fault: the machine reports a persistent refusal")
+	if outcomeIs(transientRunWithAMisleadingDetail, "persistent") {
+		t.Error("a transient run satisfied a persistent assertion because its detail said the word")
+	}
+	if !outcomeIs(transientRunWithAMisleadingDetail, "transient") {
+		t.Error("a transient run did not satisfy a transient assertion")
+	}
+	if outcomeIs(nil, "persistent") {
+		t.Error("a delivered run satisfied a persistent assertion")
 	}
 }
