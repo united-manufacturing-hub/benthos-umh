@@ -45,7 +45,7 @@ type JSEngine struct {
 
 	// Goja runtime for static expression evaluation (no variables).
 	// Never pooled and never cleared, exactly as shipped: the deterministic
-	// survival of globals a static expression sets is the old behaviour.
+	// survival of globals a static expression sets is the old behavior.
 	staticRuntime *goja.Runtime
 
 	// Pooled runtimes for dynamic expressions (with variables). Local to the

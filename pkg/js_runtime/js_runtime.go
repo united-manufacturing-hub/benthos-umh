@@ -65,7 +65,7 @@ type Program struct {
 }
 
 // Compile compiles source under the wrap. name appears in error messages.
-func Compile(name, source string) (*Program, error) {
+func Compile(name string, source string) (*Program, error) {
 	prog, err := goja.Compile(name, wrapPrefix+source+wrapSuffix, false)
 	if err != nil {
 		return nil, err
@@ -136,7 +136,7 @@ type runOutcome struct {
 // runOnVM executes p on vm, converting a Go panic inside the engine into an
 // error (goja does not recover panics itself; letting one escape would take
 // down the caller's goroutine).
-func runOnVM(vm *goja.Runtime, p *Program) (out runOutcome) {
+func runOnVM(vm *goja.Runtime, p *Program) (out runOutcome) { //nolint:nonamedreturns // a deferred recover assigns to it; naming is the mechanism
 	defer func() {
 		if rec := recover(); rec != nil {
 			out.val, out.err = nil, fmt.Errorf("JavaScript execution panic: %v. Please check the expression for runtime errors", rec)

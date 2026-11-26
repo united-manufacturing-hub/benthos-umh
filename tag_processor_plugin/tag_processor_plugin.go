@@ -141,9 +141,13 @@ type TagProcessor struct {
 	// expressions compile unwrapped and non-strict (see compilePrograms), and
 	// the frozen js_runtime API has no way to run an unwrapped program. The
 	// defaults/then/advanced programs run on p.runner.
-	vmpool       sync.Pool
-	vmPoolHits   *service.MetricCounter
-	vmPoolMisses *service.MetricCounter
+	//
+	// The vm_pool_hits/vm_pool_misses counters are gone (ENG-8128): before the
+	// move they counted every message (defaults/conditions/advanced all pooled
+	// here), but the pool now serves only the condition-if path, so a config
+	// without conditions would emit permanent zeros that look like real data on
+	// a dashboard. Removed visibly rather than left silently wrong.
+	vmpool sync.Pool
 
 	// Compiled programs - Phase 2 optimization
 	defaultsProgram       *js_runtime.Program   // Pre-compiled defaults code
@@ -183,10 +187,6 @@ func newTagProcessor(config TagProcessorConfig, logger *service.Logger, metrics 
 		// Initialize VM pool without New function - Get() will return nil when pool is empty
 		vmpool: sync.Pool{},
 
-		// VM pool metrics
-		vmPoolHits:   metrics.NewCounter("vm_pool_hits"),
-		vmPoolMisses: metrics.NewCounter("vm_pool_misses"),
-
 		// Shared runtime for defaults/then/advanced programs
 		runner: js_runtime.NewRunner(js_runtime.Options{}),
 
@@ -212,17 +212,14 @@ func newTagProcessor(config TagProcessorConfig, logger *service.Logger, metrics 
 
 // VM Pool Management Methods - Phase 1 Optimization
 
-// getVM acquires a VM from the pool and tracks metrics.
+// getVM acquires a VM from the pool.
 // Only the condition-if path uses this pool (see the struct comment).
 func (p *TagProcessor) getVM() *goja.Runtime {
 	poolResult := p.vmpool.Get()
 	if poolResult == nil {
-		// Pool is empty, create new VM and track as miss
-		p.vmPoolMisses.Incr(1)
+		// Pool is empty, create a new VM
 		return goja.New()
 	}
-	// Successfully reused VM from pool, track as hit
-	p.vmPoolHits.Incr(1)
 	return poolResult.(*goja.Runtime)
 }
 
@@ -764,7 +761,7 @@ func (p *TagProcessor) compilePrograms() error {
 		// unwrapped and non-strict, exactly as before this plugin moved onto
 		// pkg/js_runtime — the frozen js_runtime API only compiles wrapped
 		// programs, and wrapping them (making them strict, allowing a
-		// top-level return) would change behaviour and is out of scope
+		// top-level return) would change behavior and is out of scope
 		// tonight. They run on this plugin's raw VM pool.
 		p.conditionPrograms[i], err = goja.Compile(
 			fmt.Sprintf("condition-%d-if.js", i),
@@ -818,7 +815,7 @@ func (p *TagProcessor) originalCodeForStage(stageName string) string {
 // result is the exported completion value: nil for null/undefined (deliberate
 // drop), an array fans out, a single object is one message. reason is the drop
 // label when err != nil; empty for deliberate drops.
-func (p *TagProcessor) handleRunResult(result any, stageName string, jsMsg map[string]any) ([]map[string]any, string, error) {
+func (p *TagProcessor) handleRunResult(result any, _ string, _ map[string]any) ([]map[string]any, string, error) {
 	if result == nil {
 		return nil, "", nil
 	}
@@ -852,6 +849,13 @@ func (p *TagProcessor) handleRunResult(result any, stageName string, jsMsg map[s
 func (p *TagProcessor) runProgram(ctx context.Context, program *js_runtime.Program, jsMsg map[string]any, stageName string) ([]map[string]any, string, error) {
 	result, err := p.runner.Run(context.Background(), program, p.jsProcessor.JSEnvironment(ctx, jsMsg))
 	if err != nil {
+		// NOTE (ENG-8128, documented change): the runner binds the JS environment
+		// and executes the program in one call, so a bind failure is classified
+		// js_throw here and logJSError prints the user's code, where the old
+		// setupMessageForVM step was classified infra_failed without the code.
+		// Accepted for the same reason nodered_js's comment gives: the corner is
+		// unreachable in practice, and telling the failures apart would need the
+		// frozen seam to grow a bind-error sentinel.
 		// Use original code for error logging context
 		p.logJSError(err, p.originalCodeForStage(stageName), jsMsg)
 		return nil, "js_throw", fmt.Errorf("JavaScript error in %s: %w", stageName, err)

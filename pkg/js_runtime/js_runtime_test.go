@@ -26,7 +26,7 @@ import (
 	"github.com/dop251/goja"
 )
 
-func mustCompile(t *testing.T, name, source string) *Program {
+func mustCompile(t *testing.T, name string, source string) *Program {
 	t.Helper()
 	p, err := Compile(name, source)
 	if err != nil {
@@ -35,7 +35,7 @@ func mustCompile(t *testing.T, name, source string) *Program {
 	return p
 }
 
-func run(t *testing.T, r *Runner, ctx context.Context, p *Program, globals map[string]any) any {
+func run(ctx context.Context, t *testing.T, r *Runner, p *Program, globals map[string]any) any {
 	t.Helper()
 	v, err := r.Run(ctx, p, globals)
 	if err != nil {
@@ -88,7 +88,7 @@ func TestCompileWrapAllowsTopLevelReturn(t *testing.T) {
 	r := NewRunner(Options{})
 	p := mustCompile(t, "wrap", "return 42")
 
-	v := run(t, r, context.Background(), p, nil)
+	v := run(context.Background(), t, r, p, nil)
 	if got := toFloat(t, v); got != 42 {
 		t.Fatalf("wrapped return: got %v, want 42", got)
 	}
@@ -110,13 +110,13 @@ func TestRunBindsGlobalsAndClearsThemAfterRun(t *testing.T) {
 	add := mustCompile(t, "add", "return a + b")
 	probe := mustCompile(t, "probe", "return typeof a")
 
-	v := run(t, r, context.Background(), add, map[string]any{"a": 2, "b": 40})
+	v := run(context.Background(), t, r, add, map[string]any{"a": 2, "b": 40})
 	if got := toFloat(t, v); got != 42 {
 		t.Fatalf("a + b: got %v, want 42", got)
 	}
 
 	// The bound globals of the previous run must not survive into this one.
-	v = run(t, r, context.Background(), probe, nil)
+	v = run(context.Background(), t, r, probe, nil)
 	if v != "undefined" {
 		t.Fatalf("typeof a after reset: got %v, want \"undefined\"", v)
 	}
@@ -138,7 +138,7 @@ func TestZeroDeadlineRunsInline(t *testing.T) {
 	}
 
 	caller := goroutineID()
-	v := run(t, r, context.Background(), p, globals)
+	v := run(context.Background(), t, r, p, globals)
 	if v != caller {
 		t.Fatalf("script ran on goroutine %v, want the caller's goroutine %v", v, caller)
 	}
@@ -179,7 +179,7 @@ func TestDeadlineInterruptsAndSurfacesCallerError(t *testing.T) {
 	// The script must actually have stopped: the next run succeeds quickly.
 	answer := mustCompile(t, "answer", "return 6 * 7")
 	start = time.Now()
-	v := run(t, r, context.Background(), answer, nil)
+	v := run(context.Background(), t, r, answer, nil)
 	if got := toFloat(t, v); got != 42 {
 		t.Fatalf("run after interrupt: got %v, want 42", got)
 	}
@@ -285,14 +285,14 @@ func TestResetFailureDiscardsRuntime(t *testing.T) {
 	probe := mustCompile(t, "probe", "return Object.isFrozen(globalThis)")
 	globals := map[string]any{"msg": map[string]any{"payload": 1}}
 
-	v := run(t, r, context.Background(), freeze, globals)
+	v := run(context.Background(), t, r, freeze, globals)
 	if v != "frozen" {
 		t.Fatalf("freeze script: got %v, want \"frozen\"", v)
 	}
 
 	// If the frozen runtime were pooled, binding msg on it would fail
 	// (the object is not extensible) and this run would error.
-	v = run(t, r, context.Background(), probe, globals)
+	v = run(context.Background(), t, r, probe, globals)
 	if frozen, ok := v.(bool); !ok || frozen {
 		t.Fatalf("pooled runtime carried the frozen global object: got %v, want false", v)
 	}
@@ -314,8 +314,8 @@ func TestResetGlobalsClearsScriptGlobals(t *testing.T) {
 	probe := mustCompile(t, "probe", `return typeof globalThis.marker`)
 
 	for i := 0; i < 50; i++ {
-		run(t, r, context.Background(), set, nil)
-		v := run(t, r, context.Background(), probe, nil)
+		run(context.Background(), t, r, set, nil)
+		v := run(context.Background(), t, r, probe, nil)
 		if v != "undefined" {
 			t.Fatalf("ResetGlobals, iteration %d: typeof marker = %v, want %q", i, v, "undefined")
 		}
@@ -348,8 +348,8 @@ func TestGlobalsSurviveWithoutResetGlobals(t *testing.T) {
 
 	reused := false
 	for i := 0; i < 50; i++ {
-		run(t, r, context.Background(), tag, nil)
-		v := run(t, r, context.Background(), probe, nil)
+		run(context.Background(), t, r, tag, nil)
+		v := run(context.Background(), t, r, probe, nil)
 		if v == "fresh" {
 			// The pool handed the probe a different (or new) runtime; the
 			// survival promise says nothing about that run.
@@ -378,13 +378,13 @@ func TestOnSlow(t *testing.T) {
 	})
 
 	fast := mustCompile(t, "fast", "return 1")
-	run(t, r, context.Background(), fast, nil)
+	run(context.Background(), t, r, fast, nil)
 	if called {
 		t.Fatal("OnSlow called for a sub-millisecond run")
 	}
 
 	slow := mustCompile(t, "slow", `var t = Date.now(); while (Date.now() - t < 50); return t`)
-	run(t, r, context.Background(), slow, nil)
+	run(context.Background(), t, r, slow, nil)
 	if !called {
 		t.Fatal("OnSlow not called for a ~50ms run")
 	}
@@ -405,7 +405,7 @@ func TestHardenInstallsBlocklist(t *testing.T) {
 
 	// The blocker is a function, where plain goja has no console at all.
 	typeofConsole := mustCompile(t, "typeof-console", `return typeof console`)
-	v := run(t, hardened, context.Background(), typeofConsole, nil)
+	v := run(context.Background(), t, hardened, typeofConsole, nil)
 	if v != "function" {
 		t.Fatalf("Harden: typeof console = %v, want %q (blocker)", v, "function")
 	}
@@ -429,7 +429,7 @@ func TestHardenInstallsBlocklist(t *testing.T) {
 	if got := toFloat(t, v); got != 2 {
 		t.Fatalf(`no Harden: eval("1+1") = %v, want 2`, got)
 	}
-	v = run(t, plain, context.Background(), typeofConsole, nil)
+	v = run(context.Background(), t, plain, typeofConsole, nil)
 	if v != "undefined" {
 		t.Fatalf("no Harden: typeof console = %v, want %q (plain goja has no console)", v, "undefined")
 	}
@@ -440,7 +440,7 @@ func TestHardenInstallsBlocklist(t *testing.T) {
 func TestClose(t *testing.T) {
 	r := NewRunner(Options{})
 	p := mustCompile(t, "close", "return 1")
-	run(t, r, context.Background(), p, nil)
+	run(context.Background(), t, r, p, nil)
 	if err := r.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
