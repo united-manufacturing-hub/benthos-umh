@@ -622,12 +622,28 @@ const maxExactFloat = float64(1 << 53)
 // comment named as the reason it existed: a message carrying 2^53+1 reaches
 // here as exactly 2^53, and 2^53 > 2^53 is false, so the machine took
 // 9007199254740992 and the run reported delivered.
+//
+// It does NOT refuse a legitimate 2^53, and the reason is goja rather than
+// this line, so do not "fix" the bound back to > on the strength of reading
+// it here. goja keeps every integer of magnitude <= 2^53 as a valueInt and
+// exports it as int64 (vm.go, maxInt = 1 << 53), normalising an integral
+// float64 in that range into the same form. So the int64 arm takes every
+// exact 2^53 -- from a message, a literal or arithmetic -- and what reaches
+// this function is only |v| > 2^53, or a float that rounded UP to 2^53 from
+// above. That is the ambiguous set and nothing else. Measured end to end:
+// 4503599627370496.5 * 2 writes 9007199254740992 and is not refused.
+//
+// The number in the message is the float64 this was handed, which for a
+// value above 2^53 is not the one the message carried -- a message of
+// MaxUint64 arrives as 2^64. It is printed as a float, with %g, so that a
+// dead letter does not state exact digits nobody sent; the digits are gone
+// before this function and cannot be recovered here.
 func refuseAmbiguousInteger(v float64) error {
 	if v >= maxExactFloat || v <= -maxExactFloat {
 		return persistentErr(
-			"value %.0f cannot be written: a number this large has already lost its digits "+
-				"in JavaScript before the handshake sees it, so it cannot be written exactly "+
-				"and will not be written approximately", v)
+			"a value of about %g cannot be written: a number this large has already lost its "+
+				"digits in JavaScript before the handshake sees it, so it cannot be written "+
+				"exactly and will not be written approximately", v)
 	}
 	return nil
 }

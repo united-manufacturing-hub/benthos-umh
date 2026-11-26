@@ -454,13 +454,19 @@ func TestConvert_ConvertsTheDocumentedTypes(t *testing.T) {
 		{"float64 at 2^64 to UInt64", "UInt64", 18446744073709551616.0},
 		{"float64 far above the range to UInt64", "UInt64", 1.8446744073709552e19},
 		{"json.Number above the range to UInt64", "UInt64", json.Number("18446744073709551616")},
-		// At 2^53 the spacing between float64 values becomes 2, so 2^53 is
-		// what BOTH 2^53 and 2^53+1 arrive as -- the value is ambiguous, not
-		// merely large, and it is refused for the same reason a saturating
-		// conversion is. The earlier guard was `> 2^53`, which let through
+		// At 2^53 the spacing between float64 values becomes 2, so a float64
+		// of 2^53 is what BOTH 2^53 and 2^53+1 arrive as -- ambiguous, not
+		// merely large. The earlier guard was `> 2^53`, which let through
 		// the one value its own comment named as its reason: a message
 		// carrying 2^53+1 put 9007199254740992 on the machine and reported
 		// delivered.
+		//
+		// These three call convertValue directly with a float64. Through the
+		// engine the same values arrive as int64, because goja exports every
+		// integer of magnitude <= 2^53 that way, so the float64 arm only
+		// ever sees the ambiguous set. They are kept as belt and braces for
+		// a future caller that is not the engine, not as a description of
+		// what the engine sends.
 		{"float64 at 2^53 to Int64", "Int64", 9007199254740992.0},
 		{"float64 at -2^53 to Int64", "Int64", -9007199254740992.0},
 		{"float64 at 2^53 to UInt64", "UInt64", 9007199254740992.0},
