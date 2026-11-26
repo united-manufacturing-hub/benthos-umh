@@ -57,6 +57,18 @@ func (e *Engine[UnifiedAddress]) waitUntil(
 	}
 	describe := e.bind.Describe(addr)
 
+	// An hour is not a long wait, it is a wrong one. A wait_until watches a
+	// machine confirm one instruction; a timeout this long is a unit mistake
+	// far more often than an intention, and the cost of taking it at face
+	// value is a message held on a machine for an hour while the bridge
+	// reports healthy. A wrong script is persistent: repeating it will not
+	// make the number smaller (Jeremy, 2026-11-26).
+	if d := time.Duration(timeoutMs) * time.Millisecond; d > MaxInterval {
+		return nil, fmt.Errorf(
+			"wait_until on %s was given a timeout of %v, longer than the %v a handshake is allowed: check the units -- this is milliseconds",
+			describe, d, MaxInterval)
+	}
+
 	poll := e.cfg.PollInterval
 	if poll <= 0 {
 		poll = 100 * time.Millisecond // the documented default

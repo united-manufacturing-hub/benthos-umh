@@ -29,8 +29,10 @@ import (
 // it or a call threw it.
 func TestRun_TreatsAnUnmarkedBindingErrorAsTransient(t *testing.T) {
 	t.Run("unmarked error is transient", func(t *testing.T) {
-		b := &fakeBinding{values: map[string]any{},
-			errs: map[string]error{"write:Apply": errors.New("machine unreachable")}}
+		b := &fakeBinding{
+			values: map[string]any{},
+			errs:   map[string]error{"write:Apply": errors.New("machine unreachable")},
+		}
 		engine := newTestEngine(t, b, func(c *Config) {
 			c.Script = `
 				opcua.write({nodeId: "Apply"}, true);
@@ -50,8 +52,10 @@ func TestRun_TreatsAnUnmarkedBindingErrorAsTransient(t *testing.T) {
 	})
 
 	t.Run("persistent-marked error is persistent", func(t *testing.T) {
-		b := &fakeBinding{values: map[string]any{},
-			errs: map[string]error{"write:Apply": fmt.Errorf("BadTypeMismatch: %w", ErrPersistent)}}
+		b := &fakeBinding{
+			values: map[string]any{},
+			errs:   map[string]error{"write:Apply": fmt.Errorf("BadTypeMismatch: %w", ErrPersistent)},
+		}
 		engine := newTestEngine(t, b, func(c *Config) {
 			c.Script = `
 				opcua.write({nodeId: "Apply"}, true);
@@ -72,8 +76,10 @@ func TestRun_TreatsAnUnmarkedBindingErrorAsTransient(t *testing.T) {
 // The output classifies and the flow retries.
 func TestRun_AttemptsEachOperationOnce(t *testing.T) {
 	t.Run("a failed write", func(t *testing.T) {
-		b := &fakeBinding{values: map[string]any{},
-			errs: map[string]error{"write:Apply": errors.New("machine unreachable")}}
+		b := &fakeBinding{
+			values: map[string]any{},
+			errs:   map[string]error{"write:Apply": errors.New("machine unreachable")},
+		}
 		engine := newTestEngine(t, b, func(c *Config) {
 			c.Script = `
 				opcua.write({nodeId: "Apply"}, true);
@@ -90,8 +96,10 @@ func TestRun_AttemptsEachOperationOnce(t *testing.T) {
 	})
 
 	t.Run("a failed read", func(t *testing.T) {
-		b := &fakeBinding{values: map[string]any{},
-			errs: map[string]error{"read:Ready": errors.New("machine unreachable")}}
+		b := &fakeBinding{
+			values: map[string]any{},
+			errs:   map[string]error{"read:Ready": errors.New("machine unreachable")},
+		}
 		engine := newTestEngine(t, b, func(c *Config) {
 			c.Script = `
 				opcua.read({nodeId: "Ready"});
@@ -163,8 +171,10 @@ func TestRun_CleanupCannotTurnAFailureIntoADelivery(t *testing.T) {
 // LIB-4: a run whose cleanup did not finish is persistent, whatever the fault
 // was: the machine's state is unknown.
 func TestRun_IsPersistentWhenTheCleanupDidNotFinish(t *testing.T) {
-	b := &fakeBinding{values: map[string]any{},
-		errs: map[string]error{"write:Apply": errors.New("machine unreachable")}}
+	b := &fakeBinding{
+		values: map[string]any{},
+		errs:   map[string]error{"write:Apply": errors.New("machine unreachable")},
+	}
 	engine := newTestEngine(t, b, func(c *Config) {
 		c.Script = `return opcua.error_transient("busy");`
 		c.OnError = `opcua.write({nodeId: "Apply"}, false);`
@@ -206,8 +216,10 @@ func TestRun_IsTransientWhenTheCleanupFinished(t *testing.T) {
 // retry a machine that was never returned to idle — and CleanupErr names the
 // block and the refused operation.
 func TestRun_IsPersistentWhenTheCleanupWriteWasRefusedAndTheBlockCaughtIt(t *testing.T) {
-	b := &fakeBinding{values: map[string]any{},
-		errs: map[string]error{"write:Abort": errors.New("machine refused the write")}}
+	b := &fakeBinding{
+		values: map[string]any{},
+		errs:   map[string]error{"write:Abort": errors.New("machine refused the write")},
+	}
 	engine := newTestEngine(t, b, func(c *Config) {
 		c.Script = `return opcua.error_transient("not ready");`
 		c.OnError = `try { opcua.write({nodeId: "Abort"}, true); } catch (err) { }`
@@ -257,8 +269,10 @@ func TestRun_IsPersistentWhenTheCleanupCallWasRefusedAndTheBlockCaughtIt(t *test
 // probe whose refusal the block caught has not failed to hand the machine
 // back — this is how a script expresses an expected failure in a cleanup.
 func TestRun_AProbeTheCleanupCaughtIsNotAFailedCleanup(t *testing.T) {
-	b := &fakeBinding{values: map[string]any{},
-		errs: map[string]error{"read:Flag": errors.New("machine refused the read")}}
+	b := &fakeBinding{
+		values: map[string]any{},
+		errs:   map[string]error{"read:Flag": errors.New("machine refused the read")},
+	}
 	engine := newTestEngine(t, b, func(c *Config) {
 		c.Script = `return opcua.error_transient("not ready");`
 		c.OnError = `
@@ -311,8 +325,10 @@ func TestRun_ACleanupWriteWhoseAddressDoesNotParseIsAFailedCleanup(t *testing.T)
 // machine refused and the block swallowed still means the cleanup did not
 // finish. The delivery stands, with CleanupErr naming onSuccess beside it.
 func TestRun_ReportsASwallowedCleanupFailureAfterADelivery(t *testing.T) {
-	b := &fakeBinding{values: map[string]any{},
-		errs: map[string]error{"write:Ack": errors.New("machine refused the write")}}
+	b := &fakeBinding{
+		values: map[string]any{},
+		errs:   map[string]error{"write:Ack": errors.New("machine refused the write")},
+	}
 	engine := newTestEngine(t, b, func(c *Config) {
 		c.Script = `return opcua.success({delivered: true});`
 		c.OnSuccess = `try { opcua.write({nodeId: "Ack"}, false); } catch (err) { }`
@@ -357,8 +373,10 @@ func TestRun_IsPersistentWhenTheDeadlineStopsTheScript(t *testing.T) {
 // LIB-11: a cleanup that fails after a delivery does not change the outcome;
 // the result still carries the delivery, with the cleanup failure beside it.
 func TestRun_ReportsCleanupFailureAfterADeliveryWithoutChangingTheOutcome(t *testing.T) {
-	b := &fakeBinding{values: map[string]any{},
-		errs: map[string]error{"write:SuccessMarker": errors.New("machine unreachable")}}
+	b := &fakeBinding{
+		values: map[string]any{},
+		errs:   map[string]error{"write:SuccessMarker": errors.New("machine unreachable")},
+	}
 	engine := newTestEngine(t, b, func(c *Config) {
 		c.Script = `return opcua.success({delivered: true});`
 		c.OnSuccess = `opcua.write({nodeId: "SuccessMarker"}, true);`
@@ -508,7 +526,7 @@ func TestRun_TheCaughtAndUncaughtCleanupFailuresAgree(t *testing.T) {
 		{
 			door:    "wait address does not parse",
 			call:    `opcua.wait_until({}, function(v){ return v === false; }, 200)`,
-			machine: func(b *fakeBinding) {},
+			machine: func(_ *fakeBinding) {},
 			names:   []string{"parse"},
 		},
 		{

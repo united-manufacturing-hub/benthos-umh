@@ -28,10 +28,10 @@ func (endingMachine) ParseAddress(raw map[string]any) (string, error) {
 	return s, nil
 }
 func (endingMachine) Describe(a string) string { return a }
-func (endingMachine) Read(ctx context.Context, a string) (ReadResponse, error) {
+func (endingMachine) Read(_ context.Context, _ string) (ReadResponse, error) {
 	return ReadResponse{Value: true}, nil
 }
-func (endingMachine) Write(ctx context.Context, a string, v any) error { return nil }
+func (endingMachine) Write(_ context.Context, _ string, _ any) error { return nil }
 
 func runEnding(t *testing.T, script string) Result {
 	t.Helper()

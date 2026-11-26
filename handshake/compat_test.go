@@ -21,7 +21,7 @@ import (
 )
 
 // These two pin what goja's reflective binding did, after the entries were
-// rewritten to own their own argument conversion. Both behaviours were broken
+// rewritten to own their own argument conversion. Both behaviors were broken
 // by that rewrite and the whole suite stayed green, so they are here to make
 // the next rewrite go red instead.
 
@@ -33,11 +33,11 @@ func (m *compatMachine) ParseAddress(raw map[string]any) (string, error) {
 	return s, nil
 }
 func (m *compatMachine) Describe(a string) string { return a }
-func (m *compatMachine) Read(ctx context.Context, a string) (ReadResponse, error) {
+func (m *compatMachine) Read(_ context.Context, _ string) (ReadResponse, error) {
 	m.reads++
 	return ReadResponse{Value: "DONE"}, nil
 }
-func (m *compatMachine) Write(ctx context.Context, a string, v any) error { return nil }
+func (m *compatMachine) Write(_ context.Context, _ string, _ any) error { return nil }
 
 func runCompat(t *testing.T, script string) (Result, int) {
 	t.Helper()

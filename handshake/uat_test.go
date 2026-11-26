@@ -452,7 +452,7 @@ func TestUAT04_DeadlineFiresMidTransaction(t *testing.T) {
 	m := newMachine(map[string]any{
 		"ns=2;s=Ready": true, "ns=2;s=Loaded": false,
 	})
-	// The confirm read blocks past the deadline; a binding that honours
+	// The confirm read blocks past the deadline; a binding that honors
 	// its context returns ctx's own error when the deadline fires.
 	m.plan("ns=2;s=Loaded", &reaction{delay: 800 * time.Millisecond})
 	cfg := uatConfig(`
@@ -875,7 +875,7 @@ func TestUAT15_WaitComputedFromTheMessage(t *testing.T) {
 	}
 }
 
-// UAT-16 Caller's context cancelled mid-wait: the run ends, Persistent, and
+// UAT-16 Caller's context canceled mid-wait: the run ends, Persistent, and
 // onError still runs, on its own clock.
 func TestUAT16_CallersContextCancelledMidWait(t *testing.T) {
 	m := newMachine(map[string]any{
@@ -934,7 +934,7 @@ func TestUAT16_CallersContextCancelledMidWait(t *testing.T) {
 		t.Errorf("onError did not run on its own clock:\n%s", m.log())
 	}
 	if resetAt < 150*time.Millisecond {
-		t.Errorf("onError ran at %v, before the caller cancelled", resetAt)
+		t.Errorf("onError ran at %v, before the caller canceled", resetAt)
 	}
 }
 

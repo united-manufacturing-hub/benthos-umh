@@ -143,7 +143,7 @@ type fakeRuntime struct {
 	runErr     error
 }
 
-func (f fakeRuntime) compile(name, _ string) (any, error) {
+func (f fakeRuntime) compile(name string, _ string) (any, error) {
 	if f.compileErr != nil {
 		return nil, fmt.Errorf("%s: %w", name, f.compileErr)
 	}

@@ -36,7 +36,7 @@ import (
 // anyway (the 2026-11-26 ruling: "if you catch it, you own it"). Only a
 // fault the script did NOT catch reaches the outcome on its own, and fail
 // keeps the latest one, which is the one that stopped the script.
-func classify(rs *runState, ctx context.Context, runErr error) Result {
+func classify(ctx context.Context, rs *runState, runErr error) Result {
 	switch {
 	case ctx.Err() != nil:
 		// LIB-6 and LIB-2: the run's own clock ran out, so the script never
@@ -56,7 +56,7 @@ func classify(rs *runState, ctx context.Context, runErr error) Result {
 		}
 		if rs.opErr != nil {
 			return failed(Persistent, fmt.Errorf(
-				"%s (%s failed: %v): %w", what, rs.opWhere, rs.opErr, ctx.Err()))
+				"%s (%s failed: %w): %w", what, rs.opWhere, rs.opErr, ctx.Err()))
 		}
 		return failed(Persistent, fmt.Errorf("%s: %w", what, ctx.Err()))
 	case rs.end == endSuccess:
