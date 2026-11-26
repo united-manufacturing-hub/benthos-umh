@@ -1112,3 +1112,111 @@ func TestUAT20_MalformedAddress(t *testing.T) {
 		expectOutcome(t, res, Transient)
 	})
 }
+
+// UAT-25 A wait_until that times out inside onError: the machine was never
+// handed back, so the run is persistent whatever the block's JavaScript did
+// with the throw. Before the fix the timeout borrowed the script's ending
+// slot, the reset after it was refused as "the script ended" before it could
+// be recorded, and the caught shape reported the cleanup finished — the
+// uncaught shape reported the opposite for the same machine state.
+func TestUAT25_ACleanupWaitThatTimesOutDoesNotHandTheMachineBack(t *testing.T) {
+	// The probe from the defect report, verbatim: the machine is busy and
+	// never stops being busy, and the cleanup waits for idle, then resets.
+	t.Run("the block catches the timeout and carries on", func(t *testing.T) {
+		m := newMachine(map[string]any{"Busy": true})
+		cfg := uatConfig(`return opcua.error_transient("machine busy");`)
+		cfg.OnError = `
+			try {
+				opcua.wait_until({nodeId: "Busy"}, function(v){ return v === false; }, 200);
+				opcua.write({nodeId: "Reset"}, true);
+			} catch (err) { }
+		`
+		res, _ := runScenario(t, cfg, m, map[string]any{})
+
+		expectOutcome(t, res, Persistent) // LIB-4: the cleanup did not finish
+		if res.CleanupErr == nil {
+			t.Fatalf("CleanupErr must report the wait that timed out, got nil")
+		}
+		if !strings.Contains(res.CleanupErr.Error(), "onError") {
+			t.Errorf("CleanupErr must name onError, got %v", res.CleanupErr)
+		}
+		if !strings.Contains(res.CleanupErr.Error(), "Busy") {
+			t.Errorf("CleanupErr must name the wait that timed out, got %v", res.CleanupErr)
+		}
+		// The reset inside the same try never reached the machine — the
+		// timeout throws, and a throw skips the rest of the try — but the
+		// report now says so, instead of claiming the handback finished.
+		if m.count("write", "Reset") != 0 {
+			t.Errorf("a throw inside the try skips the reset:\n%s", m.log())
+		}
+	})
+	// The decision's other half, measured: a wait timeout inside a cleanup
+	// ends nothing, so a block that catches the wait alone still resets.
+	// "The machine is not touched after the script has ended" protects the
+	// transaction a script's first ending decided; a cleanup has no
+	// transaction left to protect and the handback is its job.
+	t.Run("a block that catches the wait alone still resets", func(t *testing.T) {
+		m := newMachine(map[string]any{"Busy": true})
+		cfg := uatConfig(`return opcua.error_transient("machine busy");`)
+		cfg.OnError = `
+			try {
+				opcua.wait_until({nodeId: "Busy"}, function(v){ return v === false; }, 200);
+			} catch (err) { }
+			opcua.write({nodeId: "Reset"}, true);
+		`
+		res, _ := runScenario(t, cfg, m, map[string]any{})
+
+		expectOutcome(t, res, Persistent) // the wait still timed out
+		if res.CleanupErr == nil {
+			t.Fatalf("CleanupErr must report the wait that timed out, got nil")
+		}
+		if m.count("write", "Reset") != 1 {
+			t.Errorf("the reset after a caught timeout never reached the machine:\n%s", m.log())
+		}
+	})
+	// The same cleanup without the try/catch: the throw aborts the block,
+	// so the reset does not run — the script chose not to carry on — but
+	// the report agrees with the caught shape.
+	t.Run("the same cleanup without the try/catch agrees", func(t *testing.T) {
+		m := newMachine(map[string]any{"Busy": true})
+		cfg := uatConfig(`return opcua.error_transient("machine busy");`)
+		cfg.OnError = `
+			opcua.wait_until({nodeId: "Busy"}, function(v){ return v === false; }, 200);
+			opcua.write({nodeId: "Reset"}, true);
+		`
+		res, _ := runScenario(t, cfg, m, map[string]any{})
+
+		expectOutcome(t, res, Persistent)
+		if res.CleanupErr == nil {
+			t.Fatalf("CleanupErr must report the wait that timed out, got nil")
+		}
+		if !strings.Contains(res.CleanupErr.Error(), "onError") {
+			t.Errorf("CleanupErr must name onError, got %v", res.CleanupErr)
+		}
+		if !strings.Contains(res.CleanupErr.Error(), "Busy") {
+			t.Errorf("CleanupErr must name the wait that timed out, got %v", res.CleanupErr)
+		}
+		if m.count("write", "Reset") != 0 {
+			t.Errorf("an aborted block must not have written:\n%s", m.log())
+		}
+	})
+	// The boundary: a cleanup wait that holds in time is not a failure.
+	// The machine went idle, the reset landed, the handback finished.
+	t.Run("a cleanup wait that held is not a failed cleanup", func(t *testing.T) {
+		m := newMachine(map[string]any{"Busy": false})
+		cfg := uatConfig(`return opcua.error_transient("machine busy");`)
+		cfg.OnError = `
+			opcua.wait_until({nodeId: "Busy"}, function(v){ return v === false; }, 5000);
+			opcua.write({nodeId: "Reset"}, true);
+		`
+		res, _ := runScenario(t, cfg, m, map[string]any{})
+
+		expectOutcome(t, res, Transient)
+		if res.CleanupErr != nil {
+			t.Errorf("a cleanup wait that held finished the cleanup: %v", res.CleanupErr)
+		}
+		if m.count("write", "Reset") != 1 {
+			t.Errorf("the reset never reached the machine:\n%s", m.log())
+		}
+	})
+}

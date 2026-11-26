@@ -32,7 +32,12 @@ type runState struct {
 	detail         any    // the detail an ending call passed
 	opErr          error  // a binding operation that failed
 	opWhere        string // which one, for the error message
+	lastErr        error  // the most recent fault fail recorded, whichever operation recorded it
+	lastWhere      string // which one, for cleanupEvidence's pairing with the error an operation returns
+	mutErr         error  // an operation a cleanup block asked for that came back with an error: the evidence the machine was not handed back, recorded at the dispatch boundary (cleanupEvidence)
+	mutWhere       string // which one, for the cleanup's error message
 	waitPersistent bool   // a wait that ran out was told onTimeout persistent
+	cleanup        bool   // this run is a cleanup block: no ending to record, so a wait that runs out is cleanup-failure evidence instead
 }
 
 // finish records the script's ending; the first one wins.
@@ -46,12 +51,77 @@ func (rs *runState) finish(end ending, detail any) bool {
 }
 
 // fail records a binding operation that failed; Result.Err wraps it, so a
-// caller can inspect it with errors.Is and errors.As.
+// caller can inspect it with errors.Is and errors.As. The first fault wins
+// the outcome's report; the latest fault is kept beside it, so the dispatch
+// boundary can pair the error an operation returns with the fault that
+// operation recorded for it (cleanupEvidence).
 func (rs *runState) fail(where string, err error) {
 	if rs.opErr == nil {
 		rs.opErr = err
 		rs.opWhere = where
 	}
+	rs.lastErr = err
+	rs.lastWhere = where
+}
+
+// failMutating records the evidence that a cleanup block did not hand the
+// machine back (LIB-4): the block asked for an operation and the operation
+// came back with an error, so the machine's state is unknown whether the
+// block's JavaScript caught the throw or not. For the script it is the same
+// as fail. failMutating has exactly one caller — cleanupEvidence, at the
+// dispatch boundary where a cleanup block's operations are dispatched —
+// because the first five failure routes were each found open one at a
+// time, each patched where it was found, and the sixth (wait_until without
+// its predicate, which returns before the machine is touched) proved that
+// a guard at a failure site cannot close the series: a route nobody has
+// found yet inherits the rule at the boundary instead of growing its own
+// guard.
+func (rs *runState) failMutating(where string, err error) {
+	rs.fail(where, err)
+	if rs.mutErr == nil {
+		rs.mutErr = err
+		rs.mutWhere = where
+	}
+}
+
+// cleanupEvidence is the dispatch boundary's half of LIB-4. A cleanup
+// block's job is to return the machine to a state it can be asked from;
+// when a failure surfaces at one of the block's dispatch entries, that job
+// did not finish — regardless of which line inside the operation produced
+// the failure, or which of the three mechanisms carried it: an operation
+// that returns an error, a callback that panics out of the Go frame
+// (recoverEvidence), or an argument that fails the entry's own conversion
+// before the operation runs — so this is where the evidence is recorded:
+// where the namespace dispatches the block's operations, not at each
+// failure site inside them. For the script (rs.cleanup false) this is a
+// no-op; the script's outcome is classified from its own endings and
+// faults.
+//
+// Two errors are not evidence. errEnded is the engine declining to touch
+// the machine after the run has already ended, not the machine refusing.
+// And a read's error is exempt at read's own dispatch entry, because a
+// read cannot change the machine: a cleanup may probe, catch the refusal,
+// and carry on — that is how a script expresses an expected failure in a
+// cleanup block. A read inside a wait_until is not exempt, because its
+// error surfaces at the wait's dispatch entry, not read's: the wait was
+// abandoned, so the work the block meant to do after it never ran. The
+// boundary sees only "a failure surfaced at this entry", and which entry
+// the script called is exactly the distinction between the two.
+//
+// The where names the fault the operation itself recorded, when it
+// recorded one for this very error (a refused read inside the wait, a
+// refused write, a refused parse); an error that arrived without any
+// recording — the missing predicate, a timeout the operation authored —
+// is named by the entry the block called.
+func (rs *runState) cleanupEvidence(op string, err error) {
+	if err == nil || !rs.cleanup || errors.Is(err, errEnded) {
+		return
+	}
+	where := op
+	if rs.lastErr != nil && errors.Is(err, rs.lastErr) {
+		where = rs.lastWhere
+	}
+	rs.failMutating(where, err)
 }
 
 // errEnded aborts the script once it has ended; the engine reads the ending
@@ -250,7 +320,12 @@ func (e *Engine[UnifiedAddress]) Run(ctx context.Context, msg map[string]any) Re
 }
 
 // runCleanup runs one cleanup block once, with a budget of zero or less
-// meaning the block runs unbounded.
+// meaning the block runs unbounded. The block did not finish if its
+// JavaScript aborted, or if an operation it asked for came back with an
+// error — caught or not — because in both the machine was not returned to
+// a state it can be asked from (LIB-4). Which operations failed, and where
+// inside them, is not this function's business: the evidence is recorded
+// at the dispatch boundary (cleanupEvidence), so this only reads it.
 func (e *Engine[UnifiedAddress]) runCleanup(block string, budget time.Duration) error {
 	ctx := context.Background()
 	if budget > 0 {
@@ -259,11 +334,19 @@ func (e *Engine[UnifiedAddress]) runCleanup(block string, budget time.Duration) 
 		defer cancel()
 	}
 	cleanupDeadline, _ := ctx.Deadline()
-	rs := &runState{ctx: ctx, deadline: cleanupDeadline}
+	rs := &runState{ctx: ctx, deadline: cleanupDeadline, cleanup: true}
 	globals := map[string]any{e.bind.Namespace(): e.namespace(rs, false)}
 	_, err := e.rt.run(ctx, e.blocks[block], globals)
 	if err != nil {
 		return fmt.Errorf("%s did not finish: %w", block, err)
+	}
+	if rs.mutErr != nil {
+		// The block's JavaScript ended cleanly, but an operation whose
+		// error it caught — or never saw, because it returned before the
+		// machine was touched — did not do what the block asked for, so
+		// the machine was not handed back however politely the block
+		// carried on.
+		return fmt.Errorf("%s did not finish: %s failed: %w", block, rs.mutWhere, rs.mutErr)
 	}
 	return nil
 }
