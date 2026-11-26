@@ -1040,3 +1040,90 @@ func TestVariantToValue_AByteArrayOffTheWireIsAnIntegerArray(t *testing.T) {
 		t.Errorf("the refusal should name what it refused, got %v", convErr)
 	}
 }
+
+// TestVariantToValue_TheDecodersOwnDefinedTypesConvert
+//
+// The ByteArray fix closed one case of a wider trap: gopcua's decoder
+// produces several DEFINED types, and a Go type switch treats each as
+// distinct from what it wraps. StatusCode is a uint32, XMLElement is a
+// string, and a DateTime array is a slice of a scalar this switch already
+// documents, so all of them are documented value forms -- yet each was
+// refused with a Go type name the node's owner has never seen.
+//
+// Built by encoding and decoding through the library's own wire form, both
+// ways, because an in-process ua.NewVariant does not reproduce what a
+// server sends -- the mistake the Byte array fix was written over.
+func TestVariantToValue_TheDecodersOwnDefinedTypesConvert(t *testing.T) {
+	roundTrip := func(t *testing.T, value any) *ua.Variant {
+		t.Helper()
+		built, err := ua.NewVariant(value)
+		if err != nil {
+			t.Fatalf("building a variant from %T: %v", value, err)
+		}
+		wire, err := built.Encode()
+		if err != nil {
+			t.Fatalf("encoding %T: %v", value, err)
+		}
+		var decoded ua.Variant
+		if _, err := decoded.Decode(wire); err != nil {
+			t.Fatalf("decoding %T: %v", value, err)
+		}
+		return &decoded
+	}
+
+	now := time.Date(2026, 11, 26, 16, 30, 0, 0, time.UTC)
+
+	for _, tc := range []struct {
+		name  string
+		value any
+		want  any
+	}{
+		{
+			name:  "a status code",
+			value: ua.StatusCode(0x80340000),
+			want:  int64(0x80340000),
+		},
+		{
+			name:  "an array of status codes",
+			value: []ua.StatusCode{ua.StatusOK, ua.StatusCode(0x80340000)},
+			want:  []int64{0, 0x80340000},
+		},
+		{
+			name:  "an XML element",
+			value: ua.XMLElement("<a/>"),
+			want:  "<a/>",
+		},
+		{
+			name:  "an array of XML elements",
+			value: []ua.XMLElement{"<a/>", "<b/>"},
+			want:  []string{"<a/>", "<b/>"},
+		},
+		{
+			name:  "an array of timestamps",
+			value: []time.Time{now},
+			want:  []string{now.Format(time.RFC3339Nano)},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := variantToValue(roundTrip(t, tc.value))
+			if err != nil {
+				t.Fatalf("refused: %v", err)
+			}
+			if fmt.Sprintf("%v", got) != fmt.Sprintf("%v", tc.want) {
+				t.Fatalf("got %T(%v), want %T(%v)", got, got, tc.want, tc.want)
+			}
+		})
+	}
+
+	// The structured types next to these are NOT documented value forms, so
+	// they stay refused: the fix is "convert what BND-5 documents", not
+	// "convert whatever arrives".
+	for _, value := range []any{
+		ua.NewStringNodeID(2, "Setpoint"),
+		&ua.QualifiedName{NamespaceIndex: 2, Name: "Setpoint"},
+	} {
+		if _, err := variantToValue(roundTrip(t, value)); err == nil {
+			t.Errorf("%T was converted; BND-5 documents no value form for it", value)
+		}
+	}
+}

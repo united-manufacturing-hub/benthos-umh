@@ -332,9 +332,19 @@ func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (*OPCUAO
 		if output.ReadbackTimeoutMs, err = handshakeConf.FieldInt("readbackTimeoutMs"); err != nil {
 			return nil, err
 		}
-		if output.ReadbackTimeoutMs < 0 {
-			return nil, fmt.Errorf("handshake.readbackTimeoutMs is %d: a timeout cannot be negative",
+		// Zero and not just negative: verifyWrite builds its context with
+		// exactly this timeout, so a zero one is dead on arrival -- every
+		// read-back fails, every message is retried, forever. It passed the
+		// "cannot be negative" check, which is the lesser half of the same
+		// hole maxWriteAttempts: 0 was.
+		if output.ReadbackTimeoutMs < 1 {
+			return nil, fmt.Errorf(
+				"handshake.readbackTimeoutMs is %d: it must be at least 1, or the read-back "+
+					"times out before it starts and no message is ever confirmed",
 				output.ReadbackTimeoutMs)
+		}
+		if err = refuseLongInterval("handshake.readbackTimeoutMs", output.ReadbackTimeoutMs); err != nil {
+			return nil, err
 		}
 	} else {
 		output.ReadbackTimeoutMs = 2000
@@ -366,11 +376,34 @@ func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (*OPCUAO
 			return nil, fmt.Errorf("handshake.timeBetweenRetriesMs is %d: a delay cannot be negative",
 				output.TimeBetweenRetriesMs)
 		}
+		if err = refuseLongInterval("handshake.timeBetweenRetriesMs", output.TimeBetweenRetriesMs); err != nil {
+			return nil, err
+		}
 	} else {
 		output.TimeBetweenRetriesMs = 1000
 	}
 
 	return output, nil
+}
+
+// refuseLongInterval applies the handshake's hour rule to the deprecated
+// read-back's own intervals.
+//
+// An hour is not a long wait, it is a wrong one: a unit mistake far more
+// often than an intention, and the cost of taking it at face value is a
+// bridge that reports healthy and delivers nothing, an hour at a time
+// (Jeremy, 2026-11-26). The programmable path refuses these numbers at
+// handshake.MaxInterval; the deprecated path never got the rule, so the
+// very mistake it was written for was caught on one path and deployed on
+// the other.
+func refuseLongInterval(field string, ms int) error {
+	const maxIntervalMs = int(time.Hour / time.Millisecond)
+	if ms > maxIntervalMs {
+		return fmt.Errorf(
+			"%s is %d, longer than the %v a handshake is allowed: check the units -- this is milliseconds",
+			field, ms, time.Hour)
+	}
+	return nil
 }
 
 // parseProgrammableHandshake reads the programmable fields of the handshake
