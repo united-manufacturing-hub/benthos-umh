@@ -487,3 +487,57 @@ func indentForBuilder(yamlConfig string) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// The deprecated read-back path's numbers are refused when they cannot work.
+//
+// maxWriteAttempts is the one that matters. The write loop is
+// `for attempt := 1; attempt <= MaxWriteAttempts`, so zero or less runs it
+// no times: nothing reaches the machine, the error it would have set stays
+// nil, and Write returns success for every message. The read-back is inside
+// the same loop, so it does not run either. A single unchecked integer
+// turned the output into a silent acknowledger.
+func TestDeprecatedHandshake_RefusesNumbersThatCannotWork(t *testing.T) {
+	for _, tc := range []struct {
+		name, yaml, says string
+	}{
+		{
+			name: "maxWriteAttempts of zero writes nothing and acknowledges everything",
+			yaml: "maxWriteAttempts: 0",
+			says: "at least 1",
+		},
+		{
+			name: "a negative maxWriteAttempts does the same",
+			yaml: "maxWriteAttempts: -3",
+			says: "at least 1",
+		},
+		{
+			name: "a negative readback timeout",
+			yaml: "readbackTimeoutMs: -5000",
+			says: "cannot be negative",
+		},
+		{
+			name: "a negative delay between retries",
+			yaml: "timeBetweenRetriesMs: -1000",
+			says: "cannot be negative",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := parseOutputForTest(t, `
+endpoint: "opc.tcp://localhost:4840"
+nodeMappings:
+  - nodeId: "ns=2;s=Setpoint"
+    valueFrom: "value"
+    dataType: "Int32"
+handshake:
+  enabled: true
+  `+tc.yaml+`
+`)
+			if err == nil {
+				t.Fatalf("a config with %q was accepted", tc.yaml)
+			}
+			if !strings.Contains(err.Error(), tc.says) {
+				t.Errorf("the refusal should say %q, got %v", tc.says, err)
+			}
+		})
+	}
+}
