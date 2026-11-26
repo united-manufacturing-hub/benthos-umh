@@ -30,10 +30,8 @@ type runState struct {
 	end            ending
 	data           any    // the object success returned
 	detail         any    // the detail an ending call passed
-	opErr          error  // a binding operation that failed
-	opWhere        string // which one, for the error message
-	lastErr        error  // the most recent fault fail recorded, whichever operation recorded it
-	lastWhere      string // which one, for cleanupEvidence's pairing with the error an operation returns
+	opErr          error  // the most recent binding operation that failed
+	opWhere        string // which one, for the error message and for cleanupEvidence's pairing
 	mutErr         error  // an operation a cleanup block asked for that came back with an error: the evidence the machine was not handed back, recorded at the dispatch boundary (cleanupEvidence)
 	mutWhere       string // which one, for the cleanup's error message
 	waitPersistent bool   // a wait that ran out was told onTimeout persistent
@@ -51,17 +49,21 @@ func (rs *runState) finish(end ending, detail any) bool {
 }
 
 // fail records a binding operation that failed; Result.Err wraps it, so a
-// caller can inspect it with errors.Is and errors.As. The first fault wins
-// the outcome's report; the latest fault is kept beside it, so the dispatch
-// boundary can pair the error an operation returns with the fault that
-// operation recorded for it (cleanupEvidence).
+// caller can inspect it with errors.Is and errors.As.
+//
+// The LATEST fault wins. A fault the script caught and carried on from did
+// not stop the run, so it cannot be the one that explains how the run
+// ended (the 2026-11-26 ruling, UAT-8b). Recording the first instead meant
+// a caught "machine unreachable" masked the persistent refusal that
+// actually ended the script, and the message was retried forever against a
+// machine that would never accept it.
+//
+// Whether a recorded fault reaches the outcome at all is classify's
+// question, not this one: an explicit ending outranks it, because reaching
+// an ending is the script saying it survived.
 func (rs *runState) fail(where string, err error) {
-	if rs.opErr == nil {
-		rs.opErr = err
-		rs.opWhere = where
-	}
-	rs.lastErr = err
-	rs.lastWhere = where
+	rs.opErr = err
+	rs.opWhere = where
 }
 
 // failMutating records the evidence that a cleanup block did not hand the
@@ -118,8 +120,8 @@ func (rs *runState) cleanupEvidence(op string, err error) {
 		return
 	}
 	where := op
-	if rs.lastErr != nil && errors.Is(err, rs.lastErr) {
-		where = rs.lastWhere
+	if rs.opErr != nil && errors.Is(err, rs.opErr) {
+		where = rs.opWhere
 	}
 	rs.failMutating(where, err)
 }
@@ -199,7 +201,10 @@ func (c Config) Validate() error {
 	// answers — reachable from an omitted YAML field alone (round-2
 	// review, item 3). Either block may be empty; a non-empty one must be
 	// budgeted, and the refusal names both.
-	for _, block := range []struct{ name, budgetName, source string; budget time.Duration }{
+	for _, block := range []struct {
+		name, budgetName, source string
+		budget                   time.Duration
+	}{
 		{"onSuccess", "MaxOnSuccessRuntime", c.OnSuccess, c.MaxOnSuccessRuntime},
 		{"onError", "MaxOnErrorRuntime", c.OnError, c.MaxOnErrorRuntime},
 	} {
@@ -229,7 +234,7 @@ func (c Config) Validate() error {
 	// review, item 4).
 	for _, block := range []struct {
 		name, budgetName, source string
-		budget                 time.Duration
+		budget                   time.Duration
 	}{
 		{"script", "MaxScriptRuntime", c.Script, c.MaxScriptRuntime},
 		{"onSuccess", "MaxOnSuccessRuntime", c.OnSuccess, c.MaxOnSuccessRuntime},

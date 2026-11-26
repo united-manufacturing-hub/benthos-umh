@@ -8,18 +8,22 @@ import (
 
 // classify turns how the script ended into the outcome half of a Result.
 // Whether the machine got the data was decided when the script ended (LIB-3);
-// only whether a failure may be repeated waits for the cleanup (LIB-4). The
-// order of the cases is the precedence: a fault's kind outranks how the script
-// reported it, and a run whose own clock ran out is never a delivery — an
-// ending only decides the outcome when the script actually stopped for it,
-// because the ending functions abort by throwing and a throw is catchable
+// only whether a failure may be repeated waits for the cleanup (LIB-4).
+//
+// The order of the cases is the precedence, and it says two things.
+//
+// A run whose own clock ran out is never a delivery, however it ended on the
+// way: the ending functions abort by throwing, a throw is catchable, and an
+// ending only decides the outcome when the script actually stopped for it
 // (UAT-13, round 2).
+//
+// Below that, an explicit ending outranks a binding fault, because a script
+// that reached an ending caught whatever failed and chose how to finish
+// anyway (the 2026-11-26 ruling: "if you catch it, you own it"). Only a
+// fault the script did NOT catch reaches the outcome on its own, and fail
+// keeps the latest one, which is the one that stopped the script.
 func classify(rs *runState, ctx context.Context, runErr error) Result {
 	switch {
-	case rs.opErr != nil && errors.Is(rs.opErr, ErrPersistent):
-		// LIB-5: the outcome follows the fault, not whether the script
-		// returned it or a call threw it.
-		return failed(Persistent, fmt.Errorf("%s failed: %w", rs.opWhere, rs.opErr))
 	case ctx.Err() != nil:
 		// LIB-6 and LIB-2: the run's own clock ran out, so the script never
 		// finished — however it ended on the way. An ending only decides the
@@ -55,6 +59,11 @@ func classify(rs *runState, ctx context.Context, runErr error) Result {
 			return failed(Persistent, what)
 		}
 		return failed(Transient, what)
+	case rs.opErr != nil && errors.Is(rs.opErr, ErrPersistent):
+		// LIB-5: the outcome follows the fault, not whether the script
+		// returned it or a call threw it. Reached only when the script
+		// never ended, so this fault is the one that stopped it.
+		return failed(Persistent, fmt.Errorf("%s failed: %w", rs.opWhere, rs.opErr))
 	case rs.opErr != nil:
 		// Unmarked: LIB-5 again, the other half of the rule. A ctx that ran
 		// out during the operation is handled above, with the deadline.
