@@ -833,6 +833,35 @@ func variantToValue(variant *ua.Variant) (any, error) {
 		// array converts and a single Byte reads fine; a Byte array is not
 		// special.
 		return int64s([]byte(v)), nil
+	// The decoder's own defined types, which a type switch treats as
+	// distinct from what they wrap -- the same trap ua.ByteArray sprang.
+	// StatusCode is a uint32 and XMLElement is a string under their
+	// wrappers, and a slice of time.Time is a slice of a scalar this switch
+	// already documents, so all five ARE documented value forms in BND-5's
+	// terms. They were all refused with a Go type name the node's owner has
+	// never seen.
+	case ua.StatusCode:
+		return int64(v), nil
+	case []ua.StatusCode:
+		values := make([]int64, len(v))
+		for i, e := range v {
+			values[i] = int64(e)
+		}
+		return values, nil
+	case ua.XMLElement:
+		return string(v), nil
+	case []ua.XMLElement:
+		values := make([]string, len(v))
+		for i, e := range v {
+			values[i] = string(e)
+		}
+		return values, nil
+	case []time.Time:
+		values := make([]string, len(v))
+		for i, e := range v {
+			values[i] = e.Format(time.RFC3339Nano)
+		}
+		return values, nil
 	case []uint8:
 		// A ByteString. In-process ua.NewVariant([]byte{...}) also lands
 		// here, typed ByteString, which is what it is.

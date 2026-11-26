@@ -541,3 +541,57 @@ handshake:
 		})
 	}
 }
+
+// The deprecated read-back's own numbers, checked at the one moment the
+// mistake is still cheap.
+//
+// The hour rule is Jeremy's, 2026-11-26: an hour is not a long wait, it is
+// a wrong one, a unit mistake far more often than an intention. It was
+// enforced on the programmable path only, so the very mistake it exists for
+// was caught on one path and deployed on the other. And a zero read-back
+// timeout passed the "cannot be negative" check while being a timeout that
+// cannot succeed: verifyWrite builds its context with exactly this number,
+// so the read is dead on arrival and every message is retried forever.
+func TestHandshakeConfig_TheDeprecatedNumbersAreBounded(t *testing.T) {
+	config := func(field, value string) string {
+		return `
+endpoint: "opc.tcp://localhost:4840"
+nodeMappings:
+  - nodeId: "ns=2;s=Setpoint"
+    valueFrom: "value"
+    dataType: "Int32"
+handshake:
+  enabled: true
+  ` + field + `: ` + value + `
+`
+	}
+
+	for _, tc := range []struct {
+		name    string
+		field   string
+		value   string
+		wantErr string
+	}{
+		{"an hour-long read-back timeout", "readbackTimeoutMs", "3600001", "check the units"},
+		{"an hour-long retry delay", "timeBetweenRetriesMs", "3600001", "check the units"},
+		{"a read-back timeout of zero", "readbackTimeoutMs", "0", "at least 1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := parseOutputForTest(t, config(tc.field, tc.value))
+			if err == nil {
+				t.Fatalf("handshake.%s: %s was accepted", tc.field, tc.value)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("refused for the wrong reason: %v", err)
+			}
+		})
+	}
+
+	// Exactly an hour is allowed, as it is on the programmable path, so the
+	// boundary is the rule and not an off-by-one.
+	for _, field := range []string{"readbackTimeoutMs", "timeBetweenRetriesMs"} {
+		if _, err := parseOutputForTest(t, config(field, "3600000")); err != nil {
+			t.Errorf("handshake.%s: exactly the limit must be allowed, got %v", field, err)
+		}
+	}
+}
