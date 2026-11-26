@@ -130,7 +130,7 @@ Key features:
 				Description("Sparkplug Group ID (e.g., 'FactoryA'). Serves two purposes: it is the publishing identity, and it is the default subscription filter (subscribes to spBv1.0/<group_id>/#). Set subscription.groups to override the filter.").
 				Example("FactoryA"),
 			service.NewStringField("edge_node_id").
-				Description("For the 'primary' role this field is required and is used as the Sparkplug v3.0 host_id in the STATE topic (spBv1.0/STATE/<host_id>). For the 'secondary_passive' and 'secondary_active' roles it is optional and used only for identification.").
+				Description("For the 'primary' role this field is required and is used as the Sparkplug host_id in the STATE topic (spBv1.0/STATE/<host_id>). For the 'secondary_passive' and 'secondary_active' roles it is optional and used only for identification.").
 				Example("PrimaryHost").
 				Optional(),
 			service.NewStringField("device_id").
@@ -573,7 +573,7 @@ func (s *sparkplugInput) onConnect(client mqtt.Client) {
 	// Publish STATE ONLINE for primary host role
 	if s.config.Role == RolePrimaryHost {
 		stateTopic := s.config.GetStateTopic()
-		s.logger.Infof("Primary Host: using identity.edge_node_id='%s' as Sparkplug v3.0 host_id for STATE topic %s",
+		s.logger.Infof("Primary Host: using identity.edge_node_id='%s' as Sparkplug host_id for STATE topic %s",
 			s.config.Identity.EdgeNodeID, stateTopic)
 		err := s.mqttClientBuilder.PublishWithMetrics(client, stateTopic, s.config.MQTT.QoS, false, "ONLINE")
 		if err != nil {

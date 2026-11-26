@@ -160,7 +160,7 @@ Here's how a Sparkplug B message maps to UMH-Core using the Modified Parris Meth
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `identity.group_id` | `string` | **required** | Sparkplug B Group ID. Also acts as the default subscription filter (`spBv1.0/<group_id>/#`). Override via `subscription.groups`. |
-| `identity.edge_node_id` | `string` | `""` | Required for the `primary` role, where it is used as the Sparkplug v3.0 `host_id` in the STATE topic (`spBv1.0/STATE/<host_id>`). Optional for secondary roles. |
+| `identity.edge_node_id` | `string` | `""` | Required for the `primary` role, where it is used as the Sparkplug `host_id` in the STATE topic (`spBv1.0/STATE/<host_id>`). Optional for secondary roles. |
 
 ### Role Section
 
@@ -346,7 +346,6 @@ input:
 **When to use:**
 - ✅ **Greenfield deployments** - UMH is your only Sparkplug B application
 - ✅ **Full control needed** - You want Edge Nodes to buffer data when offline
-- ✅ **Spec compliance required** - Strict Sparkplug B v3.0 compliance
 
 **Configuration:**
 ```yaml
@@ -356,11 +355,11 @@ input:
       urls: ["tcp://localhost:1883"]
     identity:
       group_id: "FactoryA"
-      edge_node_id: "UMH_Primary"  # Used as the Sparkplug v3.0 host_id
+      edge_node_id: "UMH_Primary"  # Used as the Sparkplug host_id
     role: "primary"
 ```
 
-> For the `primary` role, `identity.edge_node_id` is the Sparkplug v3.0 `host_id`. With the config above, the plugin publishes STATE messages on `spBv1.0/STATE/UMH_Primary`. The startup logs make this explicit: `Primary Host: using identity.edge_node_id='UMH_Primary' as Sparkplug v3.0 host_id for STATE topic spBv1.0/STATE/UMH_Primary`. The field is named `edge_node_id` for consistency with the secondary roles, but in `primary` mode it identifies the host.
+> For the `primary` role, `identity.edge_node_id` is the Sparkplug `host_id`. With the config above, the plugin publishes STATE messages on `spBv1.0/STATE/UMH_Primary`. The startup logs make this explicit: `Primary Host: using identity.edge_node_id='UMH_Primary' as Sparkplug host_id for STATE topic spBv1.0/STATE/UMH_Primary`. The field is named `edge_node_id` for consistency with the secondary roles, but in `primary` mode it identifies the host.
 
 **Technical behavior:** Full Primary Host with STATE publishing and session management.
 
@@ -401,7 +400,6 @@ A cascading effect that occurs when multiple Secondary Hosts simultaneously requ
 - You're building a greenfield Sparkplug B system
 - No other Primary Hosts exist in your infrastructure
 - You need Edge Nodes to respect your online/offline state
-- You require full Sparkplug B specification compliance
 
 
 ### Advanced Configuration Options
@@ -431,7 +429,7 @@ When `subscription.groups` is omitted or empty, the plugin filters to `identity.
 
 ### STATE Topic Behavior (primary role only)
 
-When using `primary` role, the plugin publishes STATE messages according to Sparkplug B v3.0:
+When using `primary` role, the plugin publishes STATE messages on this topic:
 
 ```
 spBv1.0/STATE/<host_id>
@@ -564,7 +562,6 @@ The Sparkplug B input plugin processes **bdSeq** values from incoming Edge Node 
 **Stateless Edge Nodes (like Benthos Sparkplug B Output):**
 - bdSeq may reset to 0 on Edge Node component restart
 - This is common in container-based or stateless Edge Node implementations
-- Still compliant within individual component lifecycles
 
 ### Impact on Input Processing
 

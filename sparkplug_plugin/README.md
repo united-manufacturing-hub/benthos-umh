@@ -6,7 +6,6 @@ Developer documentation for the Sparkplug B Benthos plugin. For user documentati
 
 - ✅ **189/189 Unit Tests Passing**
 - ✅ **Integration Tests Validated** 
-- ✅ **Sparkplug B v3.0 Compliant**
 - ✅ **Production Ready**
 
 ## Quick Development Setup
@@ -206,7 +205,6 @@ sparkplug_plugin/
 - **Device-Level PARRIS**: Exclusive focus on DBIRTH/DDATA (no NBIRTH/NDATA)
 - **UMH Integration**: `location_path` metadata → Sparkplug Device ID conversion
 - **Alias Management**: Automatic alias assignment and resolution
-- **Specification Compliance**: Sparkplug B v3.0 compliant STATE topics
 
 ### Testing Configuration Files
 
@@ -303,14 +301,6 @@ This implementation focuses exclusively on device-level messaging (DBIRTH/DDATA)
 - **UMH Alignment**: Perfect mapping of `location_path` → Device ID
 - **Industrial Focus**: Most IoT scenarios operate at device/asset level
 - **Maintenance**: Easier to debug and maintain
-
-### Sparkplug B Compliance
-
-- ✅ **Static Edge Node ID**: Required for v3.0 compliance
-- ✅ **STATE Topics**: `spBv1.0/STATE/<host_id>` (no group_id)
-- ✅ **Sequence Management**: Proper wraparound handling
-- ✅ **Birth Certificates**: Complete metric definitions with aliases
-- ✅ **Retained Messages**: Proper MQTT retention for DBIRTH
 
 ## License
 

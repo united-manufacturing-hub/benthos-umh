@@ -194,9 +194,9 @@ This output plugin requires input data to be in **UMH-Core format**:
 
 ### bdSeq (Birth-Death Sequence) Behavior
 
-The Sparkplug B output plugin implements **bdSeq** (Birth-Death Sequence) according to the Sparkplug B v3.0 specification:
+The Sparkplug B output plugin sets **bdSeq** (Birth-Death Sequence) as follows:
 
-**Within Component Lifetime** (✅ Specification Compliant):
+**Within Component Lifetime**:
 - bdSeq starts at 0 for the first MQTT session
 - bdSeq increments by +1 for each subsequent MQTT reconnection session
 - Example: Session 1: bdSeq=0 → Session 2: bdSeq=1 → Session 3: bdSeq=2

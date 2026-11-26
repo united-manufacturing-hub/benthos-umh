@@ -32,7 +32,7 @@
 // 4. DBIRTH published with complete metric definitions (first time OR new metrics)
 // 5. DDATA published with aliases for efficient transmission
 //
-// This approach eliminates NBIRTH/NDATA complexity while maintaining full Sparkplug B compliance.
+// This approach eliminates NBIRTH/NDATA complexity.
 package sparkplug_plugin
 
 import (
@@ -56,7 +56,7 @@ var SparkplugConfigSpec = service.NewConfigSpec().
 	Summary("Sparkplug B MQTT output acting as Edge Node").
 	Description(`The Sparkplug B output acts as an Edge Node, publishing data to Sparkplug MQTT topics
 with complete session lifecycle management. It handles BIRTH/DEATH certificates, maintains sequence
-numbers, manages alias mappings, and ensures full Sparkplug B compliance.
+numbers and manages alias mappings.
 
 Key features:
 - Always operates as Edge Node (no role configuration needed)
