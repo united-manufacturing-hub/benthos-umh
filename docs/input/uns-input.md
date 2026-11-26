@@ -95,7 +95,19 @@ input:
     - `umh_topic` - **UMH topic structure** from Kafka message key (e.g., "umh.v1.enterprise.plant1._historian.temperature")
     - Every Kafka header becomes `meta(...)` for processors downstream
 
-4. **Batch-safe ACK** – commits offsets only when the whole Benthos batch succeeds.
+4. **Acknowledgement — read this before you rely on it.** This input does **not** redeliver a
+   message your pipeline rejects. On a rejection it logs the error and stops delivering; nothing
+   is committed, so the readings are still in Kafka, but the flow does not resume on its own and
+   nothing tells you a restart is needed. Measured 2026-11-26: with one of ten readings rejected,
+   the remaining six never arrived and the flow stayed stopped until the container was restarted,
+   which then replayed everything.
+
+   A later successful acknowledgement can also commit past a rejected message (ENG-5094), which
+   loses it.
+
+   **If you need a reading to survive a destination that rejects it, use `uns_beta`**, which
+   redelivers until the message is accepted and never commits past it. See
+   [UNS Beta (Input)](uns-beta-input.md).
 
 **Performance notes**
 - A very complex regular expression can cost CPU (back-tracking). Stick to anchored, specific patterns such as

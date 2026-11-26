@@ -56,7 +56,7 @@ to consume from an external broker.
 
 | Field | Purpose & Default |
 |-------|-------------------|
-| `consumer_group` | Consumer-group ID used for offset tracking. **Required, and must be unique to this consumer.** Two consumers sharing a group split the partitions between them. |
+| `consumer_group` | Consumer-group ID used for offset tracking. **Required, and must be unique to this consumer.** Inside UMH Core the UNS topic has one partition, so two flows sharing a group do not share the work: one receives everything and the other receives nothing. |
 | `broker_address` | Comma-separated Kafka bootstrap list. Default `localhost:9092`, the embedded Redpanda inside UMH Core. Override only to consume from an external broker. |
 | `kafka_topic` | Physical Kafka topic to consume. Default `umh.messages`. |
 | `umh_topics` | List of RE2 regex patterns matched against the Kafka key (the UMH topic). **Required.** A record is delivered only if its key matches at least one pattern. Patterns are unanchored; use `^...$` to match the full key. To consume the whole namespace, set `[".*"]`. |
@@ -110,10 +110,61 @@ or more patterns instead.
   because an empty key produces an empty `umh_topic` that the `uns` output would
   reject forever.
 
-#### 5 Metrics
+#### 5 Delivery guarantees
 
-`uns_beta` adds always-on counters to the standard Redpanda Connect input
-metrics. Each counts records it drops:
+**Delivery and acknowledgement.** At-least-once. A message stays in flight until your pipeline
+acknowledges it; a rejected message is redelivered until it is accepted, and the committed
+offset never moves past it. Offsets are committed by the Redpanda Connect engine every 5
+seconds, and only after the whole batch has been acknowledged.
+
+Because the unit of acknowledgement is a whole Kafka fetch, two things follow that your pipeline
+must tolerate:
+
+- **Duplicates can be a whole fetch.** If UMH Core stops between your output accepting a message
+  and the next commit, every message in that fetch is delivered again. In testing this was up to
+  200 messages at once. Your output must be idempotent: for time-series data the topic and the
+  timestamp are the key, so rewriting the same value is harmless.
+- **One rejected message replays its batch.** Messages the output already accepted are sent
+  again on every retry, about once a second, for as long as the failure lasts. One rejected
+  message among 500 produced roughly 36 delivery attempts per message over an 80-second outage.
+  Nothing is lost; the cost is duplicate writes at the system you forward to.
+
+**Order.** Within one delivery pass, messages for a given topic arrive in the order they were
+written. A redelivery restarts at the beginning of its batch, so a consumer that tracks the
+stream sees it go backwards and repeat. The last delivery of each topic is in order, so the
+value that ends up in the UNS is the right one — but a processor that accumulates state, such as
+a counter or a projection, must tolerate the rewind as well as the duplicates.
+
+**State.** The plugin keeps none. The read position lives in the Kafka consumer group and
+survives a restart. A new `consumer_group` always starts at the oldest available message, and
+there is no way to start from "now": a new flow on a busy topic reads the whole history first.
+On a compacted topic that history is only the latest value per topic, not every value ever
+written.
+
+**Time.** `kafka_timestamp_ms` is when the broker stored the record, not when the measurement
+was taken. Event time, if you need it, is whatever your payload carries. The plugin does not
+read, set or reorder by event time.
+
+**Errors.** There is no retry limit and no dead-letter queue. A message your pipeline rejects
+every time is redelivered forever and holds up every later message on its partition. That
+includes a message whose Kafka key is not a valid UMH topic: this input accepts any key matching
+your `umh_topics` patterns, while the `uns` output accepts only the UMH topic alphabet
+(`a-z A-Z 0-9 . _ -`), so a key outside it from a third-party producer will stall the flow until
+someone intervenes. Watch consumer-group lag to detect this.
+
+**Limits.** Inside UMH Core the UNS topic has exactly one partition, so two flows sharing a
+`consumer_group` do not share the work — one receives everything and the other receives nothing.
+A producer that sets a Kafka header literally named `kafka_key` overrides the record key, so a
+message can be delivered, and written back, under a different topic; keep `umh_topics` as narrow
+as you can, since a spoofed topic still has to match your patterns. Suited to forwarding UNS data
+to systems that tolerate duplicates. Not suited, yet, to a flow that must give up on a message it
+cannot process.
+
+#### 6 Metrics
+
+`uns_beta` adds three counters to the standard Redpanda Connect input metrics.
+Each counts records it drops. A counter that has not counted anything yet does
+not appear on the metrics endpoint at all, so an absent counter means zero:
 
 - `key_omitted_records` - a record whose key matched none of your `umh_topics`
   patterns, dropped before a message is built for it. If it counts every
@@ -127,9 +178,15 @@ metrics. Each counts records it drops:
   named `kafka_key`, which overrides the record key in the metadata. Remove that
   header from the producer.
 
-The counters appear under these bare names (carrying `path` / `label` / `stream`
-labels that identify the emitting component) in whatever metrics exporter you
-configure. Delivered records increment none of them.
+The counters appear under these bare names, carrying the `path` and `label` labels that
+identify the emitting component, in whatever metrics exporter you configure. Delivered records
+increment none of them.
+
+If you are moving a flow from `uns`, note that none of the `input_uns_*` metrics are emitted any
+more: the names above replace them, and they are not the same measurements. In particular
+`uns_beta` reports no `input_received` for a record it filters out, because it never builds a
+message for one — so while a flow works through a backlog that matches none of your patterns,
+`key_omitted_records` is the only number that moves.
 
 For the standard consumer metrics (throughput, latency, connection state, and
 consumer-group lag), see the Redpanda Connect
@@ -137,7 +194,7 @@ consumer-group lag), see the Redpanda Connect
 and [metrics](https://docs.redpanda.com/redpanda-connect/components/metrics/about)
 documentation.
 
-#### 6 FAQs / Troubleshooting
+#### 7 FAQs / Troubleshooting
 
 - **"No messages appear":** your `umh_topics` patterns filtered everything out.
   Start with `[".*"]`, confirm the flow, then tighten. The drop counters under

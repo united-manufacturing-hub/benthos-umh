@@ -353,6 +353,56 @@ var _ = Describe("uns_beta metadata contract", Label("uns_beta"), func() {
 // Only records whose Kafka key matches a umh_topics pattern are delivered, and
 // a keyless record never matches (see betaKeyFilter.matches). The ack of the
 // kept records also commits past the dropped ones.
+// A tombstone is a record with a key and no value. Kafka uses it to mark a key
+// deleted, and a compacted UNS topic carries them. uns_beta delivers it: the key
+// matches, so the message reaches the pipeline with an empty body.
+var _ = Describe("uns_beta tombstone", Label("uns_beta"), func() {
+	It("delivers a tombstone as an empty message carrying its umh_topic", func() {
+		addr := startBroker(GinkgoT())
+		const group = "uns-beta-uat-tombstone"
+		const key = "umh.v1.acme.berlin._historian.deleted"
+
+		produce(GinkgoT(), addr, &kgo.Record{Key: []byte(key), Value: nil})
+
+		type seen struct {
+			body      string
+			umhTopic  string
+			tombstone string
+		}
+		got := make(chan seen, 4)
+
+		stop := runUnsBetaStream(GinkgoT(), `
+uns_beta:
+  broker_address: "`+addr+`"
+  consumer_group: "`+group+`"
+  umh_topics:
+    - "umh\\.v1\\.acme\\..+"
+`, func(_ context.Context, batch service.MessageBatch) error {
+			for _, msg := range batch {
+				b, err := msg.AsBytes()
+				if err != nil {
+					return err
+				}
+				topic, _ := msg.MetaGet("umh_topic")
+				ts, _ := msg.MetaGet("kafka_tombstone_message")
+				select {
+				case got <- seen{body: string(b), umhTopic: topic, tombstone: ts}:
+				default:
+				}
+			}
+			return nil
+		})
+		defer stop()
+
+		var s seen
+		Eventually(got).WithTimeout(20 * time.Second).Should(Receive(&s))
+		Expect(s.umhTopic).To(Equal(key), "a tombstone must carry its key as umh_topic")
+		Expect(s.body).To(BeEmpty(), "a tombstone has no value, so the message body is empty")
+		Expect(s.tombstone).To(Equal("true"),
+			"connect marks a tombstone with kafka_tombstone_message, which is how a pipeline can tell one from an empty payload")
+	})
+})
+
 var _ = Describe("uns_beta umh_topics key filter", Label("uns_beta"), func() {
 	It("delivers only matching keys, drops keyless records, and commits past the dropped offsets", func() {
 		addr := startBroker(GinkgoT())
@@ -433,6 +483,151 @@ var _ = Describe("uns_beta umh_topics key filter", Label("uns_beta"), func() {
 // Benthos discards an empty batch without calling its AckFunc. ReadBatch acks
 // an all-filtered poll itself, so the offset advances and the partition does
 // not stall.
+// The pull request says "A keyless record with that header is delivered under
+// the header's topic too." The UAT found that holds only under a pattern that
+// matches the empty key: a narrow pattern drops the record in connect's
+// pre-filter, which matches the raw key, before the header is ever read.
+//
+// These two specs are about the KEYLESS case, which no existing spec covers.
+// The suite already pins the keyed case ("stamps a spoofed kafka_key header
+// over the real record key", in this file) and keyless records
+// without a header ("drops a keyless record under an explicit match-everything
+// filter"). The gap is a keyless record that carries the header, which is the
+// shape the pull request describes.
+var _ = Describe("uns_beta keyless record carrying a kafka_key header", Label("uns_beta"), func() {
+	It("drops it under a narrow pattern, because the pre-filter reads the raw key and never sees the header", func() {
+		registerCaptureExporter()
+		captureExporter.reset()
+
+		addr := startBroker(GinkgoT())
+		const group = "uns-beta-uat-keyless-header-narrow"
+
+		produce(GinkgoT(), addr, &kgo.Record{
+			Key:     nil,
+			Value:   []byte(`{"v":0}`),
+			Headers: []kgo.RecordHeader{{Key: "kafka_key", Value: []byte("umh.v1.acme.berlin._historian.spoofed")}},
+		})
+
+		delivered := make(chan string, 4)
+
+		sb := service.NewStreamBuilder()
+		Expect(sb.AddInputYAML(`
+uns_beta:
+  broker_address: "` + addr + `"
+  consumer_group: "` + group + `"
+  umh_topics:
+    - "umh\\.v1\\.acme\\..+"
+`)).To(Succeed())
+		Expect(sb.SetMetricsYAML(captureExporterName + ": {}")).To(Succeed())
+		Expect(sb.AddBatchConsumerFunc(func(_ context.Context, batch service.MessageBatch) error {
+			for _, msg := range batch {
+				t, _ := msg.MetaGet("umh_topic")
+				select {
+				case delivered <- t:
+				default:
+				}
+			}
+			return nil
+		})).To(Succeed())
+		stream, err := sb.Build()
+		Expect(err).NotTo(HaveOccurred())
+		defer startStream(GinkgoT(), stream)()
+
+		Eventually(func() int64 { return captureExporter.counterValue("key_omitted_records") }).
+			WithTimeout(20*time.Second).WithPolling(100*time.Millisecond).
+			Should(Equal(int64(1)),
+				"a keyless record must be omitted by the pre-filter under a narrow pattern, whatever its headers say")
+
+		Consistently(delivered).WithTimeout(2*time.Second).ShouldNot(Receive(),
+			"the record must not be delivered under the topic its kafka_key header claims")
+	})
+
+	It("delivers it under \".*\", under the topic the header claims, which is the ENG-5125 exposure", func() {
+		addr := startBroker(GinkgoT())
+		const group = "uns-beta-uat-keyless-header-wildcard"
+		const spoofed = "umh.v1.acme.berlin._historian.spoofed"
+
+		produce(GinkgoT(), addr, &kgo.Record{
+			Key:     nil,
+			Value:   []byte(`{"v":0}`),
+			Headers: []kgo.RecordHeader{{Key: "kafka_key", Value: []byte(spoofed)}},
+		})
+
+		delivered := make(chan string, 4)
+		stop := runUnsBetaStream(GinkgoT(), `
+uns_beta:
+  broker_address: "`+addr+`"
+  consumer_group: "`+group+`"
+  umh_topics:
+    - ".*"
+`, func(_ context.Context, batch service.MessageBatch) error {
+			for _, msg := range batch {
+				t, _ := msg.MetaGet("umh_topic")
+				select {
+				case delivered <- t:
+				default:
+				}
+			}
+			return nil
+		})
+		defer stop()
+
+		var topic string
+		Eventually(delivered).WithTimeout(20 * time.Second).Should(Receive(&topic))
+		Expect(topic).To(Equal(spoofed),
+			"this pins the known ENG-5125 exposure: the header overrides the record key, so the message is delivered, and would be written back, under a topic it does not belong to")
+	})
+})
+
+// A key carrying a byte outside the UMH topic alphabet passes both of uns_beta's
+// filters — the user's umh_topics regex is the only key validation it does — and
+// is then refused by the uns output, which validates against the UMH topic
+// grammar. Measured in a real UMH Core on 2026-11-26: the output rejected such a
+// record about once a second indefinitely and nothing behind it on the partition
+// was delivered.
+//
+// This spec pins the current behaviour so the gap is visible. Replace it when
+// ENG-5125's parse-gate lands: at that point uns_beta should drop the record and
+// count it, exactly as it already does for an empty key, and this spec should
+// assert the drop instead of the delivery.
+var _ = Describe("uns_beta key validation", Label("uns_beta"), func() {
+	It("delivers a key the uns output cannot accept, which is what makes it a poison message (documented gap, ENG-5125)", func() {
+		addr := startBroker(GinkgoT())
+		const group = "uns-beta-uat-invalid-topic-key"
+
+		// 0xff is not valid UTF-8 and is outside the UMH topic alphabet
+		// [a-zA-Z0-9._-], which the uns output enforces.
+		badKey := "umh.v1.acme.berlin._historian.bad\xffUTF"
+		produce(GinkgoT(), addr, &kgo.Record{Key: []byte(badKey), Value: []byte(`{"v":1}`)})
+
+		delivered := make(chan string, 4)
+		stop := runUnsBetaStream(GinkgoT(), `
+uns_beta:
+  broker_address: "`+addr+`"
+  consumer_group: "`+group+`"
+  umh_topics:
+    - "umh\\.v1\\.acme\\..+"
+`, func(_ context.Context, batch service.MessageBatch) error {
+			for _, msg := range batch {
+				t, _ := msg.MetaGet("umh_topic")
+				select {
+				case delivered <- t:
+				default:
+				}
+			}
+			return nil
+		})
+		defer stop()
+
+		var topic string
+		Eventually(delivered).WithTimeout(20 * time.Second).Should(Receive(&topic))
+		Expect(topic).To(Equal(badKey),
+			"uns_beta validates the key only against umh_topics, so a key the uns output will always reject is delivered and stamped as umh_topic; this is what turns one malformed record from a third-party producer into a permanent stall of the partition")
+		Expect(topic).To(ContainSubstring("\xff"),
+			"the byte that the uns output refuses must still be present in the delivered topic — if it were sanitised here there would be no gap")
+	})
+})
+
 var _ = Describe("uns_beta all-filtered poll commit", Label("uns_beta"), func() {
 	It("self-acks an all-filtered poll so the committed offset advances while the consumer receives nothing", func() {
 		addr := startBroker(GinkgoT())
@@ -634,6 +829,85 @@ var _ = Describe("uns_beta mixed-batch NACK redelivery", Label("uns_beta"), func
 // then 1500 non-matching records, which span whole fetches. Connect's
 // key_pattern pre-filter omits them; the placeholder it keeps for each poll's
 // last omitted record carries the commit to the high-water mark.
+// A rejected message replays its whole batch, so a message the pipeline already
+// accepted is delivered again on every replay. The UAT measured 67 repeat
+// deliveries of each accepted sibling during a 67-second downstream outage. A
+// consumer of uns_beta must therefore be idempotent, and this spec fails if the
+// input ever stops replaying the accepted siblings — which is what a move to
+// per-message acks would do, and is why it is pinned here.
+var _ = Describe("uns_beta batch replay", Label("uns_beta"), func() {
+	It("redelivers the messages a batch-mate's rejection replays, and loses none once the rejection stops", func() {
+		addr := startBroker(GinkgoT())
+		const group = "uns-beta-uat-partial-batch"
+
+		// Five records in one fetch. The pipeline rejects the third.
+		produce(GinkgoT(), addr,
+			rec("umh.v1.acme.berlin._historian.a", `{"v":0}`),
+			rec("umh.v1.acme.berlin._historian.b", `{"v":1}`),
+			rec("umh.v1.acme.berlin._historian.c", `{"v":2}`),
+			rec("umh.v1.acme.berlin._historian.d", `{"v":3}`),
+			rec("umh.v1.acme.berlin._historian.e", `{"v":4}`))
+
+		const poison = `{"v":2}`
+		log := newDeliveryLog()
+		var rejecting = true
+		var mu sync.Mutex
+
+		stop := runUnsBetaStream(GinkgoT(), `
+uns_beta:
+  broker_address: "`+addr+`"
+  consumer_group: "`+group+`"
+  umh_topics:
+    - "umh\\.v1\\.acme\\..+"
+`, func(_ context.Context, batch service.MessageBatch) error {
+			mu.Lock()
+			reject := rejecting
+			mu.Unlock()
+			for _, msg := range batch {
+				b, err := msg.AsBytes()
+				if err != nil {
+					return err
+				}
+				log.add(string(b))
+				if reject && string(b) == poison {
+					return errPoison
+				}
+			}
+			return nil
+		})
+		defer stop()
+
+		// The accepted sibling is redelivered while its batch-mate is rejected.
+		Eventually(func() int { return log.count(`{"v":0}`) }).
+			WithTimeout(30*time.Second).WithPolling(100*time.Millisecond).
+			Should(BeNumerically(">", 1),
+				"a message the pipeline already accepted must be redelivered while a batch-mate is rejected; if this stops being true the input has moved to per-message acks and the idempotency contract in the docs has changed")
+
+		// Nothing commits past the rejected record while it keeps failing.
+		off, ok := committedOffset(GinkgoT(), addr, group)
+		Expect(ok && off > 2).To(BeFalse(),
+			"the committed offset must not move past the rejected record, got %d (committed=%v)", off, ok)
+
+		// Once the pipeline accepts, every record arrives and the offset catches up.
+		mu.Lock()
+		rejecting = false
+		mu.Unlock()
+
+		Eventually(func() int { return log.distinct() }).
+			WithTimeout(30*time.Second).WithPolling(100*time.Millisecond).
+			Should(Equal(5), "every produced record must reach the pipeline once the rejection stops")
+
+		Eventually(func() int64 {
+			off, _, err := committedOffsetE(addr, group)
+			if err != nil {
+				return -1
+			}
+			return off
+		}).WithTimeout(30*time.Second).WithPolling(200*time.Millisecond).
+			Should(Equal(int64(5)), "the committed offset must reach the end of the log once every record is accepted")
+	})
+})
+
 var _ = Describe("uns_beta gapless restart", Label("uns_beta"), func() {
 	It("resumes a restarted consumer group from the committed offset with no loss and no replay across a long omitted run", func() {
 		addr := startBroker(GinkgoT())
