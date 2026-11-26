@@ -37,6 +37,20 @@ type proxy struct {
 	conns []net.Conn
 	dials int
 	done  bool
+
+	// cutMu is held for the whole of a cut -- taking the connections, every
+	// Close, and the count that records them -- and by cutCount, so nobody
+	// can read the count in the window where the sockets are already dying.
+	//
+	// Keeping the count under the connection mutex is not enough. A client
+	// sees EOF microseconds after its socket closes, so a test that reacts
+	// to the client's own error and then asks for the count was racing the
+	// accounting and read zero although a connection HAD been closed: four
+	// failures in fourteen runs, and the test then blamed the client. It is
+	// an ordering race and not a data race, so -race neither caught it nor
+	// changed it.
+	cutMu  sync.Mutex
+	closed int
 }
 
 // dialCount is how many connections have been accepted since the server
@@ -102,6 +116,8 @@ func (p *proxy) track(conns ...net.Conn) {
 // connections would still read as evidence if the close were removed, and a
 // mutation proved that nothing noticed.
 func (p *proxy) cut() int {
+	p.cutMu.Lock()
+	defer p.cutMu.Unlock()
 	p.mu.Lock()
 	conns := p.conns
 	p.conns = nil
@@ -112,7 +128,17 @@ func (p *proxy) cut() int {
 			closed++
 		}
 	}
+	p.closed += closed
 	return closed
+}
+
+// cutCount is how many connections every cut so far has closed. It waits for
+// a cut in flight, so a caller that got here by noticing a dead socket is
+// told about the close that killed it.
+func (p *proxy) cutCount() int {
+	p.cutMu.Lock()
+	defer p.cutMu.Unlock()
+	return p.closed
 }
 
 func (p *proxy) close() {

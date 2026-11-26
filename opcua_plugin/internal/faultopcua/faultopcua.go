@@ -169,14 +169,14 @@ func New() (*Server, error) {
 		return nil, fmt.Errorf("faultopcua: proxy: %w", err)
 	}
 	s.proxy = px
-	s.ns.onDrop = px.cut
+	s.ns.onDrop = func() { px.cut() }
 	return s, nil
 }
 
 // Cuts reports how many connections a session drop actually closed. A test
 // that only watched the client fail could not tell a drop that reached a
 // socket from one that never fired.
-func (s *Server) Cuts() int { return s.ns.cuts() }
+func (s *Server) Cuts() int { return s.proxy.cutCount() }
 
 // AddNode gives the server a readable and writable variable node holding
 // value. The node's identifier is its name, so AddNode("Setpoint", 0) is
@@ -314,31 +314,21 @@ type faultNamespace struct {
 	// with the server rather than outliving the test that armed it.
 	closed chan struct{}
 
-	// onDrop cuts the connections underneath the client. It returns how many
-	// it closed, which is the evidence a DropSession test asserts.
-	onDrop func() int
-	cut    int
+	// onDrop cuts the connections underneath the client. The proxy keeps the
+	// count, because only the proxy can publish it before the close it
+	// records becomes visible to the client.
+	onDrop func()
 
 	// flap alternates FlapValue between the real value and the fault's.
 	flap bool
 }
 
-// cuts reports how many connections this namespace's drops have closed.
-func (ns *faultNamespace) cuts() int {
-	ns.mu.Lock()
-	defer ns.mu.Unlock()
-	return ns.cut
-}
-
-// drop cuts the client's connection and keeps the count.
+// drop cuts the client's connection. The proxy counts what it closed.
 func (ns *faultNamespace) drop() {
 	if ns.onDrop == nil {
 		return
 	}
-	n := ns.onDrop()
-	ns.mu.Lock()
-	ns.cut += n
-	ns.mu.Unlock()
+	ns.onDrop()
 }
 
 // Attribute is the read side.
