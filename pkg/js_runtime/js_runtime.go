@@ -14,10 +14,12 @@
 
 // Package js_runtime is the one JavaScript runtime mechanism for benthos-umh.
 //
-// The API is frozen in FROZEN-js-runtime.md (the seam between PR0 and PR1):
-// exactly six exported names — Program, Compile, Options, Runner, NewRunner,
-// plus the Runner methods. Do not add exported names; if you think you need
-// one, put it on the morning list and work around it.
+// Its API is deliberately six exported names — Program, Compile, Options,
+// Runner, NewRunner, and the Runner methods — and is meant to stay that way.
+// It is the seam the handshake engine (ENG-8129) is built against, so every
+// name added here is one that package can come to depend on, and widening a
+// seam is easy while narrowing one is not. If you think you need a seventh,
+// work around it and raise it on ENG-8128 instead.
 package js_runtime
 
 import (

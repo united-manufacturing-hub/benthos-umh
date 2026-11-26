@@ -78,7 +78,7 @@ const (
 // runtimes this package hardens (see js_engine's expression_semantics_test),
 // which the frozen js_runtime API cannot express, and pkg/ must not import a
 // plugin package. Keep the two lists in sync until the seam grows a raw or
-// strictness option on Compile (flagged for a ruling in MORNING.md).
+// strictness option on Compile, which is open on ENG-8128.
 var DangerousGlobals = []string{
 	// ===== CODE EXECUTION - CRITICAL SECURITY RISK =====
 	"eval",     // Direct code evaluation - MUST block for security
