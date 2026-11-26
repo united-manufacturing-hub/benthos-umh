@@ -987,41 +987,56 @@ func TestCall_DeclaredArrayInputKeepsTheGoTypeMapping(t *testing.T) {
 	})
 }
 
-// TestVariantToValue_ByteStringAndByteArrayAreNotTheSameThing
+// TestVariantToValue_AByteArrayOffTheWireIsAnIntegerArray
 //
-// Go cannot tell them apart: a ByteString and an array of Byte both decode
-// to []uint8. Refusing both told the owner of an ordinary Byte[] node that
-// their tag was a byte string, while every other integer array converted
-// and a single Byte read fine. The variant's own type says which it is.
+// The test this replaces asserted on int64s([]uint8{...}) directly and on a
+// ByteString, and never on a decoded Byte array -- so it passed while the
+// branch it was written for converted nothing a real server produces. Its
+// comment also claimed the wire half "was measured end to end against a
+// real server"; it was not. Both are why this one decodes actual wire bytes.
 //
-// Only the ByteString half can be built in this process -- ua.NewVariant
-// gives []byte the ByteString type id, and a Byte array arrives that way
-// only off the wire. The Byte[] half was measured end to end by round
-// three's adversary lane against a real server, reading
-// "a byte string has no documented value form" from a Byte[] node, which
-// is what this change fixes.
-func TestVariantToValue_ByteStringAndByteArrayAreNotTheSameThing(t *testing.T) {
+// gopcua decodes a Byte array into ua.ByteArray, a defined type, so a Go
+// type switch's `case []uint8` does not match it. A ByteString decodes to a
+// plain []uint8 and is still refused, because it has no documented value
+// form.
+func TestVariantToValue_AByteArrayOffTheWireIsAnIntegerArray(t *testing.T) {
+	// TypeIDByte (3) with the array-values bit (0x80), length 3, then the
+	// bytes. This is what a PLC's Byte[] tag looks like on the wire.
+	wire := []byte{0x80 | 3, 3, 0, 0, 0, 1, 2, 250}
+	var v ua.Variant
+	if _, err := v.Decode(wire); err != nil {
+		t.Fatalf("decoding the wire bytes: %v", err)
+	}
+	if v.Type() != ua.TypeIDByte {
+		t.Fatalf("decoded as %v, want TypeIDByte -- this test's premise has moved", v.Type())
+	}
+
+	got, err := variantToValue(&v)
+	if err != nil {
+		t.Fatalf("a Byte array off the wire was refused: %v", err)
+	}
+	want := []int64{1, 2, 250}
+	gotSlice, ok := got.([]int64)
+	if !ok || len(gotSlice) != len(want) {
+		t.Fatalf("got %T(%v), want %T(%v)", got, got, want, want)
+	}
+	for i := range want {
+		if gotSlice[i] != want[i] {
+			t.Fatalf("got %v, want %v", gotSlice, want)
+		}
+	}
+
+	// A ByteString is a different thing and still has no value form.
 	byteString, err := ua.NewVariant([]byte{1, 2, 250})
 	if err != nil {
-		t.Fatalf("could not build the variant: %v", err)
+		t.Fatalf("building the ByteString: %v", err)
 	}
 	if byteString.Type() != ua.TypeIDByteString {
-		t.Fatalf("expected a ByteString, got %v -- this test's premise has moved", byteString.Type())
+		t.Fatalf("expected a ByteString, got %v", byteString.Type())
 	}
-
-	// A ByteString still has no documented value form, and the refusal now
-	// says ByteString rather than accusing a Byte array of being one.
-	_, convErr := variantToValue(byteString)
-	if convErr == nil {
-		t.Fatal("a ByteString was converted; it has no documented value form")
-	}
-	if !strings.Contains(convErr.Error(), "ByteString") {
+	if _, convErr := variantToValue(byteString); convErr == nil {
+		t.Error("a ByteString was converted; it has no documented value form")
+	} else if !strings.Contains(convErr.Error(), "ByteString") {
 		t.Errorf("the refusal should name what it refused, got %v", convErr)
-	}
-
-	// And the conversion a Byte array takes is the one every other integer
-	// array takes, so it cannot drift apart from them unnoticed.
-	if got := int64s([]uint8{1, 2, 250}); len(got) != 3 || got[0] != 1 || got[2] != 250 {
-		t.Errorf("a Byte array converts like any integer array, got %v", got)
 	}
 }

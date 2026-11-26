@@ -824,15 +824,18 @@ func variantToValue(variant *ua.Variant) (any, error) {
 		return int64s(v), nil
 	case []int64:
 		return v, nil
+	case ua.ByteArray:
+		// A Byte array off the wire. gopcua decodes it into its own defined
+		// type (ua/variant.go: sliceType = reflect.TypeOf(ByteArray{})), and
+		// a Go type switch's `case []uint8` does NOT match a defined type --
+		// which is why an earlier version of this fix converted nothing a
+		// real server produces while its test passed. Every other integer
+		// array converts and a single Byte reads fine; a Byte array is not
+		// special.
+		return int64s([]byte(v)), nil
 	case []uint8:
-		// Go cannot tell these apart -- a ByteString and an array of Byte
-		// both decode to []uint8 -- but the variant can, and refusing both
-		// told the owner of a perfectly ordinary Byte[] node that their tag
-		// was a byte string. Every other integer array converts; a Byte
-		// array is not special, and a single Byte already reads fine.
-		if variant.Type() == ua.TypeIDByte {
-			return int64s(v), nil
-		}
+		// A ByteString. In-process ua.NewVariant([]byte{...}) also lands
+		// here, typed ByteString, which is what it is.
 		return nil, persistentErr("a ByteString has no documented value form: " +
 			"read it as a String, or as a Byte array if that is what the node holds")
 	case []uint16:
