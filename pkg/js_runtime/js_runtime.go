@@ -33,8 +33,26 @@ import (
 // scripts (nodered_js_plugin.go and tag_processor_plugin.go both did this
 // inline; this package makes it the default). The 'use strict' directive is
 // part of the wrap, so scripts run strict, and a top-level return is legal.
+// The prefix is three lines, and deliberately so. The callers this package
+// replaced wrapped their scripts as
+//
+//	\n\t\t(function(){\n\t\t\t'use strict';\n\t\t<source>\n\t\t})()\n
+//
+// which put a user's first line on line 4. A one-line prefix puts it on line
+// 2, and every line number in every error a customer sees moves by two:
+// measured against the base commit, a throw reported at nodered-fn.js:4
+// started reporting at :2, and its caller frame moved from :6 to :4. The
+// line number is how someone finds the fault in a two-hundred-line function,
+// and it reaches their logs and their drop reasons, so keeping the count
+// identical is worth two newlines.
+//
+// Columns are not preserved. The old wrap indented the source with two tabs
+// and goja counted them, so a column reads three lower here. That was an
+// artifact of the old wrapper rather than anything about the script, and
+// reproducing it would mean indenting every user's code to keep a number
+// that pointed at whitespace.
 const (
-	wrapPrefix = "(function(){'use strict';\n"
+	wrapPrefix = "\n\n(function(){'use strict';\n"
 	wrapSuffix = "\n})()"
 )
 
