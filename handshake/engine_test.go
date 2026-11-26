@@ -737,3 +737,48 @@ func TestLiteralWaitScanner_AnEmptyTimeoutIsNotALiteralWait(t *testing.T) {
 		t.Fatalf("Validate refused a script whose only wait has no timeout: %v", err)
 	}
 }
+
+// The scanner's three counting faults, each of which defeated the friendly
+// early error in a different direction.
+func TestLiteralWaitScanner_CountsOnlyRealCalls(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		script string
+		want   time.Duration
+	}{
+		{
+			// A false refusal: this blocked a deploy for a script whose
+			// only "wait" was the tail of somebody else's function name.
+			name:   "an identifier ending in wait_until is not a call",
+			script: `mywait_until(a, b, 4000);`,
+			want:   0,
+		},
+		{
+			// A false pass: JavaScript allows the space, so this was a
+			// real five-second wait the check never saw.
+			name:   "a space before the parenthesis is still a call",
+			script: `opcua.wait_until ({nodeId: "A"}, v => v, 5000);`,
+			want:   5 * time.Second,
+		},
+		{
+			// A false pass, and the worst of the three: the literal
+			// overflowed int64, the running total went NEGATIVE, and the
+			// real wait beside it was masked. MaxInterval refuses the huge
+			// one for real when the line is reached.
+			name:   "a literal too large to be a wait does not wrap the total",
+			script: `opcua.wait_until(a, b, 5000); opcua.wait_until(c, d, 99999999999999999999);`,
+			want:   5 * time.Second,
+		},
+		{
+			name:   "an ordinary call still counts",
+			script: `opcua.wait_until({nodeId: "A"}, v => v === true, 4000);`,
+			want:   4 * time.Second,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := literalWaitTotal(tc.script); got != tc.want {
+				t.Errorf("literalWaitTotal = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
