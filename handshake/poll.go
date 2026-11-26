@@ -63,10 +63,18 @@ func (e *Engine[UnifiedAddress]) waitUntil(
 	// value is a message held on a machine for an hour while the bridge
 	// reports healthy. A wrong script is persistent: repeating it will not
 	// make the number smaller (Jeremy, 2026-11-26).
-	if d := time.Duration(timeoutMs) * time.Millisecond; d > MaxInterval {
+	//
+	// Compared as milliseconds and not as a Duration. Converting first lets
+	// a wildly large number overflow int64 nanoseconds, and the product then
+	// wraps past this very check -- and which way it wraps is per
+	// architecture (arm64 saturates to max where amd64 turns max into min),
+	// so the comparison has to happen before the conversion. Written as a
+	// negated <= so that a NaN, which loses every comparison, is refused
+	// rather than waved through.
+	if !(timeoutMs <= maxIntervalMillis) {
 		return nil, fmt.Errorf(
-			"wait_until on %s was given a timeout of %v, longer than the %v a handshake is allowed: check the units -- this is milliseconds",
-			describe, d, MaxInterval)
+			"wait_until on %s was given a timeout of %.0f ms, longer than the %v a handshake is allowed: check the units -- this is milliseconds",
+			describe, timeoutMs, MaxInterval)
 	}
 
 	poll := e.cfg.PollInterval
