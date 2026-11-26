@@ -206,3 +206,13 @@ For many industrial use cases, you might need more than just writing a value and
 
 With Benthos, the “at least once” acknowledgment ensures that if writing fails, the message can be retried or routed. This plugin’s minimal default handshake (read-back from the same node) is a strong start for safer OPC UA setpoints, and we’ll grow it over time if more advanced scenarios are needed.
 
+
+***
+
+## Delivery guarantees
+
+- **Delivery**: a message is delivered when the write was sent and, with the read-back enabled, the node read back as the value that was written. A failed write is retried inside the output up to `maxWriteAttempts`, with `timeBetweenRetriesMs` between attempts; only after the last one does the message go back to the flow.
+- **State**: the output keeps no state about a message. A message that arrives twice is written twice. What it does keep — the connection and its settings — lives as long as the output does.
+- **Time**: `readbackTimeoutMs` bounds the read-back, `timeBetweenRetriesMs` the pause between write attempts. No deadline is ever taken from the message.
+- **Errors**: the output retries a failed write itself, up to `maxWriteAttempts`, before the flow sees anything; what it finally hands back carries no class, so whether to retry again or dead-letter is the flow's decision. A lost connection surfaces as the transport error the operation hit — `EOF`, then `write: broken pipe` — and the write is handed back. What happens next is `autoReconnect`, which is **off** unless you turn it on: left off, the output stays down and is visible as down; turned on, the client rebuilds the session underneath and writing continues with nothing logged.
+- **Limits**: one message is in flight per output; two machines need two outputs. Every write and read-back is its own round trip — there is no batching. Writing an array is not supported.
