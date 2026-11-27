@@ -20,46 +20,38 @@ import (
 	"time"
 )
 
-// waitUntil re-reads one address until the predicate holds or the clock runs
-// out (LIB-12). Its timeout is its own, clamped to the time remaining before
-// the block's deadline, so the deadline never fires mid-transaction: LIB-6
-// makes that persistent and leaves the machine blocked. A wait that runs out
-// ends transient (LIB-18), unless the call passed { onTimeout: "persistent" }.
-// Inside a cleanup block the ending functions are withheld, because a
-// cleanup has no transaction to end; a wait that fails — ran out of time,
-// was refused its read, or could not parse its address — is recorded at
-// the dispatch boundary instead (cleanupEvidence), as the cleanup's own
-// failure: the state the block waited for never came, so the machine was
-// not handed back (LIB-4), caught or not — and the block carries on.
+// waitUntil re-reads one address until the predicate holds or the wait's
+// timeout runs out. The timeout is clamped to the time remaining before the
+// block's deadline, so the deadline never fires mid-transaction, which would
+// make the run persistent. A wait that runs out ends the run transient,
+// unless the call passed { onTimeout: "persistent" }. Inside a cleanup
+// block, which has no ending, a failed wait is recorded as the cleanup's
+// failure instead (cleanupEvidence).
 func (e *Engine[UnifiedAddress]) waitUntil(
 	rs *runState, raw map[string]any, pred func(any) bool,
 	timeoutMs float64, opts map[string]any,
 ) (any, error) {
-	// A wait without its predicate — left off, or a name that is not a
-	// function — is a wrong script, not a nil-func call: goja fills the
-	// missing argument with a nil func, and calling it panicked straight
-	// out of Run with the machine left armed (round-2 review, item 2).
-	// A wrong script is persistent, so the fault propagates as an
-	// exception rather than being recorded as a binding fault.
+	// A wait without its predicate is a wrong script. It is persistent,
+	// so the fault propagates as an exception rather than being recorded
+	// as a binding fault.
 	if pred == nil {
 		return nil, fmt.Errorf(
 			"wait_until needs a predicate as its second argument, such as v => v === true")
 	}
-	// A wait after the run has ended is refused like every other operation
-	// (UAT-13): a wait that timed out is itself an ending, so a script that
-	// catches it cannot start another one under the ended transaction.
+	// A wait after the run has ended is refused like every other operation:
+	// a wait that timed out is itself an ending, so a script that catches
+	// it cannot start another one under the ended transaction.
 	addr, err := e.address(rs, raw)
 	if err != nil {
 		return nil, err
 	}
 	describe := e.bind.Describe(addr)
 
-	// An hour is not a long wait, it is a wrong one. A wait_until watches a
-	// machine confirm one instruction; a timeout this long is a unit mistake
-	// far more often than an intention, and the cost of taking it at face
-	// value is a message held on a machine for an hour while the bridge
-	// reports healthy. A wrong script is persistent: repeating it will not
-	// make the number smaller (Jeremy, 2026-11-26).
+	// A wait_until watches a machine confirm one instruction, so a timeout
+	// over MaxInterval is a unit mistake far more often than an intention,
+	// and taking it at face value holds a message on a machine for an hour
+	// while the bridge reports healthy. A wrong script is persistent:
+	// repeating it will not make the number smaller.
 	//
 	// Compared as milliseconds and not as a Duration. Converting first lets
 	// a wildly large number overflow int64 nanoseconds, and the product then
@@ -88,13 +80,11 @@ func (e *Engine[UnifiedAddress]) waitUntil(
 	poll = max(poll, time.Millisecond) // a sub-millisecond interval is no pause at all
 	if ms, ok := number(opts["pollMs"]); ok && ms > 0 {
 		// Bounded before the conversion, for the same reason the timeout
-		// above is. time.Duration(1e13) * time.Millisecond wraps NEGATIVE,
-		// a negative poll interval means no pause between reads at all, and
-		// the wait then reads the machine at wire speed until its timeout
-		// runs out -- measured, 117,761 reads in 313ms against an in-process
-		// machine, and the hour rule means that timeout may legitimately BE
-		// an hour. The outcome stays right because the deadline clamp holds;
-		// what a real PLC and its network see is the damage.
+		// above is. time.Duration(1e13) * time.Millisecond wraps negative,
+		// and a negative poll interval means no pause between reads, so the
+		// wait would read the machine at wire speed until its timeout, which
+		// may be up to an hour. The outcome would stay right, because the
+		// deadline clamp holds; the damage is to the PLC and its network.
 		if !(ms <= maxIntervalMillis) {
 			return nil, fmt.Errorf(
 				"wait_until on %s was given a pollMs of %.0f, longer than the %v a handshake is allowed: check the units -- this is milliseconds",
@@ -117,19 +107,13 @@ func (e *Engine[UnifiedAddress]) waitUntil(
 	}
 
 	start := time.Now()
-	// Each read is bounded by the wait's own end, not the run's deadline.
-	//
-	// A read is only discovered to be too late once it returns, so a read
-	// that starts near the end and overruns used to be cut off by the RUN's
-	// deadline -- turning the wait's clean Transient timeout into a
-	// Persistent stop (LIB-6), the opposite of what the clamp exists for.
-	//
-	// An earlier attempt predicted this from the previous read's duration
-	// and bailed early. That starved the wait: one slow first read -- the
-	// ordinary shape after a connect -- ended a wait 130ms before its own
-	// timeout on a machine that was ready on the second read, turning a
-	// delivery into a false "machine did not confirm". Bounding is exact
-	// where predicting was a guess about a machine we cannot predict.
+	// Each read is bounded by the wait's own end, not the run's deadline,
+	// so a read that starts near the end and overruns ends the wait as a
+	// transient timeout rather than letting the run's deadline stop the
+	// script, which would be persistent. The bound is exact; skipping a
+	// read because the previous one was slow would end a wait early on a
+	// machine whose first read after a connect is slow and whose second
+	// read is ready.
 	waitEnds := start.Add(timeout)
 	for {
 		value, cutOff, err := e.readWithin(rs, raw, waitEnds)
@@ -138,13 +122,9 @@ func (e *Engine[UnifiedAddress]) waitUntil(
 			return nil, e.waitRanOut(rs, describe, time.Since(start), persistent)
 		}
 		if err != nil {
-			// The read is refused and recorded by readWithin itself;
-			// whether that refusal is the cleanup's failure is not this
-			// line's to decide. The dispatch boundary decides it, and it
-			// does: the error surfaces at wait_until's own entry, not at
-			// read's exempt one, so a cleanup that catches this throw
-			// cannot report a handback that never ran (cleanupEvidence).
-			// Attempted once (LIB-8).
+			// readWithin recorded the refused read. The read is not
+			// retried; inside a cleanup block, the dispatch boundary
+			// records it as the cleanup's failure (cleanupEvidence).
 			return nil, err
 		}
 		if pred(value) {
@@ -183,8 +163,8 @@ func number(v any) (float64, bool) {
 }
 
 // clampWait leaves a margin so the wait ends strictly before the deadline,
-// never on it: a deadline that fires mid-transaction is persistent (LIB-6),
-// and the clamp exists so it never does.
+// never on it: a deadline that fires mid-transaction is persistent, and the
+// clamp exists so it never does.
 func clampWait(remaining time.Duration) time.Duration {
 	const margin = 50 * time.Millisecond
 	if remaining <= margin {
@@ -193,16 +173,16 @@ func clampWait(remaining time.Duration) time.Duration {
 	return remaining - margin
 }
 
-// waitRanOut ends a wait that did not see what it was waiting for.
+// waitRanOut ends a wait that did not see what it was waiting for. In the
+// script it records the wait_until ending.
 //
-// A cleanup has no ending to record -- that is why the ending functions are
-// withheld from it -- and setting rs.end here would refuse every operation
-// after the throw as errEnded before the block could hand the machine back:
-// the outcome was decided before the cleanup ran, and the handback is its
-// job. The dispatch boundary records the timeout as the cleanup's failure
-// instead (cleanupEvidence), and the block carries on -- a wait-for-idle
-// followed by a reset has the reset as its point -- while the recorded
-// failure still makes the run persistent, so a human looks at the machine.
+// A cleanup has no ending to record, and setting rs.end there would refuse
+// every operation after the throw as errEnded, before the block could hand
+// the machine back. The dispatch boundary records the timeout as the
+// cleanup's failure instead (cleanupEvidence), and the block carries on:
+// a wait-for-idle followed by a reset has the reset as its point. The
+// recorded failure still makes the run persistent, so a human looks at the
+// machine.
 func (e *Engine[UnifiedAddress]) waitRanOut(
 	rs *runState, describe string, elapsed time.Duration, persistent bool,
 ) error {
@@ -219,9 +199,9 @@ func (e *Engine[UnifiedAddress]) waitRanOut(
 
 // waitOptions checks wait_until's options object and reports whether a wait
 // that runs out ends persistent. An unknown option or onTimeout value is a
-// wrong script, refused rather than read as the default: a typo such as
-// "persitent" otherwise made a timeout silently Transient. Validate applies
-// the same check to literal options at deploy time (checkWaitOptions).
+// wrong script, refused rather than read as the default, which would make a
+// timeout silently transient. Validate applies the same check to literal
+// options at deploy time (checkWaitOptions).
 func waitOptions(opts map[string]any) (bool, error) {
 	for key := range opts {
 		if err := waitOptionKey(key); err != nil {

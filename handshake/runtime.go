@@ -51,19 +51,18 @@ func compile(name string, source string) (*goja.Program, *ast.Program, error) {
 	return nil, nil, fmt.Errorf("%s does not compile: %w", name, err)
 }
 
-// runProgram binds globals into a fresh goja runtime and executes prog. A
-// fresh runtime per run is the strict reset LIB-7 requires. The deadline
-// comes from ctx: the watcher goroutine interrupts the runtime when ctx is
-// done, and the returned error wraps ctx.Err(). The runtime is discarded
-// after the run, so an interrupt that arrives late cannot hurt the next one.
+// runProgram binds globals into a fresh goja runtime and executes prog, so
+// nothing a script leaves behind reaches the next run. The deadline comes
+// from ctx: the watcher goroutine interrupts the runtime when ctx is done,
+// and the returned error wraps ctx.Err(). The runtime is discarded after
+// the run, so an interrupt that arrives late cannot hurt the next one.
 func runProgram(ctx context.Context, prog *goja.Program, globals map[string]any) (result any, err error) { //nolint:nonamedreturns // a deferred recover assigns to it; naming is the mechanism
-	// No panic from a script or a binding leaves Run (round-2 review,
-	// item 2): goja fills a missing function argument with a nil func, a
-	// binding is protocol code that can blow up on a machine's bad answer,
-	// and in Benthos an escaped panic is the process — with the machine
-	// left armed and neither cleanup run. A recovered panic is a script
-	// fault: persistent, and the cleanup pair still runs, because Run
-	// reads the error like any other.
+	// No panic from a script or a binding leaves Run: a binding is protocol
+	// code that can blow up on a machine's bad answer, and in Benthos an
+	// escaped panic ends the process, with the machine left armed and
+	// neither cleanup run. A recovered panic is a script fault: persistent,
+	// and the cleanup still runs, because Run reads the error like any
+	// other.
 	defer func() {
 		if r := recover(); r != nil {
 			result = nil
@@ -201,28 +200,22 @@ func wrapRunError(err error) error {
 // dispatch boundary. Endings are offered to the script only: a cleanup
 // block returns the machine to idle and has nothing to end.
 //
-// This is the dispatch boundary where a cleanup block's operations are
-// dispatched, so it is where the cleanup's evidence is recorded
-// (cleanupEvidence): every operation a block can ask for goes through one
-// of these entries, and a failure surfacing at one of them means the
-// block's job — handing the machine back — did not finish, whatever line
-// inside the operation produced it. Three mechanisms carry a failure to
-// this boundary, and the boundary witnesses all three:
+// The entries are the dispatch boundary of a cleanup block: every
+// operation a block can ask for goes through one of them, so a failure
+// that surfaces at one means the block did not hand the machine back,
+// whatever line inside the operation produced it. Each entry records it
+// (cleanupEvidence), whichever of three ways it arrives:
 //
-//   - an operation that RETURNS an error (a refused write, a wait that
-//     ran out): the entry records it before throwing it to the script;
-//   - an operation whose callback PANICS out of the Go frame (door 7: the
-//     wait's predicate throws, and goja unwinds the entry's frame by
-//     panic, so nothing returns): the entry recovers it, records it, and
-//     re-raises the identical value, so the script sees exactly the
-//     exception it saw before — a record is added, control flow is not
-//     changed (recoverEvidence);
-//   - an argument CONVERSION that fails before the Go body runs (door 8:
-//     goja raised the TypeError above the entry, so the boundary never
-//     saw it): the entry owns its conversion, so a bad argument is an
-//     error the entry records and then throws, with goja's own message
-//     text, rather than a type error raised above it (argObject and
-//     friends).
+//   - The operation returns an error, such as a refused write or a wait
+//     that ran out. The entry records it before throwing it to the script.
+//   - A callback the script passed, such as the wait's predicate, throws.
+//     goja unwinds the entry's Go frame by panic, so nothing returns. The
+//     entry recovers the panic, records it and re-raises the same value,
+//     so the script sees the same exception (recoverEvidence).
+//   - An argument fails its conversion before the operation runs. The
+//     entry converts its own arguments, so the failure is an error it
+//     records and then throws as a TypeError with goja's wording
+//     (argObject and the other arg functions).
 //
 // read is the one exempt entry: it cannot change the machine, so a
 // cleanup may probe, catch the refusal, and carry on. A read inside
@@ -232,12 +225,7 @@ func (e *Engine[UnifiedAddress]) namespace(rs *runState, endings bool) map[strin
 	ns := map[string]any{
 		"read": func(call goja.FunctionCall, vm *goja.Runtime) goja.Value {
 			// No cleanupEvidence: a read cannot change the machine, so its
-			// refusal is not the cleanup's failure (see cleanupEvidence for
-			// the wait's other half). The entry still owns its conversion,
-			// so a bad argument throws the same TypeError it always threw;
-			// goja raised this one above the boundary too — it just never
-			// counted as evidence, and at read's exempt entry it still does
-			// not.
+			// refusal, a bad argument included, is not the cleanup's failure.
 			raw, convErr := argObject(call, 0)
 			if convErr != nil {
 				panic(vm.NewTypeError("%s", convErr.Error()))
@@ -349,23 +337,18 @@ func (e *Engine[UnifiedAddress]) namespace(rs *runState, endings bool) map[strin
 	return ns
 }
 
-// recoverEvidence closes door 7 at the dispatch boundary (see the comment
-// on namespace, above). A callback the script passed into an operation —
-// today, wait_until's predicate — that throws does not return through the
-// entry: goja unwinds the Go frame by panic, so the code after the
-// operation never runs. The entry defers this, so the boundary recovers
-// the panic, records it as the cleanup's evidence, and re-raises the
-// identical value: the script sees exactly the exception it saw before
-// the boundary learned to look, caught or not. An interrupt and a Go
-// runtime fault pass through here the same way — recorded, then raised
-// untouched — so nothing changes control flow.
+// recoverEvidence records a panic that unwinds through a dispatch entry as
+// the cleanup's evidence, then re-raises the same value, so control flow
+// does not change (see namespace). A callback the script passed into an
+// operation, such as wait_until's predicate, that throws does not return
+// through the entry: goja unwinds the Go frame by panic. An interrupt and a
+// Go runtime fault pass through the same way, recorded and then raised
+// untouched.
 //
 // own marks the throws the entry raised itself, whose evidence the entry
-// already recorded before throwing, so that a failure is recorded exactly
-// once, whichever of the three mechanisms carried it. This is a method on
-// runState rather than a closure in each entry so the recover sits in one
-// auditable place: recover only sees a panic when the deferred function
-// calls it itself.
+// already recorded, so a failure is recorded exactly once. Each entry
+// defers recoverEvidence directly, because recover only sees a panic when
+// the deferred function calls it itself.
 func (rs *runState) recoverEvidence(op string, own *bool) {
 	x := recover()
 	if x == nil {
@@ -374,7 +357,7 @@ func (rs *runState) recoverEvidence(op string, own *bool) {
 	if !*own {
 		rs.cleanupEvidence(op, panicAsError(x))
 	}
-	panic(x) // not a change of control flow: the identical value unwinds on
+	panic(x) // the same value unwinds on, so control flow does not change
 }
 
 // panicAsError turns a recovered panic into the error the boundary
@@ -394,14 +377,11 @@ func panicAsError(x any) error {
 }
 
 // argObject converts argument i of a call into the address object a script
-// passes whole. The entry owns this conversion (door 8): when goja's
-// reflective wrapper did it, a bad argument raised a TypeError above the
-// entry, before the Go body ran, so the boundary never saw the failure;
-// owned, the conversion is an error the entry records like any other. The
-// message keeps goja's own wording, so a script that catches the throw
-// reads the text it always read. A missing or null argument converts to a
-// nil address, as the reflective binding's zero value did, so ParseAddress
-// still owns that refusal.
+// passes whole. The entry converts its own arguments rather than leaving it
+// to goja's reflective wrapper, which raises its TypeError before the
+// entry's body runs, where the entry cannot record it. The message keeps
+// the wording of goja's reflective conversion. A missing or null argument
+// converts to a nil address, so ParseAddress owns that refusal.
 func argObject(call goja.FunctionCall, i int) (map[string]any, error) {
 	v := call.Argument(i)
 	if v == goja.Undefined() || v == goja.Null() {
@@ -432,8 +412,7 @@ func argInputs(call goja.FunctionCall, i int) ([]any, error) {
 
 // argNumber converts a call's numeric argument; see argObject for why the
 // entry owns the conversion. A JS number exports as int64 or float64,
-// whichever it fits, and both convert, as the reflective binding's
-// conversion did.
+// whichever it fits, and both convert. A missing or null argument is 0.
 func argNumber(call goja.FunctionCall, i int) (float64, error) {
 	v := call.Argument(i)
 	if v == goja.Undefined() || v == goja.Null() {
@@ -442,9 +421,9 @@ func argNumber(call goja.FunctionCall, i int) (float64, error) {
 	if n, ok := number(v.Export()); ok {
 		return n, nil
 	}
-	// goja's reflective binding used ToFloat, which accepts a numeric
-	// string and a boolean. A timeout read out of a message often arrives
-	// as a string, so refusing one here would break a working script.
+	// Like goja's reflective conversion, accept what ToFloat accepts,
+	// such as a numeric string or a boolean. A timeout read out of a
+	// message often arrives as a string.
 	if f := v.ToFloat(); !math.IsNaN(f) {
 		return f, nil
 	}
@@ -454,14 +433,12 @@ func argNumber(call goja.FunctionCall, i int) (float64, error) {
 
 // argPredicate converts wait_until's second argument into the Go callback
 // the wait polls with; see argObject for why the entry owns the conversion.
-// A missing or null predicate stays nil, so the wait's own friendly error
-// owns that wrong script (door 6, unchanged); a predicate that is not a
-// function fails the conversion like any other argument. The wrapper
-// reproduces what the reflective binding's wrapper did: the value crosses
-// as a JS value, the result is read with ToBoolean so a truthy non-boolean
-// satisfies the wait as JavaScript says it should, and a throw unwinds this
-// Go frame as the panic it always was, for the boundary to witness
-// (recoverEvidence).
+// A missing or null predicate stays nil, so waitUntil's own error names
+// that wrong script; a predicate that is not a function fails the
+// conversion like any other argument. The callback reads the result with
+// ToBoolean, so a truthy non-boolean satisfies the wait as JavaScript says
+// it should, and a throw unwinds the Go frame as a panic, for the entry to
+// record (recoverEvidence).
 func argPredicate(vm *goja.Runtime, v goja.Value) (func(any) bool, error) {
 	if v == goja.Undefined() || v == goja.Null() {
 		return nil, nil
@@ -474,24 +451,21 @@ func argPredicate(vm *goja.Runtime, v goja.Value) (func(any) bool, error) {
 	return func(arg any) bool {
 		res, err := fn(goja.Undefined(), vm.ToValue(arg))
 		if err != nil {
-			panic(err) // the callback's throw, unwinding exactly as before
+			panic(err) // the callback's throw unwinds the entry's frame
 		}
-		// goja's reflective binding converted with ToBoolean, so a truthy
-		// non-boolean -- v.length, 1, "ok" -- satisfied the wait. Keep that:
-		// a Go type assertion would silently read every one of them as false.
-		b := res.ToBoolean()
-		return b
+		// A truthy non-boolean, such as v.length, 1 or "ok", satisfies the
+		// wait. A Go type assertion would read every one of them as false.
+		return res.ToBoolean()
 	}, nil
 }
 
 // address is the first step of every operation that reaches the binding.
-// After the run has ended the machine is not touched again: the ending
-// functions abort the script by throwing errEnded, and a throw is catchable,
-// so the operations themselves refuse too (UAT-13). Once the run's clock has
-// run out the machine is not touched either. Otherwise address parses the
-// script's address, and records a refused parse like any operation's fault:
-// what a binding marks is what Run reports, and the operation never reached
-// the machine.
+// After the run has ended it refuses with errEnded: the ending functions
+// abort the script by throwing errEnded, and a throw is catchable, so the
+// operations refuse too. Once the run's clock has run out it refuses with
+// the context's error. Otherwise it parses the script's address, and
+// records a refused parse like any operation's fault, so what a binding
+// marks is what Run reports.
 func (e *Engine[UnifiedAddress]) address(rs *runState, raw map[string]any) (UnifiedAddress, error) {
 	var none UnifiedAddress
 	if rs.end != endNone {

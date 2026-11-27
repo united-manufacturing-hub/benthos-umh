@@ -38,8 +38,8 @@ const (
 // read from the parsed block. A call counts when its callee is named
 // wait_until, as opcua.wait_until or bare; Validate does not know the
 // binding's namespace. A timeout counts when it is a number literal, with or
-// without a unary plus. Anything else is computed, hence a person's to check
-// (SCR-4), and counts as nothing rather than refusing what it cannot read.
+// without a unary plus. Anything else is computed, so it is a person's to
+// check, and counts as nothing rather than refusing what it cannot read.
 //
 // The sum saturates at maxLiteralWait rather than wrapping: a literal too
 // big for a Duration is over every budget, which is the answer the check
