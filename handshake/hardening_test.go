@@ -169,19 +169,23 @@ func TestConfig_ValidateRefusesAnUnknownWaitOption(t *testing.T) {
 		{"an onTimeout value of the wrong case", `{"onTimeout": "Persistent"}`, `"Persistent"`},
 		{"a misspelled option", `{onTimout: "persistent"}`, `"onTimout"`},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := validConfig()
-			cfg.OnError = `opcua.wait_until({nodeId: "Idle"}, v => v === true, 100, ` + tc.opts + `);`
-			err := cfg.Validate()
-			if err == nil {
-				t.Fatalf("Validate accepted the options %s", tc.opts)
-			}
-			for _, want := range []string{"onError", tc.want} {
-				if !strings.Contains(err.Error(), want) {
-					t.Fatalf("the refusal must name %s, got: %v", want, err)
+		// Every spelling of the call that literalWaitTotal counts is
+		// checked the same way.
+		for _, callee := range []string{`opcua.wait_until`, `opcua.wait_until?.`, `opcua["wait_until"]`} {
+			t.Run(tc.name+" via "+callee, func(t *testing.T) {
+				cfg := validConfig()
+				cfg.OnError = callee + `({nodeId: "Idle"}, v => v === true, 100, ` + tc.opts + `);`
+				err := cfg.Validate()
+				if err == nil {
+					t.Fatalf("Validate accepted the options %s", tc.opts)
 				}
-			}
-		})
+				for _, want := range []string{"onError", tc.want} {
+					if !strings.Contains(err.Error(), want) {
+						t.Fatalf("the refusal must name %s, got: %v", want, err)
+					}
+				}
+			})
+		}
 	}
 	for _, opts := range []string{
 		`{onTimeout: "persistent"}`, `{onTimeout: "transient", pollMs: 10}`, `{}`, `{onTimeout: msg.mode}`,

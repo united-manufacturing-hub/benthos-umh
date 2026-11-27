@@ -36,7 +36,8 @@ const (
 
 // literalWaitTotal sums the literal timeouts of a block's wait_until calls,
 // read from the parsed block. A call counts when its callee is named
-// wait_until, as opcua.wait_until or bare; Validate does not know the
+// wait_until, as opcua.wait_until, opcua["wait_until"], an optional call of
+// either, or bare; Validate does not know the
 // binding's namespace. A timeout counts when it is a number literal, with or
 // without a unary plus. Anything else is computed, so it is a person's to
 // check, and counts as nothing rather than refusing what it cannot read.
@@ -114,13 +115,25 @@ func walk(v reflect.Value, visit func(*ast.CallExpression)) {
 }
 
 // calleeName is the name a call is made by: the property of a dot
-// expression, or a bare identifier. Anything else has no name to match.
+// expression, a string literal in brackets (opcua["wait_until"]), or a bare
+// identifier. An optional call or chain (opcua.wait_until?.(...),
+// opcua?.wait_until(...)) is named by the callee it wraps. Anything else has
+// no name to match.
 func calleeName(callee ast.Expression) string {
 	switch c := callee.(type) {
 	case *ast.DotExpression:
 		return string(c.Identifier.Name)
+	case *ast.BracketExpression:
+		if s, ok := c.Member.(*ast.StringLiteral); ok {
+			return string(s.Value)
+		}
+		return ""
 	case *ast.Identifier:
 		return string(c.Name)
+	case *ast.Optional:
+		return calleeName(c.Expression)
+	case *ast.OptionalChain:
+		return calleeName(c.Expression)
 	default:
 		return ""
 	}
