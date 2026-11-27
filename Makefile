@@ -116,8 +116,8 @@ test-handshake:
 	@go test -race -count=1 ./handshake/
 	@go test -race -count=1 -tags uat ./handshake/
 
-# The scenario suite drives the engine against a server that misbehaves
-# (opcua_plugin/internal/faultopcua). It needs no container and no network.
+# The fault server's own tests (opcua_plugin/internal/faultopcua), the OPC UA
+# server that misbehaves on purpose. It needs no container and no network.
 #
 # The whole package, with no -run filter. The filter this target shipped with
 # -- 'TestFault|TestControl|TestInject' -- silently excluded

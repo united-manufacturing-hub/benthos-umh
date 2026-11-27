@@ -33,6 +33,10 @@ type Binding[UnifiedAddress any] interface {
 	// binding's own form. No I/O: it runs on every call.
 	ParseAddress(raw map[string]any) (UnifiedAddress, error)
 
+	// Read, Write and Call return promptly once ctx is done, and do not send
+	// a request to the machine after it is. The engine's deadline holds only
+	// as far as the binding honours ctx.
+	//
 	// Read returns what the machine currently holds for one address.
 	Read(ctx context.Context, address UnifiedAddress) (ReadResponse, error)
 
