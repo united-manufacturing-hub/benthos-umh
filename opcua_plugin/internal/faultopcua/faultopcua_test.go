@@ -32,9 +32,8 @@ import (
 // underneath is broken, not the code under test.
 //
 // It also pins the two counters a fault test reads as evidence: one dial for
-// one client, no cuts, and -- the half the defect report caught -- a server
-// shut down while the client is still connected must not manufacture cut
-// evidence out of its own teardown.
+// one client, no cuts, and a server shut down while the client is still
+// connected must not manufacture cut evidence out of its own teardown.
 func TestTheControl_AnHonestServerAppliesAWrite(t *testing.T) {
 	srv, client, v := startServer(t, "Setpoint", int32(0))
 	id := nodeID(t, v)

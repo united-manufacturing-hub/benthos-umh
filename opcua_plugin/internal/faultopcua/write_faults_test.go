@@ -22,7 +22,7 @@ import (
 
 // TestFault_AcceptsAWriteAndNeverAppliesIt is the misbehavior the handshake
 // reads a value back to catch: the machine answers Good and keeps its old
-// value. TRUMPF's press does exactly this.
+// value, as some controllers do in a state that does not take the parameter.
 //
 // The assertion comes in two halves on purpose. The client's half -- the
 // read-back is stale -- cannot tell a fault that fired from a fault that
