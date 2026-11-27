@@ -38,15 +38,12 @@ import (
 // of the evidence.
 func TestAutoReconnect_FalseActuallyStopsTheClientReconnecting(t *testing.T) {
 	ctx := context.Background()
-	srv, err := faultopcua.New()
-	if err != nil {
-		t.Fatalf("fault server: %v", err)
-	}
-	srv.AddNode("Flag", true)
+	// New registers its own Close with t.Cleanup.
+	srv := faultopcua.New(t)
+	flag := srv.AddVariable("Flag", true)
 	if err := srv.Start(ctx); err != nil {
 		t.Fatalf("start fault server: %v", err)
 	}
-	t.Cleanup(func() { _ = srv.Close() })
 
 	conn := &OPCUAConnection{
 		Endpoint:      srv.Endpoint(),
@@ -66,8 +63,8 @@ func TestAutoReconnect_FalseActuallyStopsTheClientReconnecting(t *testing.T) {
 	}
 
 	// Kill the session underneath the client.
-	srv.Inject(faultopcua.Fault{Node: "Flag", Kind: faultopcua.DropSession})
-	id, err := ua.ParseNodeID(srv.NodeID("Flag"))
+	drop := srv.DropSession(flag)
+	id, err := ua.ParseNodeID(flag.ID())
 	if err != nil {
 		t.Fatalf("node id: %v", err)
 	}
@@ -76,6 +73,9 @@ func TestAutoReconnect_FalseActuallyStopsTheClientReconnecting(t *testing.T) {
 		NodesToRead: []*ua.ReadValueID{{NodeID: id, AttributeID: ua.AttributeIDValue}},
 	})
 	cancel()
+	if !drop.Fired() {
+		t.Fatal("the drop fault never took effect, so nothing was there to reconnect from")
+	}
 	if srv.Cuts() == 0 {
 		t.Fatal("no connection was closed, so nothing was there to reconnect from")
 	}
