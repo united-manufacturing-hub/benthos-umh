@@ -67,14 +67,16 @@ func NewStreamProcessor(cfg config.StreamProcessorConfig, logger *service.Logger
 		sourceNames = append(sourceNames, sourceName)
 	}
 
-	// Create pools first as they're needed by JSEngine
+	// Create pools first: the processor's metadata/buffer pools. The JS
+	// runtime pool used to live here too; it moved into the js engine's
+	// js_runtime.Runner (ENG-8128).
 	pools := pools2.NewObjectPools(sourceNames, logger)
 
 	processor := &StreamProcessor{
 		config:       cfg,
 		logger:       logger,
 		stateManager: state.NewStateManager(&cfg),
-		jsEngine:     js_engine.NewJSEngine(logger, sourceNames, pools),
+		jsEngine:     js_engine.NewJSEngine(logger, sourceNames),
 		metrics:      metrics2.NewProcessorMetrics(metrics),
 		pools:        pools,
 	}

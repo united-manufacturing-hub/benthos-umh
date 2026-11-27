@@ -24,16 +24,34 @@ import (
 
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/config"
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_security"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
 )
 
-// JSEngine handles JavaScript expression evaluation with caching and pooling
+// JSEngine handles JavaScript expression evaluation with caching and pooling.
+//
+// NOTE (ENG-8128): mapping expressions deliberately do NOT go through
+// pkg/js_runtime. The frozen js_runtime.Compile always wraps source in
+// (function(){'use strict'; ... })(), which changes how these expressions
+// evaluate: strict mode rejects octal literals at compile time (so
+// PrecompileExpressions fails and the pipeline does not start) and undeclared
+// assignments at run time, the wrap discards the completion value (a trailing
+// semicolon turns 'press * 2;' into a nil result), and it reparses '{a: 1}'
+// as an object literal instead of a labeled block. The shipped config
+// analyzer accepts all of those shapes, so they are configs customers can
+// already be running; expression_semantics_test.go pins each one. Like
+// tag_processor's if conditions, the engine keeps the raw, non-strict compile
+// it always had, and with it its own watchdog, hardening and reset below.
 type JSEngine struct {
 	logger *service.Logger
 
-	// Goja runtime instances for expression evaluation
-	staticRuntime  *goja.Runtime // For static expressions (no variables)
-	dynamicRuntime *goja.Runtime // For dynamic expressions (with variables)
+	// Goja runtime for static expression evaluation (no variables).
+	// Never pooled and never cleared, exactly as shipped: the deterministic
+	// survival of globals a static expression sets is the old behavior.
+	staticRuntime *goja.Runtime
+
+	// Pooled runtimes for dynamic expressions (with variables). Local to the
+	// engine: the JS runtime pool this replaces lived in pools.ObjectPools,
+	// and only this engine ever used it.
+	dynamicPool sync.Pool
 
 	// Compiled expressions cache for performance - OPTIMIZATION: Store compiled programs
 	compiledExpressions map[string]*goja.Program
@@ -47,9 +65,6 @@ type JSEngine struct {
 	precompiledPrograms map[string]*goja.Program // Pre-compiled mapping expressions
 	precompiledMutex    sync.RWMutex             // Protects precompiledPrograms
 
-	// Object pools for runtime reuse
-	pools *pools.ObjectPools
-
 	// Configuration
 	sourceNames []string // Available source variable names
 }
@@ -62,23 +77,72 @@ type JSExecutionResult struct {
 }
 
 // NewJSEngine creates a new JavaScript engine instance
-func NewJSEngine(logger *service.Logger, sourceNames []string, pools *pools.ObjectPools) *JSEngine {
+func NewJSEngine(logger *service.Logger, sourceNames []string) *JSEngine {
 	engine := &JSEngine{
 		logger:                logger,
 		staticRuntime:         goja.New(),
-		dynamicRuntime:        goja.New(),
 		compiledExpressions:   make(map[string]*goja.Program),
 		staticExpressionCache: make(map[string]JSExecutionResult),
 		precompiledPrograms:   make(map[string]*goja.Program),
-		pools:                 pools,
 		sourceNames:           sourceNames,
 	}
 
 	// Configure runtimes using shared security configuration
 	js_security.ConfigureJSRuntime(engine.staticRuntime, logger)
-	js_security.ConfigureJSRuntime(engine.dynamicRuntime, logger)
+
+	// Pooled runtimes for dynamic expressions, hardened like the static one.
+	engine.dynamicPool.New = func() interface{} {
+		runtime := goja.New()
+		js_security.ConfigureJSRuntime(runtime, logger)
+		return runtime
+	}
 
 	return engine
+}
+
+// putRuntime returns a dynamic runtime to the pool after clearing variables.
+// This is the reset ObjectPools.PutJSRuntime performed: the source variables
+// plus the common temporary names, then the interrupt state. If cleanup
+// fails, the runtime is discarded to prevent contamination.
+func (e *JSEngine) putRuntime(runtime *goja.Runtime) {
+	cleanupSuccessful := true
+
+	// Clear all variables from the runtime to prevent contamination
+	for _, sourceName := range e.sourceNames {
+		if err := runtime.Set(sourceName, goja.Undefined()); err != nil {
+			// Log cleanup failure - this is critical for pool hygiene
+			if e.logger != nil {
+				e.logger.Warnf("Failed to clear source variable '%s' from JS runtime during cleanup: %v", sourceName, err)
+			}
+			cleanupSuccessful = false
+		}
+	}
+
+	// Also clear common temporary variables that might have been set
+	tempVars := []string{"result", "temp", "value", "data", "input", "output"}
+	for _, tempVar := range tempVars {
+		if err := runtime.Set(tempVar, goja.Undefined()); err != nil {
+			// Log cleanup failure - this is critical for pool hygiene
+			if e.logger != nil {
+				e.logger.Warnf("Failed to clear temporary variable '%s' from JS runtime during cleanup: %v", tempVar, err)
+			}
+			cleanupSuccessful = false
+		}
+	}
+
+	// Clear any interrupt state to ensure clean state for next use
+	runtime.ClearInterrupt()
+
+	// Only return to pool if cleanup was successful
+	if cleanupSuccessful {
+		e.dynamicPool.Put(runtime)
+	} else {
+		// Discard the contaminated runtime - pool will create a new one when needed
+		if e.logger != nil {
+			e.logger.Warnf("Discarding JS runtime due to cleanup failures - pool will create a new runtime when needed")
+		}
+		// Don't put the runtime back in the pool - let it be garbage collected
+	}
 }
 
 // ValidateExpression validates a JavaScript expression syntax
@@ -202,9 +266,9 @@ func (e *JSEngine) EvaluateDynamic(expression string, variables map[string]inter
 	}
 
 	// Get a pooled runtime instance instead of creating new one
-	runtime := e.pools.GetJSRuntime()
+	runtime := e.dynamicPool.Get().(*goja.Runtime)
 	runtime.ClearInterrupt() // Clear any previous interrupt state from timeout
-	defer e.pools.PutJSRuntime(runtime)
+	defer e.putRuntime(runtime)
 
 	// Validate all variables first
 	for name := range variables {
@@ -435,9 +499,9 @@ func (e *JSEngine) EvaluateDynamicPrecompiled(expression string, variables map[s
 	}
 
 	// Get a pooled runtime for thread safety
-	runtime := e.pools.GetJSRuntime()
+	runtime := e.dynamicPool.Get().(*goja.Runtime)
 	runtime.ClearInterrupt() // Clear any previous interrupt state from timeout
-	defer e.pools.PutJSRuntime(runtime)
+	defer e.putRuntime(runtime)
 
 	// Validate all variables first
 	for name := range variables {

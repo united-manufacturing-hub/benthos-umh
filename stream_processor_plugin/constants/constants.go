@@ -71,6 +71,14 @@ const (
 // DangerousGlobals contains a comprehensive list of JavaScript globals that should be disabled
 // for security reasons in a sandboxed environment. This combines and consolidates the lists
 // from both js_engine.go and pools.go to ensure consistent security configuration.
+//
+// NOTE (ENG-8128): a second copy of this list lives, unexported, in
+// pkg/js_runtime/harden.go for the frozen js_runtime Options.Harden seam.
+// The copies are deliberate: mapping expressions evaluate on raw, non-strict
+// runtimes this package hardens (see js_engine's expression_semantics_test),
+// which the frozen js_runtime API cannot express, and pkg/ must not import a
+// plugin package. Keep the two lists in sync until the seam grows a raw or
+// strictness option on Compile, which is open on ENG-8128.
 var DangerousGlobals = []string{
 	// ===== CODE EXECUTION - CRITICAL SECURITY RISK =====
 	"eval",     // Direct code evaluation - MUST block for security

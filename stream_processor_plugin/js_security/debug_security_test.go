@@ -21,16 +21,15 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_engine"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/pools"
 )
 
 func TestSecurityBlockerDebug(t *testing.T) {
 	// Create test resources
 	resources := service.MockResources()
 
-	// Create pools and JS engine
-	pools := pools.NewObjectPools([]string{"press"}, resources.Logger())
-	jsEngine := js_engine.NewJSEngine(resources.Logger(), []string{"press"}, pools)
+	// Create a JS engine (the JS runtime pool used to live in ObjectPools;
+	// it moved into the engine's js_runtime.Runner, ENG-8128)
+	jsEngine := js_engine.NewJSEngine(resources.Logger(), []string{"press"})
 	defer func() {
 		err := jsEngine.Close()
 		if err != nil {

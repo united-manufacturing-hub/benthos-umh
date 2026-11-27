@@ -20,11 +20,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/dop251/goja"
 	"github.com/redpanda-data/benthos/v4/public/service"
 
 	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/constants"
-	"github.com/united-manufacturing-hub/benthos-umh/stream_processor_plugin/js_security"
 )
 
 // ObjectPools provides pooled objects to reduce memory allocations
@@ -41,9 +39,6 @@ type ObjectPools struct {
 	// String builder pool for topic construction
 	stringBuilderPool sync.Pool
 
-	// JavaScript runtime pool for dynamic expressions
-	jsRuntimePool sync.Pool
-
 	// JSON encoder pool for marshaling operations
 	jsonEncoderPool sync.Pool
 
@@ -53,7 +48,9 @@ type ObjectPools struct {
 	// Topic cache for frequently constructed topics
 	topicCache sync.Map
 
-	// Source names for runtime configuration
+	// sourceNames and logger are kept for constructor API compatibility;
+	// the JavaScript runtime pool they used to serve moved to pkg/js_runtime
+	// (ENG-8128); the JS engine no longer uses this type for runtimes.
 	sourceNames []string
 
 	logger *service.Logger
@@ -85,13 +82,6 @@ func NewObjectPools(sourceNames []string, logger *service.Logger) *ObjectPools {
 	// Initialize string builder pool
 	pools.stringBuilderPool.New = func() interface{} {
 		return &strings.Builder{}
-	}
-
-	// Initialize JavaScript runtime pool
-	pools.jsRuntimePool.New = func() interface{} {
-		runtime := goja.New()
-		js_security.ConfigureJSRuntime(runtime, logger)
-		return runtime
 	}
 
 	// Initialize JSON encoder pool
@@ -163,55 +153,6 @@ func (p *ObjectPools) PutStringBuilder(sb *strings.Builder) {
 	// Only pool builders that aren't too large
 	if sb.Cap() <= constants.MaxPooledStringBuilderSize {
 		p.stringBuilderPool.Put(sb)
-	}
-}
-
-// GetJSRuntime gets a JavaScript runtime from the pool
-func (p *ObjectPools) GetJSRuntime() *goja.Runtime {
-	runtime := p.jsRuntimePool.Get().(*goja.Runtime)
-	return runtime
-}
-
-// PutJSRuntime returns a JavaScript runtime to the pool after clearing variables
-// If cleanup fails, the runtime is discarded to prevent contamination
-func (p *ObjectPools) PutJSRuntime(runtime *goja.Runtime) {
-	cleanupSuccessful := true
-
-	// Clear all variables from the runtime to prevent contamination
-	for _, sourceName := range p.sourceNames {
-		if err := runtime.Set(sourceName, goja.Undefined()); err != nil {
-			// Log cleanup failure - this is critical for pool hygiene
-			if p.logger != nil {
-				p.logger.Warnf("Failed to clear source variable '%s' from JS runtime during cleanup: %v", sourceName, err)
-			}
-			cleanupSuccessful = false
-		}
-	}
-
-	// Also clear common temporary variables that might have been set
-	tempVars := []string{"result", "temp", "value", "data", "input", "output"}
-	for _, tempVar := range tempVars {
-		if err := runtime.Set(tempVar, goja.Undefined()); err != nil {
-			// Log cleanup failure - this is critical for pool hygiene
-			if p.logger != nil {
-				p.logger.Warnf("Failed to clear temporary variable '%s' from JS runtime during cleanup: %v", tempVar, err)
-			}
-			cleanupSuccessful = false
-		}
-	}
-
-	// Clear any interrupt state to ensure clean state for next use
-	runtime.ClearInterrupt()
-
-	// Only return to pool if cleanup was successful
-	if cleanupSuccessful {
-		p.jsRuntimePool.Put(runtime)
-	} else {
-		// Discard the contaminated runtime - pool will create a new one when needed
-		if p.logger != nil {
-			p.logger.Warnf("Discarding JS runtime due to cleanup failures - pool will create a new runtime when needed")
-		}
-		// Don't put the runtime back in the pool - let it be garbage collected
 	}
 }
 
