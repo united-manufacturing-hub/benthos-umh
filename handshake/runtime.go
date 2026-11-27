@@ -20,6 +20,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
+	"strconv"
 	"time"
 
 	"github.com/dop251/goja"
@@ -92,15 +94,31 @@ func runProgram(ctx context.Context, prog *goja.Program, globals map[string]any)
 	return value.Export(), nil
 }
 
-// jsValue prepares one Go value for the boundary into the script. A JSON
-// number reaches the engine as json.Number - the type a structured message
-// carries - and goja would bind that string-kind type as a string, so the
-// script would see msg.setpoint === 1.5 fail on a message that arrived as
-// JSON. A number is a number in the script, whatever Go type carried it;
-// everything else crosses as it is. Maps and slices are copied, so the
-// message the caller handed over is not written to.
+// jsValue prepares one Go value for the boundary into the script, so every
+// message crosses as the plain JavaScript values a decoded JSON message
+// would be, whatever Go types carried it:
+//
+//   - A json.Number - the type a structured message carries - is a number:
+//     goja would bind that string-kind type as a string, and the script
+//     would see msg.setpoint === 1.5 fail on a message that arrived as
+//     JSON. A json.Number that no Go parser reads as a finite number, such
+//     as 1e999, crosses as its own text rather than as a broken number.
+//   - Every map whose keys are strings or integers becomes a plain object,
+//     integer keys in their decimal form; every slice and array becomes a
+//     plain array, a nil one an empty array. That holds for typed
+//     containers ([]int, map[string]int, nested ones) too, which goja would
+//     otherwise bind by reflection, so Array.isArray would be false and a
+//     script's write would reach the caller's own map or backing array.
+//     The containers are copied, so the caller's message is never written to.
+//   - A float64 or float32 that is not finite crosses as the JavaScript
+//     number it is: Infinity, -Infinity or NaN. success refuses to return
+//     one, because it cannot be encoded as JSON.
+//
+// Everything else crosses as it is.
 func jsValue(v any) any {
 	switch t := v.(type) {
+	case nil, string, bool, int, int64, float64:
+		return v
 	case json.Number:
 		if i, err := t.Int64(); err == nil {
 			return i
@@ -121,8 +139,42 @@ func jsValue(v any) any {
 			out[i] = jsValue(e)
 		}
 		return out
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Map:
+		key := mapKey(rv.Type().Key().Kind())
+		if key == nil {
+			return v
+		}
+		out := make(map[string]any, rv.Len())
+		for it := rv.MapRange(); it.Next(); {
+			out[key(it.Key())] = jsValue(it.Value().Interface())
+		}
+		return out
+	case reflect.Slice, reflect.Array:
+		out := make([]any, rv.Len())
+		for i := range out {
+			out[i] = jsValue(rv.Index(i).Interface())
+		}
+		return out
 	default:
 		return v
+	}
+}
+
+// mapKey renders a map key of the given kind as an object key, or is nil
+// for a kind that has no natural object key, so the map crosses as it is.
+func mapKey(kind reflect.Kind) func(reflect.Value) string {
+	switch kind {
+	case reflect.String:
+		return func(k reflect.Value) string { return k.String() }
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return func(k reflect.Value) string { return strconv.FormatInt(k.Int(), 10) }
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return func(k reflect.Value) string { return strconv.FormatUint(k.Uint(), 10) }
+	default:
+		return nil
 	}
 }
 
