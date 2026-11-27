@@ -44,12 +44,12 @@ func (c *blockingConn) Close() error {
 // closed at 14:54:03.287670, the count landed at .287675, and the assertion
 // ran in between, four times in fourteen runs.
 func TestProxy_TheCountIsSettledBeforeACloseIsObservable(t *testing.T) {
-	p := &proxy{}
+	p := &proxy{pairs: map[int]*connPair{}}
 	c := &blockingConn{started: make(chan struct{}), release: make(chan struct{})}
-	p.conns = []net.Conn{c}
+	p.pairs[2048] = &connPair{client: c, backend: &fakeConn{}}
 
 	cutDone := make(chan int, 1)
-	go func() { cutDone <- p.cut() }()
+	go func() { cutDone <- p.cutPort(2048) }()
 
 	<-c.started // the socket is dying; a client would see EOF about now
 
@@ -72,29 +72,68 @@ func TestProxy_TheCountIsSettledBeforeACloseIsObservable(t *testing.T) {
 	}
 }
 
-// The count accumulates across cuts and survives a connection whose Close
-// fails, which is the property that makes it evidence rather than an
-// intention: a cut that closed nothing must report nothing.
+// The count accumulates across cuts, counts only the socket underneath the
+// client, and survives a connection whose Close fails, which is the property
+// that makes it evidence rather than an intention: a cut that closed nothing
+// must report nothing.
 func TestProxy_TheCountRecordsClosesThatSucceeded(t *testing.T) {
-	p := &proxy{}
+	p := &proxy{pairs: map[int]*connPair{}}
 	if n := p.cutCount(); n != 0 {
 		t.Fatalf("a proxy that has cut nothing reports %d", n)
 	}
 
-	ok1, ok2 := &fakeConn{}, &fakeConn{}
-	bad := &fakeConn{closeErr: net.ErrClosed}
-	p.conns = []net.Conn{ok1, bad, ok2}
-	if n := p.cut(); n != 2 {
-		t.Fatalf("cut reported %d, want 2 (the failing close is not evidence)", n)
+	// A client socket that will not close is not evidence.
+	p.pairs[1] = &connPair{client: &fakeConn{closeErr: net.ErrClosed}, backend: &fakeConn{}}
+	if n := p.cutPort(1); n != 0 {
+		t.Fatalf("cut reported %d, want 0 (the failing close is not evidence)", n)
 	}
-	if n := p.cutCount(); n != 2 {
-		t.Fatalf("cutCount reported %d, want 2", n)
+	if n := p.cutCount(); n != 0 {
+		t.Fatalf("cutCount reported %d, want 0", n)
 	}
 
-	p.conns = []net.Conn{&fakeConn{}}
-	_ = p.cut()
-	if n := p.cutCount(); n != 3 {
-		t.Fatalf("cutCount reported %d after a second cut, want 3", n)
+	// A healthy pair counts once, and the count accumulates.
+	p.pairs[2] = &connPair{client: &fakeConn{}, backend: &fakeConn{}}
+	if n := p.cutPort(2); n != 1 {
+		t.Fatalf("cut reported %d, want 1", n)
+	}
+	if n := p.cutCount(); n != 1 {
+		t.Fatalf("cutCount reported %d, want 1", n)
+	}
+
+	// Cutting a port nobody arrived on closes nothing.
+	if n := p.cutPort(3); n != 0 {
+		t.Fatalf("cut reported %d for a port with no connection, want 0", n)
+	}
+	if n := p.cutCount(); n != 1 {
+		t.Fatalf("cutCount reported %d after cutting a dead port, want 1", n)
+	}
+}
+
+// Shutting the proxy down tears its connections away but counts nothing,
+// because a server closing is not a session drop: Cuts is evidence about a
+// fault, and closing the server is not a fault. Until the rewrite, Close ran
+// the same cut a drop runs, and every teardown with a live client
+// manufactured drop evidence.
+func TestProxy_ShuttingDownIsNotACut(t *testing.T) {
+	p := &proxy{pairs: map[int]*connPair{}}
+	p.pairs[1] = &connPair{client: &fakeConn{}, backend: &fakeConn{}}
+
+	p.shutdown()
+
+	if n := p.cutCount(); n != 0 {
+		t.Fatalf("shutdown counted %d cuts, want 0: a server closing is not a session drop", n)
+	}
+	// And the connection really was torn down, so nothing leaks past the
+	// shutdown and the proxy stops tracking it.
+	p.mu.Lock()
+	remaining := len(p.pairs)
+	done := p.done
+	p.mu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("%d connections were still tracked after shutdown", remaining)
+	}
+	if !done {
+		t.Fatal("shutdown left the proxy accepting connections")
 	}
 }
 

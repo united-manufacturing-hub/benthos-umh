@@ -16,7 +16,6 @@ package faultopcua_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -31,62 +30,63 @@ import (
 // lands and the read-back returns what was written. A fault test is only
 // evidence if this one is green beside it: when both go red, the server
 // underneath is broken, not the code under test.
+//
+// It also pins the two counters a fault test reads as evidence: one dial for
+// one client, no cuts, and -- the half the defect report caught -- a server
+// shut down while the client is still connected must not manufacture cut
+// evidence out of its own teardown.
 func TestTheControl_AnHonestServerAppliesAWrite(t *testing.T) {
-	srv, client, nodeID := startServer(t, "Setpoint", int32(0))
+	srv, client, v := startServer(t, "Setpoint", int32(0))
+	id := nodeID(t, v)
 
-	writeValue(t, client, nodeID, int32(4200))
-
-	if got := readValue(t, client, nodeID); got != int32(4200) {
+	if got := readValue(t, client, id); got != int32(0) {
+		t.Fatalf("the node started at %v, want 0", got)
+	}
+	writeValue(t, client, id, int32(4200))
+	if got := readValue(t, client, id); got != int32(4200) {
 		t.Fatalf("read back %v, want 4200: an honest server did not apply the write", got)
 	}
-	if f := srv.Firings(); len(f) != 0 {
-		t.Errorf("no fault was armed, but %d fired: %v", len(f), f)
+	// The server-side truth agrees with the client's half.
+	if got := v.Value(); got != int32(4200) {
+		t.Errorf("the node holds %v server-side, want 4200", got)
 	}
-}
-
-// TestFault_AcceptsAWriteAndNeverAppliesIt is the misbehavior the handshake
-// reads a value back to catch: the machine answers Good and keeps its old
-// value. TRUMPF's press does exactly this.
-//
-// The assertion comes in two halves on purpose. The client's half -- the
-// read-back is stale -- cannot tell a fault that fired from a fault that
-// never injected, because a server that quietly ignored the whole fault
-// table would still have to be caught by something. The server's half,
-// Fired, is that something.
-func TestFault_AcceptsAWriteAndNeverAppliesIt(t *testing.T) {
-	srv, client, nodeID := startServer(t, "Setpoint", int32(7))
-	srv.Inject(faultopcua.Fault{Node: "Setpoint", Kind: faultopcua.AcceptWriteNeverApply})
-
-	// The machine says yes.
-	if st := writeValue(t, client, nodeID, int32(4200)); st != ua.StatusOK {
-		t.Fatalf("the write was refused with %v; this fault accepts the write and then ignores it", st)
+	if n := v.Writes(); n == 0 {
+		t.Errorf("the write never reached the node, so this test proved nothing")
+	}
+	if n := v.Reads(); n == 0 {
+		t.Errorf("the read never reached the node, so this test proved nothing")
+	}
+	if n := srv.Dials(); n != 1 {
+		t.Errorf("%d clients dialed, want 1", n)
+	}
+	if n := srv.Cuts(); n != 0 {
+		t.Errorf("%d connections were cut on an honest machine, want 0", n)
 	}
 
-	// And did nothing.
-	if got := readValue(t, client, nodeID); got != int32(7) {
-		t.Errorf("read back %v, want the original 7: the write was applied after all", got)
-	}
-
-	if !srv.Fired(faultopcua.AcceptWriteNeverApply, "Setpoint") {
-		t.Errorf("the fault never fired, so this test proved nothing; firings: %v", srv.Firings())
+	// A shutdown is not a session drop. Closing with the client still
+	// connected used to run the same cut a drop runs and land in Cuts().
+	_ = srv.Close()
+	if n := srv.Cuts(); n != 0 {
+		t.Errorf("shutting the server down counted %d cuts, want 0: a shutdown is not a session drop", n)
 	}
 }
 
 // startServer brings up a server holding one node, connects a real gopcua
 // client to it, and registers the teardown for both.
-func startServer(t *testing.T, node string, value any) (*faultopcua.Server, *opcua.Client, *ua.NodeID) {
+func startServer(t *testing.T, node string, value any) (*faultopcua.Server, *opcua.Client, *faultopcua.Variable) {
 	t.Helper()
-	ctx := context.Background()
-
-	srv, err := faultopcua.New()
-	if err != nil {
-		t.Fatalf("new server: %v", err)
-	}
-	srv.AddNode(node, value)
-	if err := srv.Start(ctx); err != nil {
+	srv := faultopcua.New(t)
+	v := srv.AddVariable(node, value)
+	if err := srv.Start(context.Background()); err != nil {
 		t.Fatalf("start server: %v", err)
 	}
+	client := connectClient(t, srv)
+	return srv, client, v
+}
 
+// connectClient connects a real gopcua client to the server's endpoint.
+func connectClient(t *testing.T, srv *faultopcua.Server) *opcua.Client {
+	t.Helper()
 	// AutoReconnect off, for two reasons. A dropped session during a
 	// handshake is the thing under test, and a client that quietly rebuilt
 	// it would hide the fault. And gopcua's reconnect monitor races its own
@@ -101,7 +101,7 @@ func startServer(t *testing.T, node string, value any) (*faultopcua.Server, *opc
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
-	connectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	connectCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := client.Connect(connectCtx); err != nil {
 		t.Fatalf("connect to %s: %v", srv.Endpoint(), err)
@@ -111,32 +111,31 @@ func startServer(t *testing.T, node string, value any) (*faultopcua.Server, *opc
 	// gopcua's server handles every request in one loop, so a fault holding
 	// that loop also holds the client's CloseSession, and the client then
 	// waits out its 10s default RequestTimeout. Measured: 10.56s closing the
-	// client first, 0.30s closing the server first.
+	// client first, 0.30s closing the server first. New already registered
+	// its own Close; the copy registered here runs first, and New's runs
+	// again afterwards, which Close tolerates.
 	t.Cleanup(func() { _ = client.Close(context.Background()) })
 	t.Cleanup(func() { _ = srv.Close() })
+	return client
+}
 
-	id, err := ua.ParseNodeID(srv.NodeID(node))
+// nodeID parses the handle's identifier into the form the client's requests
+// carry. The handle produces the string, so a test never assembles one by
+// hand.
+func nodeID(t *testing.T, v *faultopcua.Variable) *ua.NodeID {
+	t.Helper()
+	id, err := ua.ParseNodeID(v.ID())
 	if err != nil {
-		t.Fatalf("parse node id %q: %v", srv.NodeID(node), err)
+		t.Fatalf("parse node id %q: %v", v.ID(), err)
 	}
-	return srv, client, id
+	return id
 }
 
 func writeValue(t *testing.T, c *opcua.Client, id *ua.NodeID, value any) ua.StatusCode {
 	t.Helper()
-	v, err := ua.NewVariant(value)
-	if err != nil {
-		t.Fatalf("variant for %v: %v", value, err)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	resp, err := c.Write(ctx, &ua.WriteRequest{
-		NodesToWrite: []*ua.WriteValue{{
-			NodeID:      id,
-			AttributeID: ua.AttributeIDValue,
-			Value:       &ua.DataValue{EncodingMask: ua.DataValueValue, Value: v},
-		}},
-	})
+	resp, err := writeWithContext(ctx, c, id, value)
 	if err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -146,13 +145,25 @@ func writeValue(t *testing.T, c *opcua.Client, id *ua.NodeID, value any) ua.Stat
 	return resp.Results[0]
 }
 
+func writeWithContext(ctx context.Context, c *opcua.Client, id *ua.NodeID, value any) (*ua.WriteResponse, error) {
+	v, err := ua.NewVariant(value)
+	if err != nil {
+		return nil, err
+	}
+	return c.Write(ctx, &ua.WriteRequest{
+		NodesToWrite: []*ua.WriteValue{{
+			NodeID:      id,
+			AttributeID: ua.AttributeIDValue,
+			Value:       &ua.DataValue{EncodingMask: ua.DataValueValue, Value: v},
+		}},
+	})
+}
+
 func readValue(t *testing.T, c *opcua.Client, id *ua.NodeID) any {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	resp, err := c.Read(ctx, &ua.ReadRequest{
-		NodesToRead: []*ua.ReadValueID{{NodeID: id, AttributeID: ua.AttributeIDValue}},
-	})
+	resp, err := readWithContext(ctx, c, id)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -171,9 +182,7 @@ func readStatus(t *testing.T, c *opcua.Client, id *ua.NodeID) ua.StatusCode {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	resp, err := c.Read(ctx, &ua.ReadRequest{
-		NodesToRead: []*ua.ReadValueID{{NodeID: id, AttributeID: ua.AttributeIDValue}},
-	})
+	resp, err := readWithContext(ctx, c, id)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -189,59 +198,4 @@ func readWithContext(ctx context.Context, c *opcua.Client, id *ua.NodeID) (*ua.R
 	return c.Read(ctx, &ua.ReadRequest{
 		NodesToRead: []*ua.ReadValueID{{NodeID: id, AttributeID: ua.AttributeIDValue}},
 	})
-}
-
-// TestInject_RefusesAGhostNode pins the loudest thing this package does.
-//
-// A fault matches by node name and the read side answers before the real
-// namespace is consulted, so a fault armed against a name nothing added would
-// otherwise produce its whole observable behavior against a node that is not
-// there -- refusing, stalling, flapping and dropping exactly as instructed,
-// with Fired reporting true and the scenario passing end to end. One typo
-// between AddNode and Inject is all it takes.
-func TestInject_RefusesAGhostNode(t *testing.T) {
-	srv, err := faultopcua.New()
-	if err != nil {
-		t.Fatalf("new server: %v", err)
-	}
-	srv.AddNode("Real", true)
-	t.Cleanup(func() { _ = srv.Close() })
-
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("arming a fault against a node that does not exist was accepted")
-		}
-		if msg, _ := r.(string); !strings.Contains(msg, "Ghost") {
-			t.Errorf("the panic should name the node, got %v", r)
-		}
-	}()
-	srv.Inject(faultopcua.Fault{Node: "Ghost", Kind: faultopcua.RefuseRead, Status: ua.StatusBadInternalError})
-}
-
-// TestInject_RefusesAnUnknownKind pins the field beside the one the ghost
-// check validates.
-//
-// A misspelled Kind arms a fault that matches nothing in the dispatch
-// switch: the node answers honestly, nothing is recorded, and the scenario
-// author is told "the fault never fired, so this test proved nothing" --
-// true, and pointing at entirely the wrong thing.
-func TestInject_RefusesAnUnknownKind(t *testing.T) {
-	srv, err := faultopcua.New()
-	if err != nil {
-		t.Fatalf("new server: %v", err)
-	}
-	srv.AddNode("Real", true)
-	t.Cleanup(func() { _ = srv.Close() })
-
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("a fault kind that does not exist was accepted")
-		}
-		if msg, _ := r.(string); !strings.Contains(msg, "refus_read") {
-			t.Errorf("the panic should name the kind, got %v", r)
-		}
-	}()
-	srv.Inject(faultopcua.Fault{Node: "Real", Kind: faultopcua.Kind("refus_read")})
 }
