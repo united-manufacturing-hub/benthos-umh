@@ -22,7 +22,7 @@
 //
 // It has the two things the unit tests do not: the scripts are real
 // JavaScript compiled and run by goja exactly as a user's would be
-// (newRuntime is never substituted), and the machine is a Binding whose
+// (nothing in the engine is substituted), and the machine is a Binding whose
 // every answer is scripted per call, with a recorder that keeps what the
 // machine was asked, in what order, and when. A scenario's result is
 // Outcome, Err, CleanupErr and the operation log; UAT.md carries the

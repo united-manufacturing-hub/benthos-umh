@@ -25,6 +25,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/dop251/goja"
 )
 
 // ending is how a script said its run ended.
@@ -301,12 +303,10 @@ func (c Config) Validate() error {
 				block.name, block.budgetName, block.budget)
 		}
 	}
-	rt := newRuntime()
-	defer func() { _ = rt.close() }()
 	for _, block := range []struct{ name, source string }{
 		{"script", c.Script}, {"onSuccess", c.OnSuccess}, {"onError", c.OnError},
 	} {
-		if _, err := rt.compile(block.name, block.source); err != nil {
+		if _, err := compile(block.name, block.source); err != nil {
 			return err
 		}
 	}
@@ -339,11 +339,10 @@ func (c Config) Validate() error {
 type Engine[UnifiedAddress any] struct {
 	bind Binding[UnifiedAddress]
 	cfg  Config
-	_    [0]func() // not comparable, and not copyable by value
+	_    [0]func() // not comparable
 
-	rt     scriptRuntime  // the seam to pkg/js_runtime
-	blocks map[string]any // compiled script, onSuccess, onError
-	mu     sync.Mutex     // one transaction at a time; Close waits for it
+	blocks map[string]*goja.Program // compiled script, onSuccess, onError
+	mu     sync.Mutex               // one transaction at a time; Close waits for it
 }
 
 // New compiles the configuration and returns an Engine bound to one binding. It returns
@@ -355,14 +354,12 @@ func New[UnifiedAddress any](
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	rt := newRuntime()
-	engine := &Engine[UnifiedAddress]{bind: p, cfg: cfg, rt: rt, blocks: map[string]any{}}
+	engine := &Engine[UnifiedAddress]{bind: p, cfg: cfg, blocks: map[string]*goja.Program{}}
 	for _, block := range []struct{ name, source string }{
 		{"script", cfg.Script}, {"onSuccess", cfg.OnSuccess}, {"onError", cfg.OnError},
 	} {
-		program, err := rt.compile(block.name, block.source)
+		program, err := compile(block.name, block.source)
 		if err != nil {
-			_ = rt.close()
 			return nil, err
 		}
 		engine.blocks[block.name] = program
@@ -387,7 +384,7 @@ func (e *Engine[UnifiedAddress]) Run(ctx context.Context, msg map[string]any) Re
 		e.bind.Namespace(): e.namespace(rs, true), // the script sees the machine
 		"msg":              msg,
 	}
-	_, runErr := e.rt.run(scriptCtx, e.blocks["script"], globals)
+	_, runErr := runProgram(scriptCtx, e.blocks["script"], globals)
 	result := classify(scriptCtx, rs, runErr)
 
 	// Exactly one of the two blocks runs after every run, including one the
@@ -426,7 +423,7 @@ func (e *Engine[UnifiedAddress]) runCleanup(block string, budget time.Duration) 
 	cleanupDeadline, _ := ctx.Deadline()
 	rs := &runState{ctx: ctx, deadline: cleanupDeadline, cleanup: true}
 	globals := map[string]any{e.bind.Namespace(): e.namespace(rs, false)}
-	_, err := e.rt.run(ctx, e.blocks[block], globals)
+	_, err := runProgram(ctx, e.blocks[block], globals)
 	if err != nil {
 		return fmt.Errorf("%s did not finish: %w", block, err)
 	}
@@ -441,11 +438,12 @@ func (e *Engine[UnifiedAddress]) runCleanup(block string, budget time.Duration) 
 	return nil
 }
 
-// Close releases the runtimes the Engine pooled. A Run already in flight finishes first.
+// Close waits for a Run already in flight to finish. Each run builds and
+// discards its own runtime, so there is nothing else to release.
 func (e *Engine[UnifiedAddress]) Close() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.rt.close()
+	return nil
 }
 
 // literalWaitTotal sums the literal timeouts of a block's wait_until calls.
