@@ -41,8 +41,10 @@ func classify(ctx context.Context, rs *runState, runErr error) Result {
 		// it, and a caught success must not run onSuccess on a transaction
 		// cut in half. A deadline that arrives in the same instant as a
 		// real ending resolves here too, to the conservative side. An
-		// unmarked operation fault that surfaced as the clock ran out is
-		// part of the same stop, not a retryable machine fault.
+		// operation the clock cut off is named, and is part of the same
+		// stop, not a retryable machine fault; a fault the script caught
+		// before the clock ran out is not recorded (fail), so it never
+		// appears here.
 		what := "script stopped before it ended"
 		if rs.end != endNone {
 			what += " after an ending it did not stop for"

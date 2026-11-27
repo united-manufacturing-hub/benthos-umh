@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -477,6 +478,31 @@ func TestRun_IsPersistentWhenTheDeadlineStopsAnOperation(t *testing.T) {
 	}
 	if !errors.Is(res.Err, context.DeadlineExceeded) {
 		t.Fatalf("Err does not name the deadline: %v", res.Err)
+	}
+	if !strings.Contains(res.Err.Error(), "read Slow failed") {
+		t.Fatalf("Err does not name the read the deadline cut off: %v", res.Err)
+	}
+}
+
+// A fault the script caught before its deadline is not part of the stop: the
+// run is Persistent for the deadline alone, and the caught fault is neither
+// named in the message nor found in Result.Err by errors.Is, which would
+// send someone to a machine fault that stopped nothing.
+func TestRun_ACaughtFaultIsNotInTheMessageOfARunItsDeadlineStopped(t *testing.T) {
+	b := &fakeBinding{errs: map[string]error{"read:A": io.EOF}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.MaxScriptRuntime = 100 * time.Millisecond
+		c.Script = `try { opcua.read({nodeId: "A"}) } catch (e) {} for (;;) {}`
+	})
+	res := engine.Run(t.Context(), map[string]any{})
+	if res.Outcome != Persistent {
+		t.Fatalf("outcome %v, want Persistent: the deadline stopped the script (err %v)", res.Outcome, res.Err)
+	}
+	if !errors.Is(res.Err, context.DeadlineExceeded) {
+		t.Fatalf("Err does not name the deadline: %v", res.Err)
+	}
+	if errors.Is(res.Err, io.EOF) || strings.Contains(res.Err.Error(), "read A") {
+		t.Fatalf("a fault the script caught reached the deadline's message: %v", res.Err)
 	}
 }
 
