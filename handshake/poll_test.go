@@ -399,3 +399,54 @@ func TestWaitUntil_AClampInsideTheMarginStillEndsBeforeTheDeadline(t *testing.T)
 		t.Fatalf("the clamped wait ended before it ever polled (ops: %v)", b.snapshot())
 	}
 }
+
+// A pollMs converts like the timeout does, so a numeric string from a
+// message is the interval it spells. The fallback is far slower than the
+// interval asked for, so a dropped pollMs falls below the lower bound.
+func TestWaitUntil_APollMsStringIsConvertedLikeTheTimeout(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{"Loaded": false}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.PollInterval = 100 * time.Millisecond // the fallback if pollMs is dropped
+		c.Script = `
+			opcua.wait_until({nodeId: "Loaded"}, v => v === true, 300, { pollMs: msg.pollMs });
+			return opcua.success({waited: true});
+		`
+	})
+	res := engine.Run(t.Context(), map[string]any{"pollMs": "5"})
+	if res.Outcome != Transient {
+		t.Fatalf("outcome %v, err %v: the wait should run out", res.Outcome, res.Err)
+	}
+	// At most 60 reads at a 5ms poll in 300ms; at most 3 at the fallback.
+	if n := b.count("read Loaded"); n < 10 {
+		t.Fatalf("%d reads in 300ms: a pollMs of \"5\" was dropped", n)
+	}
+}
+
+// A pollMs that is not a positive number is a wrong script: Persistent,
+// refused before the machine is read, rather than silently replaced by the
+// default interval.
+func TestWaitUntil_RefusesAPollMsThatIsNotAPositiveNumber(t *testing.T) {
+	for _, tc := range []struct{ name, pollMs, errSays string }{
+		{"zero", `0`, "must be a positive number"},
+		{"negative", `-5`, "must be a positive number"},
+		{"NaN", `NaN`, "not a number"},
+		{"a string that is no number", `"fast"`, "not a number"},
+		{"a missing message field times 1000", `msg.missing * 1000`, "not a number"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := &fakeBinding{values: map[string]any{"Loaded": true}}
+			engine := newTestEngine(t, b, func(c *Config) {
+				c.Script = `opcua.wait_until({nodeId: "Loaded"}, v => v === true, 100, { pollMs: ` +
+					tc.pollMs + ` }); return opcua.success({});`
+			})
+			res := engine.Run(t.Context(), map[string]any{})
+			if res.Outcome != Persistent || res.Err == nil ||
+				!strings.Contains(res.Err.Error(), "pollMs") || !strings.Contains(res.Err.Error(), tc.errSays) {
+				t.Fatalf("outcome %v, err %v", res.Outcome, res.Err)
+			}
+			if n := b.count("read Loaded"); n != 0 {
+				t.Fatalf("a refused wait read the machine %d time(s)", n)
+			}
+		})
+	}
+}

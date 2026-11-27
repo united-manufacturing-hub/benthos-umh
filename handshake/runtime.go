@@ -274,7 +274,12 @@ func (e *Engine[UnifiedAddress]) namespace(rs *runState, endings bool) map[strin
 				own = true
 				panic(vm.NewTypeError("%s", convErr.Error()))
 			}
-			v, err := e.waitUntil(rs, raw, pred, timeoutMs, opts)
+			var pollMs *float64
+			if v, ok := opts["pollMs"]; ok && v != nil {
+				ms := optNumber(vm, v)
+				pollMs = &ms
+			}
+			v, err := e.waitUntil(rs, raw, pred, timeoutMs, pollMs, opts)
 			rs.cleanupEvidence("wait_until", err)
 			if err != nil {
 				own = true
@@ -429,6 +434,17 @@ func argNumber(call goja.FunctionCall, i int) (float64, error) {
 	}
 	return 0, fmt.Errorf(
 		"could not convert function call parameter %d: could not convert %v to float64", i, v)
+}
+
+// optNumber converts a numeric option the way argNumber converts a numeric
+// argument: a JS number in whichever Go type carried it, and otherwise what
+// ToFloat makes of it, so a numeric string is accepted. Anything that is no
+// number comes back as NaN, for the caller to refuse with its own message.
+func optNumber(vm *goja.Runtime, v any) float64 {
+	if n, ok := number(v); ok {
+		return n
+	}
+	return vm.ToValue(v).ToFloat()
 }
 
 // argPredicate converts wait_until's second argument into the Go callback
