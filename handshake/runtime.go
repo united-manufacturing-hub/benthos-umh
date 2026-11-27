@@ -107,9 +107,14 @@ func (gojaRuntime) run(ctx context.Context, program any, globals map[string]any)
 		case <-stop:
 		}
 	}()
+	// Deferred, so a binding that panics through RunProgram stops the
+	// watcher too; otherwise it waits for a ctx that, in an unbudgeted
+	// cleanup, is never done. It runs before the recover above.
+	defer func() {
+		close(stop)
+		<-watchDone
+	}()
 	value, err := vm.RunProgram(prog)
-	close(stop)
-	<-watchDone
 	if err != nil {
 		return nil, wrapRunError(err)
 	}
