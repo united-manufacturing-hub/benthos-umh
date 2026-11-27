@@ -193,10 +193,16 @@ with.
 
 ### Field types
 
-The downsampler rejects a field with the wrong YAML kind at startup, for example an object where
-a number belongs. It accepts a scalar of the wrong type and then discards it as if it were unset.
-`max_time: 30`, `max_time: "abc"` and `threshold: "0.5"` all pass. Write durations as strings
-(`"30m"`, `"1h"`) and thresholds as numbers.
+Write durations as strings (`"30m"`, `"1h"`) and thresholds as numbers. The two mistakes fail
+differently:
+
+- A duration written as a bare number, `max_time: 30`, passes every check and is then discarded
+  as if it were unset. The series runs without a heartbeat.
+- A number written as a string, `threshold: "0.5"`, passes `benthos lint` but stops the pipeline
+  from starting, with `failed to init processor ... field 'threshold': yaml: unmarshal errors`.
+
+A field with the wrong YAML kind, for example an object where a number belongs, is rejected at
+startup as well.
 
 ### Swinging door requires a threshold
 
@@ -423,15 +429,16 @@ with threshold drops.
 
 ## Startup validation
 
-The downsampler checks little of its configuration at startup. Benthos rejects these before the
-first message:
+The downsampler checks little of its configuration at startup. These stop it before the first
+message:
 
 - an unknown field name, for example a misspelled `treshold`;
 - a field with the wrong YAML kind;
 - a `late_policy` other than `passthrough` or `drop`;
-- an override without `pattern`.
+- an override without `pattern`;
+- a number written as a string, which fails when the processor is built.
 
-A scalar of the wrong type passes and is discarded (see [Field types](#field-types)). Everything
+A duration written as a bare number passes and is discarded (see [Field types](#field-types)). Everything
 else starts without an error, for example a negative `threshold`, a swinging-door series without a
 threshold, or `min_time` greater than `max_time`. This is a known defect.
 
