@@ -629,8 +629,8 @@ const maxExactFloat = float64(1 << 53)
 // exports it as int64 (vm.go, maxInt = 1 << 53), normalising an integral
 // float64 in that range into the same form. So the int64 arm takes every
 // exact 2^53 -- from a message, a literal or arithmetic -- and what reaches
-// this function is only |v| > 2^53, or a float that rounded UP to 2^53 from
-// above. That is the ambiguous set and nothing else. Measured end to end:
+// this function is only |v| > 2^53, or a float that arithmetic rounded DOWN
+// to exactly 2^53 from above. That is the ambiguous set and nothing else. Measured end to end:
 // 4503599627370496.5 * 2 writes 9007199254740992 and is not refused.
 //
 // The number in the message is the float64 this was handed, which for a

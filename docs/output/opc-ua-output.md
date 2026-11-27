@@ -348,7 +348,7 @@ output:
 
 ### Migrating from the read-back fields
 
-The deprecated fields still work, and a config that only sets them behaves exactly as before. Nothing breaks on upgrade. When you are ready:
+The deprecated fields still work. One thing does change on upgrade: four settings that used to load are now refused when the config loads — `maxWriteAttempts: 0`, `readbackTimeoutMs: 0`, and a `readbackTimeoutMs` or `timeBetweenRetriesMs` longer than an hour. Each of those used to fail quietly while running. Any other config that only sets the deprecated fields behaves as before. When you are ready:
 
 - **A plain write with no verification** (`handshake.enabled: false`): keep your `nodeMappings` as they are — nothing to migrate.
 - **Read-back verification** (`enabled: true`): replace the `nodeMappings` with a script that writes, then reads back and compares —
