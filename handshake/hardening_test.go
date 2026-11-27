@@ -165,7 +165,7 @@ func TestRun_TheFirstSuccessDataWins(t *testing.T) {
 // refuses a literal one, naming the block and the value.
 func TestConfig_ValidateRefusesAnUnknownWaitOption(t *testing.T) {
 	for _, tc := range []struct{ name, opts, want string }{
-		{"a misspelled onTimeout value", `{onTimeout: "persistant"}`, `"persistant"`},
+		{"a misspelled onTimeout value", `{onTimeout: "persitent"}`, `"persitent"`},
 		{"an onTimeout value of the wrong case", `{"onTimeout": "Persistent"}`, `"Persistent"`},
 		{"a misspelled option", `{onTimout: "persistent"}`, `"onTimout"`},
 	} {
@@ -201,8 +201,8 @@ func TestWaitUntil_RefusesAComputedUnknownOnTimeout(t *testing.T) {
 	engine := newTestEngine(t, b, func(c *Config) {
 		c.Script = `opcua.wait_until({nodeId: "Loaded"}, v => v === true, 50, {onTimeout: msg.mode}); return opcua.success({});`
 	})
-	res := engine.Run(t.Context(), map[string]any{"mode": "persistant"})
-	if res.Outcome != Persistent || res.Err == nil || !strings.Contains(res.Err.Error(), `"persistant"`) {
+	res := engine.Run(t.Context(), map[string]any{"mode": "persitent"})
+	if res.Outcome != Persistent || res.Err == nil || !strings.Contains(res.Err.Error(), `"persitent"`) {
 		t.Fatalf("outcome %v, err %v", res.Outcome, res.Err)
 	}
 	if n := b.count("read Loaded"); n != 0 {

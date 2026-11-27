@@ -220,7 +220,7 @@ func (e *Engine[UnifiedAddress]) waitRanOut(
 // waitOptions checks wait_until's options object and reports whether a wait
 // that runs out ends persistent. An unknown option or onTimeout value is a
 // wrong script, refused rather than read as the default: a typo such as
-// "persistant" otherwise made a timeout silently Transient. Validate applies
+// "persitent" otherwise made a timeout silently Transient. Validate applies
 // the same check to literal options at deploy time (checkWaitOptions).
 func waitOptions(opts map[string]any) (bool, error) {
 	for key := range opts {
