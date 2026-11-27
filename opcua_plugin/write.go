@@ -25,6 +25,8 @@ import (
 
 	"github.com/gopcua/opcua/ua"
 	"github.com/redpanda-data/benthos/v4/public/service"
+
+	"github.com/united-manufacturing-hub/benthos-umh/handshake"
 )
 
 // OPCUAOutput represents an OPC UA output plugin
@@ -34,11 +36,16 @@ type OPCUAOutput struct {
 	// Output-specific fields
 	NodeMappings []NodeMapping
 
-	// Handshake configuration
+	// Handshake configuration, deprecated shape: the fixed read-back
 	HandshakeEnabled     bool
 	ReadbackTimeoutMs    int
 	MaxWriteAttempts     int
 	TimeBetweenRetriesMs int
+
+	// handshakeEngine runs the programmable handshake (handshake.script and
+	// its blocks) when the config chose it. It is nil on the deprecated
+	// path, which the fields above carry unchanged.
+	handshakeEngine *handshake.Engine[Address]
 }
 
 // NodeMapping defines how to map message fields to OPC UA nodes
@@ -65,31 +72,126 @@ func opcuaOutputConfig() *service.ConfigSpec {
 				Description("The OPC UA data type for the value. Supports dynamic values through interpolation.").
 				Example("Int32").
 				Example("${! json(\"dataType\") }")).
-			Description("List of node mappings defining which message fields to write to which OPC UA nodes")).
+			Description("List of node mappings defining which message fields to write to which OPC UA nodes. Optional only for the programmable handshake, whose script performs the writes.").
+			Optional()).
 		Field(service.NewObjectField("handshake",
+			// The deprecated fixed read-back (OUT-1). The fields keep their
+			// meaning and defaults; a config that sets one of them together with
+			// any programmable field is refused at config time.
 			service.NewBoolField("enabled").
-				Description("Whether to enable read-back verification after writing.").
-				Default(true),
+				Description("Deprecated: whether to enable read-back verification after writing. Configure the programmable handshake (script) instead.").
+				Optional().Deprecated(),
 			service.NewIntField("readbackTimeoutMs").
-				Description("How long to wait for the server to show the updated value.").
-				Default(2000),
+				Description("Deprecated: how long to wait for the server to show the updated value. Configure the programmable handshake (script) instead.").
+				Optional().Deprecated(),
 			service.NewIntField("maxWriteAttempts").
-				Description("Number of write attempts if the server fails.").
-				Default(1),
+				Description("Deprecated: number of write attempts if the server fails. Configure the programmable handshake (script) instead.").
+				Optional().Deprecated(),
 			service.NewIntField("timeBetweenRetriesMs").
-				Description("Delay between write attempts.").
-				Default(1000)).
-			Description("Configuration for the read-back handshake.").
+				Description("Deprecated: delay between write attempts. Configure the programmable handshake (script) instead.").
+				Optional().Deprecated(),
+			// The programmable handshake (OUT-1): one script per write request,
+			// plus the cleanup pair and the three deadlines.
+			service.NewStringField("script").
+				Description("The handshake, in JavaScript. It runs once per message and turns the write request into opcua.read, opcua.write, opcua.wait_until and opcua.call_method operations, ending by returning opcua.success(obj), opcua.error_not_ready(), opcua.error_transient(detail) or opcua.error_persistent(detail). Cannot be combined with the deprecated read-back fields.").
+				Optional().
+				Example(`if (opcua.read({ nodeId: "ns=2;s=Ready" }) !== true) { return opcua.error_not_ready(); }`),
+			service.NewStringField("onSuccess").
+				Description("Runs after the script returned success. May be empty, but the script leaves the machine's flags to this block to clear.").
+				Optional(),
+			service.NewStringField("onError").
+				Description("Runs whenever the script did not succeed, the deadline included, and must return the machine to a state it can be asked from. May be empty.").
+				Optional(),
+			service.NewIntField("maxScriptRuntimeMs").
+				Description("The script's deadline in milliseconds. It stops a runaway, not paces a machine: it must comfortably exceed the waits the script performs. Defaults to 120000.").
+				Optional(),
+			service.NewIntField("maxOnSuccessRuntimeMs").
+				Description("The onSuccess block's deadline in milliseconds. Defaults to 15000.").
+				Optional(),
+			service.NewIntField("maxOnErrorRuntimeMs").
+				Description("The onError block's deadline in milliseconds. Defaults to 15000.").
+				Optional()).
+			Description("The handshake: either the deprecated read-back verification or the programmable handshake, never both.").
+			// The same refusal the constructor enforces, caught one step
+			// earlier: at lint time, before the output is ever constructed.
+			// The rule runs on the raw block the user wrote, so the deprecated
+			// defaults a config that omits the block falls back to never trip
+			// it.
+			LintRule(handshakeConflictLint).
 			Default(map[string]any{
 				"enabled":              true,
 				"readbackTimeoutMs":    2000,
 				"maxWriteAttempts":     1,
 				"timeBetweenRetriesMs": 1000,
-			}))
+			})).
+		// The third conflicting pair (OUT-1): nodeMappings, the deprecated
+		// fixed write, cannot be combined with a programmable handshake —
+		// the script performs the writes. The handshake block's own rule
+		// cannot see nodeMappings (a field outside the block it is given),
+		// so this rule runs on the whole output config and restores the
+		// symmetry: every conflicting pair is refused where the config is
+		// linted, not only when the output is constructed. Like the block
+		// rule it runs on the raw config, so it never fires on defaults.
+		LintRule(nodeMappingsConflictLint)
 }
 
+// handshakeConflictLint refuses a handshake block that sets both shapes
+// (OUT-1) or a programmable one without a script, as a lint error: it runs
+// wherever the config is linted, before anything is constructed.
+const handshakeConflictLint = `let obj = if this.type() == "object" { this } else { {} }
+let keys = $obj.keys()
+let old = ["enabled", "readbackTimeoutMs", "maxWriteAttempts", "timeBetweenRetriesMs"].filter(f -> $keys.contains(f))
+let new = ["script", "onSuccess", "onError", "maxScriptRuntimeMs", "maxOnSuccessRuntimeMs", "maxOnErrorRuntimeMs"].filter(f -> $keys.contains(f))
+root = if $old.length() > 0 && $new.length() > 0 {
+	"the handshake block sets both the deprecated field " + $old.index(0) + " and the programmable field " + $new.index(0) + ": configure either the deprecated read-back (enabled, readbackTimeoutMs, maxWriteAttempts, timeBetweenRetriesMs) or the programmable handshake (script, onSuccess, onError, maxScriptRuntimeMs, maxOnSuccessRuntimeMs, maxOnErrorRuntimeMs), not both"
+} else if $new.length() > 0 && !$keys.contains("script") {
+	"the handshake block sets a programmable field but no script: the script is the handshake, and the block cannot run without one"
+} else {
+	deleted()
+}`
+
+// nodeMappingsConflictLint refuses a config that sets nodeMappings — the
+// deprecated fixed write — together with any programmable handshake field,
+// as a lint error (OUT-1's third pair; see the wiring above for why it is a
+// rule on the whole output config). It fires only on a non-empty list, to
+// match the constructor exactly: an empty nodeMappings list builds with a
+// script today.
+const nodeMappingsConflictLint = `let obj = if this.type() == "object" { this } else { {} }
+let mappings = if $obj.nodeMappings.type() == "array" { $obj.nodeMappings.length() } else { 0 }
+let programmable = ["script", "onSuccess", "onError", "maxScriptRuntimeMs", "maxOnSuccessRuntimeMs", "maxOnErrorRuntimeMs"].filter(f -> $obj.exists("handshake." + f))
+root = if $mappings > 0 && $programmable.length() > 0 {
+	"nodeMappings are the deprecated fixed write, and a handshake script performs the writes itself, so the two cannot be combined: remove nodeMappings, or remove the handshake field " + $programmable.index(0)
+} else {
+	deleted()
+}`
+
+// The deprecated and the programmable fields of the handshake block. Both
+// shapes live under the same key; a config that sets one of each is refused
+// at config time, and the error names the two that conflict (OUT-1).
+var (
+	deprecatedHandshakeFields   = []string{"enabled", "readbackTimeoutMs", "maxWriteAttempts", "timeBetweenRetriesMs"}
+	programmableHandshakeFields = []string{"script", "onSuccess", "onError", "maxScriptRuntimeMs", "maxOnSuccessRuntimeMs", "maxOnErrorRuntimeMs"}
+)
+
+// firstFieldPresent returns the first of fields the config sets explicitly.
+func firstFieldPresent(conf *service.ParsedConfig, fields []string) string {
+	for _, f := range fields {
+		if conf.Contains(f) {
+			return f
+		}
+	}
+	return ""
+}
+
+// The defaults of the programmable deadlines, for a config that omits them.
+const (
+	defaultMaxScriptRuntimeMs    = 120000
+	defaultMaxOnSuccessRuntimeMs = 15000
+	defaultMaxOnErrorRuntimeMs   = 15000
+)
+
 // newOPCUAOutput creates a new OPC UA output based on the provided configuration
-func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (service.Output, error) {
+func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (*OPCUAOutput, error) {
 	var (
 		nodeIDInterp, dataTypeInterp *service.InterpolatedString
 		valueFrom                    string
@@ -104,14 +206,37 @@ func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		OPCUAConnection: conn,
 	}
 
-	// Parse node mappings
-	nodeMappingsConf, err := conf.FieldObjectList("nodeMappings")
-	if err != nil {
-		return nil, err
+	// The handshake block carries either the deprecated read-back fields or
+	// the programmable handshake, never both (OUT-1). Which shape the config
+	// chose decides what else it needs: the script replaces nodeMappings.
+	handshakeConf := conf.Namespace("handshake")
+	oldField := firstFieldPresent(handshakeConf, deprecatedHandshakeFields)
+	newField := firstFieldPresent(handshakeConf, programmableHandshakeFields)
+	if oldField != "" && newField != "" {
+		return nil, fmt.Errorf(
+			"the handshake block sets both the deprecated field %q and the programmable field %q: configure either the deprecated read-back (%s) or the programmable handshake (%s), not both",
+			oldField, newField,
+			strings.Join(deprecatedHandshakeFields, ", "),
+			strings.Join(programmableHandshakeFields, ", "))
 	}
+	programmable := newField != ""
 
-	// Validate that we have at least one node mapping
-	if len(nodeMappingsConf) == 0 {
+	// Parse node mappings: required on the deprecated path, refused on the
+	// programmable one, because the script performs the writes.
+	var nodeMappingsConf []*service.ParsedConfig
+	if conf.Contains("nodeMappings") {
+		nodeMappingsConf, err = conf.FieldObjectList("nodeMappings")
+		if err != nil {
+			return nil, err
+		}
+	}
+	if programmable {
+		if len(nodeMappingsConf) > 0 {
+			return nil, fmt.Errorf(
+				"nodeMappings are the deprecated fixed write, and a handshake script performs the writes itself, so the two cannot be combined: remove nodeMappings, or remove the handshake fields %s",
+				strings.Join(programmableHandshakeFields, ", "))
+		}
+	} else if len(nodeMappingsConf) == 0 {
 		return nil, fmt.Errorf("at least one node mapping is required in the 'nodeMappings' configuration. Please refer to the documentation for examples")
 	}
 
@@ -178,23 +303,165 @@ func newOPCUAOutput(conf *service.ParsedConfig, mgr *service.Resources) (service
 		})
 	}
 
-	// Parse handshake configuration
-	handshakeConf := conf.Namespace("handshake")
+	if programmable {
+		// The programmable handshake. Everything that cannot run is refused
+		// here, at config time: the engine compiles all three blocks and
+		// checks the literal waits against the deadline (LIB-9, LIB-14).
+		cfg, cfgErr := parseProgrammableHandshake(handshakeConf)
+		if cfgErr != nil {
+			return nil, cfgErr
+		}
+		engine, engineErr := handshake.New(cfg, NewBinding(conn))
+		if engineErr != nil {
+			return nil, fmt.Errorf("the handshake block cannot run: %w", engineErr)
+		}
+		output.handshakeEngine = engine
+		return output, nil
+	}
 
-	if output.HandshakeEnabled, err = handshakeConf.FieldBool("enabled"); err != nil {
-		return nil, err
+	// The deprecated read-back, with the defaults a config that omits a
+	// field has always fallen back to.
+	if handshakeConf.Contains("enabled") {
+		if output.HandshakeEnabled, err = handshakeConf.FieldBool("enabled"); err != nil {
+			return nil, err
+		}
+	} else {
+		output.HandshakeEnabled = true
 	}
-	if output.ReadbackTimeoutMs, err = handshakeConf.FieldInt("readbackTimeoutMs"); err != nil {
-		return nil, err
+	if handshakeConf.Contains("readbackTimeoutMs") {
+		if output.ReadbackTimeoutMs, err = handshakeConf.FieldInt("readbackTimeoutMs"); err != nil {
+			return nil, err
+		}
+		// Zero and not just negative: verifyWrite builds its context with
+		// exactly this timeout, so a zero one is dead on arrival -- every
+		// read-back fails, every message is retried, forever. It passed the
+		// "cannot be negative" check, which is the lesser half of the same
+		// hole maxWriteAttempts: 0 was.
+		if output.ReadbackTimeoutMs < 1 {
+			return nil, fmt.Errorf(
+				"handshake.readbackTimeoutMs is %d: it must be at least 1, or the read-back "+
+					"times out before it starts and no message is ever confirmed",
+				output.ReadbackTimeoutMs)
+		}
+		if err = refuseLongInterval("handshake.readbackTimeoutMs", output.ReadbackTimeoutMs); err != nil {
+			return nil, err
+		}
+	} else {
+		output.ReadbackTimeoutMs = 2000
 	}
-	if output.MaxWriteAttempts, err = handshakeConf.FieldInt("maxWriteAttempts"); err != nil {
-		return nil, err
+	if handshakeConf.Contains("maxWriteAttempts") {
+		if output.MaxWriteAttempts, err = handshakeConf.FieldInt("maxWriteAttempts"); err != nil {
+			return nil, err
+		}
+		// The write loop is `for attempt := 1; attempt <= MaxWriteAttempts`,
+		// so a zero or negative value runs the body no times: nothing is
+		// sent, the error it would have set stays nil, and every message is
+		// reported written. The read-back lives inside the same loop, so it
+		// does not run either. One unchecked integer turned the output into
+		// a silent acknowledger, which is the worst thing a write flow can
+		// be, so it is refused when the config loads.
+		if output.MaxWriteAttempts < 1 {
+			return nil, fmt.Errorf(
+				"handshake.maxWriteAttempts is %d: it must be at least 1, or nothing is ever written "+
+					"and every message is reported as delivered", output.MaxWriteAttempts)
+		}
+	} else {
+		output.MaxWriteAttempts = 1
 	}
-	if output.TimeBetweenRetriesMs, err = handshakeConf.FieldInt("timeBetweenRetriesMs"); err != nil {
-		return nil, err
+	if handshakeConf.Contains("timeBetweenRetriesMs") {
+		if output.TimeBetweenRetriesMs, err = handshakeConf.FieldInt("timeBetweenRetriesMs"); err != nil {
+			return nil, err
+		}
+		if output.TimeBetweenRetriesMs < 0 {
+			return nil, fmt.Errorf("handshake.timeBetweenRetriesMs is %d: a delay cannot be negative",
+				output.TimeBetweenRetriesMs)
+		}
+		if err = refuseLongInterval("handshake.timeBetweenRetriesMs", output.TimeBetweenRetriesMs); err != nil {
+			return nil, err
+		}
+	} else {
+		output.TimeBetweenRetriesMs = 1000
 	}
 
 	return output, nil
+}
+
+// refuseLongInterval applies the handshake's hour rule to the deprecated
+// read-back's own intervals.
+//
+// An hour is not a long wait, it is a wrong one: a unit mistake far more
+// often than an intention, and the cost of taking it at face value is a
+// bridge that reports healthy and delivers nothing, an hour at a time
+// (Jeremy, 2026-11-26). The programmable path refuses these numbers at
+// handshake.MaxInterval; the deprecated path never got the rule, so the
+// very mistake it was written for was caught on one path and deployed on
+// the other.
+func refuseLongInterval(field string, ms int) error {
+	const maxIntervalMs = int(time.Hour / time.Millisecond)
+	if ms > maxIntervalMs {
+		return fmt.Errorf(
+			"%s is %d, longer than the %v a handshake is allowed: check the units -- this is milliseconds",
+			field, ms, time.Hour)
+	}
+	return nil
+}
+
+// parseProgrammableHandshake reads the programmable fields of the handshake
+// block. The script is required: it is the handshake. The deadlines default,
+// because a machine's procedure varies; a deadline that is set must be
+// positive.
+func parseProgrammableHandshake(conf *service.ParsedConfig) (handshake.Config, error) {
+	cfg := handshake.Config{
+		// wait_until's documented default poll, which a script overrides per
+		// call with { pollMs }.
+		PollInterval: 100 * time.Millisecond,
+	}
+	var err error
+	if conf.Contains("script") {
+		if cfg.Script, err = conf.FieldString("script"); err != nil {
+			return cfg, err
+		}
+	}
+	if cfg.Script == "" {
+		return cfg, fmt.Errorf(
+			"the handshake block sets no script: the script is the handshake, and the block cannot run without one. Write the machine's procedure in JavaScript, ending by returning opcua.success(obj), opcua.error_not_ready(), opcua.error_transient(detail) or opcua.error_persistent(detail)")
+	}
+	if conf.Contains("onSuccess") {
+		if cfg.OnSuccess, err = conf.FieldString("onSuccess"); err != nil {
+			return cfg, err
+		}
+	}
+	if conf.Contains("onError") {
+		if cfg.OnError, err = conf.FieldString("onError"); err != nil {
+			return cfg, err
+		}
+	}
+	maxScriptRuntimeMs := defaultMaxScriptRuntimeMs
+	if conf.Contains("maxScriptRuntimeMs") {
+		if maxScriptRuntimeMs, err = conf.FieldInt("maxScriptRuntimeMs"); err != nil {
+			return cfg, err
+		}
+	}
+	maxOnSuccessRuntimeMs := defaultMaxOnSuccessRuntimeMs
+	if conf.Contains("maxOnSuccessRuntimeMs") {
+		if maxOnSuccessRuntimeMs, err = conf.FieldInt("maxOnSuccessRuntimeMs"); err != nil {
+			return cfg, err
+		}
+	}
+	maxOnErrorRuntimeMs := defaultMaxOnErrorRuntimeMs
+	if conf.Contains("maxOnErrorRuntimeMs") {
+		if maxOnErrorRuntimeMs, err = conf.FieldInt("maxOnErrorRuntimeMs"); err != nil {
+			return cfg, err
+		}
+	}
+	if maxScriptRuntimeMs <= 0 || maxOnSuccessRuntimeMs <= 0 || maxOnErrorRuntimeMs <= 0 {
+		return cfg, fmt.Errorf("the handshake deadlines must be positive: maxScriptRuntimeMs %d, maxOnSuccessRuntimeMs %d, maxOnErrorRuntimeMs %d",
+			maxScriptRuntimeMs, maxOnSuccessRuntimeMs, maxOnErrorRuntimeMs)
+	}
+	cfg.MaxScriptRuntime = time.Duration(maxScriptRuntimeMs) * time.Millisecond
+	cfg.MaxOnSuccessRuntime = time.Duration(maxOnSuccessRuntimeMs) * time.Millisecond
+	cfg.MaxOnErrorRuntime = time.Duration(maxOnErrorRuntimeMs) * time.Millisecond
+	return cfg, nil
 }
 
 // Connect establishes a connection to the OPC UA server
@@ -205,6 +472,19 @@ func (o *OPCUAOutput) Connect(ctx context.Context) error {
 
 	o.Log.Infof("Connecting to OPC UA server at %s", o.Endpoint)
 	return o.connect(ctx)
+}
+
+// Close releases the programmable handshake engine, then the connection. On
+// the deprecated path there is no engine and this is the connection's own
+// Close, as before.
+func (o *OPCUAOutput) Close(ctx context.Context) error {
+	if o.handshakeEngine != nil {
+		if err := o.handshakeEngine.Close(); err != nil {
+			o.Log.Warnf("closing the handshake engine: %v", err)
+		}
+		o.handshakeEngine = nil
+	}
+	return o.OPCUAConnection.Close(ctx)
 }
 
 // Write writes a message to the OPC UA server
@@ -220,6 +500,12 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 	content, err := msg.AsStructured()
 	if err != nil {
 		return fmt.Errorf("error getting message content: %w", err)
+	}
+
+	// The programmable handshake runs the message's procedure against the
+	// machine; the deprecated path continues below, unchanged.
+	if o.handshakeEngine != nil {
+		return o.runHandshake(ctx, content)
 	}
 
 	// Extract values and resolve node IDs from message
@@ -392,6 +678,38 @@ func (o *OPCUAOutput) Write(ctx context.Context, msg *service.Message) error {
 	}
 
 	return nil
+}
+
+// runHandshake runs one write request through the configured handshake
+// script, where content is the message as the script sees it. The output
+// classifies the run and hands the message back (OUT-2): it never retries
+// and has no retry setting; the flow around it retries what the run called
+// transient and dead-letters what it called persistent.
+func (o *OPCUAOutput) runHandshake(ctx context.Context, content any) error {
+	msg, ok := content.(map[string]any)
+	if !ok {
+		return fmt.Errorf("handshake: the message content is not a map, so the script cannot see it: %T", content)
+	}
+	result := o.handshakeEngine.Run(ctx, msg)
+	switch result.Outcome {
+	case handshake.Delivered:
+		// The machine has the write request and acted on it. A cleanup that
+		// did not finish does not change that (LIB-11); the flow is told, not
+		// asked to run the message again.
+		if result.CleanupErr != nil {
+			o.Log.Warnf("handshake delivered, but onSuccess did not finish: %v", result.CleanupErr)
+		}
+		o.Log.Debugf("handshake delivered: %v", result.Data)
+		return nil
+	case handshake.Transient:
+		return fmt.Errorf("handshake ended transient: %w", result.Err)
+	default: // handshake.Persistent
+		err := fmt.Errorf("handshake ended persistent: %w", result.Err)
+		if result.CleanupErr != nil {
+			err = fmt.Errorf("%w; onError did not finish, so the machine's state is unknown: %w", err, result.CleanupErr)
+		}
+		return err
+	}
 }
 
 // convertToVariant converts a value to an OPC UA variant with a specified type
