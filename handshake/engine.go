@@ -258,8 +258,15 @@ const maxIntervalMillis = float64(MaxInterval / time.Millisecond)
 // Validate reports whether the configuration can run. It compiles all three blocks, so
 // a script that does not parse is caught at deploy time rather than against a machine.
 func (c Config) Validate() error {
+	_, err := c.compileBlocks()
+	return err
+}
+
+// compileBlocks validates the configuration and returns its compiled blocks, so
+// New compiles each block once rather than once to validate and again to run.
+func (c Config) compileBlocks() (map[string]*goja.Program, error) {
 	if c.MaxScriptRuntime <= 0 {
-		return fmt.Errorf("MaxScriptRuntime must be positive, is %v", c.MaxScriptRuntime)
+		return nil, fmt.Errorf("MaxScriptRuntime must be positive, is %v", c.MaxScriptRuntime)
 	}
 	// Nobody means an hour. A handshake is one machine's acknowledgement of
 	// one instruction, measured in seconds; an hour-long budget is a unit
@@ -278,7 +285,7 @@ func (c Config) Validate() error {
 		{"MaxOnErrorRuntime", c.MaxOnErrorRuntime},
 	} {
 		if budget.value > MaxInterval {
-			return fmt.Errorf(
+			return nil, fmt.Errorf(
 				"%s is %v, longer than the %v a handshake is allowed: a budget this long is a unit mistake far more often than an intention, and a message would sit on the machine that long before anyone learned it failed",
 				budget.name, budget.value, MaxInterval)
 		}
@@ -299,16 +306,19 @@ func (c Config) Validate() error {
 			continue
 		}
 		if block.budget <= 0 {
-			return fmt.Errorf("%s is not empty, so %s must be positive, is %v",
+			return nil, fmt.Errorf("%s is not empty, so %s must be positive, is %v",
 				block.name, block.budgetName, block.budget)
 		}
 	}
+	blocks := make(map[string]*goja.Program, 3)
 	for _, block := range []struct{ name, source string }{
 		{"script", c.Script}, {"onSuccess", c.OnSuccess}, {"onError", c.OnError},
 	} {
-		if _, err := compile(block.name, block.source); err != nil {
-			return err
+		program, err := compile(block.name, block.source)
+		if err != nil {
+			return nil, err
 		}
+		blocks[block.name] = program
 	}
 	// LIB-9, literal waits only, and only live ones: a script whose waits
 	// add up to more than its own limit is killed on a slow day, mid-commit.
@@ -327,12 +337,12 @@ func (c Config) Validate() error {
 	} {
 		waits := literalWaitTotal(block.source)
 		if waits > block.budget {
-			return fmt.Errorf(
+			return nil, fmt.Errorf(
 				"%s's literal waits total %v, which exceeds %s %v",
 				block.name, waits, block.budgetName, block.budget)
 		}
 	}
-	return nil
+	return blocks, nil
 }
 
 // An Engine runs one configured handshake against one machine, once per message.
@@ -351,20 +361,11 @@ type Engine[UnifiedAddress any] struct {
 func New[UnifiedAddress any](
 	cfg Config, p Binding[UnifiedAddress],
 ) (*Engine[UnifiedAddress], error) {
-	if err := cfg.Validate(); err != nil {
+	blocks, err := cfg.compileBlocks()
+	if err != nil {
 		return nil, err
 	}
-	engine := &Engine[UnifiedAddress]{bind: p, cfg: cfg, blocks: map[string]*goja.Program{}}
-	for _, block := range []struct{ name, source string }{
-		{"script", cfg.Script}, {"onSuccess", cfg.OnSuccess}, {"onError", cfg.OnError},
-	} {
-		program, err := compile(block.name, block.source)
-		if err != nil {
-			return nil, err
-		}
-		engine.blocks[block.name] = program
-	}
-	return engine, nil
+	return &Engine[UnifiedAddress]{bind: p, cfg: cfg, blocks: blocks}, nil
 }
 
 // Run executes the handshake once for one message, where msg is the message as the
