@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"runtime"
 	"strings"
 	"testing"
@@ -410,5 +411,89 @@ func TestRuntime_APanickingBindingDoesNotLeakTheWatcher(t *testing.T) {
 				before, runtime.NumGoroutine())
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Typed Go containers in a message cross as plain JavaScript arrays and
+// objects, as a decoded JSON message would, nested ones included, and they
+// are copies: a script that writes to msg does not write to the caller's map
+// or slice.
+func TestRun_TypedContainersInTheMessageCrossAsPlainCopies(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.Script = `
+			if (!Array.isArray(msg.ints) || !Array.isArray(msg.nested.y) || !Array.isArray(msg.fixed)) {
+				return opcua.error_persistent("a typed slice is not an array");
+			}
+			const seen = JSON.stringify([msg.ints, msg.counts, msg.nested, msg.fixed, msg.byID, msg.none]);
+			msg.ints[0] = 99;
+			msg.counts.x = 99;
+			msg.nested.y[0] = 99;
+			return opcua.success({seen: seen, sum: msg.ints.reduce((a, v) => a + v, 0)});
+		`
+	})
+
+	ints := []int{1, 2}
+	counts := map[string]int{"x": 1}
+	nested := map[string][]float64{"y": {1.5}}
+	res := engine.Run(t.Context(), map[string]any{
+		"ints":   ints,
+		"counts": counts,
+		"nested": nested,
+		"fixed":  [2]string{"p", "q"},
+		"byID":   map[int]bool{7: true},
+		"none":   []int(nil),
+	})
+	if res.Outcome != Delivered {
+		t.Fatalf("outcome %v, err %v", res.Outcome, res.Err)
+	}
+	d, ok := res.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("Data is %#v", res.Data)
+	}
+	if want := `[[1,2],{"x":1},{"y":[1.5]},["p","q"],{"7":true},[]]`; d["seen"] != want {
+		t.Errorf("the script saw %v, want %v", d["seen"], want)
+	}
+	if d["sum"] != int64(101) {
+		t.Errorf("the script's own copy did not take its write: sum %#v", d["sum"])
+	}
+	if ints[0] != 1 || counts["x"] != 1 || nested["y"][0] != 1.5 {
+		t.Fatalf("the script wrote to the caller's message: %v %v %v", ints, counts, nested)
+	}
+}
+
+// A Go float that is not finite crosses as the JavaScript number it is, so a
+// script can test it with Number.isFinite. A json.Number too large for any
+// float is covered by TestRun_AJSONNumberThatIsNoNumberCrossesAsItsOwnText.
+func TestRun_NonFiniteFloatsInTheMessageCrossAsJavaScriptNumbers(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.Script = `
+			if (msg.inf !== Infinity || msg.ninf !== -Infinity || !Number.isNaN(msg.nan) || msg.small !== Infinity) {
+				return opcua.error_persistent("got " + [msg.inf, msg.ninf, msg.nan, msg.small].join(","));
+			}
+			return opcua.success({finite: [msg.inf, msg.ninf, msg.nan].some(Number.isFinite)});
+		`
+	})
+	res := engine.Run(t.Context(), map[string]any{
+		"inf":   math.Inf(1),
+		"ninf":  math.Inf(-1),
+		"nan":   math.NaN(),
+		"small": []float32{float32(math.Inf(1))}[0],
+	})
+	if res.Outcome != Delivered {
+		t.Fatalf("outcome %v, err %v", res.Outcome, res.Err)
+	}
+	if d, _ := res.Data.(map[string]any); d["finite"] != false {
+		t.Fatalf("Data is %#v", res.Data)
+	}
+
+	// Returning one is refused: it cannot be encoded as JSON.
+	engine = newTestEngine(t, b, func(c *Config) {
+		c.Script = `return opcua.success({v: msg.inf});`
+	})
+	res = engine.Run(t.Context(), map[string]any{"inf": math.Inf(1)})
+	if res.Outcome != Persistent || !strings.Contains(res.Err.Error(), "cannot be encoded") {
+		t.Fatalf("outcome %v, err %v", res.Outcome, res.Err)
 	}
 }
