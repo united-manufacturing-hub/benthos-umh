@@ -33,14 +33,14 @@ import (
 // build their streams, they never run them.
 type stubInput struct{}
 
-func (stubInput) Connect(ctx context.Context) error { return nil }
+func (stubInput) Connect(_ context.Context) error { return nil }
 
 func (stubInput) Read(ctx context.Context) (*service.Message, service.AckFunc, error) {
 	<-ctx.Done()
 	return nil, nil, ctx.Err()
 }
 
-func (stubInput) Close(ctx context.Context) error { return nil }
+func (stubInput) Close(_ context.Context) error { return nil }
 
 // These specs go through the same public surface a real plugin goes through:
 // RegisterInput on an Environment, then YAML through StreamBuilder, which is
@@ -88,7 +88,7 @@ var _ = Describe("through the real public config surface", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("accepts a recognised compatibility key", func() {
+		It("accepts a recognized compatibility key", func() {
 			sb := env.NewStreamBuilder()
 			err := sb.AddInputYAML(pluginName + `:
   endpoint: localhost
@@ -127,7 +127,7 @@ var _ = Describe("through the real public config surface", func() {
 			sb = env.NewStreamBuilder()
 			// A consumer func stands in for an output, so the test does not
 			// depend on any specific output component being registered.
-			err := sb.AddConsumerFunc(func(ctx context.Context, msg *service.Message) error {
+			err := sb.AddConsumerFunc(func(_ context.Context, _ *service.Message) error {
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())

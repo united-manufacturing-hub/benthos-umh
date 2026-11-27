@@ -13,8 +13,8 @@
 // limitations under the License.
 
 // Package compat provides compatibility flags: the standard way for a
-// benthos-umh plugin to keep its previous behaviour working until a customer
-// opts in to a new behaviour.
+// benthos-umh plugin to keep its previous behavior working until a customer
+// opts in to a new behavior.
 //
 // A plugin uses the package in three steps. First, declare the plugin's
 // flags once, at package level:
@@ -39,12 +39,12 @@
 //		return nil, err
 //	}
 //	if flags.Enabled(correctTagPath) {
-//		// new behaviour
+//		// new behavior
 //	}
 //
 // Every flag defaults to false: a missing compatibility block, a missing key
-// and an explicit false all leave the plugin on its previous behaviour. Keys
-// the plugin does not recognise are ignored rather than rejected, because
+// and an explicit false all leave the plugin on its previous behavior. Keys
+// the plugin does not recognize are ignored rather than rejected, because
 // retired flags stay in customer configs forever. Key lookup is exact: a key
 // spelled differently from the declared flag, even in casing, does not enable
 // the flag. A YAML merge key ("<<") is rejected instead of ignored, because
@@ -64,7 +64,7 @@ type Flag struct {
 	flags       *Flags
 }
 
-// Flags is the set of compatibility flags that one plugin recognises. Each
+// Flags is the set of compatibility flags that one plugin recognizes. Each
 // plugin builds a single Flags value with New and Declare, and passes its
 // flags to Parse and Set.Enabled.
 type Flags struct {
@@ -92,7 +92,7 @@ func New() *Flags {
 // configuration problems: an empty name could never be written, and an empty
 // description would render a dangling colon in the Management Console and the
 // log.
-func (f *Flags) Declare(name, description string) *Flag {
+func (f *Flags) Declare(name string, description string) *Flag {
 	if f.flags == nil {
 		f.flags = make(map[string]*Flag)
 	}

@@ -22,7 +22,6 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
 	"github.com/redpanda-data/benthos/v4/public/service"
 
 	compat "github.com/united-manufacturing-hub/benthos-umh/pkg/compat"
@@ -49,7 +48,7 @@ func parseFlags(c *compat.Flags, spec *service.ConfigSpec, yml string) compat.Se
 	return set
 }
 
-// captureLogger returns a service.Logger writing levelled text output into a
+// captureLogger returns a service.Logger writing leveled text output into a
 // buffer, so tests can assert on what the plugin would log.
 func captureLogger() (*service.Logger, *bytes.Buffer) {
 	var buf bytes.Buffer
@@ -93,9 +92,9 @@ var _ = Describe("compat", func() {
 			},
 			Entry("no compatibility block at all", ``),
 			Entry("an empty compatibility block", "compatibility: {}"),
-			Entry("a recognised key that is absent (another key is present)", "compatibility:\n  flag_b: false\n"),
-			Entry("a recognised key set to false", "compatibility:\n  flag_a: false\n"),
-			Entry("a recognised key set to false next to an unknown key", "compatibility:\n  flag_a: false\n  retired_key: true\n"),
+			Entry("a recognized key that is absent (another key is present)", "compatibility:\n  flag_b: false\n"),
+			Entry("a recognized key set to false", "compatibility:\n  flag_a: false\n"),
+			Entry("a recognized key set to false next to an unknown key", "compatibility:\n  flag_a: false\n  retired_key: true\n"),
 			// A retired flag does not have to hold a boolean: a config from
 			// before the flag was retired may carry a string, a number, a list
 			// or nothing at all. All of these must stay valid.
@@ -205,7 +204,7 @@ var _ = Describe("compat", func() {
 			Expect(out).NotTo(ContainSubstring("level=ERROR"))
 		})
 
-		It("logs an unknown key at Info level, naming it and the recognised keys", func() {
+		It("logs an unknown key at Info level, naming it and the recognized keys", func() {
 			log, buf := captureLogger()
 			conf, err := spec.ParseYAML("compatibility:\n  retired_key: true\n", nil)
 			Expect(err).NotTo(HaveOccurred())
@@ -263,14 +262,14 @@ var _ = Describe("compat", func() {
 	})
 
 	Describe("separate Flags in one process", func() {
-		It("do not recognise each other's keys", func() {
+		It("do not recognize each other's keys", func() {
 			other := compat.New()
 			otherFlag := other.Declare("flag_a", "Some other plugin's flag of the same name.")
 
 			set := parseFlags(c, spec, "compatibility:\n  flag_a: true\n")
 			Expect(set.Enabled(flagA)).To(BeTrue())
 
-			// The other Flags parses the same config: the key is recognised
+			// The other Flags parses the same config: the key is recognized
 			// there too, but only through its own handle.
 			otherSet := parseFlags(other, spec, "compatibility:\n  flag_a: true\n")
 			Expect(otherSet.Enabled(otherFlag)).To(BeTrue())
@@ -363,7 +362,7 @@ var _ = Describe("compat", func() {
 				// Management Console; check it through the exported docs of a
 				// registered plugin.
 				env := service.NewEnvironment()
-				err := env.RegisterInput("description_probe", spec, func(conf *service.ParsedConfig, mgr *service.Resources) (service.Input, error) {
+				err := env.RegisterInput("description_probe", spec, func(_ *service.ParsedConfig, _ *service.Resources) (service.Input, error) {
 					Fail("must not be constructed")
 					return nil, nil
 				})
@@ -388,8 +387,8 @@ var _ = Describe("compat", func() {
 
 			It("is a snapshot: a spec built before a Declare does not mention that flag, but Parse accepts it", func() {
 				// This is the standard Go trap: a package-level spec variable
-				// initialises before any init function that declares flags.
-				// The behaviour is pinned here so the suite teaches it; the
+				// initializes before any init function that declares flags.
+				// The behavior is pinned here so the suite teaches it; the
 				// docs on Field and Declare demand the same init function.
 				env := service.NewEnvironment()
 				fresh := compat.New()
@@ -398,7 +397,7 @@ var _ = Describe("compat", func() {
 				lateSpec := service.NewConfigSpec().Field(fresh.Field())
 
 				register := func(name string, spec *service.ConfigSpec) *service.ConfigView {
-					err := env.RegisterInput(name, spec, func(conf *service.ParsedConfig, mgr *service.Resources) (service.Input, error) {
+					err := env.RegisterInput(name, spec, func(_ *service.ParsedConfig, _ *service.Resources) (service.Input, error) {
 						Fail("must not be constructed")
 						return nil, nil
 					})
@@ -432,7 +431,7 @@ var _ = Describe("compat", func() {
 				env := service.NewEnvironment()
 				empty := compat.New()
 				spec := service.NewConfigSpec().Field(empty.Field())
-				err := env.RegisterInput("empty_description_probe", spec, func(conf *service.ParsedConfig, mgr *service.Resources) (service.Input, error) {
+				err := env.RegisterInput("empty_description_probe", spec, func(_ *service.ParsedConfig, _ *service.Resources) (service.Input, error) {
 					Fail("must not be constructed")
 					return nil, nil
 				})
@@ -448,5 +447,4 @@ var _ = Describe("compat", func() {
 			})
 		})
 	})
-
 })

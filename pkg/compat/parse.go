@@ -26,7 +26,7 @@ import (
 
 // Set is the result of Parse: it reports which of the plugin's flags the
 // customer enabled. Its zero value is valid and reports every flag as
-// disabled, which is always the plugin's previous behaviour.
+// disabled, which is always the plugin's previous behavior.
 type Set struct {
 	flags   *Flags
 	enabled map[string]bool
@@ -36,7 +36,7 @@ type Set struct {
 //
 // Enabled panics if f is nil or was not declared on the Flags that this Set
 // was parsed from. Such a mismatch is a programming error, and silently
-// reporting the flag as disabled would quietly fall back to legacy behaviour,
+// reporting the flag as disabled would quietly fall back to legacy behavior,
 // which is the failure this package exists to prevent. The zero Set reports
 // every declared flag as disabled instead of panicking.
 func (s Set) Enabled(f *Flag) bool {
@@ -56,13 +56,13 @@ func (s Set) Enabled(f *Flag) bool {
 // returns the resulting flag set.
 //
 // A missing block, an empty block and a missing key all leave every flag
-// disabled. Keys the plugin does not recognise are ignored — retired keys are
+// disabled. Keys the plugin does not recognize are ignored — retired keys are
 // expected to remain in customer configs forever and nobody has to act on
 // them — and are reported together in a single Info line. Key lookup is
 // exact: a key spelled differently from the declared flag, even in casing,
 // is an unknown key and leaves the flag disabled.
 //
-// A recognised key whose value is not a boolean is an error, because it means
+// A recognized key whose value is not a boolean is an error, because it means
 // the customer wrote something the plugin cannot interpret. The YAML merge
 // key "<<" is also an error: Benthos does not expand merge keys inside the
 // compatibility block, so flags merged in would silently not apply.
@@ -116,20 +116,20 @@ func (f *Flags) Parse(conf *service.ParsedConfig, log *service.Logger) (Set, err
 			quoted[i] = fmt.Sprintf("%q", k)
 		}
 		if len(unknownKeys) == 1 {
-			log.Infof("Ignoring the unknown key %s in the compatibility block. This plugin recognises the following keys: %s. The unknown key has no effect.", quoted[0], f.recognisedKeys())
+			log.Infof("Ignoring the unknown key %s in the compatibility block. This plugin recognizes the following keys: %s. The unknown key has no effect.", quoted[0], f.recognizedKeys())
 		} else {
-			log.Infof("Ignoring the unknown keys %s in the compatibility block. This plugin recognises the following keys: %s. The unknown keys have no effect.", strings.Join(quoted, ", "), f.recognisedKeys())
+			log.Infof("Ignoring the unknown keys %s in the compatibility block. This plugin recognizes the following keys: %s. The unknown keys have no effect.", strings.Join(quoted, ", "), f.recognizedKeys())
 		}
 	}
 	return set, nil
 }
 
-// recognisedKeys renders the declared flag names for log messages. A Flags
+// recognizedKeys renders the declared flag names for log messages. A Flags
 // with no declarations renders as a hint to that effect rather than an empty
 // list.
-func (f *Flags) recognisedKeys() string {
+func (f *Flags) recognizedKeys() string {
 	if len(f.names) == 0 {
-		// An unrecognised key against a Flags with no declarations is
+		// An unrecognized key against a Flags with no declarations is
 		// already nonsense; still, never emit an empty list.
 		return "(none; this plugin has no compatibility flags)"
 	}

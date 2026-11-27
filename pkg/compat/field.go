@@ -36,9 +36,9 @@ import (
 //
 //	var spec = service.NewConfigSpec().Field(compatibility.Field())
 //
-// is initialised before any init function that later declares flags, so its
+// is initialized before any init function that later declares flags, so its
 // description would claim the plugin has no compatibility flags even though
-// Parse still accepts them: the new behaviour would be undiscoverable. Declare
+// Parse still accepts them: the new behavior would be undiscoverable. Declare
 // every flag before calling Field — the standard pattern is to declare the
 // flags and build the spec in the same init function.
 func (f *Flags) Field() *service.ConfigField {
@@ -52,7 +52,7 @@ func (f *Flags) Field() *service.ConfigField {
 // field, built from the declared flags.
 func (f *Flags) fieldDescription() string {
 	var b strings.Builder
-	b.WriteString("Compatibility flags let you opt in to this plugin's new behaviour before it becomes the default. Every flag defaults to false, meaning the plugin keeps its previous behaviour until you explicitly set it to true here. Keys are matched exactly, including case. Keys this plugin does not recognise are ignored, so retired keys from an older configuration keep this config valid. The YAML merge key (\"<<\") is not supported: write the flags out explicitly.")
+	b.WriteString("Compatibility flags let you opt in to this plugin's new behavior before it becomes the default. Every flag defaults to false, meaning the plugin keeps its previous behavior until you explicitly set it to true here. Keys are matched exactly, including case. Keys this plugin does not recognize are ignored, so retired keys from an older configuration keep this config valid. The YAML merge key (\"<<\") is not supported: write the flags out explicitly.")
 	switch len(f.names) {
 	case 0:
 		b.WriteString(" This plugin currently has no compatibility flags.")
