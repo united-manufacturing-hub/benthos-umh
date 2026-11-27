@@ -20,36 +20,42 @@
 //     • Accept only UMH‑core time‑series messages
 //       { "value": <scalar>, "timestamp_ms": <unix‑ms> }      (one tag, one topic)
 //     • Require metadata key `umh_topic`                      (series identity)
-//     • Emit message unaltered except for     `downsampled_by` / `downsampling_config`
-//       metadata.
+//     • Emit the message unaltered except for the `downsampled_by` and
+//       `downsampling_config` metadata.
 //
 // 2.  Purpose                                                  *WHY?*
-//     • Compress noisy or low‑value data points (Deadband, SDT).
-//     • No delivery guarantee beyond what is emitted: a filtered
-//       message is ACKed and discarded; a stashed emit‑previous
-//       candidate is ACKed when stashed and can still be dropped
-//       (max_time, superseded); points collected at Close() are
-//       never emitted.
+//     • Compress noisy or low-value data points (Deadband, SDT).
+//     • Delivery: an emitted message is ACKed after downstream. A
+//       filtered message is ACKed and dropped. A held swinging-door
+//       candidate is ACKed when stashed and can still be lost; see
+//       SeriesState for every way it is lost.
 //
-// 3.  Critical levers
-//     • Dual use of `max_time` – evaluated only on message arrival;
-//       a series that stops sending emits nothing.
-//         – Deadband heartbeat: an unchanged value that keeps
-//           arriving is re‑emitted every max_time.
-//         – Swinging door: when max_time is reached the pending
-//           candidate is discarded, not flushed.
-//         – Idle flush timer : moves buffered points into a one‑batch
-//           channel that is read only when a later batch arrives.
-//     • Late‑arrival policy (`passthrough` | `drop`) keeps historical
-//       accuracy configurable per topic.
+// 3.  Critical settings
+//     • `max_time` has two uses:
+//         - Heartbeat, checked only when a message arrives: a
+//           message `max_time` after the last emitted point is
+//           emitted. A series that stops sending emits nothing. On
+//           swinging door the heartbeat discards the held candidate
+//           (https://linear.app/united-manufacturing-hub/issue/ENG-8219).
+//         - Idle flush, on the wall clock: releases the held candidate
+//           of a quiet swinging-door series into shutdownBatch, which
+//           is read only when a later batch arrives. A second flush
+//           before that is lost (https://linear.app/united-manufacturing-hub/issue/ENG-8218).
+//     • Late-arrival policy (`passthrough` | `drop`) per topic. On
+//       swinging door `drop` replaces the held candidate instead
+//       (https://linear.app/united-manufacturing-hub/issue/ENG-8221).
 //
 // 4.  Configuration tiers
 //     • default   – global baseline for every topic.
 //     • overrides – wildcard or exact topic patterns.
 //
 // 5.  Error policy
-//     • *Fail‑open*: on any processing error, forward the raw message
-//       unchanged and log – never lose data.
+//     • *Fail-open*: on any processing error, forward the raw message
+//       unchanged and log. This includes every message of a series
+//       whose algorithm cannot be built
+//       (https://linear.app/united-manufacturing-hub/issue/ENG-8220) and raw JSON
+//       payloads, whose timestamp_ms is a json.Number
+//       (https://linear.app/united-manufacturing-hub/issue/ENG-8227).
 //
 // -----------------------------------------------------------------------------
 
@@ -80,9 +86,9 @@ import (
 //	c) Failed                        ⇒ Error != nil            (fail‑open)
 //
 // WHY:
-//   - Distinguishing (b) from (c) is essential – only real errors should
-//     block ACKs; filtered messages may be ACKed once their buffered
-//     predecessor is emitted.
+//   - Distinguishing (b) from (c) matters for metrics: (b) counts as
+//     filtered, (c) as errored and is forwarded unchanged. Neither
+//     blocks the ACK.
 type MessageProcessingResult struct {
 	OriginalMessage   *service.Message   // The input message for ACK tracking
 	ProcessedMessages []*service.Message // Output messages (empty if filtered, may contain buffered messages)
@@ -98,7 +104,8 @@ type MessageProcessingResult struct {
 //
 //   - Registration          – binds "downsampler" to Benthos.
 //   - Config schema         – declares default + overrides tier.
-//   - Validation upfront    – Benthos rejects invalid configs before runtime.
+//   - Validation upfront    – Benthos rejects unknown fields and wrong kinds;
+//     semantic errors surface per message (https://linear.app/united-manufacturing-hub/issue/ENG-8220).
 //   - Panic on failure      – plugin absence is a deployment bug; crash fast.
 func init() {
 	spec := service.NewConfigSpec().
@@ -110,6 +117,10 @@ It processes UMH-core time-series messages: JSON payloads with exactly the two k
 "timestamp_ms" and "value", identified by the "umh_topic" metadata field. It does not check
 any data_contract. All other messages are passed through unchanged. Each message that passes
 the downsampling filter is annotated with metadata indicating the algorithm used.
+
+Payloads that arrive as raw JSON bytes, for example directly from a uns or kafka input, are not
+downsampled: their timestamp_ms is parsed as json.Number, which takes the fail-open path. Put a
+processor that builds the payload, such as tag_processor, in front of the downsampler.
 
 In typical UMH deployments, the downsampler is enabled by default with conservative settings to automatically
 compress time-series data. The tag_processor can be used upstream to selectively bypass downsampling for
@@ -176,7 +187,7 @@ Use with tag_processor for UMH deployments to selectively bypass downsampling ba
 				Description("Default swinging door algorithm parameters.").
 				Optional(),
 			service.NewStringEnumField("late_policy", "passthrough", "drop").
-				Description("Default policy for handling late-arriving messages (passthrough=forward unchanged, drop=discard; drops are logged at debug level).").
+				Description("Default policy for late-arriving numeric messages. passthrough forwards them. drop discards them on deadband series and logs at debug level; on swinging-door series a late message replaces the held candidate instead.").
 				Default("passthrough").
 				Optional()).
 			Description("Default algorithm parameters applied to all topics unless overridden.")).
@@ -209,12 +220,12 @@ Use with tag_processor for UMH deployments to selectively bypass downsampling ba
 				Description("Swinging door algorithm parameter overrides.").
 				Optional(),
 			service.NewStringEnumField("late_policy", "passthrough", "drop").
-				Description("Override policy for handling late-arriving messages (passthrough=forward unchanged, drop=discard; drops are logged at debug level).").
+				Description("Override policy for late-arriving numeric messages. passthrough forwards them. drop discards them on deadband series and logs at debug level; on swinging-door series a late message replaces the held candidate instead.").
 				Optional()).
 			Description("Topic-specific parameter overrides using pattern matching. Supports exact topic names and shell-style wildcards (* matches any sequence, ? matches any character).").
 			Optional()).
 		Field(service.NewBoolField("allow_meta_overrides").
-			Description("Honor per-message ds_* metadata.").
+			Description("Honor per-message ds_* metadata hints. Does not affect ds_ignore, which is always honored.").
 			Default(true))
 
 	err := service.RegisterBatchProcessor(
@@ -252,7 +263,7 @@ Use with tag_processor for UMH deployments to selectively bypass downsampling ba
 //
 // WHY idle flush?
 //  1. Memory cap: only one buffered point per quiet series.
-//  2. Liveness : ensures every message is eventually ACKed.
+//  2. Liveness : releases the held candidate of a series that stopped sending.
 //  3. Consistency with algorithm heartbeat (same max_time source).
 type DownsamplerProcessor struct {
 	config           DownsamplerConfig       // Downsampling algorithm configuration
@@ -337,7 +348,8 @@ func newDownsamplerProcessor(config DownsamplerConfig, logger *service.Logger, m
 //  2. Fallback to 4h if none set.
 //
 // WHY minimum?
-//   - Guarantees no series waits longer than its own SLA before a flush.
+//   - Every configured max_time is checked at least once per its own
+//     interval, so a candidate is released at most one interval late.
 func calculateFlushInterval(config DownsamplerConfig) time.Duration {
 	minMaxTime := 4 * time.Hour // Default fallback
 
@@ -480,8 +492,8 @@ func (p *DownsamplerProcessor) ProcessBatch(_ context.Context, batch service.Mes
 		// Note: if len(result.ProcessedMessages) == 0, the message was filtered (not an error)
 	}
 
-	// If there were any critical errors, you might want to return an error
-	// This would prevent ACKing the batch, ensuring at-least-once delivery
+	// Errors are logged, not returned: returning one would block the ACK
+	// of the whole batch. The failed messages were forwarded above.
 	if len(processingErrors) > 0 {
 		p.logger.Errorf("Batch processing had %d errors, but continuing with fail-open policy", len(processingErrors))
 		// In a strict at-least-once setup, you might return the first error here:
@@ -768,8 +780,8 @@ func (p *DownsamplerProcessor) updateProcessedTime(state *SeriesState, timestamp
 //  4. Queue remaining messages on shutdownBatch.
 //  5. Clear maps, return nil.
 //
-// WHY still fail‑open here?
-//   - Better to risk duplicate data than to drop final points.
+// Benthos never calls ProcessBatch after Close, so the queued batch is
+// never emitted (https://linear.app/united-manufacturing-hub/issue/ENG-8218).
 func (p *DownsamplerProcessor) Close(_ context.Context) error {
 	// Use sync.Once to ensure closeChan is only closed once
 	p.closeOnce.Do(func() {

@@ -23,26 +23,18 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/downsampler_plugin/algorithms"
 )
 
-// SeriesState maintains processing state for a specific time series with ACK buffering support
-//
-// ## ACK Buffering Implementation
-//
-// This struct implements message buffering to support "emit-previous" algorithms like SDT.
-// The buffering holds the candidate message while the algorithm decides and releases it for
-// emission when needed. A buffered candidate can still be dropped (superseded, max_time,
-// shutdown), so this is not a delivery guarantee.
-//
-// ### Buffer Lifecycle:
-// 1. **stash()**: Store message when algorithm doesn't emit (filtered)
-// 2. **releaseCandidate()**: Retrieve and clear buffered message for emission
-// 3. **Idle timeout**: Automatic flush based on algorithm's max_time setting
-// 4. **Shutdown**: Close() moves buffered messages into a shutdown batch that is
-//    emitted only if another batch is processed afterwards
-//
-// ### Memory Safety:
-// - Only one message buffered per series (bounded memory usage)
-// - Messages are copied to prevent mutation issues
-// - Automatic cleanup on series reset or shutdown
+// SeriesState holds the algorithm state of one time series and, for
+// emit-previous algorithms such as swinging door, the one held candidate
+// message. The candidate is ACKed when stashed and exists only in memory, so
+// it is lost when:
+//   - a newer sample replaces it;
+//   - the max_time heartbeat or a late passthrough message emits the current
+//     point instead (https://linear.app/united-manufacturing-hub/issue/ENG-8219);
+//   - a boolean or string message on the series is emitted or stashed;
+//   - a ds_* hint rebuilds the series' algorithm;
+//   - a late message under late_policy drop replaces it (https://linear.app/united-manufacturing-hub/issue/ENG-8221);
+//   - the idle flush cannot queue it, or Close queues it into shutdownBatch,
+//     which is never read afterwards (https://linear.app/united-manufacturing-hub/issue/ENG-8218).
 type SeriesState struct {
 	processor *algorithms.ProcessorWrapper
 	mutex     sync.Mutex

@@ -1,3 +1,0 @@
-kind: fixes
-body: 'downsampler processor (downsampler): documentation now matches the actual behaviour. The old page promised a confirmatory message every max_time (a stopped sensor emits nothing at all under deadband, and under swinging door its last held sample appears once, late), claimed an invalid config is rejected at startup (it starts and then forwards every message unfiltered), and claimed no message is lost on shutdown (points still held are dropped) (ENG-8206)'
-time: 2026-11-27T12:00:00.000000+01:00

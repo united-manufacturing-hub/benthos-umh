@@ -79,10 +79,10 @@ pipeline:
               threshold: 1.0     # Medium sensitivity for humidity
           - pattern: "*.status"
             deadband:
-              threshold: 0.1
+              threshold: 0.1     # no effect: strings and booleans are kept only when they change
           - pattern: "*.machine_state" 
             deadband:
-              threshold: 0.1
+              threshold: 0.1     # no effect: strings and booleans are kept only when they change
           - pattern: "*.critical_sensor"
             late_policy: drop
           # Pressure will use the default threshold of 2.0
