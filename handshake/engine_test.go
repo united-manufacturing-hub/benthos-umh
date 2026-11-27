@@ -772,6 +772,30 @@ func TestLiteralWaitScanner_CountsOnlyRealCalls(t *testing.T) {
 			want:   maxLiteralWait,
 		},
 		{
+			// An optional call runs the wait whenever wait_until exists,
+			// which it always does, so it is a real wait.
+			name:   "an optional call is still a call",
+			script: `opcua.wait_until?.({nodeId: "A"}, v => v, 5000);`,
+			want:   5 * time.Second,
+		},
+		{
+			name:   "an optional chain on the namespace is still a call",
+			script: `opcua?.wait_until({nodeId: "A"}, v => v, 5000);`,
+			want:   5 * time.Second,
+		},
+		{
+			name:   "a string literal in brackets names the call",
+			script: `opcua["wait_until"]({nodeId: "A"}, v => v, 5000);`,
+			want:   5 * time.Second,
+		},
+		{
+			// A computed member has no name to match, so it is left to a
+			// person, like a computed timeout.
+			name:   "a computed member in brackets is not named",
+			script: `opcua[name]({nodeId: "A"}, v => v, 5000);`,
+			want:   0,
+		},
+		{
 			// Both are plain numbers, so both count. Read as computed,
 			// a real one-second wait would pass a 999ms budget unseen.
 			name:   "a hex literal is a plain number",
