@@ -491,3 +491,50 @@ func TestRun_NonFiniteFloatsInTheMessageCrossAsJavaScriptNumbers(t *testing.T) {
 		t.Fatalf("outcome %v, err %v", res.Outcome, res.Err)
 	}
 }
+
+// selfMap is a typed map, which jsValue copies by reflection rather than by
+// its map[string]any case.
+type selfMap map[string]any
+
+// A message that contains itself cannot cross into the script: copying it
+// would recurse until the Go stack overflows, which kills the process. The
+// run is refused as a script-side mistake, Persistent and not a machine
+// fault, before the script runs. The failure messages never format the
+// message itself, which %v would also recurse on.
+func TestRun_AMessageThatContainsItselfIsRefusedNotACrash(t *testing.T) {
+	m := map[string]any{}
+	m["self"] = m
+	s := []any{nil}
+	s[0] = s
+	typed := selfMap{}
+	typed["self"] = typed
+	for _, tc := range []struct {
+		name string
+		msg  map[string]any
+	}{
+		{"a map holding itself", m},
+		{"a slice holding itself", map[string]any{"list": s}},
+		{"a typed map holding itself", map[string]any{"typed": typed}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := &fakeBinding{values: map[string]any{"Ready": true}}
+			engine := newTestEngine(t, b, func(c *Config) {
+				c.Script = `opcua.read({nodeId: "Ready"}); return opcua.success({});`
+			})
+			res := engine.Run(t.Context(), tc.msg)
+			if res.Outcome != Persistent {
+				t.Fatalf("outcome %v, want Persistent (err %v)", res.Outcome, res.Err)
+			}
+			if res.Err == nil || !strings.Contains(res.Err.Error(), "contains itself") {
+				t.Fatalf("Err does not say the message contains itself: %v", res.Err)
+			}
+			var f *fault
+			if errors.As(res.Err, &f) {
+				t.Fatalf("a message that cannot cross is not a machine fault: %v", res.Err)
+			}
+			if ops := b.snapshot(); len(ops) != 0 {
+				t.Fatalf("the script ran on a message it cannot see: %v", ops)
+			}
+		})
+	}
+}
