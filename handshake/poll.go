@@ -104,9 +104,9 @@ func (e *Engine[UnifiedAddress]) waitUntil(
 		// the machine at wire speed; 1ms is the floor.
 		poll = max(time.Duration(ms*float64(time.Millisecond)), time.Millisecond)
 	}
-	persistent := false
-	if s, ok := opts["onTimeout"].(string); ok {
-		persistent = s == "persistent"
+	persistent, err := waitOptions(opts)
+	if err != nil {
+		return nil, fmt.Errorf("wait_until on %s %w", describe, err)
 	}
 
 	timeout := time.Duration(timeoutMs) * time.Millisecond
@@ -215,4 +215,40 @@ func (e *Engine[UnifiedAddress]) waitRanOut(
 		rs.waitPersistent = persistent
 	}
 	return err
+}
+
+// waitOptions checks wait_until's options object and reports whether a wait
+// that runs out ends persistent. An unknown option or onTimeout value is a
+// wrong script, refused rather than read as the default: a typo such as
+// "persistant" otherwise made a timeout silently Transient. Validate applies
+// the same check to literal options at deploy time (checkWaitOptions).
+func waitOptions(opts map[string]any) (bool, error) {
+	for key := range opts {
+		if err := waitOptionKey(key); err != nil {
+			return false, err
+		}
+	}
+	return onTimeoutValue(opts["onTimeout"])
+}
+
+// waitOptionKey refuses an option wait_until does not take.
+func waitOptionKey(key string) error {
+	switch key {
+	case "pollMs", "onTimeout":
+		return nil
+	default:
+		return fmt.Errorf("was given the unknown option %q: it takes pollMs and onTimeout", key)
+	}
+}
+
+// onTimeoutValue reads the onTimeout option; absent is transient.
+func onTimeoutValue(v any) (bool, error) {
+	switch v {
+	case nil, "transient":
+		return false, nil
+	case "persistent":
+		return true, nil
+	default:
+		return false, fmt.Errorf(`was given onTimeout %#v: it must be "transient" or "persistent"`, v)
+	}
 }

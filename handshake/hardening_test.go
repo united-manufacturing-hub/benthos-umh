@@ -159,3 +159,58 @@ func TestRun_TheFirstSuccessDataWins(t *testing.T) {
 		t.Fatalf("Data is %#v, want the first success's {n: 1}", res.Data)
 	}
 }
+
+// A typo in a wait's options used to read as the default, so a wait meant to
+// end persistent ended Transient and the message was retried. Validate
+// refuses a literal one, naming the block and the value.
+func TestConfig_ValidateRefusesAnUnknownWaitOption(t *testing.T) {
+	for _, tc := range []struct{ name, opts, want string }{
+		{"a misspelled onTimeout value", `{onTimeout: "persistant"}`, `"persistant"`},
+		{"an onTimeout value of the wrong case", `{"onTimeout": "Persistent"}`, `"Persistent"`},
+		{"a misspelled option", `{onTimout: "persistent"}`, `"onTimout"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.OnError = `opcua.wait_until({nodeId: "Idle"}, v => v === true, 100, ` + tc.opts + `);`
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatalf("Validate accepted the options %s", tc.opts)
+			}
+			for _, want := range []string{"onError", tc.want} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("the refusal must name %s, got: %v", want, err)
+				}
+			}
+		})
+	}
+	for _, opts := range []string{
+		`{onTimeout: "persistent"}`, `{onTimeout: "transient", pollMs: 10}`, `{}`, `{onTimeout: msg.mode}`,
+	} {
+		cfg := validConfig()
+		cfg.Script = `opcua.wait_until({nodeId: "Idle"}, v => v === true, 100, ` + opts + `); return opcua.success({});`
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate refused the options %s: %v", opts, err)
+		}
+	}
+}
+
+// A computed onTimeout value is checked when the wait runs: a wrong one is a
+// wrong script, Persistent, refused before the machine is read.
+func TestWaitUntil_RefusesAComputedUnknownOnTimeout(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{"Loaded": false}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.Script = `opcua.wait_until({nodeId: "Loaded"}, v => v === true, 50, {onTimeout: msg.mode}); return opcua.success({});`
+	})
+	res := engine.Run(t.Context(), map[string]any{"mode": "persistant"})
+	if res.Outcome != Persistent || res.Err == nil || !strings.Contains(res.Err.Error(), `"persistant"`) {
+		t.Fatalf("outcome %v, err %v", res.Outcome, res.Err)
+	}
+	if n := b.count("read Loaded"); n != 0 {
+		t.Fatalf("a refused wait read the machine %d time(s)", n)
+	}
+
+	res = engine.Run(t.Context(), map[string]any{"mode": "transient"})
+	if res.Outcome != Transient {
+		t.Fatalf("an explicit transient wait that ran out: outcome %v, err %v", res.Outcome, res.Err)
+	}
+}
