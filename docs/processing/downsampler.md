@@ -27,10 +27,15 @@ If a value you expected is not in your historian, one of the paths below dropped
    a deadband series; on a swinging-door series the late message instead replaces the held
    candidate (see [Late arrivals](#late-arrivals)).
 5. **Swinging-door candidate discarded.** The most recent sample of a swinging-door series is held
-   in memory as a candidate and is dropped — never emitted — when a newer sample supersedes it or
-   when `max_time` fires. The test for this cause is to watch whether the series' next arrival
-   produces it.
-6. **Process restart or shutdown.** All state is in memory. A swinging-door candidate dies with
+   in memory as a candidate and is dropped — never emitted — when a newer sample supersedes it,
+   when `max_time` fires, or when **any** late message arrives for that series, under either
+   `late_policy` (see [Late arrivals](#late-arrivals)). The test for this cause is to watch
+   whether the series' next arrival produces it.
+6. **Parameter-change flush.** When a per-message hint changes a series' parameters, the point
+   flushed out of the old algorithm is re-stashed as the new algorithm's candidate and then
+   cleared by the hint-carrying message, which is the new algorithm's first message. It is never
+   emitted (see [Metadata overrides](#metadata-overrides)).
+7. **Process restart or shutdown.** All state is in memory. A swinging-door candidate dies with
    the process, and the points collected at shutdown are not emitted
    (see [Delivery guarantees](#delivery-guarantees)).
 
@@ -61,9 +66,6 @@ otherwise suppress it.
 6. **Idle flush.** A swinging-door candidate held longer than the series' `max_time` — or 4 hours
    when `max_time` is unset — is released by the background timer and reaches the output with the
    next batch that passes through (see [max_time](#max_time)).
-7. **Parameter-change flush.** When a per-message hint changes a series' parameters, a held
-   candidate is flushed before the series' state is recreated
-   (see [Metadata overrides](#metadata-overrides)).
 
 ## Which messages are downsampled
 
@@ -174,10 +176,16 @@ not name), and vice versa. Check the `downsampling_config` output metadata (see
 
 ### Field types
 
-A field with the wrong YAML kind — an object or array where a scalar belongs — is rejected at
-startup. A scalar of the wrong type is not: `max_time: 30` and `threshold: "0.5"` both pass the
-startup check and are then silently discarded, the value treated as unset. Write durations as
-strings (`"30m"`, `"1h"`) and thresholds as numbers.
+Write durations as strings (`"30m"`, `"1h"`) and thresholds as numbers. The two mistakes fail
+differently, and neither failure is the one you would expect:
+
+- A **duration given as a bare number**, `max_time: 30`, passes every check and is then silently
+  discarded. The value is treated as unset, so the series runs with no heartbeat at all.
+- A **number given as a string**, `threshold: "0.5"`, passes lint but **stops the pipeline from
+  starting**, with `failed to init processor ... field 'threshold': yaml: unmarshal errors`.
+
+A field with the wrong YAML kind — an object or array where a scalar belongs — is also rejected
+before the pipeline runs.
 
 ### Swinging door requires a threshold
 
@@ -312,9 +320,11 @@ There is also a background wall-clock timer. Once a held candidate's stash age r
 series' `max_time` — or **4 hours when `max_time` is unset** — the timer releases the held message
 and resets the series' algorithm. Three consequences:
 
-- A dead swinging-door sensor's last suppressed sample does appear in the historian, roughly
-  `max_time` (or 4 hours) after the silence began. It carries **no `downsampled_by` metadata**, so
-  it looks like an ordinary sample.
+- A dead swinging-door sensor's last suppressed sample does appear in the historian, between
+  `max_time` and about twice `max_time` after the silence began — the timer ticks at the smallest
+  `max_time` anywhere in the configuration, while each series waits for its own. With no
+  `max_time` configured at all that window is 4 to 8 hours. The sample carries **no
+  `downsampled_by` metadata**, so it looks like an ordinary one.
 - Because the flush resets the algorithm, the sensor's **next real sample is treated as a first
   message** and emitted unfiltered, whatever its value. A sensor that recovers with a large
   excursion writes that spike through.
@@ -335,12 +345,17 @@ late-arrival check, so a late *changed* boolean is emitted even under `drop`, an
 
 - `passthrough` (the default): a message older than the series' last timestamp bypasses the
   algorithm and is emitted unchanged. There is no marker on it — late messages are
-  indistinguishable from in-order ones downstream.
+  indistinguishable from in-order ones downstream. On a swinging-door series it also **discards
+  the held candidate**, which is never emitted: one late message costs you the in-order point the
+  algorithm was holding.
 - `drop`: a message older than the series' last timestamp is discarded on a deadband series. On a
   swinging-door series the late message is instead **stashed as the new candidate**, replacing
   and discarding whatever was held; the idle flush can later emit that stale message with its
   out-of-order value. The drop on a deadband series is logged at Debug level and counted in
   `messages_filtered`; there is no counter that separates it from threshold suppression.
+
+So on a swinging-door series a late message destroys the held in-order point under **either**
+policy. Only deadband, which holds nothing, is unaffected.
 
 Independently of the policy, a message whose `timestamp_ms` **equals** the series' last processed
 timestamp is dropped regardless of its value (see
@@ -350,8 +365,14 @@ timestamp is dropped regardless of its value (see
 
 Instead of hard-coding every rule in the downsampler configuration, you can set downsampling
 hints per message in metadata — typically in a preceding `tag_processor`. Hints apply per series;
-a hint change flushes any held candidate and recreates the series' algorithm state, so the
-message carrying the new hint is processed as the first message of a fresh series.
+a hint change recreates the series' algorithm state, so the message carrying the new hint is
+processed as the first message of a fresh series.
+
+Changing a hint costs you the held candidate. A parameter change flushes the old algorithm's
+pending point, but re-stashes it as the new algorithm's candidate, where the hint-carrying
+message immediately clears it — so it is never emitted. A change of `ds_algorithm` does not flush
+the old algorithm at all. Either way the held point is lost; change hints on a series you care
+about only when it is quiet.
 
 | Metadata key | Allowed values | Maps to |
 |---|---|---|
@@ -401,9 +422,9 @@ Messages the downsampler emits carry:
 - `downsampling_config` — the parameters the series actually ran with, for example
   `deadband(threshold=0.500,max_time=30m0s)`.
 
-Synthetic messages produced at shutdown or by a parameter-change flush additionally carry
-`synthetic_flush_point: "true"` and `umh_topic`. An idle-flushed message is the raw stashed copy:
-it carries neither key.
+Synthetic messages built at shutdown carry `synthetic_flush_point: "true"` and `umh_topic` as
+well — though the shutdown batch is not emitted, so in practice nothing downstream sees them. An
+idle-flushed message is the raw stashed copy and carries neither key.
 
 `ds_ignore` is deleted on the ignore path; other metadata is carried through unchanged.
 
@@ -423,10 +444,10 @@ indistinguishable from threshold suppression in the metrics.
 
 ## Startup validation
 
-The downsampler does not validate its configuration. Only three things are rejected before the
-first message: a field with the wrong YAML kind, a `late_policy` outside `passthrough`/`drop`, and
-an override without `pattern`. A scalar of the wrong type passes and is silently discarded
-(see [Field types](#field-types)).
+The downsampler does not validate its configuration. Four things stop it before the first
+message, and all four are about shape rather than meaning: a field with the wrong YAML kind, a
+`late_policy` outside `passthrough`/`drop`, an override without `pattern`, and a number written
+as a string, which fails when the processor is built (see [Field types](#field-types)).
 
 Everything else — a negative `threshold`, a `swinging_door` block without a threshold,
 `min_time > max_time` — starts cleanly. The failure surfaces per series on the first message: the
@@ -469,9 +490,10 @@ configuration is a rising `messages_errored` counter while the affected series p
 unfiltered (see [Startup validation](#startup-validation)).
 
 **Limits.** These guarantees hold only while the process stays alive and messages keep arriving:
-nothing is persisted, and the idle and shutdown flushes write into a one-batch queue that only
-the regular processing loop reads, so their output reaches the pipeline only if another batch
-arrives afterwards. The downsampler is not suited for pipelines where every sample must be
+nothing is persisted, and the idle and shutdown flushes write into a queue that holds **one**
+batch and that only the regular processing loop reads. Their output reaches the pipeline only if
+another batch arrives afterwards, and a flush that finds the queue still occupied is dropped with
+a log line rather than waiting. The downsampler is not suited for pipelines where every sample must be
 preserved: it removes data by design, holds each swinging-door series' unemitted candidate in
 memory, and cannot reconstruct either. If a consumer needs the full raw stream, archive the
 unfiltered topic in parallel.
