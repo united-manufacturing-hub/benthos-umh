@@ -24,10 +24,9 @@ on:
         type: boolean
 
 jobs:
-  # The handshake engine and the runtime under it had no CI target at all
-  # until ENG-8129: every green run came from someone running go test by
-  # hand. Both run with -race, because the engine hands a machine to a
-  # script and the failure that matters is a run outliving its own deadline.
+  # The handshake engine and the fault server run with -race, because the
+  # engine hands a machine to a script and the failure that matters is a run
+  # outliving its own deadline.
   test-handshake:
     name: Handshake engine
     runs-on: depot-ubuntu-24.04
