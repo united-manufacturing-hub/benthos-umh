@@ -134,9 +134,9 @@ nodeIDs: ['ns=2;s=IoTSensors']
 })
 
 var _ = Describe("compatibility field in the published config schema", func() {
-	// OPCUAConfigSpec is a package-level var whose initialiser calls
+	// OPCUAConfigSpec is a package-level var whose initializer calls
 	// compatibility.Field(), and Field() renders its description from the
-	// flags declared so far. Go orders package-level initialisation by
+	// flags declared so far. Go orders package-level initialization by
 	// dependency, and OPCUAConfigSpec depends on the compatibility Flags but
 	// not on correctTagPath, so nothing in the language guarantees the flag
 	// is declared before the spec is built: it works today only because

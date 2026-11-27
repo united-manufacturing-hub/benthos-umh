@@ -126,7 +126,7 @@ var _ = Describe("createMessageFromValue tag metadata", func() {
 	}
 
 	// Legacy mode (compatibility.correct_tag_path unset or false) is frozen
-	// behaviour: every expectation in this table is today's output, malformed
+	// behavior: every expectation in this table is today's output, malformed
 	// paths and all, and must never change (ENG-7953).
 	DescribeTable("legacy mode: sets opcua_tag_path, opcua_tag_group and opcua_tag_name",
 		func(path, browseName, wantPath, wantGroup, wantName string) {

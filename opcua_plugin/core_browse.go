@@ -109,7 +109,7 @@ type tagTopicParts struct {
 }
 
 // compatibility is the set of compatibility flags the OPC UA input
-// recognises inside its `compatibility` config block.
+// recognizes inside its `compatibility` config block.
 var compatibility = compat.New()
 
 // correctTagPath is the compatibility flag correct_tag_path: publish a tag
@@ -137,7 +137,7 @@ func (g *OPCUAInput) tagTopicPartsOf(n NodeDef) tagTopicParts {
 // instead of DB1.arr.1), and a tag inside a folder of the same name does not
 // publish at all.
 //
-// This is frozen behaviour that bridges depend on: never change it. It stays
+// This is frozen behavior that bridges depend on: never change it. It stays
 // available as the default of the compatibility flag correct_tag_path
 // (ENG-7953).
 func legacyTagTopicPartsOf(n NodeDef) tagTopicParts {
