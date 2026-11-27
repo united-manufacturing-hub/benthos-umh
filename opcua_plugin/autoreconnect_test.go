@@ -25,17 +25,15 @@ import (
 	"github.com/united-manufacturing-hub/benthos-umh/opcua_plugin/internal/faultopcua"
 )
 
-// TestAutoReconnect_FalseActuallyStopsTheClientReconnecting
+// TestAutoReconnect_FalseActuallyStopsTheClientReconnecting pins that
+// autoReconnect false, the documented default, turns reconnection off.
+// gopcua's own default is AutoReconnect(true), so the connection has to pass
+// the option whichever way the field is set.
 //
-// autoReconnect is documented as defaulting to false, and setting it false
-// did nothing: gopcua's own default is AutoReconnect(true), and we only ever
-// passed the option when our field was true, so the field was one-way.
-//
-// Nothing caught it because nothing had ever killed a connection underneath
-// a running client. This kills one, and then counts the dials the server
-// saw. A reconnect is otherwise invisible -- the session is rebuilt, the
-// next request works, nothing is logged -- so the dial count is the whole
-// of the evidence.
+// The test kills the connection underneath a running client and then counts
+// the dials the server saw. A reconnect is otherwise invisible -- the session
+// is rebuilt, the next request works, nothing is logged -- so the dial count
+// is the whole of the evidence.
 func TestAutoReconnect_FalseActuallyStopsTheClientReconnecting(t *testing.T) {
 	ctx := context.Background()
 	// New registers its own Close with t.Cleanup.

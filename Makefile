@@ -119,12 +119,10 @@ test-handshake:
 # The fault server's own tests (opcua_plugin/internal/faultopcua), the OPC UA
 # server that misbehaves on purpose. It needs no container and no network.
 #
-# The whole package, with no -run filter. The filter this target shipped with
-# -- 'TestFault|TestControl|TestInject' -- silently excluded
-# TestTheControl_AnHonestServerAppliesAWrite, because "TestControl" is not a
-# substring of "TestTheControl". The one test it dropped was the control: the
-# test that proves the server behaves honestly when nothing is armed, which
-# is what makes every fault result mean anything.
+# It runs the whole package, with no -run filter, so the control test
+# (TestTheControl_AnHonestServerAppliesAWrite) always runs. The control shows
+# that the server behaves honestly when no fault is armed, which is what gives
+# every fault result its meaning.
 .PHONY: test-handshake-faults
 test-handshake-faults:
 	@go test -race -count=1 ./opcua_plugin/internal/faultopcua/
