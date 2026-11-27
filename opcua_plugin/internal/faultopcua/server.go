@@ -56,6 +56,7 @@ func New(t *testing.T) *Server {
 	)
 	s.ns = &faultNamespace{
 		NodeNameSpace: server.NewNodeNameSpace(s.srv, "faultopcua"),
+		t:             t,
 		faults:        map[string]*Fault{},
 		vars:          map[string]*Variable{},
 		closed:        make(chan struct{}),

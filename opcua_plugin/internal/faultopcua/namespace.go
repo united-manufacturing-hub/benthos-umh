@@ -17,6 +17,7 @@ package faultopcua
 import (
 	"net"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/gopcua/opcua/id"
@@ -59,6 +60,12 @@ const (
 type faultNamespace struct {
 	*server.NodeNameSpace
 
+	// t is the test this namespace serves, and the only witness a fault
+	// can call to when it catches itself lying at request time, on a
+	// goroutine that is not the test's own: t.Error is the one reporting
+	// call safe from any goroutine.
+	t *testing.T
+
 	mu     sync.Mutex
 	faults map[string]*Fault // keyed by the node's StringID; one armed fault per node
 	vars   map[string]*Variable
@@ -78,9 +85,6 @@ type faultNamespace struct {
 	// DropSession firing inside a request cuts the connection that touched
 	// the node rather than every connection there is.
 	reqPort int
-
-	// flap alternates FlapValue between the real value and the fault's.
-	flap bool
 }
 
 // Attribute is the read side.
@@ -100,7 +104,7 @@ func (ns *faultNamespace) Attribute(id *ua.NodeID, attr ua.AttributeID) *ua.Data
 	switch f.kind {
 	case faultDropSession:
 		f.tookEffect()
-		ns.drop()
+		ns.drop(f)
 		return &ua.DataValue{
 			EncodingMask:    ua.DataValueServerTimestamp | ua.DataValueStatusCode,
 			ServerTimestamp: time.Now(),
@@ -130,7 +134,7 @@ func (ns *faultNamespace) Attribute(id *ua.NodeID, attr ua.AttributeID) *ua.Data
 		}
 	case faultFlapValue:
 		f.tookEffect()
-		if ns.toggleFlap() {
+		if f.toggle() {
 			return server.DataValueFromValue(f.until)
 		}
 		return ns.NodeNameSpace.Attribute(id, attr)
@@ -162,7 +166,7 @@ func (ns *faultNamespace) SetAttribute(id *ua.NodeID, attr ua.AttributeID, val *
 		// this fault asks is what a caller does when it cannot find out
 		// whether the write landed. Storing it first would answer that.
 		f.tookEffect()
-		ns.drop()
+		ns.drop(f)
 		return ua.StatusBadConnectionClosed
 	case faultRefuseWrite:
 		f.tookEffect()
@@ -301,14 +305,28 @@ func (ns *faultNamespace) servePort(port int) {
 }
 
 // drop cuts the client's connection. The proxy counts what it closed.
-func (ns *faultNamespace) drop() {
+//
+// When there is no connection to cut, it fails the test rather than
+// returning quietly, because the fault has already recorded a firing and
+// answered with a ConnectionClosed: a fault that reports it fired while
+// closing nothing is the one thing this package must never do. The
+// connection is missing when the request that touched the node never
+// arrived on one -- gopcua answers monitored items from a background
+// goroutine, where reqPort is zero and there is no session to drop. This
+// runs on a goroutine that is not the test's own, so it reports with
+// t.Error, the one call safe from any goroutine.
+func (ns *faultNamespace) drop(f *Fault) {
 	if ns.onDrop == nil {
 		return
 	}
 	ns.mu.Lock()
 	port := ns.reqPort
 	ns.mu.Unlock()
-	ns.onDrop(port)
+	if cut := ns.onDrop(port); cut == 0 {
+		ns.t.Errorf("faultopcua: DropSession fired on %q with no connection to cut (the request's port was %d): "+
+			"the session was not dropped and nothing was closed, so the fault has reported a firing it did not perform -- "+
+			"a fault that reports it fired while closing nothing is the one thing this package must never do", f.node, port)
+	}
 }
 
 // faultFor finds the fault armed against a node, if any.
@@ -331,13 +349,4 @@ func (ns *faultNamespace) varFor(id *ua.NodeID) *Variable {
 	ns.mu.Lock()
 	defer ns.mu.Unlock()
 	return ns.vars[id.StringID()]
-}
-
-// toggleFlap flips the shared phase FlapValue alternates on, under the lock,
-// because two requests can race for it even though the service loop cannot.
-func (ns *faultNamespace) toggleFlap() bool {
-	ns.mu.Lock()
-	defer ns.mu.Unlock()
-	ns.flap = !ns.flap
-	return ns.flap
 }

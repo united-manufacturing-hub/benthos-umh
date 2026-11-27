@@ -77,6 +77,16 @@ func TestArming_RefusesWhatItCannotArm(t *testing.T) {
 			v := srv.AddVariable("Loaded", true)
 			srv.RaiseFlagLate(v, false, -time.Second)
 		}},
+		// Arming a second fault on a node used to replace the first silently:
+		// the first *Fault stayed in the caller's hand, never fired again, and
+		// Fired() answered false with no diagnostic -- the same silent trap as
+		// a fault armed against a node that is not there, one step along.
+		{"arming a second fault on a node that already has one", "cannot arm FlapValue against \"Setpoint\": RefuseWrite is already armed", func(t *testing.T) {
+			srv := faultopcua.New(t)
+			v := srv.AddVariable("Setpoint", int32(7))
+			srv.RefuseWrite(v, ua.StatusBadInternalError)
+			srv.FlapValue(v, false)
+		}},
 	}
 
 	if child, ok := os.LookupEnv(armCaseEnv); ok {

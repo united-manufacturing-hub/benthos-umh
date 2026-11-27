@@ -289,3 +289,41 @@ func TestFault_RaisesTheFlagLate(t *testing.T) {
 		t.Error("the flag never came up, so this fault is a permanent refusal rather than a late answer")
 	})
 }
+
+// TestFault_FlapsIndependentlyPerNode pins the phase FlapValue alternates on
+// as the fault's own. The phase used to live on the namespace, one bool for
+// every fault in it, so two flapping nodes read alternately did not alternate:
+// they toggled the same phase in lockstep, one node answering the fault's
+// value every time and the other the real value every time. Neither node
+// flapped, which reads as two machines, not one machine flapping twice.
+func TestFault_FlapsIndependentlyPerNode(t *testing.T) {
+	srv, client, left := startServer(t, "Left", int32(1))
+	right := srv.AddVariable("Right", int32(2))
+	fLeft := srv.FlapValue(left, int32(111))
+	fRight := srv.FlapValue(right, int32(222))
+	idLeft, idRight := nodeID(t, left), nodeID(t, right)
+
+	// Look at Left, then Right, then Left again, the way a script watching
+	// two controllers does. Each node must alternate on its own reads: the
+	// first faulted read of a node answers the fault's value, the second
+	// the real one.
+	wantLeft := []any{int32(111), int32(1), int32(111)}
+	wantRight := []any{int32(222), int32(2), int32(222)}
+	for i := range wantLeft {
+		if got := readValue(t, client, idLeft); got != wantLeft[i] {
+			t.Fatalf("Left read %v on look %d, want %v: the node is not alternating on its own reads", got, i+1, wantLeft[i])
+		}
+		if got := readValue(t, client, idRight); got != wantRight[i] {
+			t.Fatalf("Right read %v on look %d, want %v: reading another node took this one's phase, so this node is not alternating", got, i+1, wantRight[i])
+		}
+	}
+	if !fLeft.Fired() || !fRight.Fired() {
+		t.Errorf("Left fired %d times and Right %d: both faults must fire for this to prove anything", fLeft.Count(), fRight.Count())
+	}
+	if n := left.Reads(); n < len(wantLeft) {
+		t.Errorf("only %d reads reached Left, want at least %d", n, len(wantLeft))
+	}
+	if n := right.Reads(); n < len(wantRight) {
+		t.Errorf("only %d reads reached Right, want at least %d", n, len(wantRight))
+	}
+}
