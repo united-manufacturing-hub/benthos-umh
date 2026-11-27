@@ -426,11 +426,30 @@ func argPredicate(vm *goja.Runtime, v goja.Value) (func(any) bool, error) {
 	}, nil
 }
 
-// readOp runs one read and records the fault if it failed. A parse failure is
-// recorded like a read failure: what a binding marks is what Run reports.
+// address is the first step of every operation that reaches the binding.
 // After the run has ended the machine is not touched again: the ending
 // functions abort the script by throwing errEnded, and a throw is catchable,
-// so the operations themselves refuse too (UAT-13).
+// so the operations themselves refuse too (UAT-13). Once the run's clock has
+// run out the machine is not touched either. Otherwise address parses the
+// script's address, and records a refused parse like any operation's fault:
+// what a binding marks is what Run reports, and the operation never reached
+// the machine.
+func (e *Engine[UnifiedAddress]) address(rs *runState, raw map[string]any) (UnifiedAddress, error) {
+	var none UnifiedAddress
+	if rs.end != endNone {
+		return none, errEnded
+	}
+	if err := rs.ctx.Err(); err != nil {
+		return none, err
+	}
+	addr, err := e.bind.ParseAddress(raw)
+	if err != nil {
+		rs.fail("parse address", err)
+		return none, err
+	}
+	return addr, nil
+}
+
 // readWithin is readOp bounded by the caller's own deadline rather than the
 // run's. It reports whether the read was cut off by that bound while the run
 // still had time, which is a wait running out rather than a machine fault --
@@ -438,15 +457,8 @@ func argPredicate(vm *goja.Runtime, v goja.Value) (func(any) bool, error) {
 func (e *Engine[UnifiedAddress]) readWithin(
 	rs *runState, raw map[string]any, bound time.Time,
 ) (value any, cutOff bool, err error) { //nolint:nonamedreturns // three results, and the middle one is the question
-	if rs.end != endNone {
-		return nil, false, errEnded
-	}
-	if err := rs.ctx.Err(); err != nil {
-		return nil, false, err // the deadline fired; the machine is not touched again
-	}
-	addr, err := e.bind.ParseAddress(raw)
+	addr, err := e.address(rs, raw)
 	if err != nil {
-		rs.fail("parse address", err)
 		return nil, false, err
 	}
 	ctx, cancel := context.WithDeadline(rs.ctx, bound)
@@ -466,16 +478,10 @@ func (e *Engine[UnifiedAddress]) readWithin(
 	return resp.Value, false, nil
 }
 
+// readOp runs one read and records the fault if it failed.
 func (e *Engine[UnifiedAddress]) readOp(rs *runState, raw map[string]any) (any, error) {
-	if rs.end != endNone {
-		return nil, errEnded
-	}
-	if err := rs.ctx.Err(); err != nil {
-		return nil, err // the deadline fired; the machine is not touched again
-	}
-	addr, err := e.bind.ParseAddress(raw)
+	addr, err := e.address(rs, raw)
 	if err != nil {
-		rs.fail("parse address", err)
 		return nil, err
 	}
 	resp, err := e.bind.Read(rs.ctx, addr)
@@ -490,19 +496,10 @@ func (e *Engine[UnifiedAddress]) readOp(rs *runState, raw map[string]any) (any, 
 // operation's, for the script's outcome; inside a cleanup block the
 // dispatch boundary records what a refused write means (cleanupEvidence):
 // a refused write leaves the machine's state unknown, which a cleanup
-// block must not be able to catch its way around. After the run has ended
-// the write is refused without reaching the machine (UAT-13): the first
-// ending decided the transaction, and nothing may extend it.
+// block must not be able to catch its way around.
 func (e *Engine[UnifiedAddress]) writeOp(rs *runState, raw map[string]any, value any) error {
-	if rs.end != endNone {
-		return errEnded
-	}
-	if err := rs.ctx.Err(); err != nil {
-		return err // the deadline fired; the machine is not touched again
-	}
-	addr, err := e.bind.ParseAddress(raw)
+	addr, err := e.address(rs, raw)
 	if err != nil {
-		rs.fail("parse address", err) // the write never reached the machine
 		return err
 	}
 	if err := e.bind.Write(rs.ctx, addr, value); err != nil {
@@ -521,15 +518,8 @@ func (e *Engine[UnifiedAddress]) writeOp(rs *runState, raw map[string]any, value
 func (e *Engine[UnifiedAddress]) callOp(
 	rs *runState, caller Caller[UnifiedAddress], raw map[string]any, inputs []any,
 ) (any, error) {
-	if rs.end != endNone {
-		return nil, errEnded
-	}
-	if err := rs.ctx.Err(); err != nil {
-		return nil, err // the deadline fired; the machine is not touched again
-	}
-	addr, err := e.bind.ParseAddress(raw)
+	addr, err := e.address(rs, raw)
 	if err != nil {
-		rs.fail("parse address", err) // the call never reached the machine
 		return nil, err
 	}
 	resp, err := caller.Call(rs.ctx, addr, inputs)
