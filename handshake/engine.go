@@ -44,14 +44,14 @@ type runState struct {
 	ctx            context.Context // the clock the block runs under
 	deadline       time.Time       // zero when the block has no deadline
 	end            ending
-	data           any             // the object success returned
-	detail         any             // the detail an ending call passed
-	opErr          error           // the most recent binding operation that failed
-	opWhere        string          // which one, for the message of a run its deadline stopped
-	mutErr         error           // an operation a cleanup block asked for that came back with an error: the evidence the machine was not handed back, recorded at the dispatch boundary (cleanupEvidence)
-	mutWhere       string          // which one, for the cleanup's error message
-	waitPersistent bool            // a wait that ran out was told onTimeout persistent
-	cleanup        bool            // this run is a cleanup block: no ending to record, so a wait that runs out is cleanup-failure evidence instead
+	data           any    // the object success returned
+	detail         any    // the detail an ending call passed
+	opErr          error  // the most recent binding operation that failed
+	opWhere        string // which one, for the message of a run its deadline stopped
+	mutErr         error  // an operation a cleanup block asked for that came back with an error: the evidence the machine was not handed back, recorded at the dispatch boundary (cleanupEvidence)
+	mutWhere       string // which one, for the cleanup's error message
+	waitPersistent bool   // a wait that ran out was told onTimeout persistent
+	cleanup        bool   // this run is a cleanup block: no ending to record, so a wait that runs out is cleanup-failure evidence instead
 }
 
 // finish records the script's ending; the first one wins.
