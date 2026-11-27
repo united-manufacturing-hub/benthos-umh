@@ -187,9 +187,9 @@ func (g *OPCUAConnection) GetOPCUAClientOptions(
 	}
 	opts = append(opts, opcua.ApplicationName("benthos-umh-predefined"))
 
-	// Auto reconnect?
+	// gopcua reconnects unless told otherwise, so false is passed too.
+	opts = append(opts, opcua.AutoReconnect(g.AutoReconnect))
 	if g.AutoReconnect {
-		opts = append(opts, opcua.AutoReconnect(true))
 		reconnectInterval := time.Duration(g.ReconnectIntervalInSeconds) * time.Second
 		opts = append(opts, opcua.ReconnectInterval(reconnectInterval))
 	}
