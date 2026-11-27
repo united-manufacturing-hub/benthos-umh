@@ -299,6 +299,30 @@ input:
     reconnectIntervalInSeconds: 5
 ```
 
+**Correct Tag Path (`compatibility.correct_tag_path`)**
+
+By default (`false`), the input keeps its previous calculation of `opcua_tag_path`, `opcua_tag_group` and `opcua_tag_name`: it removes the **first** occurrence of the tag's browse name from its browse path, instead of the last segment. A tag whose name also appears earlier in its browse path therefore lands in a wrong or misspelled folder in the UNS topic, and a tag inside a folder of the same name does not publish at all.
+
+Set `compatibility.correct_tag_path: true` to publish each tag under its browse path without the tag's own name, which `opcua_tag_name` already carries. The input logs one warning per connect, naming this flag, when it discovers such tags while the flag is off.
+
+```yaml
+input:
+  opcua:
+    endpoint: 'opc.tcp://localhost:46010'
+    nodeIDs: ['ns=2;s=IoTSensors']
+    compatibility:
+      correct_tag_path: true
+```
+
+**Migration from the old topic to the corrected topic**
+
+| Tag | Topic with `correct_tag_path: false` (default) | Topic with `correct_tag_path: true` |
+|---|---|---|
+| Element `1` of array `arr` in data block `DB1` | `DB.arr.1.1` | `DB1.arr.1` |
+| Tag `Temp` inside folder `Temp` | (does not publish) | `Temp.Temp` |
+
+> **Note**: switching the flag on moves the affected tags to a **new** topic; their history stays behind on the old one, so dashboards and queries reading the old topic must be updated. Switching the flag back returns the tags to the old topic; data written to the new topic while the flag was on also stays there. Tags whose name does not appear earlier in their browse path keep their topic either way.
+
 **Advanced Configuration Options**
 
 > **WARNING**: The following options are for advanced users only. Modifying these settings without understanding your OPC UA server's behavior and limitations can lead to performance issues, memory problems, or connection failures. Setting those configuration options, does **not** mean that the server will respect that settings. **Leave these at their default values unless you have specific performance requirements and understand the implications.**
