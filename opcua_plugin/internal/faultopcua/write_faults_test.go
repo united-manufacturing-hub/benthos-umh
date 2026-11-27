@@ -22,7 +22,7 @@ import (
 
 // TestFault_AcceptsAWriteAndNeverAppliesIt is the misbehavior the handshake
 // reads a value back to catch: the machine answers Good and keeps its old
-// value. TRUMPF's press does exactly this.
+// value, as some controllers do in a state that does not take the parameter.
 //
 // The assertion comes in two halves on purpose. The client's half -- the
 // read-back is stale -- cannot tell a fault that fired from a fault that
@@ -78,10 +78,8 @@ func TestFault_AcceptsAWriteAndNeverAppliesIt(t *testing.T) {
 // the instrument has to be able to produce any status rather than one
 // stand-in refusal.
 //
-// Until the rewrite this fault had no test at all, which is how it shipped
-// answering Good when the status was left at its zero value -- the package's
-// own Fired machinery corroborating an honest answer. The arm method now
-// refuses a success status; TestArming_RefusesWhatItCannotArm pins that.
+// The arm method refuses a success status, which would answer Good while
+// Fired corroborated it; TestArming_RefusesWhatItCannotArm pins that.
 func TestFault_RefusesAWriteWithTheStatusItWasGiven(t *testing.T) {
 	t.Run("control: the honest server accepts the write", func(t *testing.T) {
 		_, client, v := startServer(t, "Setpoint", int32(7))

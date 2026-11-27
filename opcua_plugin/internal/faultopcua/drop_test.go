@@ -51,8 +51,8 @@ func TestFault_DropsTheSessionOnAWrite(t *testing.T) {
 			t.Errorf("%d connections were cut on an honest machine, want 0", n)
 		}
 
-		// A shutdown is not a session drop either: closing with the client
-		// still connected used to run the same cut a drop runs.
+		// A shutdown is not a session drop either, so closing with the
+		// client still connected must not count as a cut.
 		_ = srv.Close()
 		if n := srv.Cuts(); n != 0 {
 			t.Errorf("shutting the server down counted %d cuts, want 0: a shutdown is not a session drop", n)
@@ -86,11 +86,10 @@ func TestFault_DropsTheSessionOnAWrite(t *testing.T) {
 		}
 
 		// And the socket is really gone. Everything above is also true of a
-		// server that merely answered rudely, which a mutation proved:
-		// counting a cut that never closed anything killed no test. Only an
-		// operation that cannot complete afterwards separates the two, so
-		// this reads a node with nothing armed against it over the same
-		// client.
+		// server that merely answered rudely and counted a cut it never
+		// made. Only an operation that cannot complete afterwards separates
+		// the two, so this reads a node with nothing armed against it over
+		// the same client.
 		after, cancelAfter := context.WithTimeout(context.Background(), time.Second)
 		defer cancelAfter()
 		if _, err := readWithContext(after, client, nodeID(t, untouched)); err == nil {
@@ -108,9 +107,9 @@ func TestFault_DropsTheSessionOnAWrite(t *testing.T) {
 		}
 	})
 
-	// The drop cuts the connection that touched the node, and only that one.
-	// Until the rewrite it cut every connection the proxy was tracking, so a
-	// second client lost its session to a fault it never came near.
+	// The drop cuts the connection that touched the node, and only that one:
+	// a second client must not lose its session to a fault it never came
+	// near.
 	t.Run("the client that never touched the node keeps its session", func(t *testing.T) {
 		srv := faultopcua.New(t)
 		doomed := srv.AddVariable("Doomed", int32(7))

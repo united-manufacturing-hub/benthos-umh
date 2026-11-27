@@ -40,12 +40,12 @@ const dropCaseEnv = "FAULTOPCUA_DROP_CASE"
 // gopcua answers a monitored item from a background goroutine, calling
 // Attribute with no request behind it. The read and write handlers are the
 // only places that tell the namespace whose connection is calling, so the
-// background read finds reqPort at zero, and DropSession firing there used to
+// background read has no connection, and DropSession firing there would
 // report a firing -- and hand the client a ConnectionClosed -- while cutting
-// nothing: Cuts() stayed 0 and the session lived. A fault that reports it
-// fired while closing nothing is the one thing this package must never do,
-// so when there is no connection to cut, the harness fails the test rather
-// than returning quietly.
+// nothing: Cuts() would stay 0 and the session would live. A fault that
+// reports it fired while closing nothing is the one thing this package must
+// never do, so when there is no connection to cut, the harness fails the test
+// rather than returning quietly.
 func TestDropSession_RefusesToFireWithoutAConnectionToCut(t *testing.T) {
 	if _, ok := os.LookupEnv(dropCaseEnv); ok {
 		// The child: arm DropSession, then watch it through a monitored
@@ -79,8 +79,8 @@ func TestDropSession_RefusesToFireWithoutAConnectionToCut(t *testing.T) {
 		}
 
 		// The invariant, with no arm-time guard able to reach it: a fault
-		// that fired must have closed something. Before the guard existed
-		// this read fired quietly and the session lived on.
+		// that fired must have closed something. Without the guard this
+		// read would fire quietly and the session would live on.
 		if srv.Cuts() == 0 {
 			t.Errorf("DropSession reported fired %d times while closing nothing: Cuts() == 0 and the session lives", f.Count())
 		}

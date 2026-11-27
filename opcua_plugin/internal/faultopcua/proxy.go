@@ -44,11 +44,10 @@ type proxy struct {
 	//
 	// Keeping the count under the connection mutex is not enough. A client
 	// sees EOF microseconds after its socket closes, so a test that reacts
-	// to the client's own error and then asks for the count was racing the
-	// accounting and read zero although a connection HAD been closed: four
-	// failures in fourteen runs, and the test then blamed the client. It is
-	// an ordering race and not a data race, so -race neither caught it nor
-	// changed it.
+	// to the client's own error and then asks for the count would race the
+	// accounting and could read zero although a connection had been closed,
+	// and then blame the client. It is an ordering race and not a data
+	// race, so -race neither catches it nor changes it.
 	cutMu  sync.Mutex
 	closed int
 }
@@ -128,7 +127,7 @@ func (p *proxy) track(client net.Conn, backend net.Conn) {
 // underneath a client it actually closed. The count is what a test asserts,
 // so it counts closes that succeeded rather than connections it intended to
 // close: a count of connections would still read as evidence if the close
-// were removed, and a mutation proved that nothing noticed.
+// were removed.
 func (p *proxy) cutPort(port int) int {
 	p.cutMu.Lock()
 	defer p.cutMu.Unlock()

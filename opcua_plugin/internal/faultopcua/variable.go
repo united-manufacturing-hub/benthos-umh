@@ -23,9 +23,9 @@ import (
 
 // A Variable is one node on the server, and the thing a fault is armed against.
 // Holding a handle rather than a name is what makes a fault against a node that does
-// not exist unwritable: the old API matched by string, so one typo between adding a
-// node and arming a fault produced the fault's whole observable behavior against a
-// node that was not there, and the scenario passed end to end.
+// not exist unwritable. Matched by string, one typo between adding a node and arming
+// a fault would produce the fault's whole observable behavior against a node that is
+// not there, and the scenario would pass end to end.
 type Variable struct {
 	ns   *faultNamespace
 	id   *ua.NodeID

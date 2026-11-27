@@ -70,8 +70,7 @@ func TestFault_RefusesAReadWithTheStatusItWasGiven(t *testing.T) {
 
 // TestFault_FlapsTheValue is what a single-read check mistakes for a
 // confirmation: the machine with two controllers, where the flag is up when
-// the script looks and down when it looks again. Until the rewrite this fault
-// had no test at all.
+// the script looks and down when it looks again.
 func TestFault_FlapsTheValue(t *testing.T) {
 	t.Run("control: the honest server answers the same value every time", func(t *testing.T) {
 		_, client, v := startServer(t, "Loaded", true)
@@ -114,9 +113,9 @@ func TestFault_FlapsTheValue(t *testing.T) {
 // answering correctly the whole time; it is only slow, which is why a client
 // that waits on the socket rather than on its own clock never recovers.
 //
-// Both halves are here, because until the rewrite the write path had no case
-// for this fault at all: a write was applied and acknowledged on the spot
-// while this machine was supposed to be slow.
+// Both halves are here, because the fault applies to reads and writes alike:
+// a write applied and acknowledged on the spot would be a machine that is not
+// slow at all.
 func TestFault_AnswersLate(t *testing.T) {
 	t.Run("control: the honest server answers promptly", func(t *testing.T) {
 		_, client, v := startServer(t, "Flag", true)
@@ -186,9 +185,9 @@ func TestFault_AnswersLate(t *testing.T) {
 // and nothing came back, so the caller cannot know whether it landed. Only
 // the caller's own clock ends this.
 //
-// Both halves are here, because until the rewrite the write path had no case
-// for this fault at all: a write was applied and acknowledged on the spot by
-// a machine that was supposed to be silent.
+// Both halves are here, because the fault applies to reads and writes alike:
+// a write applied and acknowledged on the spot would be a machine that is not
+// silent at all.
 func TestFault_NeverAnswers(t *testing.T) {
 	t.Run("control: the honest server answers promptly", func(t *testing.T) {
 		_, client, v := startServer(t, "Flag", true)
@@ -291,11 +290,10 @@ func TestFault_RaisesTheFlagLate(t *testing.T) {
 }
 
 // TestFault_FlapsIndependentlyPerNode pins the phase FlapValue alternates on
-// as the fault's own. The phase used to live on the namespace, one bool for
-// every fault in it, so two flapping nodes read alternately did not alternate:
-// they toggled the same phase in lockstep, one node answering the fault's
-// value every time and the other the real value every time. Neither node
-// flapped, which reads as two machines, not one machine flapping twice.
+// as the fault's own. With one phase shared by every fault in the namespace,
+// two flapping nodes read alternately would not alternate: they would toggle
+// the same phase in lockstep, one node answering the fault's value every time
+// and the other the real value every time. Neither node would flap.
 func TestFault_FlapsIndependentlyPerNode(t *testing.T) {
 	srv, client, left := startServer(t, "Left", int32(1))
 	right := srv.AddVariable("Right", int32(2))

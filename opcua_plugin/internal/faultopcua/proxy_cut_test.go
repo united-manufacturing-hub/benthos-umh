@@ -40,9 +40,8 @@ func (c *blockingConn) Close() error {
 // its evidence. Those two facts travel by different routes, so the count
 // has to be settled before the close is observable -- otherwise the test
 // reads zero and reports that nothing was closed, which is a lie about a
-// connection that WAS closed. Measured on the failing shape: the conn
-// closed at 14:54:03.287670, the count landed at .287675, and the assertion
-// ran in between, four times in fourteen runs.
+// connection that was closed. The window between the close and the count is
+// a few microseconds, which is enough for an assertion to land in it.
 func TestProxy_TheCountIsSettledBeforeACloseIsObservable(t *testing.T) {
 	p := &proxy{pairs: map[int]*connPair{}}
 	c := &blockingConn{started: make(chan struct{}), release: make(chan struct{})}
@@ -111,9 +110,9 @@ func TestProxy_TheCountRecordsClosesThatSucceeded(t *testing.T) {
 
 // Shutting the proxy down tears its connections away but counts nothing,
 // because a server closing is not a session drop: Cuts is evidence about a
-// fault, and closing the server is not a fault. Until the rewrite, Close ran
-// the same cut a drop runs, and every teardown with a live client
-// manufactured drop evidence.
+// fault, and closing the server is not a fault. A shutdown that ran the same
+// cut a drop runs would manufacture drop evidence on every teardown with a
+// live client.
 func TestProxy_ShuttingDownIsNotACut(t *testing.T) {
 	p := &proxy{pairs: map[int]*connPair{}}
 	p.pairs[1] = &connPair{client: &fakeConn{}, backend: &fakeConn{}}

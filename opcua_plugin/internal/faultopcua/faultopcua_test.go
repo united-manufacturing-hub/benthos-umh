@@ -32,9 +32,8 @@ import (
 // underneath is broken, not the code under test.
 //
 // It also pins the two counters a fault test reads as evidence: one dial for
-// one client, no cuts, and -- the half the defect report caught -- a server
-// shut down while the client is still connected must not manufacture cut
-// evidence out of its own teardown.
+// one client, no cuts, and a server shut down while the client is still
+// connected must not manufacture cut evidence out of its own teardown.
 func TestTheControl_AnHonestServerAppliesAWrite(t *testing.T) {
 	srv, client, v := startServer(t, "Setpoint", int32(0))
 	id := nodeID(t, v)
@@ -63,8 +62,8 @@ func TestTheControl_AnHonestServerAppliesAWrite(t *testing.T) {
 		t.Errorf("%d connections were cut on an honest machine, want 0", n)
 	}
 
-	// A shutdown is not a session drop. Closing with the client still
-	// connected used to run the same cut a drop runs and land in Cuts().
+	// A shutdown is not a session drop, so closing with the client still
+	// connected must not land in Cuts().
 	_ = srv.Close()
 	if n := srv.Cuts(); n != 0 {
 		t.Errorf("shutting the server down counted %d cuts, want 0: a shutdown is not a session drop", n)
@@ -90,10 +89,9 @@ func connectClient(t *testing.T, srv *faultopcua.Server) *opcua.Client {
 	// AutoReconnect off, for two reasons. A dropped session during a
 	// handshake is the thing under test, and a client that quietly rebuilt
 	// it would hide the fault. And gopcua's reconnect monitor races its own
-	// Close -- Dial writes c.conn at client.go:617 while Close reads it at
-	// :664, unguarded -- which this package's drop test reproduces under
-	// -race every time. That is gopcua's defect, recorded in
-	// DEFECT-client-close-race.md on 2026-11-02, and a caller cannot work
+	// Close -- the monitor's Dial writes the client's connection while Close
+	// reads it, unguarded -- which this package's drop test reproduces under
+	// -race every time. That is gopcua's defect, and a caller cannot work
 	// around it except by not starting the monitor.
 	client, err := opcua.NewClient(srv.Endpoint(),
 		opcua.SecurityMode(ua.MessageSecurityModeNone),
