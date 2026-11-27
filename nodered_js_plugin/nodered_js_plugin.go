@@ -537,6 +537,16 @@ func (u *NodeREDJSProcessor) processSingleMessage(ctx context.Context, msg *serv
 	// the batch's own ctx, captured in the environment).
 	result, err := u.runner.Run(context.Background(), u.program, u.JSEnvironment(ctx, jsMsg))
 	if err != nil {
+		// NOTE (ENG-8128, documented change): the runner binds the JS environment
+		// and executes the script in one call, so a bind failure is classified
+		// js_throw here and logJSError prints the script's source, where the old
+		// SetupJSEnvironment step was classified infra_failed without the source.
+		// Accepted: a pooled runtime that could reject a bind would have failed
+		// its reset first and been discarded, and a fresh runtime's global object
+		// cannot reject Set unless a script froze it (which also fails the reset,
+		// so it is discarded too) — the corner is unreachable in practice, and
+		// telling the failures apart would need the frozen seam to grow a
+		// bind-error sentinel.
 		u.logJSError(err, jsMsg)
 		return nil, false, "js_throw", err
 	}
