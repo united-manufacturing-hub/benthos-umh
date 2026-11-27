@@ -330,6 +330,9 @@ func (c Config) compileBlocks() (map[string]*goja.Program, error) {
 			return nil, err
 		}
 		blocks[block.name] = program
+		if err := checkWaitOptions(tree); err != nil {
+			return nil, fmt.Errorf("%s: a wait_until %w", block.name, err)
+		}
 		waits := literalWaitTotal(tree)
 		if waits > block.budget {
 			return nil, fmt.Errorf(

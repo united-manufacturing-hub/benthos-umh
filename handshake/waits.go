@@ -147,3 +147,45 @@ func literalMillis(arg ast.Expression) (float64, bool) {
 		return 0, false
 	}
 }
+
+// checkWaitOptions refuses, at deploy time, a wait_until whose literal
+// options object names an option it does not take or an onTimeout value
+// other than "transient" or "persistent". It applies the same rules
+// waitUntil applies at run time (waitOptions); a computed key or value is
+// left to that check.
+func checkWaitOptions(tree *ast.Program) error {
+	for _, call := range waitCalls(tree) {
+		if len(call.ArgumentList) < 4 {
+			continue
+		}
+		opts, ok := call.ArgumentList[3].(*ast.ObjectLiteral)
+		if !ok {
+			continue
+		}
+		for _, prop := range opts.Value {
+			var key string
+			var value ast.Expression
+			switch p := prop.(type) {
+			case *ast.PropertyKeyed:
+				k, ok := p.Key.(*ast.StringLiteral)
+				if !ok || p.Computed {
+					continue
+				}
+				key, value = string(k.Value), p.Value
+			case *ast.PropertyShort:
+				key = string(p.Name.Name)
+			default:
+				continue
+			}
+			if err := waitOptionKey(key); err != nil {
+				return err
+			}
+			if s, ok := value.(*ast.StringLiteral); ok && key == "onTimeout" {
+				if _, err := onTimeoutValue(string(s.Value)); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
