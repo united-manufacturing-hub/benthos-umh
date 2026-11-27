@@ -52,6 +52,8 @@ type Binding[UnifiedAddress any] interface {
 // The engine asks for it and offers call_method only when it is there, so a protocol
 // without methods implements nothing rather than a method that always refuses.
 type Caller[UnifiedAddress any] interface {
+	// Call invokes the method at address with inputs, and returns nil only when
+	// the machine ran it.
 	Call(ctx context.Context, address UnifiedAddress, inputs []any) (CallResponse, error)
 }
 
