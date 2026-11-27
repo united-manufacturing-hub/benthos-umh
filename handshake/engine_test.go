@@ -55,8 +55,8 @@ func newTestEngine(t *testing.T, b Binding[string], mutate func(*Config)) *Engin
 	return engine
 }
 
-// LIB-1: the script runs exactly once per write request. A repeat is a new
-// delivery decided by the flow, never by the library.
+// The script runs exactly once per write request. A repeat is a new
+// delivery decided by the flow, never by the engine.
 func TestRun_RunsTheScriptOncePerMessage(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{"Ready": true}}
 	engine := newTestEngine(t, b, func(c *Config) {
@@ -89,7 +89,7 @@ func TestRun_RunsTheScriptOncePerMessage(t *testing.T) {
 	}
 }
 
-// LIB-10: a script that returns success is Delivered, and the object it
+// A script that returns success is Delivered, and the object it
 // returns is carried in Result.Data.
 func TestRun_DeliversWhenScriptReturnsSuccess(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{"Ready": true}}
@@ -116,8 +116,7 @@ func TestRun_DeliversWhenScriptReturnsSuccess(t *testing.T) {
 // The message reaches the script as the flow decoded it, and a JSON number
 // is json.Number in Go, the type benthos' structured messages carry. In the
 // script it must be a number: a customer's read-back guard is
-// v === msg.setpoint, and against a string-kind object it is always false
-// (UAT scenario 12).
+// v === msg.setpoint, and against a string-kind object it is always false.
 func TestRun_TheScriptSeesJSONNumbersAsNumbers(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{}}
 	engine := newTestEngine(t, b, func(c *Config) {
@@ -148,7 +147,7 @@ func TestRun_TheScriptSeesJSONNumbersAsNumbers(t *testing.T) {
 	}
 }
 
-// LIB-14: Validate compiles all three blocks; a script that does not parse is
+// Validate compiles all three blocks; a script that does not parse is
 // refused at deploy time, not against a machine.
 func TestConfig_ValidateRefusesAScriptThatDoesNotCompile(t *testing.T) {
 	for name, mutate := range map[string]func(*Config){
@@ -172,11 +171,10 @@ func TestConfig_ValidateRefusesAScriptThatDoesNotCompile(t *testing.T) {
 }
 
 // A cleanup block with no deadline would run unbounded: runCleanup reads a
-// budget of zero or less as 'no limit', and nothing checked the two cleanup
-// budgets, so an omitted YAML field plus a machine that never goes idle
-// hung Run and Close forever with nothing logged. Found by the round-2
-// review (item 3): the worst of the eight, because a config alone reaches
-// it. Either block may be empty; a non-empty one must be budgeted.
+// budget of zero or less as 'no limit', so an omitted YAML field plus a
+// machine that never goes idle would hang Run and Close forever with
+// nothing logged. Either block may be empty; a non-empty one must be
+// budgeted.
 func TestConfig_ValidateRefusesAnUnbudgetedCleanup(t *testing.T) {
 	refuses := func(t *testing.T, mutate func(*Config), want ...string) {
 		t.Helper()
@@ -215,8 +213,8 @@ func TestConfig_ValidateRefusesAnUnbudgetedCleanup(t *testing.T) {
 	})
 }
 
-// LIB-9: a configuration whose literal waits do not clear the script deadline
-// is refused. Literal waits only; a computed wait is beyond it (SCR-4).
+// A configuration whose literal waits do not clear the script deadline
+// is refused. Literal waits only; a computed wait is a person's to check.
 func TestConfig_ValidateRefusesWaitsThatExceedTheScriptDeadline(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -245,14 +243,14 @@ func TestConfig_ValidateRefusesWaitsThatExceedTheScriptDeadline(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			// A computed wait is a person's to check (SCR-4), not Validate's.
+			// A computed wait is a person's to check, not Validate's.
 			name:    "computed wait is beyond it",
 			script:  `opcua.wait_until(A, v => v === true, msg.payload.wait); return opcua.success({});`,
 			limit:   time.Second,
 			wantErr: false,
 		},
 		{
-			// An address object with commas in it must not fool the scanner.
+			// An address object with commas in it is one argument.
 			name:    "address object with a comma",
 			script:  `opcua.wait_until({nodeId: "ns=2;s=A", dataType: "Boolean"}, v => v === true, 100); return opcua.success({});`,
 			limit:   time.Second,
@@ -279,13 +277,10 @@ func TestConfig_ValidateRefusesWaitsThatExceedTheScriptDeadline(t *testing.T) {
 	}
 }
 
-// LIB-9's scanner, against three holes the round-2 review measured (item
-// 4): a wait inside a comment is live code to the scanner, a backtick
-// template literal desynchronises the argument splitter (the dangerous
-// direction: a 600s wait under a 2s deadline was accepted), and the
-// cleanup blocks' waits were never summed against their own budgets.
-// The scanner is the friendly early error, not the safety mechanism, so
-// the guard is that each hole is closed once, not over-built.
+// The literal-wait check reads only live code: a wait inside a comment is
+// not a wait, a backtick template literal does not hide the arguments
+// after it (a 600s wait under a 2s deadline must be refused), and each
+// cleanup block's waits are summed against that block's own budget.
 func TestConfig_ValidateScansOnlyLiveWaitsInEveryBlock(t *testing.T) {
 	accepts := func(t *testing.T, mutate func(*Config)) {
 		t.Helper()
@@ -364,12 +359,10 @@ func TestConfig_ValidateScansOnlyLiveWaitsInEveryBlock(t *testing.T) {
 	})
 }
 
-// LIB-2: exactly one of onSuccess/onError runs after every run, including one
-// the deadline stopped and one a canceled context ended.
+// Exactly one of onSuccess/onError runs after every ending. The two tests
+// after this one cover a run the deadline stopped and one a canceled
+// context ended.
 func TestRun_RunsOnSuccessAfterSuccessAndOnErrorAfterEverythingElse(t *testing.T) {
-	cleanup := `
-		opcua.write({nodeId: "Apply"}, true);
-	`
 	onSuccess := `
 		opcua.write({nodeId: "SuccessMarker"}, true);
 	`
@@ -395,7 +388,6 @@ func TestRun_RunsOnSuccessAfterSuccessAndOnErrorAfterEverythingElse(t *testing.T
 				c.Script = end.script
 				c.OnSuccess = onSuccess
 				c.OnError = onError
-				_ = cleanup
 			})
 			res := engine.Run(t.Context(), map[string]any{})
 			if res.Outcome == Delivered && end.want != "SuccessMarker" {
@@ -411,7 +403,7 @@ func TestRun_RunsOnSuccessAfterSuccessAndOnErrorAfterEverythingElse(t *testing.T
 	}
 }
 
-// LIB-2: onError also runs when the deadline stops the script, which a
+// onError also runs when the deadline stops the script, which a
 // JavaScript finally cannot.
 func TestRun_RunsOnErrorWhenTheScriptIsStoppedByItsDeadline(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{"Ready": true}}
@@ -433,7 +425,7 @@ func TestRun_RunsOnErrorWhenTheScriptIsStoppedByItsDeadline(t *testing.T) {
 	}
 }
 
-// LIB-2: onError runs when a canceled context ends the run.
+// onError runs when a canceled context ends the run.
 func TestRun_RunsOnErrorWhenTheContextIsCancelled(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{}}
 	engine := newTestEngine(t, b, func(c *Config) {
@@ -458,12 +450,10 @@ func TestRun_RunsOnErrorWhenTheContextIsCancelled(t *testing.T) {
 	}
 }
 
-// LIB-6: the deadline is configuration, so repeating cannot fix it — and a
-// binding that honors its context and returns ctx's own error when the
-// deadline fires mid-operation must not turn that stop into an unmarked,
-// retryable fault. Found by UAT-4 (a deadline that fires mid-transaction
-// was classed Transient); the fault's kind outranks nothing here, the
-// stop does.
+// The deadline is configuration, so repeating cannot fix it. A binding
+// that honors its context and returns ctx's own error when the deadline
+// fires mid-operation must not turn that stop into an unmarked, retryable
+// fault: the stop decides the outcome, not the fault's kind.
 func TestRun_IsPersistentWhenTheDeadlineStopsAnOperation(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{"Ready": true}}
 	engine := newTestEngine(t, b, func(c *Config) {
@@ -491,10 +481,9 @@ func TestRun_IsPersistentWhenTheDeadlineStopsAnOperation(t *testing.T) {
 }
 
 // The ending functions abort the script by throwing, and a throw is
-// catchable — so a script that catches its own ending must not be able to
-// carry the transaction on. Found by UAT-13: a caught success throw let a
-// script write to the machine again, under a run that had already been
-// decided. The first ending wins, and the machine is not touched after it.
+// catchable, so a script that catches its own ending must not be able to
+// carry the transaction on. The first ending wins, and the machine is not
+// touched after it.
 func TestRun_RefusesOperationsAfterTheScriptEnded(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{"Ready": true}}
 	engine := newTestEngine(t, b, func(c *Config) {
@@ -506,12 +495,11 @@ func TestRun_RefusesOperationsAfterTheScriptEnded(t *testing.T) {
 			} catch (e) {
 				// The ending threw; a buggy script carries on.
 			}
-			// The read comes first, deliberately: after the write's guard
-			// refuses and throws, nothing later in the block runs, so a
-			// read placed after it is asserted vacuously — the round-3
-			// review deleted the read's guard and every package stayed
-			// green, because the write's throw had already aborted the run.
-			// With the read first, its own guard is what the count pins.
+			// The read comes first, deliberately: once the write is
+			// refused and throws, nothing later in the block runs, so a
+			// read placed after it would pass whether or not reads are
+			// refused. With the read first, its own refusal is what the
+			// count pins.
 			opcua.read({nodeId: "Ready"});
 			opcua.write({nodeId: "Extra"}, 7);
 			return opcua.error_transient("unreachable in practice");
@@ -535,14 +523,12 @@ func TestRun_RefusesOperationsAfterTheScriptEnded(t *testing.T) {
 }
 
 // The ending functions abort the script by throwing, and a throw is
-// catchable — so a script that catches its ending and carries on is
+// catchable, so a script that catches its ending and carries on is
 // stopped by the deadline, not by the ending it recorded on the way.
-// That run is not a delivery: LIB-2 puts a deadline-stopped run under
-// onError, LIB-6 makes it persistent, and LIB-3 decides the outcome when
-// the script ends — a script the deadline killed never ended for the
-// ending it recorded first. Found by the round-2 review's probe of
-// UAT-13: try { success } catch {} for(;;){} came back Delivered and ran
-// onSuccess on a machine whose transaction was cut in half.
+// That run is not a delivery: a run the deadline stopped is persistent
+// and runs onError, because the script never stopped for the ending it
+// recorded. Running onSuccess here would hand back a machine whose
+// transaction was cut in half.
 func TestRun_TheDeadlineOutranksAnEndingTheScriptNeverStoppedFor(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{}}
 	engine := newTestEngine(t, b, func(c *Config) {
@@ -576,11 +562,9 @@ func TestRun_TheDeadlineOutranksAnEndingTheScriptNeverStoppedFor(t *testing.T) {
 }
 
 // No panic from a script or a binding leaves Run: the recovered value is a
-// persistent fault, and both cleanups still run, because a binding is
+// persistent fault, and the cleanup still runs, because a binding is
 // protocol code that can panic under a machine's bad answer as easily as a
-// script can call something wrongly. Found by the round-2 review, which
-// watched a nil predicate panic out of Run with the machine left armed;
-// grep found no recover anywhere in the package.
+// script can call something wrongly.
 func TestRun_ABindingPanicIsAPersistentFaultNotACrash(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{}}
 	engine := newTestEngine(t, b, func(c *Config) {
@@ -612,9 +596,9 @@ func TestRun_ABindingPanicIsAPersistentFaultNotACrash(t *testing.T) {
 }
 
 // A config with no script deadline at all is reachable from one omitted YAML
-// field, exactly like the unbudgeted cleanup (round-2 review, item 3): a zero
-// MaxScriptRuntime makes every run expire its context before the script
-// starts, so Validate refuses it the way it refuses the cleanup budgets.
+// field, like the unbudgeted cleanup: a zero MaxScriptRuntime makes every
+// run expire its context before the script starts, so Validate refuses it
+// the way it refuses the cleanup budgets.
 // The refusal names the field, so a person reading it knows which line to add.
 func TestConfig_ValidateRefusesAZeroOrNegativeScriptRuntime(t *testing.T) {
 	for _, budget := range []time.Duration{0, -time.Second} {
@@ -630,10 +614,10 @@ func TestConfig_ValidateRefusesAZeroOrNegativeScriptRuntime(t *testing.T) {
 	}
 }
 
-// The literal-wait check (LIB-9) reads the parsed script, so only code
-// counts: a wait in a comment or a string is not a wait, and no literal of
-// another kind (a regex, a template) can hide a real one. The check is the
-// friendly early error, not the safety mechanism -- LIB-12's clamp is.
+// The literal-wait check reads the parsed script, so only code counts: a
+// wait in a comment or a string is not a wait, and no literal of another
+// kind (a regex, a template) can hide a real one. The check is the
+// friendly early error, not the safety mechanism; wait_until's clamp is.
 
 // A `//` comment that runs to the end of the file, with no newline after it,
 // is not live code. A script's last line being a comment is ordinary.
@@ -719,8 +703,9 @@ func TestLiteralWaitScanner_AWaitInAVarDeclarationCountsOnce(t *testing.T) {
 	}
 }
 
-// The counting rules, each pinned against a fault the earlier text scanner
-// had, which defeated the friendly early error in one direction or the other.
+// The counting rules. Each case is a script the check could get wrong in
+// one direction or the other: refusing a deploy it should accept, or
+// passing a real wait it should count.
 func TestLiteralWaitScanner_CountsOnlyRealCalls(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -728,46 +713,41 @@ func TestLiteralWaitScanner_CountsOnlyRealCalls(t *testing.T) {
 		want   time.Duration
 	}{
 		{
-			// A false refusal: this blocked a deploy for a script whose
-			// only "wait" was the tail of somebody else's function name.
+			// Counting it would refuse a deploy whose only "wait" is the
+			// tail of somebody else's function name.
 			name:   "an identifier ending in wait_until is not a call",
 			script: `mywait_until(a, b, 4000);`,
 			want:   0,
 		},
 		{
-			// A false pass: JavaScript allows the space, so this was a
-			// real five-second wait the check never saw.
+			// JavaScript allows the space, so this is a real
+			// five-second wait.
 			name:   "a space before the parenthesis is still a call",
 			script: `opcua.wait_until ({nodeId: "A"}, v => v, 5000);`,
 			want:   5 * time.Second,
 		},
 		{
-			// A false pass, and the worst of the three: the literal
-			// overflowed int64, the running total went NEGATIVE, and the
-			// real wait beside it was masked. It saturates now rather than
-			// being counted as nothing, because a wait nobody can have meant
-			// should refuse the deploy rather than be quietly ignored -- and
-			// because the runtime check it was once left to is itself a
-			// conversion this number overflows.
+			// The literal overflows int64, and a total that wrapped
+			// negative would mask the real wait beside it. It saturates
+			// rather than counting as nothing, because a wait nobody can
+			// have meant should refuse the deploy rather than be quietly
+			// ignored.
 			name:   "a literal too large to be a wait saturates the total",
 			script: `opcua.wait_until(a, b, 5000); opcua.wait_until(c, d, 99999999999999999999);`,
 			want:   maxLiteralWait,
 		},
 		{
-			// The round-4 guard stopped the digit accumulator wrapping but
-			// not the millisecond-to-nanosecond multiply underneath the sum,
-			// so a 13-digit literal -- one shorter than the case above, and
-			// one that FITS int64 milliseconds -- still turned the total
-			// negative and carried a real five-second wait past a
-			// one-second budget.
+			// This literal fits int64 milliseconds but not int64
+			// nanoseconds, so the millisecond-to-nanosecond multiply
+			// under the sum must saturate too, or a real five-second wait
+			// passes a one-second budget.
 			name:   "a literal that fits int64 milliseconds still cannot wrap the total",
 			script: `opcua.wait_until(a, b, 5000); opcua.wait_until(c, d, 9223372036855);`,
 			want:   maxLiteralWait,
 		},
 		{
-			// Both are plain numbers, which is the scanner's own test for
-			// "not computed", and both were read as computed and counted as
-			// nothing: a real one-second wait passing a 999ms budget unseen.
+			// Both are plain numbers, so both count. Read as computed,
+			// a real one-second wait would pass a 999ms budget unseen.
 			name:   "a hex literal is a plain number",
 			script: `opcua.wait_until(a, b, 0x3E8);`,
 			want:   time.Second,
@@ -778,10 +758,8 @@ func TestLiteralWaitScanner_CountsOnlyRealCalls(t *testing.T) {
 			want:   time.Second,
 		},
 		{
-			// Four more spellings of a plain number that were read as
-			// computed and counted as nothing, which is the same false pass
-			// hex and 1_000 were fixed for: a real five-second wait
-			// deploying under a 999ms budget with no complaint.
+			// Four more spellings of a plain number, each of which must
+			// count for the same reason hex and 1_000 do.
 			name:   "a float literal is a plain number",
 			script: `opcua.wait_until(a, b, 5000.0);`,
 			want:   5 * time.Second,
@@ -819,10 +797,8 @@ func TestLiteralWaitScanner_CountsOnlyRealCalls(t *testing.T) {
 			want:   maxLiteralWait,
 		},
 		{
-			// goja compiles this, so the script deployed; the scanner read
-			// the byte before the name, which for a multi-byte rune is a
-			// continuation byte that matched no identifier character, and
-			// refused the deploy over a call to somebody else's function.
+			// goja compiles this, and it is a call to somebody else's
+			// function, whose name only ends in wait_until.
 			name:   "a call to a Unicode-named function is not a wait",
 			script: "\u00e9wait_until(a, b, 4000);",
 			want:   0,

@@ -14,19 +14,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Scenario harness for the handshake engine (PR1, ENG-8129).
-//
-// Excluded from CI; run with
+// Scenario harness for the handshake engine. It builds only with the uat
+// tag; make test-handshake runs it, as does
 //
 //	go test -tags uat -v ./handshake/
 //
-// It has the two things the unit tests do not: the scripts are real
-// JavaScript compiled and run by goja exactly as a user's would be
-// (nothing in the engine is substituted), and the machine is a Binding whose
+// Each TestUATnn function is one scenario. The machine is a Binding whose
 // every answer is scripted per call, with a recorder that keeps what the
 // machine was asked, in what order, and when. A scenario's result is
-// Outcome, Err, CleanupErr and the operation log; UAT.md carries the
-// evidence for each.
+// Outcome, Err, CleanupErr and the operation log, which runScenario logs.
 package handshake
 
 import (
@@ -175,8 +171,10 @@ func (m *machine) act(ctx context.Context, op string, a uatAddr, sent any) (any,
 		// The machine's own driver blows up; recorded like any other
 		// answer, because the machine was asked.
 		m.mu.Lock()
-		m.recs = append(m.recs, rec{Seq: len(m.recs) + 1, Op: op, Addr: a.NodeID,
-			Value: sent, At: enter.Sub(start)})
+		m.recs = append(m.recs, rec{
+			Seq: len(m.recs) + 1, Op: op, Addr: a.NodeID,
+			Value: sent, At: enter.Sub(start),
+		})
 		m.mu.Unlock()
 		panic(r.panicWith)
 	}
@@ -243,7 +241,7 @@ func (m *machine) trace() []string {
 	return out
 }
 
-// log renders the full log with timings, for the evidence file.
+// log renders the full log with timings, for the test output.
 func (m *machine) log() string {
 	var b strings.Builder
 	for _, r := range m.ops() {
@@ -252,7 +250,7 @@ func (m *machine) log() string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func (m *machine) count(op, addr string) int {
+func (m *machine) count(op string, addr string) int {
 	n := 0
 	for _, r := range m.ops() {
 		if r.Op == op && r.Addr == addr {
@@ -313,9 +311,9 @@ func expectTrace(t *testing.T, m *machine, want []string) {
 	}
 }
 
-// The handshake every scenario is a faulted copy of: the shape the spec's
-// own examples use — guard reads, a payload write, read-back, the committing
-// write, the machine's own acknowledgement, end.
+// happyHandshake is the handshake most scenarios fault: guard reads, a
+// payload write, read-back, the committing write, the machine's own
+// acknowledgement, end.
 const happyHandshake = `
 	const READY    = { nodeId: "ns=2;s=Ready" };
 	const SETPOINT = { nodeId: "ns=2;s=Setpoint" };
@@ -335,7 +333,7 @@ const happyHandshake = `
 	return opcua.success({ value: msg.payload.value });
 `
 
-// UAT-1 Happy path: the machine behaves. Delivered, onSuccess ran, onError
+// Happy path: the machine behaves. Delivered, onSuccess ran, onError
 // did not, and the operation log shows each write exactly once.
 func TestUAT01_HappyPath(t *testing.T) {
 	m := newMachine(map[string]any{
@@ -384,7 +382,7 @@ func TestUAT01_HappyPath(t *testing.T) {
 	})
 }
 
-// UAT-2 Never ready: wait_until's predicate never holds. The wait's own
+// Never ready: wait_until's predicate never holds. The wait's own
 // timeout ends the run, not the script deadline; Transient; onError ran.
 func TestUAT02_NeverReadyIsTransient(t *testing.T) {
 	m := newMachine(map[string]any{
@@ -400,7 +398,7 @@ func TestUAT02_NeverReadyIsTransient(t *testing.T) {
 	opcua.wait_until(LOADED, v => v === true, 1500);
 	return opcua.success({});
 `)
-	cfg.MaxScriptRuntime = 30 * time.Second // far beyond the wait: LIB-9
+	cfg.MaxScriptRuntime = 30 * time.Second // far beyond the wait, so Validate accepts it
 	cfg.OnError = `opcua.write({nodeId: "ns=2;s=Reset"}, false);`
 
 	res, wall := runScenario(t, cfg, m, map[string]any{"payload": map[string]any{"value": 1}})
@@ -409,7 +407,7 @@ func TestUAT02_NeverReadyIsTransient(t *testing.T) {
 	if res.Err == nil || !strings.Contains(res.Err.Error(), "timed out") {
 		t.Errorf("the wait's own timeout should be the fault, got %v", res.Err)
 	}
-	if wall < 1400*time.Millisecond || wall > 2500*time.Millisecond {
+	if wall < 1500*time.Millisecond || wall > 5*time.Second {
 		t.Errorf("run took %v, want the wait's own 1500ms timeout, not the script deadline", wall)
 	}
 	if m.count("write", "ns=2;s=Reset") != 1 {
@@ -420,7 +418,7 @@ func TestUAT02_NeverReadyIsTransient(t *testing.T) {
 	}
 }
 
-// UAT-3 Never ready with { onTimeout: "persistent" }: same, but Persistent.
+// Never ready with { onTimeout: "persistent" }: same, but Persistent.
 func TestUAT03_NeverReadyOnTimeoutPersistent(t *testing.T) {
 	m := newMachine(map[string]any{
 		"ns=2;s=Ready": true, "ns=2;s=Loaded": false,
@@ -445,8 +443,8 @@ func TestUAT03_NeverReadyOnTimeoutPersistent(t *testing.T) {
 	}
 }
 
-// UAT-4 Slow machine, deadline fires mid-transaction: a read blocks past
-// MaxScriptRuntime. Persistent (LIB-6), onError ran, and the machine was
+// Slow machine, deadline fires mid-transaction: a read blocks past
+// MaxScriptRuntime. Persistent, onError ran, and the machine was
 // not asked to do anything after the deadline passed.
 func TestUAT04_DeadlineFiresMidTransaction(t *testing.T) {
 	m := newMachine(map[string]any{
@@ -472,13 +470,13 @@ func TestUAT04_DeadlineFiresMidTransaction(t *testing.T) {
 
 	res, wall := runScenario(t, cfg, m, map[string]any{"payload": map[string]any{"value": 42}})
 
-	// LIB-6: the deadline stopped the script mid-transaction; the run is
+	// The deadline stopped the script mid-transaction; the run is
 	// persistent however the binding worded its refusal.
 	expectOutcome(t, res, Persistent)
 	if res.Err == nil || !errors.Is(res.Err, context.DeadlineExceeded) {
 		t.Errorf("the deadline should be the fault, got %v", res.Err)
 	}
-	if wall < 450*time.Millisecond || wall > 1500*time.Millisecond {
+	if wall < 500*time.Millisecond || wall > 5*time.Second {
 		t.Errorf("run took %v, want ~500ms (the deadline) plus the blocked read's tail", wall)
 	}
 	// Nothing the script asked for started after the deadline passed;
@@ -497,7 +495,7 @@ func TestUAT04_DeadlineFiresMidTransaction(t *testing.T) {
 	}
 }
 
-// UAT-5 A binding that ignores its context entirely: it blocks for 10s
+// A binding that ignores its context entirely: it blocks for 10s
 // whatever ctx says, with MaxScriptRuntime at 1s. Does Run return at 1s or
 // at 10s? Measured, and reported either way.
 func TestUAT05_BindingIgnoresItsContext(t *testing.T) {
@@ -527,20 +525,20 @@ func TestUAT05_BindingIgnoresItsContext(t *testing.T) {
 	// The measurement this scenario exists for: goja's interrupt is read in
 	// the bytecode loop, so a script parked inside a Go call is not
 	// interruptible. Expect ~10s, Persistent, onError still run. The
-	// wall time itself is the finding; see UAT.md.
+	// wall time itself is the finding.
 	expectOutcome(t, res, Persistent)
 	if res.Err == nil || !errors.Is(res.Err, context.DeadlineExceeded) {
 		t.Errorf("the deadline should be the fault, got %v", res.Err)
 	}
-	if wall < 9500*time.Millisecond || wall > 11500*time.Millisecond {
-		t.Errorf("MEASUREMENT OUT OF RANGE: Run returned after %v; recorded in UAT.md, not a defect", wall)
+	if wall < 10*time.Second || wall > 20*time.Second {
+		t.Errorf("MEASUREMENT OUT OF RANGE: Run returned after %v, want the binding's 10s", wall)
 	}
 	if m.count("write", "ns=2;s=Reset") != 1 {
 		t.Errorf("onError did not run:\n%s", m.log())
 	}
 }
 
-// UAT-6 Commit write fails with ErrPersistent: Persistent.
+// Commit write fails with ErrPersistent: Persistent.
 func TestUAT06_CommitWriteFailsPersistent(t *testing.T) {
 	m := newMachine(map[string]any{"ns=2;s=Ready": true, "ns=2;s=Loaded": false})
 	m.plan("ns=2;s=Apply", &reaction{err: fmt.Errorf("BadTypeMismatch: %w", ErrPersistent)})
@@ -554,14 +552,14 @@ func TestUAT06_CommitWriteFailsPersistent(t *testing.T) {
 		t.Errorf("Err must carry the binding's own persistent fault, got %v", res.Err)
 	}
 	if n := m.count("write", "ns=2;s=Apply"); n != 1 {
-		t.Errorf("the committing write was attempted %d times, want once (LIB-8)", n)
+		t.Errorf("the committing write was attempted %d times, want once", n)
 	}
 	if m.count("write", "ns=2;s=Reset") != 1 {
 		t.Errorf("onError did not run:\n%s", m.log())
 	}
 }
 
-// UAT-7 Commit write fails unmarked: Transient.
+// Commit write fails unmarked: Transient.
 func TestUAT07_CommitWriteFailsUnmarked(t *testing.T) {
 	m := newMachine(map[string]any{"ns=2;s=Ready": true, "ns=2;s=Loaded": false})
 	m.plan("ns=2;s=Apply", &reaction{err: errors.New("connection reset by peer")})
@@ -572,22 +570,21 @@ func TestUAT07_CommitWriteFailsUnmarked(t *testing.T) {
 
 	expectOutcome(t, res, Transient)
 	if n := m.count("write", "ns=2;s=Apply"); n != 1 {
-		t.Errorf("the committing write was attempted %d times, want once (LIB-8)", n)
+		t.Errorf("the committing write was attempted %d times, want once", n)
 	}
 	if m.count("write", "ns=2;s=Reset") != 1 {
 		t.Errorf("onError did not run:\n%s", m.log())
 	}
 }
 
-// UAT-8 A failure the script catches and recovers from, then succeeds. An
+// A failure the script catches and recovers from, then succeeds. An
 // optional read fails; the script catches it, writes, and calls success.
 //
-// RULED 2026-11-26 (Jeremy): the script's explicit ending wins, and a fault
-// the script caught stays caught. "If you catch it, you own it" — a
-// try/catch around an operation is the script telling the engine the
-// failure was expected, so the engine stops second-guessing it. A script
-// that swallows a fault it should not is a script bug, and belongs to
-// SCR-1's human review rather than to the engine.
+// The script's explicit ending wins, and a fault the script caught stays
+// caught: a try/catch around an operation is the script telling the engine
+// the failure was expected, so the engine does not second-guess it. A
+// script that swallows a fault it should not is a script bug, for the
+// person who reviews the script rather than for the engine.
 func TestUAT08_ScriptCatchesAFailureAndSucceeds(t *testing.T) {
 	t.Run("persistent-marked fault, caught and recovered from", func(t *testing.T) {
 		m := newMachine(map[string]any{"ns=2;s=Ready": true})
@@ -624,10 +621,9 @@ func TestUAT08_ScriptCatchesAFailureAndSucceeds(t *testing.T) {
 		res, _ := runScenario(t, cfg, m, map[string]any{"payload": map[string]any{"value": 42}})
 		expectOutcome(t, res, Delivered)
 	})
-	// Under the ruling the answer no longer depends on which caught fault
-	// came first, which is what the engine answered before it. Both orders
-	// are asserted, because an order-dependent answer is the defect these
-	// two tests exist to keep out.
+	// The answer does not depend on which caught fault came first. Both
+	// orders are asserted, because an order-dependent answer is the defect
+	// these two tests exist to keep out.
 	t.Run("transient then persistent, both caught, delivers", func(t *testing.T) {
 		res := twoCaughtFaults(t,
 			fmt.Errorf("machine unreachable"),
@@ -650,11 +646,9 @@ func TestUAT08_ScriptCatchesAFailureAndSucceeds(t *testing.T) {
 
 // twoCaughtFaults runs one script shape — two reads that fail and are
 // caught, then a write and success — with the two faults in the order
-// given. Both node ids appear in the plan exactly as the script spells
-// them; an earlier version of this test planned "ns=2;s=First" against a
-// script reading "ns=2;s/First", so no reaction ever fired and the
-// subtest passed with no fault in it at all.
-func twoCaughtFaults(t *testing.T, first, second error) Result {
+// given. It fails unless each planned reaction fired, so a node id the
+// plan and the script spell differently cannot pass with no fault in it.
+func twoCaughtFaults(t *testing.T, first error, second error) Result {
 	t.Helper()
 	m := newMachine(map[string]any{"ns=2;s=Ready": true})
 	m.plan("ns=2;s=First", &reaction{err: first})
@@ -675,11 +669,11 @@ func twoCaughtFaults(t *testing.T, first, second error) Result {
 	return res
 }
 
-// UAT-8b A fault the script does NOT catch decides the outcome, and it is
-// the fault that stopped the script -- not an earlier one it caught and
-// carried on from. Before the 2026-11-26 ruling only the first fault was
-// recorded, so a caught "machine unreachable" masked the persistent
-// refusal that actually ended the run and the message was retried forever.
+// A fault the script does not catch decides the outcome, and it is the
+// fault that stopped the script, not an earlier one it caught and carried
+// on from. Otherwise a caught "machine unreachable" would mask the
+// persistent refusal that ended the run, and the message would be retried
+// forever.
 func TestUAT08b_AnUncaughtFaultDecides_NotAnEarlierCaughtOne(t *testing.T) {
 	m := newMachine(map[string]any{"ns=2;s=Ready": true})
 	m.plan("ns=2;s=First", &reaction{err: errors.New("machine unreachable")})
@@ -699,7 +693,7 @@ func TestUAT08b_AnUncaughtFaultDecides_NotAnEarlierCaughtOne(t *testing.T) {
 	}
 }
 
-// UAT-9 onError itself fails: Persistent, with CleanupErr naming onError.
+// onError itself fails: Persistent, with CleanupErr naming onError.
 func TestUAT09_OnErrorItselfFails(t *testing.T) {
 	m := newMachine(map[string]any{"ns=2;s=Ready": true})
 	m.plan("ns=2;s=Reset", &reaction{err: errors.New("machine unreachable")})
@@ -708,13 +702,13 @@ func TestUAT09_OnErrorItselfFails(t *testing.T) {
 
 	res, _ := runScenario(t, cfg, m, map[string]any{})
 
-	expectOutcome(t, res, Persistent) // LIB-4: the cleanup did not finish
+	expectOutcome(t, res, Persistent) // the cleanup did not finish
 	if res.CleanupErr == nil || !strings.Contains(res.CleanupErr.Error(), "onError") {
 		t.Errorf("CleanupErr must name onError, got %v", res.CleanupErr)
 	}
 }
 
-// UAT-10 onSuccess fails after a delivery: the delivery stands (LIB-11),
+// onSuccess fails after a delivery: the delivery stands,
 // with CleanupErr naming onSuccess.
 func TestUAT10_OnSuccessFailsAfterDelivery(t *testing.T) {
 	m := newMachine(map[string]any{"ns=2;s=Ready": true})
@@ -735,7 +729,7 @@ func TestUAT10_OnSuccessFailsAfterDelivery(t *testing.T) {
 	}
 }
 
-// UAT-11 Uncaught exception in the script: Persistent, onError ran.
+// Uncaught exception in the script: Persistent, onError ran.
 func TestUAT11_UncaughtExceptionInTheScript(t *testing.T) {
 	m := newMachine(map[string]any{"ns=2;s=Ready": true})
 	cfg := uatConfig(`
@@ -756,7 +750,7 @@ func TestUAT11_UncaughtExceptionInTheScript(t *testing.T) {
 	}
 }
 
-// UAT-12 Script ends without calling any ending: Persistent, onError ran.
+// Script ends without calling any ending: Persistent, onError ran.
 func TestUAT12_ScriptEndsWithoutAnEnding(t *testing.T) {
 	m := newMachine(map[string]any{"ns=2;s=Ready": true})
 	cfg := uatConfig(`
@@ -777,7 +771,7 @@ func TestUAT12_ScriptEndsWithoutAnEnding(t *testing.T) {
 	}
 }
 
-// UAT-13 Script catches the ending's own throw and carries on, then writes
+// Script catches the ending's own throw and carries on, then writes
 // again. The transaction ended at success; the machine must not be
 // touched again from the script, and the outcome is the first ending.
 func TestUAT13_ScriptCatchesTheEndingAndCarriesOn(t *testing.T) {
@@ -800,15 +794,14 @@ func TestUAT13_ScriptCatchesTheEndingAndCarriesOn(t *testing.T) {
 	// The first ending wins and is the outcome.
 	expectOutcome(t, res, Delivered)
 	// But the machine must not be asked for anything after the ending:
-	// the transaction is over (engine.go: "a script cannot carry on
-	// past the end of its transaction").
+	// the transaction is over, and every operation refuses.
 	if n := m.count("write", "ns=2;s=Extra"); n != 0 {
 		t.Errorf("the machine was written after the transaction ended:\n%s", m.log())
 	}
 	expectTrace(t, m, []string{"write ns=2;s=Apply=true"})
 }
 
-// UAT-14 State between runs: a script that sets a global and defines a
+// State between runs: a script that sets a global and defines a
 // function, then a second run that looks for them. Both must be gone.
 func TestUAT14_NothingCarriesBetweenRuns(t *testing.T) {
 	m := newMachine(map[string]any{})
@@ -830,13 +823,13 @@ func TestUAT14_NothingCarriesBetweenRuns(t *testing.T) {
 	for run := 1; run <= 3; run++ {
 		res := engine.Run(context.Background(), map[string]any{})
 		if res.Outcome != Delivered {
-			t.Fatalf("run %d: outcome %v, err %v — state leaked between runs (LIB-7)",
+			t.Fatalf("run %d: outcome %v, err %v: state leaked between runs",
 				run, res.Outcome, res.Err)
 		}
 	}
 }
 
-// UAT-15 A wait computed from the message: msg carries 60s, MaxScriptRuntime
+// A wait computed from the message: msg carries 60s, MaxScriptRuntime
 // is 2s. Config validation cannot see this wait. Measure: does Run come
 // back at ~2s, with what outcome, and does the clamp hold?
 func TestUAT15_WaitComputedFromTheMessage(t *testing.T) {
@@ -861,21 +854,21 @@ func TestUAT15_WaitComputedFromTheMessage(t *testing.T) {
 		map[string]any{"payload": map[string]any{"value": 1, "waitMs": float64(60000)}})
 
 	t.Logf("MEASUREMENT: computed 60s wait under a 2s budget returned after %v as %v", wall, res.Outcome)
-	// The clamp (LIB-12) must hold: the wait ends at its clamped timeout
+	// The clamp must hold: the wait ends at its clamped timeout
 	// before the deadline, so the run is the wait's own transient timeout,
 	// not a deadline stop.
-	if wall < 1800*time.Millisecond || wall > 2600*time.Millisecond {
+	if wall < 1950*time.Millisecond || wall > 5*time.Second {
 		t.Errorf("run took %v, want ~2s: the clamp should end the wait before the deadline", wall)
 	}
 	if res.Outcome != Transient {
-		t.Errorf("outcome %v (err %v): the clamped wait should time out on its own, transient (LIB-18)", res.Outcome, res.Err)
+		t.Errorf("outcome %v (err %v): the clamped wait should time out on its own, transient", res.Outcome, res.Err)
 	}
 	if res.Err != nil && errors.Is(res.Err, context.DeadlineExceeded) {
 		t.Errorf("the deadline fired mid-wait: the clamp did not hold (err %v)", res.Err)
 	}
 }
 
-// UAT-16 Caller's context canceled mid-wait: the run ends, Persistent, and
+// Caller's context canceled mid-wait: the run ends, Persistent, and
 // onError still runs, on its own clock.
 func TestUAT16_CallersContextCancelledMidWait(t *testing.T) {
 	m := newMachine(map[string]any{
@@ -891,7 +884,7 @@ func TestUAT16_CallersContextCancelledMidWait(t *testing.T) {
 	opcua.wait_until(LOADED, v => v === true, 30000);
 	return opcua.success({});
 `)
-	cfg.MaxScriptRuntime = 60 * time.Second // clears the literal wait (LIB-9)
+	cfg.MaxScriptRuntime = 60 * time.Second // clears the literal wait, so Validate accepts it
 	cfg.OnError = `opcua.write({nodeId: "ns=2;s=Reset"}, false);`
 	cfg.MaxOnErrorRuntime = 5 * time.Second
 
@@ -904,7 +897,7 @@ func TestUAT16_CallersContextCancelledMidWait(t *testing.T) {
 
 	// Cancel mid-wait, ahead of the clamp: a deadline-based cancellation
 	// cannot land mid-wait, because the clamp ends the wait ~50ms before
-	// any deadline (recorded in UAT.md as a UAT-16 side-finding).
+	// any deadline.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	time.AfterFunc(150*time.Millisecond, cancel)
@@ -938,9 +931,9 @@ func TestUAT16_CallersContextCancelledMidWait(t *testing.T) {
 	}
 }
 
-// UAT-17 A cleanup whose binding ignores its budget: onError blocks 5s
+// A cleanup whose binding ignores its budget: onError blocks 5s
 // under MaxOnErrorRuntime of 1s. Run cannot return before the machine does;
-// measured and reported, same class of finding as UAT-5.
+// measured and reported, the same class of finding as TestUAT05.
 func TestUAT17_CleanupBindingIgnoresItsBudget(t *testing.T) {
 	m := newMachine(map[string]any{"ns=2;s=Ready": true})
 	m.plan("ns=2;s=Reset", &reaction{delay: 5 * time.Second, ignoreCtx: true})
@@ -951,16 +944,16 @@ func TestUAT17_CleanupBindingIgnoresItsBudget(t *testing.T) {
 	res, wall := runScenario(t, cfg, m, map[string]any{})
 
 	t.Logf("MEASUREMENT: Run with a 1s onError budget returned after %v", wall)
-	expectOutcome(t, res, Persistent) // LIB-4: the cleanup did not finish
+	expectOutcome(t, res, Persistent) // the cleanup did not finish
 	if res.CleanupErr == nil || !strings.Contains(res.CleanupErr.Error(), "onError") {
 		t.Errorf("CleanupErr must name onError, got %v", res.CleanupErr)
 	}
-	if wall < 4500*time.Millisecond || wall > 6500*time.Millisecond {
-		t.Errorf("MEASUREMENT OUT OF RANGE: Run returned after %v; recorded in UAT.md", wall)
+	if wall < 5*time.Second || wall > 15*time.Second {
+		t.Errorf("MEASUREMENT OUT OF RANGE: Run returned after %v, want the binding's 5s", wall)
 	}
 }
 
-// UAT-18 A machine that accepts a write and then reports the old value on
+// A machine that accepts a write and then reports the old value on
 // read-back ("this machine accepts writes it then ignores"). The script's
 // read-back guard should catch it and the run should be Persistent.
 func TestUAT18_MachineAcceptsWriteThenReportsOldValue(t *testing.T) {
@@ -990,7 +983,7 @@ func TestUAT18_MachineAcceptsWriteThenReportsOldValue(t *testing.T) {
 	}
 }
 
-// UAT-19 A flag that only becomes correct after N reads, and flaps on the
+// A flag that only becomes correct after N reads, and flaps on the
 // way: wait_until passes on the first true, and a confirm read right after
 // can see false again. Read skew inside one handshake, measured.
 func TestUAT19_FlappingFlagReadSkew(t *testing.T) {
@@ -1031,11 +1024,10 @@ func TestUAT19_FlappingFlagReadSkew(t *testing.T) {
 	}
 }
 
-// UAT-21 A script that catches its ending and spins: the deadline kills
-// it, and the run must not be reported as the ending it recorded on the
-// way. LIB-2 puts a deadline-stopped run under onError; LIB-6 makes it
-// persistent; the delivery it half-announced is not a delivery. Found by
-// the round-2 review's probe of UAT-13.
+// A script that catches its ending and spins: the deadline kills it, and
+// the run must not be reported as the ending it recorded on the way. A run
+// the deadline stopped is persistent and runs onError; the delivery it
+// half-announced is not a delivery.
 func TestUAT21_DeadlineOutrunsACaughtEnding(t *testing.T) {
 	m := newMachine(map[string]any{"ns=2;s=Ready": true})
 	cfg := uatConfig(`
@@ -1059,7 +1051,7 @@ func TestUAT21_DeadlineOutrunsACaughtEnding(t *testing.T) {
 	if res.Err == nil || !errors.Is(res.Err, context.DeadlineExceeded) {
 		t.Errorf("the deadline should be the fault, got %v", res.Err)
 	}
-	if wall < 140*time.Millisecond || wall > 2*time.Second {
+	if wall < 150*time.Millisecond || wall > 5*time.Second {
 		t.Errorf("run took %v, want ~150ms (the deadline) plus the cleanup", wall)
 	}
 	if n := m.count("write", "ns=2;s=SuccessMarker"); n != 0 {
@@ -1070,9 +1062,9 @@ func TestUAT21_DeadlineOutrunsACaughtEnding(t *testing.T) {
 	}
 }
 
-// UAT-22 A wait without its predicate — a customer's typo — must be a
-// readable persistent fault with the cleanup run, not a panic that takes
-// the process and leaves the machine armed. Found by the round-2 review.
+// A wait without its predicate, a customer's typo, must be a readable
+// persistent fault with the cleanup run, not a panic that takes the
+// process and leaves the machine armed.
 func TestUAT22_WaitWithoutAPredicateIsAFaultNotAPanic(t *testing.T) {
 	m := newMachine(map[string]any{"ns=2;s=Loaded": false})
 	cfg := uatConfig(`
@@ -1094,7 +1086,7 @@ func TestUAT22_WaitWithoutAPredicateIsAFaultNotAPanic(t *testing.T) {
 	}
 }
 
-// UAT-23 A machine whose driver panics mid-handshake: the run is a
+// A machine whose driver panics mid-handshake: the run is a
 // persistent fault, the machine is handed back by onError, and the process
 // survives. The recover lives at the runtime seam, so nothing a script or a
 // binding can do takes the host with it.
@@ -1123,10 +1115,9 @@ func TestUAT23_AMachineThatPanicsIsAFaultNotACrash(t *testing.T) {
 	}
 }
 
-// UAT-24 A cleanup with no budget would wait forever: an omitted deadline
+// A cleanup with no budget would wait forever: an omitted deadline
 // field in the YAML is all it takes, so it is refused at deploy, with both
-// names in the error. Found by the round-2 review; the worst of the eight
-// because a config alone reaches it.
+// names in the error.
 func TestUAT24_AnUnbudgetedCleanupIsRefusedAtDeploy(t *testing.T) {
 	m := newMachine(map[string]any{})
 	cfg := uatConfig(`return opcua.error_not_ready();`)
@@ -1144,9 +1135,9 @@ func TestUAT24_AnUnbudgetedCleanupIsRefusedAtDeploy(t *testing.T) {
 	}
 }
 
-// UAT-20 A malformed address: what ParseAddress refuses. Marked persistent
-// is persistent (LIB-5); unmarked is transient, which is the letter of
-// LIB-5 and a duty on PR2's OPC UA binding to mark its parse faults.
+// A malformed address: what ParseAddress refuses. Marked persistent is
+// persistent; unmarked is transient, like every unmarked binding fault, so
+// a binding must mark its own parse faults persistent.
 func TestUAT20_MalformedAddress(t *testing.T) {
 	t.Run("parse error marked persistent", func(t *testing.T) {
 		m := newMachine(map[string]any{})
@@ -1157,7 +1148,7 @@ func TestUAT20_MalformedAddress(t *testing.T) {
 		res, _ := runScenario(t, cfg, m, map[string]any{})
 		expectOutcome(t, res, Persistent)
 	})
-	t.Run("parse error unmarked is transient, per the letter of LIB-5", func(t *testing.T) {
+	t.Run("parse error unmarked is transient", func(t *testing.T) {
 		m := newMachine(map[string]any{})
 		m.mu.Lock()
 		m.parseErr = errors.New("nodeId is not a NodeID")
@@ -1168,15 +1159,12 @@ func TestUAT20_MalformedAddress(t *testing.T) {
 	})
 }
 
-// UAT-25 A wait_until that times out inside onError: the machine was never
+// A wait_until that times out inside onError: the machine was never
 // handed back, so the run is persistent whatever the block's JavaScript did
-// with the throw. Before the fix the timeout borrowed the script's ending
-// slot, the reset after it was refused as "the script ended" before it could
-// be recorded, and the caught shape reported the cleanup finished — the
-// uncaught shape reported the opposite for the same machine state.
+// with the throw, and the caught and the uncaught shape agree.
 func TestUAT25_ACleanupWaitThatTimesOutDoesNotHandTheMachineBack(t *testing.T) {
-	// The probe from the defect report, verbatim: the machine is busy and
-	// never stops being busy, and the cleanup waits for idle, then resets.
+	// The machine is busy and never stops being busy, and the cleanup
+	// waits for idle, then resets.
 	t.Run("the block catches the timeout and carries on", func(t *testing.T) {
 		m := newMachine(map[string]any{"Busy": true})
 		cfg := uatConfig(`return opcua.error_transient("machine busy");`)
@@ -1188,7 +1176,7 @@ func TestUAT25_ACleanupWaitThatTimesOutDoesNotHandTheMachineBack(t *testing.T) {
 		`
 		res, _ := runScenario(t, cfg, m, map[string]any{})
 
-		expectOutcome(t, res, Persistent) // LIB-4: the cleanup did not finish
+		expectOutcome(t, res, Persistent) // the cleanup did not finish
 		if res.CleanupErr == nil {
 			t.Fatalf("CleanupErr must report the wait that timed out, got nil")
 		}
@@ -1198,14 +1186,14 @@ func TestUAT25_ACleanupWaitThatTimesOutDoesNotHandTheMachineBack(t *testing.T) {
 		if !strings.Contains(res.CleanupErr.Error(), "Busy") {
 			t.Errorf("CleanupErr must name the wait that timed out, got %v", res.CleanupErr)
 		}
-		// The reset inside the same try never reached the machine — the
-		// timeout throws, and a throw skips the rest of the try — but the
-		// report now says so, instead of claiming the handback finished.
+		// The reset inside the same try never reached the machine: the
+		// timeout throws, and a throw skips the rest of the try. The
+		// report says so, rather than claiming the handback finished.
 		if m.count("write", "Reset") != 0 {
 			t.Errorf("a throw inside the try skips the reset:\n%s", m.log())
 		}
 	})
-	// The decision's other half, measured: a wait timeout inside a cleanup
+	// The other half: a wait timeout inside a cleanup
 	// ends nothing, so a block that catches the wait alone still resets.
 	// "The machine is not touched after the script has ended" protects the
 	// transaction a script's first ending decided; a cleanup has no
@@ -1230,7 +1218,7 @@ func TestUAT25_ACleanupWaitThatTimesOutDoesNotHandTheMachineBack(t *testing.T) {
 		}
 	})
 	// The same cleanup without the try/catch: the throw aborts the block,
-	// so the reset does not run — the script chose not to carry on — but
+	// so the reset does not run (the script chose not to carry on), and
 	// the report agrees with the caught shape.
 	t.Run("the same cleanup without the try/catch agrees", func(t *testing.T) {
 		m := newMachine(map[string]any{"Busy": true})

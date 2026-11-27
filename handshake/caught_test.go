@@ -25,14 +25,12 @@ import (
 // A fault the script caught must not explain a run that something else
 // stopped.
 //
-// The 2026-11-26 ruling -- a caught fault stays caught -- was implemented as
-// precedence: an explicit ending outranks the recorded fault. That covered
-// the runs that reach an ending and left the ones that do not. A script that
-// caught a flaky read and then hit a bug of its own reported the MACHINE
-// fault and was handed back for retry, so the same bug was persistent until
-// an unrelated try/catch appeared near it, and the dead letter it eventually
-// produced named a machine fault that had stopped nothing. Someone reading
-// that would go and look at the network.
+// A caught fault stays caught, whether or not the run reaches an ending. A
+// script that catches a flaky read and then hits a bug of its own is that
+// bug: Persistent, with the bug as its reason. Reporting the machine fault
+// would hand the message back for retry, and the dead letter it eventually
+// produced would send someone to look at the network for a fault that
+// stopped nothing.
 func TestCaughtFault_DoesNotExplainAScriptBug(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -58,9 +56,9 @@ func TestCaughtFault_DoesNotExplainAScriptBug(t *testing.T) {
 			errSays: "script ended without calling",
 		},
 		{
-			// The other direction, and the one UAT-8b pinned: a fault the
-			// script did NOT catch is exactly what stopped the run, so it
-			// decides, and an unmarked one is worth retrying.
+			// The other direction: a fault the script did not catch is
+			// what stopped the run, so it decides, and an unmarked one is
+			// worth retrying.
 			name:    "the same fault uncaught still decides",
 			script:  `opcua.read({ nodeId: "ns=2;s=Flaky" }); return opcua.success({});`,
 			want:    Transient,
@@ -82,12 +80,11 @@ func TestCaughtFault_DoesNotExplainAScriptBug(t *testing.T) {
 // A fault recorded while the stack unwinds must not displace the fault that
 // stopped the run.
 //
-// classify finds which recorded fault the run's error IS. Keeping only the
-// latest meant a failing operation inside a `finally`, or a rethrow, took
-// the place of the stopper: the identical machine fault was Transient until
-// an unrelated caught write in an unwind path also failed, and then it was
-// Persistent with an error that named neither the node nor the operation.
-// The flow branches on that class.
+// classify takes the fault the run's error carries, so a failing operation
+// inside a `finally` does not take the place of the fault that stopped the
+// run. Otherwise the same machine fault would be Transient or Persistent
+// depending on whether an unrelated caught write in the unwind path also
+// failed, and the flow branches on that class.
 func TestUnwindFault_DoesNotDisplaceTheFaultThatStopped(t *testing.T) {
 	const script = `
 		try {

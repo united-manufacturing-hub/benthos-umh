@@ -22,30 +22,23 @@ import (
 )
 
 // A clamped wait ends as a wait, not as a deadline, however slow the machine
-// is (LIB-12) -- for a machine that honours the context it is given, which
-// is what BND-3 requires of a binding.
+// is, as long as the binding honors the context it is given.
 //
 // The engine bounds each read at the wait's own end, so a machine that
-// honours that bound cannot carry the run past its deadline no matter how
-// slow it is. A binding that IGNORES its context defeats this and every
-// other deadline the engine sets; that is BND-3's own case and UAT-05
-// covers it. Nothing here can fix a binding that will not stop.
+// honors that bound cannot carry the run past its deadline no matter how
+// slow it is. A binding that ignores its context defeats this and every
+// other deadline the engine sets; nothing here can fix a binding that will
+// not stop.
 //
-// The clamp used to leave a fixed 50ms margin, and a read is only discovered
-// to be too late once it returns, so against a machine answering in 60ms the
-// last read started inside the margin and ran past the deadline: the run
-// came back Persistent, blocking for the whole budget instead of returning
-// at the clamped timeout. UAT-15 could not see it, because its machine
-// answers in about 0ms.
-//
-// Predicting the next read from the last one was tried and was worse: one
-// slow first read -- the ordinary shape after a connect -- ended a wait
-// 130ms early on a machine that was ready on its second read, turning a
-// delivery into a false "machine did not confirm".
+// A read is only discovered to be too late once it returns, so the clamp's
+// 50ms margin alone is not enough: against a machine answering in 60ms, the
+// last read starts inside the margin and runs past the deadline, and the run
+// would come back Persistent after the whole budget instead of Transient at
+// the clamped timeout. A machine that answers in about 0ms cannot show this.
 func TestClampedWait_EndsAsAWaitHoweverSlowTheMachineIs(t *testing.T) {
 	for _, answersIn := range []time.Duration{
-		30 * time.Millisecond,  // faster than the old margin
-		60 * time.Millisecond,  // slower than it: the case that failed
+		30 * time.Millisecond,  // faster than clampWait's margin
+		60 * time.Millisecond,  // slower than the margin
 		120 * time.Millisecond, // much slower
 	} {
 		t.Run(answersIn.String(), func(t *testing.T) {
@@ -84,15 +77,10 @@ func TestClampedWait_EndsAsAWaitHoweverSlowTheMachineIs(t *testing.T) {
 	}
 }
 
-// A slow FIRST read must not starve the rest of the wait.
-//
-// Predicting the next read from the previous one ended a wait as soon as one
-// read had been slow, even with time left and the wait's own timeout not
-// reached. The shape is ordinary: the first read after a connect, or after a
-// cache warms. Measured against the predictive form, this delivered on a
-// generous budget and timed out on a tight one with the same machine and the
-// same script -- a delivery turned into a false "the machine did not
-// confirm".
+// A slow first read must not starve the rest of the wait: with time left and
+// the wait's own timeout not reached, the wait reads again. The shape is
+// ordinary: the first read after a connect, or after a cache warms. Giving
+// up early would turn a delivery into a false "the machine did not confirm".
 func TestClampedWait_ASlowFirstReadDoesNotStarveTheWait(t *testing.T) {
 	m := newMachine(map[string]any{"ns=2;s=Ready": false})
 	// Slow once, then instant, and ready on the second look.

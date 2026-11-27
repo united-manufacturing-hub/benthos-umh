@@ -21,12 +21,11 @@ import (
 	"testing"
 )
 
-// TestWaitUntil_RefusesAComputedTimeoutLongerThanAnHour
-//
-// A LITERAL wait that long is already refused when the config loads: the
-// scanner adds up the literal waits in each block and rejects a total that
-// exceeds the script's own deadline. What the scanner cannot see is a
-// timeout the script computes, and that is the one a message carries --
+// TestWaitUntil_RefusesAComputedTimeoutLongerThanAnHour pins the run-time
+// half of the hour rule. A literal wait that long is already refused when
+// the config loads: Validate adds up the literal waits in each block and
+// rejects a total that exceeds the block's budget. What Validate cannot see
+// is a timeout the script computes, such as
 // wait_until(addr, pred, msg.timeout) with a value in the wrong unit.
 //
 // It is persistent. Repeating the message will not make the number smaller.
