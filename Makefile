@@ -110,7 +110,13 @@ test-noderedjs:
 .PHONY: test-unit-opc
 test-unit-opc:
 	@TEST_OPCUA_UNIT=true \
-		$(GINKGO_CMD) $(GINKGO_FLAGS) ./opcua_plugin/...
+		$(GINKGO_CMD) $(GINKGO_FLAGS) --skip-package=faultopcua ./opcua_plugin/...
+
+# The fault server's tests rely on the race detector to catch a fault that is
+# published before its parameters are set, so CI runs them here, with --race.
+.PHONY: test-faultopcua
+test-faultopcua:
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) --race ./opcua_plugin/internal/faultopcua/...
 
 .PHONY: test-integration-opc
 test-integration-opc:

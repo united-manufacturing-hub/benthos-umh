@@ -22,10 +22,9 @@ import (
 )
 
 // A Variable is one node on the server, and the thing a fault is armed against.
-// Holding a handle rather than a name is what makes a fault against a node that does
-// not exist unwritable: the old API matched by string, so one typo between adding a
-// node and arming a fault produced the fault's whole observable behavior against a
-// node that was not there, and the scenario passed end to end.
+// Holding a handle rather than a name makes a fault against a node that does not
+// exist unwritable: there is no name to mistype between adding a node and arming
+// a fault.
 type Variable struct {
 	ns   *faultNamespace
 	id   *ua.NodeID
@@ -56,10 +55,13 @@ func (v *Variable) Value() any {
 	return dv.Value.Value()
 }
 
-// Reads and Writes count the requests that reached this node. They prove the request
-// physically arrived, which is what separates "the client handled the fault" from
-// "the client never got that far".
-func (v *Variable) Reads() int  { return int(v.reads.Load()) }
+// Reads reports how many reads of this node's value reached the server, including
+// those a fault then refused, stalled or dropped. It separates "the client handled
+// the fault" from "the client never got that far".
+func (v *Variable) Reads() int { return int(v.reads.Load()) }
+
+// Writes reports how many writes of this node's value reached the server, including
+// those a fault then refused, stalled or dropped.
 func (v *Variable) Writes() int { return int(v.writes.Load()) }
 
 // sawRead and sawWrite are called from the namespace on every request that reaches

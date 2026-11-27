@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync"
 	"testing"
 
 	"github.com/gopcua/opcua/server"
@@ -32,17 +33,17 @@ type Server struct {
 	proxy *proxy
 	host  string
 	port  int // where the OPC UA server listens, behind the proxy
+
+	// stop cancels the context Start hands to gopcua. gopcua's own Close
+	// does not stop its service loop, which runs until that context ends.
+	mu   sync.Mutex
+	stop context.CancelFunc
 }
 
-// New starts a server with no faults armed: an honest machine, which is the control
-// every fault test needs beside it. It fails the test rather than returning an error,
-// because a fixture that could not start is not a condition a test handles, and it
-// registers Close with t.Cleanup so a forgotten teardown cannot leak a listener into
-// the next test.
-//
-// The port is taken from the operating system here rather than on Start, so several
-// servers can run at once without a test picking a number, and so Endpoint answers
-// before the server is listening.
+// New returns a server with no faults armed: an honest machine, the control every
+// fault test needs beside it. It fails t if the server cannot be set up, and
+// registers Close with t.Cleanup. The port is fixed here, so Endpoint is valid
+// before Start.
 func New(t *testing.T) *Server {
 	port, err := freePort()
 	if err != nil {
@@ -55,19 +56,22 @@ func New(t *testing.T) *Server {
 		server.EnableAuthMode(ua.UserTokenTypeAnonymous),
 	)
 	s.ns = &faultNamespace{
-		NodeNameSpace: server.NewNodeNameSpace(s.srv, "faultopcua"),
-		t:             t,
-		faults:        map[string]*Fault{},
-		vars:          map[string]*Variable{},
-		closed:        make(chan struct{}),
+		NodeNameSpace:  server.NewNodeNameSpace(s.srv, innerNamespaceName),
+		t:              t,
+		faults:         map[string]*Fault{},
+		vars:           map[string]*Variable{},
+		writingThrough: map[string]int{},
+		closed:         make(chan struct{}),
 	}
 
 	// The namespace the server dispatches to must be the wrapper, whose
 	// Attribute and SetAttribute are where the faults live, and not the
-	// NodeNameSpace inside it -- the constructor registers that one on its
-	// own, at the index before this one, and a request routed there meets
-	// an honest machine no matter what is armed. The wrapper takes the next
-	// index, and the nodes added to it are named with it.
+	// NodeNameSpace inside it. gopcua's constructor registers that one on
+	// its own, at index 1. The wrapper takes index 2, and because the
+	// wrapper embeds the inner namespace, that also renumbers the inner
+	// one: every node is added as ns=2, and index 1 is left holding no
+	// variables. The wrapper reports its own name, so a namespace URI
+	// resolves to index 2 and not to the empty index before it.
 	_ = s.srv.AddNamespace(s.ns)
 
 	// The read and write services are ours rather than gopcua's, registered
@@ -123,7 +127,12 @@ func (s *Server) Cuts() int { return s.proxy.cutCount() }
 
 // Start listens and serves until ctx is canceled or Close is called.
 func (s *Server) Start(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	s.mu.Lock()
+	s.stop = cancel
+	s.mu.Unlock()
 	if err := s.srv.Start(ctx); err != nil {
+		cancel()
 		return fmt.Errorf("faultopcua: start: %w", err)
 	}
 	return nil
@@ -134,17 +143,32 @@ func (s *Server) Start(ctx context.Context) error {
 func (s *Server) Close() error {
 	s.ns.release()
 	if s.proxy != nil {
-		// Not cut(). The proxy's connections are torn down here without
-		// being counted, because a shutdown is not a session drop and
-		// must not read as one: Cuts is evidence about a fault, and
-		// closing the server is not a fault.
+		// The proxy's connections are torn down without being counted,
+		// because a shutdown is not a session drop: Cuts is evidence about
+		// a fault, and closing the server is not a fault.
 		s.proxy.shutdown()
 	}
 	if s.srv == nil {
 		return nil
 	}
-	return s.srv.Close()
+	err := s.srv.Close()
+	s.mu.Lock()
+	if s.stop != nil {
+		s.stop()
+	}
+	s.mu.Unlock()
+	return err
 }
+
+// innerNamespaceName and namespaceName are the URIs of the namespace gopcua
+// registers on its own and of the wrapper the server dispatches to.
+const (
+	innerNamespaceName = "faultopcua-inner"
+	namespaceName      = "faultopcua"
+)
+
+// Name is the wrapper's namespace URI.
+func (ns *faultNamespace) Name() string { return namespaceName }
 
 // freePort asks the operating system for a port and gives it straight back.
 // Another process can take it in between; a test that cannot bind should say

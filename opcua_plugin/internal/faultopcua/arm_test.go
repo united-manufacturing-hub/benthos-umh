@@ -28,14 +28,11 @@ import (
 // server's request handlers find it, and they can find it the moment it is
 // inserted.
 //
-// arm used to insert the fault and leave its parameters to the arm method,
-// which set them after arming returned -- outside the lock. A write that
-// arrived in between met a fault whose status was still the zero value:
-// RefuseWrite answered Good -- the exact lie refuseASuccessStatus exists to
-// prevent, reached around the guard -- and recorded a firing. And because no
-// later arming-side synchronization ordered those writes against the
-// handler's reads, every request the fault then answered was a data race on
-// the field, not only the ones inside the arming window.
+// A fault published before its parameters are set is met, by a write that
+// arrives in between, with its status still at the zero value: RefuseWrite
+// answers Good -- the lie refuseASuccessStatus exists to prevent, reached
+// around the guard -- and records a firing. Setting the parameters after
+// publishing is also a data race on every request the fault then answers.
 //
 // The hammer is one goroutine calling the write path the way the server's
 // single service loop does, without pause. The fault is armed and left armed

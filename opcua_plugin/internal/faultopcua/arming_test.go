@@ -32,15 +32,15 @@ import (
 // subprocess and the parent asserts the child died with the refusal message.
 const armCaseEnv = "FAULTOPCUA_ARM_CASE"
 
-// TestArming_RefusesWhatItCannotArm pins the guards that replaced the two
-// zero-value traps:
+// TestArming_RefusesWhatItCannotArm pins the guards against arguments that
+// would make a fault meaningless:
 //
-//   - RefuseWrite (and RefuseRead, which shares the parameter) armed without
-//     a status used to answer Good -- the machine's honest answer -- while
-//     recording a firing and reporting fired.
-//   - RaiseFlagLate with no wait used to be over before it was armed: it
-//     never took effect and never recorded anything, and read exactly like a
-//     fault that never injected.
+//   - RefuseWrite (and RefuseRead, which shares the parameter) armed with a
+//     Good status would answer the machine's honest answer while recording a
+//     firing and reporting fired.
+//   - RaiseFlagLate with no wait would be over before it was armed: it would
+//     never take effect, and would read exactly like a fault that never
+//     injected.
 //
 // An arm method cannot be called without the value it needs, and cannot be
 // called with a value that makes the fault meaningless.
@@ -77,10 +77,9 @@ func TestArming_RefusesWhatItCannotArm(t *testing.T) {
 			v := srv.AddVariable("Loaded", true)
 			srv.RaiseFlagLate(v, false, -time.Second)
 		}},
-		// Arming a second fault on a node used to replace the first silently:
-		// the first *Fault stayed in the caller's hand, never fired again, and
-		// Fired() answered false with no diagnostic -- the same silent trap as
-		// a fault armed against a node that is not there, one step along.
+		// Replacing the first fault silently would leave it in the caller's
+		// hand, never firing again, with Fired() answering false and no
+		// diagnostic.
 		{"arming a second fault on a node that already has one", "cannot arm FlapValue against \"Setpoint\": RefuseWrite is already armed", func(t *testing.T) {
 			srv := faultopcua.New(t)
 			v := srv.AddVariable("Setpoint", int32(7))

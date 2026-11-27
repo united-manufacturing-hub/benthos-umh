@@ -27,6 +27,45 @@
 // did, and that the fault fired. The second assertion is not optional. A fault
 // that silently failed to inject reads exactly like a fault the client handled.
 //
+// # Example
+//
+// A machine that accepts a write and never applies it. The client is told the
+// write landed; the read-back and the server-side value say otherwise, and
+// [Fault.Fired] proves the fault, not luck, is why:
+//
+//	func TestWriteIsVerified(t *testing.T) {
+//		srv := faultopcua.New(t) // Close is registered with t.Cleanup
+//		setpoint := srv.AddVariable("Setpoint", int32(7))
+//		f := srv.AcceptWriteNeverApply(setpoint)
+//		if err := srv.Start(context.Background()); err != nil {
+//			t.Fatal(err)
+//		}
+//
+//		client, err := opcua.NewClient(srv.Endpoint(),
+//			opcua.SecurityMode(ua.MessageSecurityModeNone),
+//			opcua.AutoReconnect(false))
+//		if err != nil {
+//			t.Fatal(err)
+//		}
+//		if err := client.Connect(context.Background()); err != nil {
+//			t.Fatal(err)
+//		}
+//		// Cleanups run last-registered-first, so the server closes before
+//		// the client, as "One service loop" below asks. New's own Close
+//		// runs again afterwards, which Close tolerates.
+//		t.Cleanup(func() { _ = client.Close(context.Background()) })
+//		t.Cleanup(func() { _ = srv.Close() })
+//
+//		// ... run the code under test against setpoint.ID() with client ...
+//
+//		if got := setpoint.Value(); got != int32(7) {
+//			t.Errorf("the machine holds %v, want the original 7", got)
+//		}
+//		if setpoint.Writes() == 0 || !f.Fired() {
+//			t.Error("the write never met the fault, so this test proved nothing")
+//		}
+//	}
+//
 // # One service loop
 //
 // gopcua's server handles every service request in a single loop, so a fault
@@ -39,10 +78,7 @@
 //
 // Close the server before the client. Closing the client first sends a
 // CloseSession that queues behind the blocked handler, and the client then
-// waits out gopcua's 10s default RequestTimeout: measured at 10.56s against
-// 0.30s the other way round. The helpers in this package's tests register
-// their cleanups accordingly, and LIFO makes that the reverse of how it
-// reads.
+// waits out gopcua's 10s default RequestTimeout.
 //
 // It is not a general OPC UA server. It implements what a fault needs and nothing
 // more, and nobody should point a plant at it.

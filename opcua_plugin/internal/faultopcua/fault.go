@@ -40,13 +40,13 @@ type Fault struct {
 	// delay is how much later than it should AnswerLate answer.
 	delay time.Duration
 
-	// after is how long RaiseFlagLate holds the node at until, measured from
-	// the moment the fault was armed.
+	// after is how long RaiseFlagLate serves its value instead of the
+	// node's, measured from the moment the fault was armed.
 	after time.Duration
 
-	// until is the value RaiseFlagLate serves while it is holding, and the
-	// value FlapValue alternates the node with.
-	until any
+	// served is the value the fault answers with instead of the node's:
+	// RaiseFlagLate's while it is holding, FlapValue's on every other read.
+	served any
 
 	// flap is this fault's own phase, which FlapValue flips on every read
 	// that meets it. It lives on the fault and not on the namespace because
@@ -62,6 +62,11 @@ type Fault struct {
 
 	// ns disarms the fault: it is the namespace the fault's node lives in.
 	ns *faultNamespace
+
+	// disarmed is closed by Disarm, and releases a request that
+	// NeverAnswer or AnswerLate is holding.
+	disarmed   chan struct{}
+	disarmOnce sync.Once
 
 	mu   sync.Mutex
 	hits int
@@ -79,12 +84,14 @@ func (f *Fault) Count() int {
 }
 
 // Disarm stops the fault, leaving an honest machine and freeing the node for
-// another fault. Its record is kept, so a scenario can disarm and still prove
-// the fault fired earlier.
+// another fault. A request the fault is holding is answered at once: AnswerLate's
+// with the real answer, NeverAnswer's with BadServerHalted. Its record is kept, so a scenario can disarm and still prove the fault fired
+// earlier.
 func (f *Fault) Disarm() {
 	if f.ns == nil {
 		return
 	}
+	f.disarmOnce.Do(func() { close(f.disarmed) })
 	f.ns.mu.Lock()
 	defer f.ns.mu.Unlock()
 	// Only let go of the node if this fault is still the one holding it:
@@ -121,10 +128,13 @@ func (f *Fault) toggle() bool {
 // fault cannot be armed against a node this server does not have, because there is
 // no way to name one, and it cannot be armed without the value it needs, because
 // there is no field to leave at its zero value.
+//
+// An arm method that refuses its arguments calls Fatalf on the test passed to New,
+// so call it from that test's goroutine, not from a subtest or a goroutine of its own.
 
 // AcceptWriteNeverApply answers a write with Good and leaves the node holding its
-// old value. TRUMPF's press does this, and it is the reason the handshake reads a
-// value back after writing it.
+// old value. TRUMPF's press does this, and it is why a client that must know a
+// write landed reads the value back.
 func (s *Server) AcceptWriteNeverApply(v *Variable) *Fault {
 	return s.arm(v, &Fault{kind: faultAcceptWriteNeverApply})
 }
@@ -150,7 +160,7 @@ func (s *Server) RefuseRead(v *Variable, status ua.StatusCode) *Fault {
 // machine with two controllers behaves, and it is what a single-read check mistakes
 // for a confirmation.
 func (s *Server) FlapValue(v *Variable, other any) *Fault {
-	return s.arm(v, &Fault{kind: faultFlapValue, until: other})
+	return s.arm(v, &Fault{kind: faultFlapValue, served: other})
 }
 
 // AnswerLate answers correctly, delay too late, on reads and on writes alike. It
@@ -160,14 +170,15 @@ func (s *Server) AnswerLate(v *Variable, delay time.Duration) *Fault {
 	return s.arm(v, &Fault{kind: faultAnswerLate, delay: delay})
 }
 
-// NeverAnswer does not answer at all, on reads or writes, until the server closes.
+// NeverAnswer does not answer at all, on reads or writes, until the fault is
+// disarmed or the server closes.
 // A client that waits on a socket rather than on its own clock hangs here forever,
 // which is the failure this fault exists to find.
 func (s *Server) NeverAnswer(v *Variable) *Fault {
 	return s.arm(v, &Fault{kind: faultNeverAnswer})
 }
 
-// RaiseFlagLate holds the node at until for after, then lets the real value
+// RaiseFlagLate answers until instead of the node's value for after, then lets the real value
 // through. A machine that confirms late rather than never is the ordinary case a
 // wait exists for, and the one a test using a flag that is already up never
 // exercises. An after of zero is refused: a fault that is over before it is armed
@@ -177,7 +188,7 @@ func (s *Server) RaiseFlagLate(v *Variable, until any, after time.Duration) *Fau
 		s.t.Fatalf("faultopcua: RaiseFlagLate: after must be positive, got %v: "+
 			"a fault that is over before it is armed records nothing and reads as a fault that never fired", after)
 	}
-	return s.arm(v, &Fault{kind: faultRaiseFlagLate, until: until, after: after})
+	return s.arm(v, &Fault{kind: faultRaiseFlagLate, served: until, after: after})
 }
 
 // DropSession closes the connection underneath the client at the moment the node is
@@ -188,22 +199,16 @@ func (s *Server) DropSession(v *Variable) *Fault {
 }
 
 // arm fills in where the fault lives, publishes it against v's node, and
-// returns it. Registering on the node's own namespace, rather than on the
-// server's, is what makes the handle the whole truth about where the fault
-// lives: there is no name to typo and no node to miss.
+// returns it.
 //
 // The fault must arrive complete, and every arm method builds it that way:
 // the moment it is in the namespace's map the server's request handlers can
-// find it, so a parameter set after arming returned is a parameter a request
-// can miss. RefuseWrite armed that way -- published before its status was set
-// -- answered Good, the exact lie refuseASuccessStatus exists to prevent,
-// reached around the guard, and was a data race on the field besides.
+// find it, so a parameter set after arm returns is a parameter a request can
+// miss, and a data race besides.
 //
-// A node holds one armed fault. Arming a second used to replace the first
-// silently: the first *Fault stayed in the caller's hand, never fired again,
-// and Fired() answered false with no diagnostic -- the same silent trap as a
-// fault armed against a node that is not there, one step along. Disarm the
-// first fault before arming another.
+// A node holds one armed fault, and arming a second fails the test: replacing
+// the first would leave its *Fault in the caller's hand, never firing again,
+// with no diagnostic. Disarm the first fault before arming another.
 func (s *Server) arm(v *Variable, f *Fault) *Fault {
 	if v == nil || v.ns == nil {
 		s.t.Fatalf("faultopcua: cannot arm a fault against a node this server does not have")
@@ -211,6 +216,7 @@ func (s *Server) arm(v *Variable, f *Fault) *Fault {
 	f.node = v.id.StringID()
 	f.ns = v.ns
 	f.armed = time.Now()
+	f.disarmed = make(chan struct{})
 	v.ns.mu.Lock()
 	defer v.ns.mu.Unlock()
 	if other := v.ns.faults[f.node]; other != nil {
@@ -252,9 +258,8 @@ func (k faultKind) String() string {
 const statusSeverity ua.StatusCode = 0xC0000000
 
 // refuseASuccessStatus fails the test rather than arming a refusal that answers
-// with success. RefuseWrite without this guard answered Good, recorded a firing,
-// and reported fired -- the package's own evidence machinery corroborating the
-// wrong behavior on the fault a plant produces most.
+// with success: such a fault would answer the way an honest machine does and
+// still record a firing, so the evidence would corroborate the wrong behavior.
 func (s *Server) refuseASuccessStatus(method string, status ua.StatusCode) {
 	if status&statusSeverity == 0 {
 		s.t.Fatalf("faultopcua: %s: %v is a Good status, which means success; "+

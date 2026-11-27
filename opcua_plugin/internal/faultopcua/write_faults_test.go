@@ -78,10 +78,8 @@ func TestFault_AcceptsAWriteAndNeverAppliesIt(t *testing.T) {
 // the instrument has to be able to produce any status rather than one
 // stand-in refusal.
 //
-// Until the rewrite this fault had no test at all, which is how it shipped
-// answering Good when the status was left at its zero value -- the package's
-// own Fired machinery corroborating an honest answer. The arm method now
-// refuses a success status; TestArming_RefusesWhatItCannotArm pins that.
+// The arm method refuses a success status; TestArming_RefusesWhatItCannotArm
+// pins that.
 func TestFault_RefusesAWriteWithTheStatusItWasGiven(t *testing.T) {
 	t.Run("control: the honest server accepts the write", func(t *testing.T) {
 		_, client, v := startServer(t, "Setpoint", int32(7))

@@ -63,8 +63,7 @@ func TestTheControl_AnHonestServerAppliesAWrite(t *testing.T) {
 		t.Errorf("%d connections were cut on an honest machine, want 0", n)
 	}
 
-	// A shutdown is not a session drop. Closing with the client still
-	// connected used to run the same cut a drop runs and land in Cuts().
+	// A shutdown with the client still connected is not a session drop.
 	_ = srv.Close()
 	if n := srv.Cuts(); n != 0 {
 		t.Errorf("shutting the server down counted %d cuts, want 0: a shutdown is not a session drop", n)
@@ -92,9 +91,8 @@ func connectClient(t *testing.T, srv *faultopcua.Server) *opcua.Client {
 	// it would hide the fault. And gopcua's reconnect monitor races its own
 	// Close -- Dial writes c.conn at client.go:617 while Close reads it at
 	// :664, unguarded -- which this package's drop test reproduces under
-	// -race every time. That is gopcua's defect, recorded in
-	// DEFECT-client-close-race.md on 2026-11-02, and a caller cannot work
-	// around it except by not starting the monitor.
+	// -race every time. That is gopcua's defect, tracked as ENG-8156, and a
+	// caller cannot work around it except by not starting the monitor.
 	client, err := opcua.NewClient(srv.Endpoint(),
 		opcua.SecurityMode(ua.MessageSecurityModeNone),
 		opcua.AutoReconnect(false))
@@ -110,8 +108,7 @@ func connectClient(t *testing.T, srv *faultopcua.Server) *opcua.Client {
 	// run last-registered-first, so the server closes BEFORE the client.
 	// gopcua's server handles every request in one loop, so a fault holding
 	// that loop also holds the client's CloseSession, and the client then
-	// waits out its 10s default RequestTimeout. Measured: 10.56s closing the
-	// client first, 0.30s closing the server first. New already registered
+	// waits out its 10s default RequestTimeout. New already registered
 	// its own Close; the copy registered here runs first, and New's runs
 	// again afterwards, which Close tolerates.
 	t.Cleanup(func() { _ = client.Close(context.Background()) })

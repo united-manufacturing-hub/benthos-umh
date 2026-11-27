@@ -15,7 +15,9 @@
 package faultopcua_test
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/gopcua/opcua/ua"
 )
@@ -85,5 +87,42 @@ func TestDisarm_FreesTheNodeForAnotherFault(t *testing.T) {
 	// And the first fault's record of the earlier misbehavior is kept.
 	if got := first.Count(); got != count {
 		t.Errorf("after the second fault took the node, the first reports %d hits, want the %d it had: the record was not kept", got, count)
+	}
+}
+
+// TestDisarm_ReleasesARequestTheFaultIsHolding pins that Disarm answers a
+// request the fault is holding, and that the machine is honest afterwards. gopcua serves
+// every request in one loop, so a held request that outlived Disarm would
+// keep the whole server silent for every client until Close.
+func TestDisarm_ReleasesARequestTheFaultIsHolding(t *testing.T) {
+	srv, client, v := startServer(t, "Flag", true)
+	id := nodeID(t, v)
+	f := srv.NeverAnswer(v)
+
+	held := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, err := readWithContext(ctx, client, id)
+		held <- err
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for !f.Fired() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !f.Fired() {
+		t.Fatal("the read never met the fault, so this test proved nothing")
+	}
+
+	f.Disarm()
+
+	select {
+	case <-held:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the held read was still unanswered 5s after Disarm: disarming did not release it")
+	}
+	if got := readValue(t, client, id); got != true {
+		t.Errorf("after disarming, the read answered %v, want true", got)
 	}
 }
