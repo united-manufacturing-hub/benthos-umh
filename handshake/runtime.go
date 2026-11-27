@@ -25,10 +25,13 @@ import (
 	"time"
 
 	"github.com/dop251/goja"
+	"github.com/dop251/goja/ast"
 )
 
 // compile wraps the source as (function(){'use strict'; ... })(), so a
-// script may use a top-level return, and compiles it.
+// script may use a top-level return, and compiles it. It returns the parsed
+// tree beside the program, so Validate reads the script's waits from the
+// same parse.
 //
 // The prefix sits on the user's first line, so a line number in an error
 // is the user's own line: a script that throws on its first line reaches the
@@ -36,13 +39,16 @@ import (
 // the operator's logs. Only columns on that first line are shifted, by the
 // prefix's length. The suffix starts on a new line, so a trailing // comment
 // cannot swallow it. TestCompile_AUsersFirstLineIsLineOne pins this.
-func compile(name string, source string) (*goja.Program, error) {
+func compile(name string, source string) (*goja.Program, *ast.Program, error) {
 	wrapped := "(function(){'use strict';" + source + "\n})()"
-	program, err := goja.Compile(name, wrapped, false)
-	if err != nil {
-		return nil, fmt.Errorf("%s does not compile: %w", name, err)
+	tree, err := goja.Parse(name, wrapped)
+	if err == nil {
+		var program *goja.Program
+		if program, err = goja.CompileAST(tree, false); err == nil {
+			return program, tree, nil
+		}
 	}
-	return program, nil
+	return nil, nil, fmt.Errorf("%s does not compile: %w", name, err)
 }
 
 // runProgram binds globals into a fresh goja runtime and executes prog. A

@@ -162,7 +162,7 @@ func TestRun_AScriptFaultReachesTheResultUnmangled(t *testing.T) {
 // The runtime must stop a running script when its context is done. The
 // engine tests reach the runtime only indirectly; this drives it directly.
 func TestRuntime_TheRealRuntimeStopsWhenItsContextIsDone(t *testing.T) {
-	program, err := compile("spin", `for (;;) {}`)
+	program, _, err := compile("spin", `for (;;) {}`)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -391,7 +391,7 @@ func TestCallMethod_ACallUnderAnEndedTransactionIsRefused(t *testing.T) {
 // interrupts the VM on ctx must still stop. Under a ctx that is never done,
 // as an unbudgeted cleanup's is, a skipped stop leaks one goroutine per run.
 func TestRuntime_APanickingBindingDoesNotLeakTheWatcher(t *testing.T) {
-	program, err := compile("script", `boom();`)
+	program, _, err := compile("script", `boom();`)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
