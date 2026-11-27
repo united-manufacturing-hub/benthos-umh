@@ -192,6 +192,10 @@ test-downsampler:
 test-pkg-umh-topic:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./pkg/umh/topic/...
 
+.PHONY: test-pkg-compat
+test-pkg-compat:
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) --race ./pkg/compat/...
+
 .PHONY: bench-pkg-umh-topic
 bench-pkg-umh-topic:
 	go test -bench=. -benchmem ./pkg/umh/topic/...
