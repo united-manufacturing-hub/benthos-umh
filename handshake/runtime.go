@@ -290,8 +290,16 @@ func (e *Engine[UnifiedAddress]) namespace(rs *runState, endings bool) map[strin
 	}
 	if endings {
 		ns["success"] = func(call goja.FunctionCall, vm *goja.Runtime) goja.Value {
+			data := call.Argument(0).Export()
+			// The data leaves the engine in Result.Data. Data that does not
+			// encode -- an object that contains itself, a NaN -- is refused
+			// here as a script mistake rather than handed to a caller whose
+			// logging or encoding would choke on it.
+			if _, err := json.Marshal(data); err != nil {
+				panic(vm.NewTypeError("success() was given data that cannot be encoded as JSON: %v", err))
+			}
 			if rs.finish(endSuccess, nil) {
-				rs.data = call.Argument(0).Export()
+				rs.data = data
 			}
 			panic(vm.NewGoError(errEnded))
 		}
@@ -461,6 +469,9 @@ func (e *Engine[UnifiedAddress]) readWithin(
 	if rs.end != endNone {
 		return nil, false, errEnded
 	}
+	if err := rs.ctx.Err(); err != nil {
+		return nil, false, err // the deadline fired; the machine is not touched again
+	}
 	addr, err := e.bind.ParseAddress(raw)
 	if err != nil {
 		rs.fail("parse address", err)
@@ -487,6 +498,9 @@ func (e *Engine[UnifiedAddress]) readOp(rs *runState, raw map[string]any) (any, 
 	if rs.end != endNone {
 		return nil, errEnded
 	}
+	if err := rs.ctx.Err(); err != nil {
+		return nil, err // the deadline fired; the machine is not touched again
+	}
 	addr, err := e.bind.ParseAddress(raw)
 	if err != nil {
 		rs.fail("parse address", err)
@@ -511,6 +525,9 @@ func (e *Engine[UnifiedAddress]) writeOp(rs *runState, raw map[string]any, value
 	if rs.end != endNone {
 		return errEnded
 	}
+	if err := rs.ctx.Err(); err != nil {
+		return err // the deadline fired; the machine is not touched again
+	}
 	addr, err := e.bind.ParseAddress(raw)
 	if err != nil {
 		rs.fail("parse address", err) // the write never reached the machine
@@ -534,6 +551,9 @@ func (e *Engine[UnifiedAddress]) callOp(
 ) (any, error) {
 	if rs.end != endNone {
 		return nil, errEnded
+	}
+	if err := rs.ctx.Err(); err != nil {
+		return nil, err // the deadline fired; the machine is not touched again
 	}
 	addr, err := e.bind.ParseAddress(raw)
 	if err != nil {

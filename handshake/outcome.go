@@ -16,6 +16,7 @@ package handshake
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -92,7 +93,10 @@ func classify(ctx context.Context, rs *runState, runErr error) Result {
 		// in an unwind path changed the class the flow branches on, and the
 		// reported error degraded to a raw goja dump naming neither the node
 		// nor the operation.
-		for _, f := range rs.faults {
+		// Newest first: when two recorded faults share an error in their
+		// chains, the later one is the one that stopped the run.
+		for i := len(rs.faults) - 1; i >= 0; i-- {
+			f := rs.faults[i]
 			if !errors.Is(runErr, f.err) {
 				continue
 			}
@@ -123,5 +127,14 @@ func detailErr(what string, detail any) error {
 	if detail == nil {
 		return errors.New(what)
 	}
-	return fmt.Errorf("%s: %v", what, detail)
+	// JSON, not %v: a script can pass an object that contains itself, and
+	// %v recurses on it until the Go runtime dies, which recover cannot stop.
+	if text, ok := detail.(string); ok {
+		return fmt.Errorf("%s: %s", what, text)
+	}
+	b, err := json.Marshal(detail)
+	if err != nil {
+		return fmt.Errorf("%s: <detail that cannot be rendered: %v>", what, err)
+	}
+	return fmt.Errorf("%s: %s", what, b)
 }
