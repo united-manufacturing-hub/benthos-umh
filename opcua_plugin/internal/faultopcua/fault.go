@@ -78,18 +78,21 @@ func (f *Fault) Count() int {
 	return f.hits
 }
 
-// Disarm stops the fault, leaving an honest machine and freeing the node for
-// another fault. Its record is kept, so a scenario can disarm and still prove
-// the fault fired earlier.
+// Disarm stops the fault for every request that arrives afterwards, and frees
+// the node for another fault. A request the fault is already holding -- a
+// NeverAnswer or an AnswerLate in progress -- is not let go: it stays held
+// until its delay ends or the server closes. The fault's record is kept, so a
+// scenario can disarm and still prove the fault fired earlier. Disarming twice
+// is safe.
 func (f *Fault) Disarm() {
 	if f.ns == nil {
-		return
+		return // never armed: the arm method refused it
 	}
 	f.ns.mu.Lock()
 	defer f.ns.mu.Unlock()
 	// Only let go of the node if this fault is still the one holding it:
-	// arming another fault on the same node takes the node over, and a
-	// disarm arriving late must not disarm the newcomer.
+	// once it is disarmed another fault can be armed on the node, and a
+	// second Disarm of this one must not disarm the newcomer.
 	if f.ns.faults[f.node] == f {
 		delete(f.ns.faults, f.node)
 	}
@@ -123,8 +126,9 @@ func (f *Fault) toggle() bool {
 // there is no field to leave at its zero value.
 
 // AcceptWriteNeverApply answers a write with Good and leaves the node holding its
-// old value. TRUMPF's press does this, and it is the reason the handshake reads a
-// value back after writing it.
+// old value. Some machine controllers do this when they are in a state that does
+// not take the parameter, without saying so, and it is the reason the handshake
+// reads a value back after writing it.
 func (s *Server) AcceptWriteNeverApply(v *Variable) *Fault {
 	return s.arm(v, &Fault{kind: faultAcceptWriteNeverApply})
 }
@@ -155,8 +159,16 @@ func (s *Server) FlapValue(v *Variable, other any) *Fault {
 
 // AnswerLate answers correctly, delay too late, on reads and on writes alike. It
 // tests a deadline: the client must stop waiting and its cleanup must still run,
-// while the machine is answering normally the whole time.
+// while the machine is answering normally the whole time. A delay of zero is
+// refused: a fault that delays nothing answers the way an honest machine does
+// while reporting that it fired.
 func (s *Server) AnswerLate(v *Variable, delay time.Duration) *Fault {
+	s.t.Helper()
+	if delay <= 0 {
+		s.t.Fatalf("faultopcua: AnswerLate: delay must be positive, got %v: "+
+			"a fault that delays nothing answers the way an honest machine does while reporting that it fired", delay)
+		return &Fault{kind: faultAnswerLate}
+	}
 	return s.arm(v, &Fault{kind: faultAnswerLate, delay: delay})
 }
 
@@ -173,9 +185,11 @@ func (s *Server) NeverAnswer(v *Variable) *Fault {
 // exercises. An after of zero is refused: a fault that is over before it is armed
 // records nothing, and reads as a fault that never fired.
 func (s *Server) RaiseFlagLate(v *Variable, until any, after time.Duration) *Fault {
+	s.t.Helper()
 	if after <= 0 {
 		s.t.Fatalf("faultopcua: RaiseFlagLate: after must be positive, got %v: "+
 			"a fault that is over before it is armed records nothing and reads as a fault that never fired", after)
+		return &Fault{kind: faultRaiseFlagLate}
 	}
 	return s.arm(v, &Fault{kind: faultRaiseFlagLate, until: until, after: after})
 }
@@ -194,19 +208,20 @@ func (s *Server) DropSession(v *Variable) *Fault {
 //
 // The fault must arrive complete, and every arm method builds it that way:
 // the moment it is in the namespace's map the server's request handlers can
-// find it, so a parameter set after arming returned is a parameter a request
-// can miss. RefuseWrite armed that way -- published before its status was set
-// -- answered Good, the exact lie refuseASuccessStatus exists to prevent,
-// reached around the guard, and was a data race on the field besides.
+// find it, so a parameter set after arm returns is a parameter a request can
+// miss. A RefuseWrite whose status was set late would answer Good to the
+// requests in between, reaching around refuseASuccessStatus, and would be a
+// data race on the field besides.
 //
-// A node holds one armed fault. Arming a second used to replace the first
-// silently: the first *Fault stayed in the caller's hand, never fired again,
-// and Fired() answered false with no diagnostic -- the same silent trap as a
-// fault armed against a node that is not there, one step along. Disarm the
-// first fault before arming another.
+// A node holds one armed fault, and arming a second fails the test. Replacing
+// the first silently would leave its *Fault in the caller's hand, never firing
+// again, with Fired() answering false and no diagnostic. Disarm the first
+// fault before arming another.
 func (s *Server) arm(v *Variable, f *Fault) *Fault {
+	s.t.Helper()
 	if v == nil || v.ns == nil {
 		s.t.Fatalf("faultopcua: cannot arm a fault against a node this server does not have")
+		return f
 	}
 	f.node = v.id.StringID()
 	f.ns = v.ns
@@ -216,6 +231,7 @@ func (s *Server) arm(v *Variable, f *Fault) *Fault {
 	if other := v.ns.faults[f.node]; other != nil {
 		s.t.Fatalf("faultopcua: cannot arm %s against %q: %s is already armed there and would be silently replaced, so the first fault would stop firing with no diagnostic -- Disarm the first fault before arming another",
 			f.kind, f.node, other.kind)
+		return f
 	}
 	v.ns.faults[f.node] = f
 	return f
@@ -252,10 +268,11 @@ func (k faultKind) String() string {
 const statusSeverity ua.StatusCode = 0xC0000000
 
 // refuseASuccessStatus fails the test rather than arming a refusal that answers
-// with success. RefuseWrite without this guard answered Good, recorded a firing,
-// and reported fired -- the package's own evidence machinery corroborating the
-// wrong behavior on the fault a plant produces most.
+// with success. Such a refusal would answer Good, record a firing and report
+// fired: the package's own evidence corroborating an honest answer on the fault
+// a plant produces most.
 func (s *Server) refuseASuccessStatus(method string, status ua.StatusCode) {
+	s.t.Helper()
 	if status&statusSeverity == 0 {
 		s.t.Fatalf("faultopcua: %s: %v is a Good status, which means success; "+
 			"a fault that refuses with it answers the way an honest machine does "+

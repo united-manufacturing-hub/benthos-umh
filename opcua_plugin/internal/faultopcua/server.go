@@ -18,35 +18,62 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"testing"
+	"sync"
 
 	"github.com/gopcua/opcua/server"
 	"github.com/gopcua/opcua/ua"
 )
 
+// TB is the part of a test the server reports to. *testing.T satisfies it, and
+// so does Ginkgo's GinkgoT(), so the server works in a plain Go test and in a
+// Ginkgo spec alike.
+//
+// The server calls Fatalf on the caller's goroutine when it cannot be built or a
+// fault cannot be armed, and expects it not to return, as both of the above do.
+// It calls Errorf from its own goroutines when a fault catches itself reporting
+// a firing it did not perform.
+type TB interface {
+	Helper()
+	Cleanup(func())
+	Errorf(format string, args ...any)
+	Fatalf(format string, args ...any)
+}
+
 // Server is a running OPC UA server with a programmable set of faults.
 type Server struct {
-	t     *testing.T
+	t     TB
 	srv   *server.Server
 	ns    *faultNamespace
 	proxy *proxy
 	host  string
 	port  int // where the OPC UA server listens, behind the proxy
+
+	// mu guards cancel, which Start sets and Close calls.
+	mu sync.Mutex
+
+	// cancel ends the context gopcua's accept and service loops run under.
+	// gopcua's own Close closes the listener and the secure channels but
+	// leaves the service loop waiting on that context, so without the
+	// cancel every server would leave its goroutines behind.
+	cancel context.CancelFunc
 }
 
-// New starts a server with no faults armed: an honest machine, which is the control
-// every fault test needs beside it. It fails the test rather than returning an error,
-// because a fixture that could not start is not a condition a test handles, and it
-// registers Close with t.Cleanup so a forgotten teardown cannot leak a listener into
-// the next test.
+// New builds a server with no faults armed: an honest machine, which is the
+// control every fault test needs beside it. Clients can use it once Start has
+// returned. New fails the test rather than returning an error, because a fixture
+// that could not be built is not a condition a test handles, and it registers
+// Close with t.Cleanup so a forgotten teardown cannot leak the listeners or the
+// server's goroutines into the next test.
 //
-// The port is taken from the operating system here rather than on Start, so several
-// servers can run at once without a test picking a number, and so Endpoint answers
-// before the server is listening.
-func New(t *testing.T) *Server {
+// The server's port is taken from the operating system here rather than on Start,
+// so several servers can run at once without a test picking a number. The proxy
+// in front of the server listens from New on, so Endpoint is valid before Start.
+func New(t TB) *Server {
+	t.Helper()
 	port, err := freePort()
 	if err != nil {
 		t.Fatalf("faultopcua: no free port: %v", err)
+		return nil
 	}
 	s := &Server{t: t, host: "127.0.0.1", port: port}
 	s.srv = server.New(
@@ -59,6 +86,7 @@ func New(t *testing.T) *Server {
 		t:             t,
 		faults:        map[string]*Fault{},
 		vars:          map[string]*Variable{},
+		notifying:     map[*ua.NodeID]struct{}{},
 		closed:        make(chan struct{}),
 	}
 
@@ -86,6 +114,7 @@ func New(t *testing.T) *Server {
 	px, err := newProxy(fmt.Sprintf("%s:%d", s.host, s.port))
 	if err != nil {
 		t.Fatalf("faultopcua: proxy: %v", err)
+		return nil
 	}
 	s.proxy = px
 	s.ns.onDrop = func(port int) int { return px.cutPort(port) }
@@ -121,28 +150,44 @@ func (s *Server) Dials() int { return s.proxy.dialCount() }
 // says a socket died. Shutting the server down does not change it.
 func (s *Server) Cuts() int { return s.proxy.cutCount() }
 
-// Start listens and serves until ctx is canceled or Close is called.
+// Start listens and serves until Close is called. Cancelling ctx stops gopcua's
+// accept and service loops too, but only Close releases the requests a fault is
+// holding and shuts the proxy down, so a test closes the server either way.
 func (s *Server) Start(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
 	if err := s.srv.Start(ctx); err != nil {
+		cancel()
 		return fmt.Errorf("faultopcua: start: %w", err)
 	}
+	s.mu.Lock()
+	s.cancel = cancel
+	s.mu.Unlock()
 	return nil
 }
 
-// Close stops the server and releases any read a fault is holding. New registers it
-// with t.Cleanup; calling it by hand as well is safe.
+// Close stops the server and releases any request a fault is holding. New
+// registers it with t.Cleanup; calling it by hand as well is safe.
+//
+// It cancels the context Start handed to gopcua, which is what ends gopcua's
+// accept and service loops; gopcua's own Close does not. The loops do not
+// report when they have finished, so Close cannot wait for them, but neither
+// can outlive the cancel: the accept loop's listener is closed by gopcua's
+// Close, and the service loop is either waiting on the context or inside one
+// of this package's handlers, which releasing the faults lets go.
 func (s *Server) Close() error {
 	s.ns.release()
-	if s.proxy != nil {
-		// Not cut(). The proxy's connections are torn down here without
-		// being counted, because a shutdown is not a session drop and
-		// must not read as one: Cuts is evidence about a fault, and
-		// closing the server is not a fault.
-		s.proxy.shutdown()
+	s.mu.Lock()
+	cancel := s.cancel
+	s.cancel = nil
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
-	if s.srv == nil {
-		return nil
-	}
+	// Not cutPort. The proxy's connections are torn down here without being
+	// counted, because a shutdown is not a session drop and must not read as
+	// one: Cuts is evidence about a fault, and closing the server is not a
+	// fault.
+	s.proxy.shutdown()
 	return s.srv.Close()
 }
 
