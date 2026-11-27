@@ -270,10 +270,9 @@ func TestWaitUntil_AWaitUnderAnEndedTransactionIsRefused(t *testing.T) {
 	}
 
 	// Because address refuses before it parses, a post-end wait whose
-	// address does not parse records no binding fault. If it did, the
-	// deadline-stopped run below would blame that parse refusal, because
-	// `fail` keeps the latest fault, though it happened after the
-	// transaction had been decided.
+	// address does not parse records no binding fault, so the
+	// deadline-stopped run below does not blame that parse refusal, which
+	// happened after the transaction had been decided.
 	b2 := &fakeBinding{values: map[string]any{"A": false}}
 	engine2 := newTestEngine(t, b2, func(c *Config) {
 		c.MaxScriptRuntime = 250 * time.Millisecond

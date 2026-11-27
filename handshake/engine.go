@@ -47,7 +47,7 @@ type runState struct {
 	end            ending
 	data           any    // the object success returned
 	detail         any    // the detail an ending call passed
-	opErr          error  // the most recent binding operation that failed
+	opErr          error  // the binding operation the run's clock cut off, if one was in flight
 	opWhere        string // which one, for the message of a run its deadline stopped
 	mutErr         error  // the first operation of a cleanup block that failed: the machine was not handed back (cleanupEvidence)
 	mutWhere       string // which one, for the cleanup's error message
@@ -65,14 +65,22 @@ func (rs *runState) finish(end ending, detail any) bool {
 	return true
 }
 
-// fail records a binding operation that failed and returns the *fault the
-// operation throws into the script. Result.Err wraps the binding's error, so
-// a caller can inspect it with errors.Is and errors.As. The recorded fault
-// only names the operation when a deadline stops the run; which fault
-// decides the outcome is classify's question.
+// fail returns the *fault a failed binding operation throws into the
+// script. Result.Err wraps the binding's error, so a caller can inspect it
+// with errors.Is and errors.As; which fault decides the outcome is
+// classify's question.
+//
+// The operation is also recorded, to name it in the message of a run its
+// deadline stopped, but only when it failed after the run's clock ran out:
+// that is the operation the deadline cut off. A fault from before then is
+// either in the run's error, if the script did not catch it, or caught, and
+// a caught fault must not explain a stop it had no part in, nor make
+// errors.Is find the binding's error in a deadline's Result.Err.
 func (rs *runState) fail(where string, err error) error {
-	rs.opErr = err
-	rs.opWhere = where
+	if rs.ctx.Err() != nil {
+		rs.opErr = err
+		rs.opWhere = where
+	}
 	return &fault{where: where, err: err}
 }
 
@@ -98,7 +106,6 @@ func (f *fault) Unwrap() error { return f.err }
 // is covered at the dispatch boundary rather than by a guard at each
 // failure site.
 func (rs *runState) failMutating(where string, err error) {
-	_ = rs.fail(where, err)
 	if rs.mutErr == nil {
 		rs.mutErr = err
 		rs.mutWhere = where
