@@ -35,8 +35,8 @@ import (
 // Below that, an explicit ending outranks a binding fault, because a script
 // that reached an ending caught whatever failed and chose how to finish
 // anyway (the 2026-11-26 ruling: "if you catch it, you own it"). Only a
-// fault the script did NOT catch reaches the outcome on its own, and fail
-// keeps the latest one, which is the one that stopped the script.
+// fault the script did NOT catch reaches the outcome on its own: the one the
+// run's error carries, which is the one that stopped the script.
 func classify(ctx context.Context, rs *runState, runErr error) Result {
 	switch {
 	case ctx.Err() != nil:
@@ -75,31 +75,14 @@ func classify(ctx context.Context, rs *runState, runErr error) Result {
 		}
 		return failed(Transient, what)
 	case runErr != nil:
-		// Something stopped the script. Whether the fault we recorded is
-		// that something is the question, and errors.Is answers it: an
-		// operation that failed throws into JavaScript, so if the script
-		// did NOT catch it the same error comes back out as runErr, and if
-		// it DID catch it runErr is whatever stopped the script afterwards.
-		//
-		// Ranking the recorded fault above this was a hole in the 11-26
-		// ruling. A script that caught a flaky read and then hit a bug of
-		// its own reported the machine fault and was retried, so the same
-		// bug was persistent until an unrelated try/catch appeared near it,
-		// and the dead letter named a machine fault that stopped nothing.
-		// Which recorded fault IS the run's error, if any. Matching only
-		// the latest was wrong: a fault recorded while the stack unwound --
-		// a failing operation inside a finally, or a rethrow -- displaced
-		// the fault that actually stopped the run, so an unrelated failure
-		// in an unwind path changed the class the flow branches on, and the
-		// reported error degraded to a raw goja dump naming neither the node
-		// nor the operation.
-		// Newest first: when two recorded faults share an error in their
-		// chains, the later one is the one that stopped the run.
-		for i := len(rs.faults) - 1; i >= 0; i-- {
-			f := rs.faults[i]
-			if !errors.Is(runErr, f.err) {
-				continue
-			}
+		// Something stopped the script. If it was an operation's fault,
+		// the fault travels with the exception, uncaught or rethrown, and
+		// errors.As finds it. A fault the script caught and carried on from
+		// is not in the run's error, so it cannot decide the class: a script
+		// that caught a flaky read and then hit a bug of its own is that
+		// bug, not a retryable machine fault.
+		var f *fault
+		if errors.As(runErr, &f) {
 			// LIB-5: the outcome follows the fault, not whether the script
 			// returned it or a call threw it.
 			if errors.Is(f.err, ErrPersistent) {

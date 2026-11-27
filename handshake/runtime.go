@@ -502,8 +502,7 @@ func (e *Engine[UnifiedAddress]) address(rs *runState, raw map[string]any) (Unif
 	}
 	addr, err := e.bind.ParseAddress(raw)
 	if err != nil {
-		rs.fail("parse address", err)
-		return none, err
+		return none, rs.fail("parse address", err)
 	}
 	return addr, nil
 }
@@ -530,8 +529,7 @@ func (e *Engine[UnifiedAddress]) readWithin(
 		if ctx.Err() != nil && rs.ctx.Err() == nil {
 			return nil, true, err
 		}
-		rs.fail("read "+e.bind.Describe(addr), err)
-		return nil, false, err
+		return nil, false, rs.fail("read "+e.bind.Describe(addr), err)
 	}
 	return resp.Value, false, nil
 }
@@ -544,8 +542,7 @@ func (e *Engine[UnifiedAddress]) readOp(rs *runState, raw map[string]any) (any, 
 	}
 	resp, err := e.bind.Read(rs.ctx, addr)
 	if err != nil {
-		rs.fail("read "+e.bind.Describe(addr), err)
-		return nil, err
+		return nil, rs.fail("read "+e.bind.Describe(addr), err)
 	}
 	return resp.Value, nil
 }
@@ -561,8 +558,7 @@ func (e *Engine[UnifiedAddress]) writeOp(rs *runState, raw map[string]any, value
 		return err
 	}
 	if err := e.bind.Write(rs.ctx, addr, value); err != nil {
-		rs.fail("write "+e.bind.Describe(addr), err)
-		return err
+		return rs.fail("write "+e.bind.Describe(addr), err)
 	}
 	return nil
 }
@@ -582,8 +578,7 @@ func (e *Engine[UnifiedAddress]) callOp(
 	}
 	resp, err := caller.Call(rs.ctx, addr, inputs)
 	if err != nil {
-		rs.fail("call "+e.bind.Describe(addr), err)
-		return nil, err
+		return nil, rs.fail("call "+e.bind.Describe(addr), err)
 	}
 	return resp.Outputs, nil
 }
