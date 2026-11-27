@@ -1,183 +1,392 @@
-## Downsampler in a Nutshell
+# Downsampler
 
-The UMH **Downsampler** sits between the field bus and your persistence layer and performs one task with provable bounds: **it discards samples that do not contribute new information**.
+The downsampler is a Benthos processor that drops messages which add no information to a time
+series: exact repeats, changes below a threshold, and values that lie on the trend the previous
+points already describe. It runs numeric values through one of two algorithms, deadband (the
+default) or swinging door. Boolean and string values go through a change detector instead.
 
-### Supported compression modes
+The downsampler removes data by design and keeps all of its state in memory. See
+[Delivery guarantees](#delivery-guarantees) for what that means for your pipeline. No setting
+makes it lossless. Even with `threshold: 0` and `late_policy: passthrough` it drops exact numeric
+repeats, every repeated boolean and string, and every message whose timestamp equals the last
+processed timestamp of its series.
 
-* **Dead-band** – forwards every *value change*, suppresses byte-for-byte repeats, and—if `max_time` is set—adds an audit heartbeat.
-* **Swinging-Door Trending (SDT)** – maintains a slope-aware envelope; a sample is forwarded only when it would exceed a fixed vertical error bound.
+## Terms
 
-Wildcard overrides let you apply a conservative baseline (`deadband {threshold: 0}`) and refine it only where tighter compression is beneficial.
+- **Series**: all messages with the same `umh_topic`. The downsampler keeps its state per series.
+- **Emit**: pass a message on to the next stage of the pipeline. A message that is not emitted is
+  dropped.
+- **Held candidate**: under swinging door, the most recent sample of a series. The downsampler
+  keeps it in memory and decides whether to emit it only when the next sample arrives.
+- **Heartbeat**: the `max_time` rule. A message that arrives `max_time` or more after the last
+  emitted one is emitted, whatever its value.
+- **Idle flush**: a background timer that releases the held candidate of a swinging-door series
+  that has stopped sending.
 
-### Recommended deployment points
+## Why a value is missing
 
-1. **First hop into the Unified Namespace**
-   *Configuration:* `deadband {threshold: 0, max_time: 30m}`
-   *Effect:* Removes pure duplicates while guaranteeing one confirmatory message every 30 min. No latency is introduced.
+If a value you expected is not in your historian, one of these paths dropped it.
 
-2. **Noise suppression anywhere in the stream**
-   *Configuration:* `deadband {threshold: 2 × σ_noise, max_time: 1h}`
-   *Effect:* Removes fluctuations beneath the sensor's specified noise floor yet retains all legitimate steps. No latency is introduced.
+1. **Threshold.** This is the intended behaviour. Under deadband, the value was within
+   `threshold` of the last emitted value. Under swinging door, the value lay on the trend within
+   `threshold`. See [Deadband](#deadband) and [Swinging door](#swinging-door).
+2. **Duplicate timestamp.** A message whose `timestamp_ms` equals the last processed timestamp of
+   its series is dropped, whatever its value. This is the only cause that is logged above Debug
+   level. It is logged at Warn as `Dropping message with duplicate timestamp`.
+3. **Boolean or string repeat.** The value is identical to the last emitted value of the same
+   type in that series (see [Value types](#value-types)).
+4. **`late_policy: drop`.** A numeric message older than the last timestamp of a deadband series
+   is dropped. On a swinging-door series it is not dropped. It replaces the held candidate instead
+   (see [Late arrivals](#late-arrivals)).
+5. **Held candidate discarded.** On a swinging-door series, the held candidate is replaced by each
+   newer sample that stays on the trend, which is how swinging door compresses. It is also
+   discarded without being emitted when:
+   - the heartbeat emits the arriving message (a known defect);
+   - a late message passes through under `late_policy: passthrough`;
+   - a boolean or string message arrives on the same series;
+   - a `ds_*` hint changes the parameters or the algorithm of the series.
+6. **Idle flush lost.** If the idle flush runs again before a batch has picked up its previous
+   output, the newly released candidates are dropped. This is logged at Warn as
+   `Could not flush ... idle candidates - shutdown batch channel full`.
+7. **Restart or shutdown.** All state is in memory. A held candidate is lost when the process
+   stops, and the points collected at shutdown are never emitted, which is a known defect (see
+   [Delivery guarantees](#delivery-guarantees)).
 
-3. **Final stage before the historian**
-   *Configuration:* `swinging_door {threshold: 2 × σ_noise, min_time: physics_limit, max_time: 1h}`
-   *Effect:* Achieves 95–99 % volume reduction while preserving slope integrity and audit heartbeat. Introduces latency of up to `max_time` as the algorithm needs to buffer the last point before it can be emitted.
+From outside the processor you can only partly tell these causes apart. The counters cover the
+whole processor, not a single series, and nothing records which message was dropped. What does
+help is the `downsampling_config` and `downsampled_by` metadata on the last point of the series
+that reached the historian. It shows the algorithm and the parameters the series actually runs
+with (see [Output metadata](#output-metadata)).
 
-Discrete counters and alarms should remain on `deadband {threshold: 0}`; SDT's emit-previous logic could delay a critical state change.
+## Why a value is emitted anyway
 
-> **Compliance note** – Both algorithms enforce an absolute error bound and maintain a heartbeat, but they still remove data. If your GxP / 21 CFR Part 11 process mandates a full raw stream, archive the unfiltered UMH-core topic in parallel.
+A value reaches your historian even though the configuration would drop it in these cases.
 
+1. **First message of a series.** It is always emitted. That includes the first message after a
+   restart, after a `ds_*` hint changes the series (see [Metadata overrides](#metadata-overrides))
+   and after an idle flush.
+2. **Heartbeat.** The arriving message is emitted because `max_time` has passed (see
+   [max_time](#max_time)).
+3. **`late_policy: passthrough`, the default.** A numeric message older than the last timestamp
+   of its series skips the algorithm and is emitted.
+4. **`ds_ignore`.** A message with any non-empty `ds_ignore` value, including `"false"`, skips
+   the downsampler.
+5. **Error path.** The processor forwards every message it cannot handle unchanged. That includes
+   every message of a series whose configuration is invalid (see
+   [Startup validation](#startup-validation)) and every raw JSON message (see
+   [Which messages are downsampled](#which-messages-are-downsampled)).
+6. **Idle flush.** The held candidate of a swinging-door series that has stopped sending is
+   released (see [max_time](#max_time)).
 
----
+## Which messages are downsampled
 
-## 1  Quick-start Configuration
+A message is downsampled only if both of these hold:
+
+- the metadata field `umh_topic` is present;
+- the payload is a JSON object with exactly the two keys `timestamp_ms` and `value`.
+
+Every other message, for example one with a third key, without `umh_topic` or with a top-level
+array, is forwarded unchanged and counted in `messages_passed_through`. Three inputs take the
+error path instead. They are forwarded unchanged as well but counted in `messages_errored`:
+
+- a `umh_topic` that is present but empty;
+- a `timestamp_ms` that is not a number;
+- a payload that arrives as raw JSON bytes. Benthos parses its numbers as `json.Number`, and the
+  processor does not accept that type for `timestamp_ms`. This is a known defect. It hits a
+  downsampler placed directly after an input such as `uns` or `kafka`, so every message passes
+  unfiltered. Put a processor that builds the payload in front of it, such as the
+  [tag processor](tag-processor.md). A Bloblang `mapping: root = this` does not help.
+
+The processor does not check `data_contract`. It downsamples every series it is given, whether
+the topic ends in `_historian`, `_raw` or anything else.
+
+## Value types
+
+What happens to a message depends on the type of its `value` field. The type is checked before
+any threshold:
+
+| `value` type | Handling | Dropped when |
+|---|---|---|
+| number (integer or float) | the configured algorithm, `deadband` or `swinging_door` | see [Deadband](#deadband) and [Swinging door](#swinging-door) |
+| boolean | change detector, which never reads a threshold | identical to the last emitted boolean of the series |
+| string | change detector with exact byte comparison; `"42"` is never parsed as a number | identical to the last emitted string of the series |
+| `null`, object, array | error path: forwarded unchanged, counted in `messages_errored` | never |
+
+Each series remembers its last number, boolean and string separately. A tag that alternates
+between types therefore gets a first value for each type, and each first value is emitted. On a
+swinging-door series all three types share the one held candidate, so a boolean or string
+message discards a held numeric sample.
+
+Boolean and string series have no heartbeat and ignore `late_policy`. They are dropped on repeats
+alone. To keep every message of such a tag, set [`ds_ignore`](#bypassing-a-series-with-ds_ignore)
+on it.
+
+## Configuration
 
 ```yaml
-processors:
-  - downsampler:
-      default:                     # safe baseline for every topic
-        late_policy: passthrough   # global policy for late arrivals
-        deadband:
-          threshold: 0             # keep every change
-          max_time: "30m"          # 30-minute heartbeat
-      overrides:                   # finer control
-        - pattern: "*.temperature"
+pipeline:
+  processors:
+    - downsampler:
+        default:                     # applies to every topic unless overridden
+          late_policy: passthrough
           deadband:
-            threshold: 0.1         # 2 × 0.05 °C noise
-        - pattern: "*.furnace*"
-          late_policy: drop        # can override per pattern
-          swinging_door:
-            threshold: 0.1
-            min_time: "5s"
-            max_time: "1h"
+            threshold: 0             # keep every change, drop exact repeats
+            max_time: "30m"
+        overrides:
+          - pattern: "*.temperature"
+            deadband:
+              threshold: 0.1
+          - pattern: "*.furnace*"
+            late_policy: drop
+            swinging_door:
+              threshold: 0.5
+              min_time: "5s"
+              max_time: "1h"
+        allow_meta_overrides: true   # honour per-message ds_* hints
 ```
 
-*Nothing else is required.*
-Messages that aren't strict UMH-core time-series (`value` + `timestamp_ms`) pass straight through.
+`downsampler: {}` is valid. It runs deadband with threshold 0 and no heartbeat.
 
-**Pattern Matching:** The `pattern` field uses **shell-style glob patterns** (not regex). Supported wildcards:
-- `*` matches any sequence of characters (e.g., `"*.temperature"` matches topics ending in "temperature")
-- `?` matches any single character 
-- `[abc]` matches any character in brackets
-- Examples: `"*.temperature"`, `"*sensor*"`, `"temp_?"`, `"sensor[12]"`
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `default.deadband.threshold` | float | `0` | |
+| `default.deadband.max_time` | duration string | unset (off) | see [max_time](#max_time) |
+| `default.deadband.min_time` | duration string | none | **does nothing**, see below |
+| `default.swinging_door.threshold` | float | none | required, see [Swinging door requires a threshold](#swinging-door-requires-a-threshold) |
+| `default.swinging_door.max_time` / `.min_time` | duration string | unset (off) | `max_time` also sets the idle flush, see [max_time](#max_time) |
+| `default.late_policy` | `passthrough` or `drop` | `passthrough` | see [Late arrivals](#late-arrivals) |
+| `overrides[].pattern` | glob string | required | see [Pattern matching](#pattern-matching) |
+| `overrides[]` | the same algorithm fields and `late_policy` as `default` | | |
+| `allow_meta_overrides` | bool | `true` | enables the `ds_*` hints except `ds_ignore`, which always applies |
 
-**Important:** When an override pattern specifies both `deadband` and `swinging_door` algorithms, the more advanced **swinging door** algorithm takes precedence and deadband parameters are ignored.
+**`deadband.min_time` does nothing.** The schema accepts it and the parser discards it. Set
+`min_time` only under `swinging_door`.
 
----
+### Pattern matching
 
-## Algorithm & Parameter Deep Dive
+`pattern` is a shell-style glob (Go's `filepath.Match`), not a regular expression. `*` matches any
+sequence of characters, dots included, so `"*.temperature"` matches
+`umh.v1.plant._historian.temperature`. `?` matches any single character and `[abc]` any one of
+the characters in brackets.
 
-The Downsampler exposes just four parameters; once you understand their purpose you can configure the system with confidence.
+- **The first match wins.** Overrides are tried in order and the first one that matches is used.
+  An override that matches but sets no algorithm parameters still wins, so later overrides never
+  apply to that topic.
+- **The last topic segment is tried too.** A pattern that does not match the full topic is
+  matched against the part after the last dot, so `pattern: "temperature"` matches
+  `umh.v1.plant._historian.temperature`.
+- **Empty and malformed patterns never match.** They are skipped without a warning.
 
+### Algorithm precedence
 
-| Parameter     | Purpose                                                                                          | Typical setting                                                                            | Issue it prevents                                                               |
-| ------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
-| `threshold`   | Maximum absolute deviation allowed before a new point must be stored (same units as the signal). Optional, defaults to 0. | **2 × sensor-noise σ** · If σ is unknown, inspect a steady period and take ± peak spread. **Default 0** = keep any change, drop exact repeats.   | Removes pure measurement noise without masking genuine step changes.            |
-| `min_time`    | Smallest physically realistic interval between meaningful changes. Available only on `swinging_door`                               | Fastest credible process period (e.g. 1 s for furnaces, 50 ms for servo torque). `0` = off | Suppresses transients caused by bursty drivers or unstable links.               |
-| `max_time`    | Heart-beat that forces an output even during flat periods; also flushes any SDT buffer.          | 15 min – 1 h (aligns with 21 CFR §11 "system liveness").                                   | Ensures line-flat sensors remain visible and internal buffers stay bounded.     |
-| `late_policy` | Action for out-of-order samples.                                                                 | `passthrough` (default) or `drop`.                                                         | Lets you balance historical accuracy against traffic volume on skewed networks. |
+The two algorithms take precedence differently in `default` and in an override:
 
-### Dead-band
+- if `default` sets both `deadband` and `swinging_door`, deadband wins and the `swinging_door`
+  block of `default` is ignored entirely;
+- if one override sets both, swinging door wins.
 
-* **Rule** Emit when `|v − last| ≥ threshold` or when `max_time` expires.
-* **Best suited to** Duplicate removal, discrete states, counters, Boolean flags.
-* **Tuning notes**
+The parameters of a topic start from the winning `default` block. An override replaces only the
+parameters it names. An override that switches a topic to swinging door therefore keeps the
+`max_time` of the `default` deadband block, and the other way round. The `downsampling_config`
+metadata (see [Output metadata](#output-metadata)) shows the parameters a series actually runs
+with.
 
-  * `threshold` is optional and defaults to 0 if not specified.
-  * `threshold = 2 × σ_noise` removes sensor noise yet preserves real transitions.
-  * `threshold = 0` (default) provides safe, universal de-duplication.
-  * Keep `max_time` within 15 – 60 min to satisfy audit requirements.
+### Field types
 
-### Swinging-Door Trending (SDT)
+Write durations as strings (`"30m"`, `"1h"`) and thresholds as numbers. The two mistakes fail
+differently:
 
-* **Rule** Maintain rotating upper and lower "doors" that bound the current slope; emit the **previous** point when a new sample would violate the envelope.
-* **Additional parameters**
+- A duration written as a bare number, `max_time: 30`, passes every check and is then discarded
+  as if it were unset. The series runs without a heartbeat.
+- A number written as a string, `threshold: "0.5"`, passes `benthos lint` but stops the pipeline
+  from starting, with `failed to init processor ... field 'threshold': yaml: unmarshal errors`.
 
-  * `threshold` – vertical tolerance (same intuition as for dead-band).
-  * `min_time` – enforces physical plausibility for fast-changing signals.
-  * `max_time` – still provides the audit heart-beat and buffer flush.
-* **Why choose SDT** Captures long ramps with just two points, eliminating the stair-step pattern created by naïve dead-band on slow trends, while mathematically guaranteeing the reconstruction error remains ≤ `threshold`.
+A field with the wrong YAML kind, for example an object where a number belongs, is rejected at
+startup as well.
 
-## Edge-case Handling & Internal Behaviour
+### Swinging door requires a threshold
 
-The Downsampler runs each series in its own finite-state machine and guards two invariants:
+`swinging_door.threshold` has no default. A threshold anywhere in the parameters of the series is
+enough, including one taken over from the `default` deadband block (see
+[Algorithm precedence](#algorithm-precedence)). Without one, the swinging-door algorithm cannot be
+built when the first message of the series arrives. Every message of that series is then
+forwarded unfiltered until the process restarts (see [Startup validation](#startup-validation)).
 
-1. **No silent loss** A point is acknowledged only after it—or the predecessor that still sits in the buffer—has been forwarded downstream.
-2. **Bounded memory** At most **one** candidate is stored per series; an idle-flush watchdog empties it after `max_time`.
+## Deadband
 
----
+Deadband emits the first message of a series. After that, it emits a message when
+`|value − last emitted value| ≥ threshold`. A change of exactly `threshold` is emitted. The
+comparison is always with the last emitted value, never with the last arrived one. Small changes
+therefore add up until together they reach `threshold`.
 
-### How incoming records are routed
+With `threshold: 0`, the default, any change is emitted and exact repeats are dropped.
 
-| Payload type            | Processing path                                    | Reasoning                                                                                 |
-| ----------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| *Numeric* (int / float) | Selected algorithm (`deadband` or `swinging_door`) | These are the signals where compression counts.                                           |
-| *Boolean, string*       | Change detector (`value ≠ last_value`)             | For states and text, only transitions matter; thresholds are irrelevant.                  |
-| Other JSON structures   | **Bypass** (fail-open)                             | Complex objects could hide multiple semantics—forward untouched rather than risk pruning. |
+`threshold` is in the units of the signal. A reasonable starting point is about twice the noise
+standard deviation of the sensor. If you do not know it, look at a steady period of the raw data
+and use the spread between its highest and lowest value.
 
----
+Deadband holds nothing back. A dropped message is acknowledged and gone. An emitted message leaves
+in the batch it arrived in, so deadband adds no delay. For `max_time`, see [max_time](#max_time).
 
-### Late-arrival strategy
+## Swinging door
 
-*The timestamp of each processed sample is compared with the most recent one already seen for that series.*
+Swinging door keeps the points needed to redraw the series as straight lines, each within
+`threshold` of every real sample. A long ramp therefore keeps its shape with few points, where
+deadband turns it into a staircase.
 
-* `passthrough` (default) Forward the late sample raw, flagging it with `meta:late_oos=true` (oos = "out of sequence").
-* `drop` Discard and increment a metric counter—useful when stale data has no value but bandwidth is critical.
+It keeps each arriving sample as the held candidate and decides about it only when the next
+sample arrives:
 
-Both modes preserve at-least-once delivery for in-order traffic; only you decide what to do with stragglers.
+- If the next sample still fits the trend, it replaces the held candidate, which is dropped.
+- If the next sample breaks the trend, the held candidate is emitted and becomes the new
+  anchor, the point the next lines start from. The arriving sample becomes the held candidate.
+  The emitted point therefore leaves only when the sample after it arrives.
+- If an emit is due but the timestamp of the held candidate is less than `min_time` after the last
+  emitted point, nothing is emitted. The arriving sample replaces the held candidate, and the trend
+  starts again from the anchor.
+- First messages and heartbeat emissions leave in the batch they arrive in.
 
----
+`threshold` is required and in the units of the signal. Swinging door suits continuous signals.
+Keep counters on deadband, because a counter step is then emitted when it arrives, not when the
+next sample does.
 
-### Buffered-emit logic (needed by SDT)
+### Swinging door step by step
 
-1. A candidate point is retained while the doors stay open.
-2. When a violation occurs, the **previous** candidate is released and the new sample becomes the fresh candidate.
-3. If traffic stops before the doors close, the watchdog flushes the last candidate after `max_time` to guarantee visibility.
+The pictures label the anchor A (green), the latest sample P (black) and the held candidate S
+(red).
 
-The same mechanism ensures a graceful shutdown: during a Benthos drain, every buffered point is emitted before the plug-in confirms closure.
+1. **The anchor opens the trend.** From the anchor the algorithm draws two straight lines, an
+   upper and a lower one. Their slopes are the fastest and the slowest rise that keep the
+   series within `threshold`.
 
-### Dynamic, per-message compression hints
+   <img src="./downsampler/img1.png" alt="The two lines open from the anchor" width="600"/>
 
-Instead of hard-coding a rule map inside the *downsampler* you can let each message declare its own compression wishes in **metadata**. The downsampler simply reads the hints, validates them, and uses them in place of the global/default settings.
-This is useful if you want to configure everything for a single tag in a single place - the tag_processor.
+2. **Each new sample narrows the lines.** Every sample that stays on the trend moves the two
+   slopes closer together.
 
----
+   <img src="./downsampler/img2.png" alt="The lines narrow" width="600"/>
 
-#### Metadata keys
+   <img src="./downsampler/img3.png" alt="The lines almost meet" width="600"/>
 
-| Meta key         | Type / allowed values                    | Maps to parameter |
-| ---------------- | ---------------------------------------- | ----------------- |
-| `ds_algorithm`        | `"deadband"` \| `"swinging_door"`        | algorithm switch  |
-| `ds_threshold`   | float                                    | `threshold`       |
-| `ds_min_time`    | Go/ISO-style duration string (`"750ms"`) | `min_time` (SDT)  |
-| `ds_max_time`    | duration string (`"15m"`, `"1h"`, …)     | `max_time`        |
-| `ds_late_policy` | `"passthrough"` \| `"drop"`              | late-arrival rule |
-| `ds_ignore`      | any non-empty value                      | bypass downsampler completely |
+3. **The algorithm emits S and starts again.** It emits the held candidate S when P breaks the
+   trend. That happens in three cases:
+   - the slope from A to P lies outside the two lines;
+   - the two lines have crossed;
+   - a straight line from A to P would miss the value of S by `threshold` or more.
 
-#### Precedence
+   S then becomes the new anchor, the lines open fully again, and P becomes the new held
+   candidate.
 
-```
-per-message metadata  →  pattern override  →  global default
-```
+   <img src="./downsampler/img4.png" alt="The lines close and S is emitted" width="600"/>
 
-If any field is missing the cascade falls back to the next level, so you can override only what
-matters.
+4. **The animation shows the whole run.** The lines swing, S jumps forward on every emit, and only
+   a few of the black points remain.
 
-#### Complete bypass with `ds_ignore`
+   <img src="./downsampler/animation1.gif" alt="Swinging door animation" width="600"/>
 
-In UMH deployments, the downsampler is typically enabled by default with conservative settings to provide data compression benefits across all time-series data. However, certain message types require complete bypass of any downsampling logic to ensure data integrity.
+Image source: [emrumo/swingingdoor](https://github.com/emrumo/swingingdoor)
 
-The `ds_ignore` metadata key provides this capability and is designed to be used primarily in the **tag_processor** to selectively bypass downsampling based on message characteristics:
+## max_time
 
-- **Any non-empty value** for `ds_ignore` will cause the message to skip all downsampling logic
-- The message passes through unchanged, preserving all original data and metadata
-- A `downsampled_by: "ignored"` metadata field is added for traceability
-- No series state is created or modified for ignored messages
-- Ignored messages are counted in the `messages_ignored` metric
+`max_time` limits how long a series goes without an emitted point while it keeps sending. It is
+checked only when a message arrives, so the gap can reach `max_time` plus one sampling interval.
+What it does depends on the algorithm.
 
-#### Common UMH use cases
+### Deadband
 
-**Critical alarms and alerts:**
+A sensor that keeps sending unchanged values, or changes below `threshold`, emits its first
+message and then one message every `max_time`. Each heartbeat is the arriving message itself,
+with its own timestamp. The downsampler never makes up a message that repeats the last value.
+
+A sensor that stops sending emits nothing, whatever `max_time` is set to. A dead sensor looks
+the same as a flat one. A consumer that needs to detect gaps has to do so from the timestamps it
+receives.
+
+### Swinging door
+
+A message that arrives `max_time` or more after the last emitted point is emitted and becomes the
+new anchor. The held candidate is discarded, not emitted. This is a known defect.
+
+In addition, the idle flush releases the held candidate of a series that has stopped sending.
+Three things set its timing:
+
+- It runs on the wall clock, every smallest `max_time` set in `default` and `overrides`, or every
+  4 hours if none is set.
+- On each run it releases every held candidate whose series has sent nothing for at least that
+  series' `max_time`, or 4 hours if none is set.
+- It takes `max_time` from `default` or the matching override only. A `ds_max_time` hint does not
+  change it.
+
+A release can therefore come up to about one more timer interval after `max_time` has passed.
+It has these effects:
+
+- The last sample of a stopped sensor does reach the historian, late. It is the original input
+  message, without `downsampled_by` or `downsampling_config` metadata, so it looks like an
+  ordinary sample.
+- The flush resets the algorithm, so the next sample of the series counts as a first message and
+  is emitted whatever its value. A sensor that comes back with a spike writes the spike through.
+- The released message reaches the output only when a later batch passes through the processor.
+  Until then it waits in a queue that holds one batch (see [Delivery guarantees](#delivery-guarantees)).
+
+Boolean and string series have no heartbeat. `max_time` never applies to them.
+
+## Late arrivals
+
+The downsampler compares the `timestamp_ms` of each message with the latest timestamp it has
+processed for that series. A message with an older timestamp is late.
+
+`late_policy` applies only to numeric values. Boolean and string values go to the change detector
+first, so a late changed boolean is emitted even under `drop`, and a late unchanged one is dropped
+even under `passthrough`.
+
+- `passthrough`, the default: a late message skips the algorithm and is emitted. Nothing marks it
+  as late, so downstream it looks like any other message. On a swinging-door series it also
+  discards the held candidate.
+- `drop`: on a deadband series, a late message is dropped, logged at Debug level and counted in
+  `messages_filtered`. On a swinging-door series it is not dropped. It replaces the held
+  candidate, and the idle flush can later emit it with its old value and timestamp. This is a
+  known defect.
+
+A message whose `timestamp_ms` equals the latest timestamp of its series is dropped under both
+policies (see [Why a value is missing](#why-a-value-is-missing)).
+
+## Metadata overrides
+
+Instead of putting every rule into the downsampler configuration, you can set hints on single
+messages in metadata, usually from a `tag_processor` in front of the downsampler.
+
+| Metadata key | Allowed values | Sets |
+|---|---|---|
+| `ds_algorithm` | `"deadband"` or `"swinging_door"` | the algorithm |
+| `ds_threshold` | number, not negative | `threshold` |
+| `ds_min_time` | duration string (`"750ms"`, `"5s"`), not negative | `min_time` |
+| `ds_max_time` | duration string (`"15m"`, `"1h"`), not negative | `max_time` |
+| `ds_late_policy` | `"passthrough"` or `"drop"` | `late_policy` |
+| `ds_ignore` | any non-empty value | skips the downsampler |
+
+A hint takes precedence over a pattern override, which takes precedence over `default`. A message
+that sets some hints gets the configured value for every parameter it does not set. A message
+that sets no hint keeps the parameters the series runs with, including earlier hints.
+
+When a hint changes the parameters or the algorithm of a series, the downsampler rebuilds the
+algorithm of that series. A held candidate is discarded, and the message carrying the hint counts
+as the first message of the series.
+
+`allow_meta_overrides` (default `true`) enables the five `ds_*` hints other than `ds_ignore`.
+`ds_ignore` always applies, whatever the setting. If any hint on a message is invalid, for example
+an unknown algorithm or an unparseable number, the downsampler ignores all hints on that message.
+It logs a warning, counts the message in `meta_overrides_rejected` and processes it with the
+configured parameters. Valid hints that the algorithm cannot run with, such as `ds_algorithm:
+swinging_door` without any threshold, take the error path instead and are counted in
+`messages_errored`.
+
+### Bypassing a series with `ds_ignore`
+
+A message with a non-empty `ds_ignore` value skips the downsampler. The `ds_ignore` key is
+removed, `downsampled_by: "ignored"` is added, and the message is counted in both
+`messages_ignored` and `messages_passed_through`. Set it from the `tag_processor` for data that
+must reach the historian unfiltered:
+
 ```yaml
 pipeline:
   processors:
@@ -187,136 +396,115 @@ pipeline:
             then: |
               msg.meta.ds_ignore = "true"
               return msg;
-    - downsampler: 
+    - downsampler:
         default:
           deadband:
             threshold: 1.0
             max_time: "30m"
 ```
 
-**High-precision measurements:**
-```yaml
-pipeline:
-  processors:
-    - tag_processor:
-        conditions:
-          - if: msg.meta.virtual_path && msg.meta.virtual_path.includes("calibration")
-            then: |
-              msg.meta.ds_ignore = "bypass_precision_data"
-              return msg;
-    - downsampler: 
-        default:
-          deadband:
-            threshold: 0.1
-```
+## Output metadata
 
-**State change events:**
-```yaml
-pipeline:
-  processors:
-    - tag_processor:
-        conditions:
-          - if: msg.meta.data_contract === "_state" || msg.meta.tag_name.startsWith("mode_")
-            then: |
-              msg.meta.ds_ignore = "preserve_state_changes"
-              return msg;
-    - downsampler: 
-        default:
-          deadband:
-            threshold: 2.0
-```
+Messages that the algorithm emits carry two metadata keys:
 
-This approach allows UMH to benefit from automatic downsampling for most data while preserving critical information that requires every data point to be stored without any filtering or compression.
+- `downsampled_by`: `"deadband"`, `"swinging_door"`, or `"ignored"` for `ds_ignore`;
+- `downsampling_config`: the parameters the series runs with, for example
+  `deadband(threshold=0.500,max_time=30m0s)`.
 
----
+All other metadata is passed on unchanged, except `ds_ignore`, which is removed.
 
-#### Tag-processor snippet – picking the right algorithm on the fly
+`downsampled_by` is missing on messages that are not time series, on the error path and on
+messages released by the idle flush. Its absence therefore does not mean that a message skipped
+the downsampler.
 
-```yaml
-pipeline:
-  processors:
-    - tag_processor:
-        defaults: |
-          # generic baseline for every tag
-          msg.meta.location_path = "enterprise.plant1"
-          msg.meta.data_contract = "_historian"
+## Metrics
 
-          # safe, zero-risk compression unless told otherwise
-          msg.meta.ds_algorithm       = "deadband"
-          msg.meta.ds_threshold  = 0
-          msg.meta.ds_max_time   = "30m"
-          return msg;
+The processor counts `messages_processed`, `messages_filtered`, `messages_errored`,
+`messages_passed_through`, `messages_ignored`, `meta_overrides_applied`,
+`meta_overrides_rejected` and `meta_override_recreations`.
 
-        conditions:
-          - if: msg.meta.virtual_path.startsWith("furnace.")
-            then: |
-              msg.meta.ds_algorithm      = "swinging_door"
-              msg.meta.ds_threshold = 0.5
-              msg.meta.ds_min_time  = "5s"
-              msg.meta.ds_max_time  = "1h"
-              return msg;
-    - downsampler: {}
-```
+No counter separates the other drops from threshold drops. Messages dropped by
+`late_policy: drop` or for a duplicate timestamp are counted in `messages_filtered`, together
+with threshold drops.
 
----
+## Startup validation
 
-### Numerical edge cases covered in tests
+The downsampler checks little of its configuration at startup. These stop it before the first
+message:
 
-| Scenario                              | Guard rail in code                                                     |
-| ------------------------------------- | ---------------------------------------------------------------------- |
-| `threshold < 0`                       | Configuration rejected at startup.                                     |
-| `threshold = 0`                       | Legal—drops exact repeats, keeps any change.                           |
-| `max_time = 0`                        | Treated as *unset* (no heart-beat, but still at-least-once buffering). |
-| `min_time > max_time`                 | Validation error to prevent deadlocks.                                 |
-| IEEE-754 extremes (`±Inf`, `NaN`)     | Sample is bypassed with a warning; counting metrics record the event.  |
-| Clock skew (non-monotonic timestamps) | Logged and routed through late-arrival policy; compression continues.  |
+- an unknown field name, for example a misspelled `treshold`;
+- a field with the wrong YAML kind;
+- a `late_policy` other than `passthrough` or `drop`;
+- an override without `pattern`;
+- a number written as a string, which fails when the processor is built.
 
-With these guards the Downsampler behaves deterministically across PLC glitches, network jitter and even deliberate fuzz-test assaults—yet still errs on the side of passing the data through rather than dropping it.
+A duration written as a bare number passes and is discarded (see [Field types](#field-types)). Everything
+else starts without an error, for example a negative `threshold`, a swinging-door series without a
+threshold, or `min_time` greater than `max_time`. This is a known defect.
 
+The error shows when the first message of the affected series arrives. The algorithm cannot be
+built, so every message of that series is forwarded unfiltered until the process restarts. Topics
+whose own configuration is valid keep downsampling. The log shows one generic line per batch,
+`Batch processing had %d errors, but continuing with fail-open policy`, without the reason, and
+`messages_errored` rises.
 
-### How Swinging-Door Trending keeps the essentials—step by step
+To check that a configuration works, send test messages. `messages_errored` should stay at zero
+and `downsampling_config` should show the parameters you meant. A rising `messages_errored` can
+also come from input the processor cannot downsample (see
+[Which messages are downsampled](#which-messages-are-downsampled)).
 
-1. **Segment start (point A, green).**
-   From the very first sample in a segment the algorithm opens two straight "doors": an **upper** line and a **lower** line.
-   *Their slopes mark the fastest rise and the slowest rise allowed while the signal stays inside the ± *compDev* error band.*
-   <img src="./downsampler/img1.png" alt="Cone opens" width="600"/>
+## Delivery guarantees
 
-2. **Each new sample narrows the door.**
-   Every arriving point recalculates the steepest and flattest slopes that would still stay within ± *compDev*.
-   Geometrically the cone can only shrink, so the blue lines in the pictures pivot closer together frame by frame.
+### Delivery and acknowledgement
 
-   <img src="./downsampler/img2.png" alt="Door narrows further" width="600"/>
+The downsampler never acknowledges a message itself. Benthos acknowledges each input message once
+the processor's output for it is delivered, or at once when the processor drops it. That gives
+three cases:
 
-   <img src="./downsampler/img3.png" alt="Almost closed" width="600"/>
+- An emitted message keeps the at-least-once delivery of the pipeline.
+- A message dropped by a threshold, a repeat, `late_policy: drop` or a duplicate timestamp is
+  dropped on purpose and cannot be recovered.
+- A held candidate is acknowledged as soon as it is held, while it exists only in memory. Its
+  delivery is therefore at most once, which breaks the rule that no plugin keeps a message only in
+  memory. It is lost on every path listed in [Why a value is missing](#why-a-value-is-missing),
+  and at shutdown, where the points collected by `Close()` are never emitted. This is a known
+  defect.
 
-3. **Two working points—P and S.**
+### Idempotence
 
-   * **P** (black) is simply the *latest* raw sample.
-   * **S** (red, "snapshot") is the *candidate* we might archive.
-     Unlike a dead-band filter we do **not** decide about P immediately; first we test whether S can still represent the trend after P tightens the cone.
+Emitted points keep the `timestamp_ms` of their input message, so the topic and timestamp still
+identify them downstream. The processor never adds a timestamp of its own. Within one run, a
+redelivered message with the latest timestamp of its series is dropped as a duplicate. An older
+one counts as late and is emitted again under `passthrough`. After a restart the state starts
+empty, so redelivered messages can produce a different set of emitted points than the first run
+did.
 
-4. **Door-slam event = keep S, start over.**
-   When the upper-slope line crosses the lower-slope line the cone has closed (see img 4 / final GIF frame).
+### State
 
-   * S is now guaranteed to be the last point that still satisfies the error bound → we **emit** S.
-   * P becomes the new anchor A of the next segment, and the door re-opens to its full width.
+The processor keeps state per series in memory: the last emitted value for deadband, the anchor
+and the two slopes for swinging door, the last emitted boolean and string for the change
+detectors, and the held candidate. None of it survives a restart. After a restart the first
+message of every series counts as a first message and is emitted (see
+[Why a value is emitted anyway](#why-a-value-is-emitted-anyway)).
 
-   <img src="./downsampler/img4.png" alt="Door closed, snapshot flushed" width="600"/>
+### Time
 
-5. **Heartbeat and physics limits.**
-   *`max_time`* forces an emit even if the cone never closes (flat signals, watchdog audit).
-   *`min_time`* ignores arrivals that come *so* fast the physical process could not have changed—useful for ovens versus millisecond-level servo data.
+The algorithms use the `timestamp_ms` of the message, never the wall clock. That is why the
+heartbeat takes effect only when a message arrives. A message with the latest timestamp of its
+series is dropped. Older timestamps follow `late_policy` (see [Late arrivals](#late-arrivals)).
+Only the idle flush uses the wall clock (see [max_time](#max_time)).
 
-6. **The GIF puts it all together.**
-   Blue cone lines swing, the red snapshot jumps forward, only a handful of black-× points survive, yet the reconstructed line never drifts more than ± *compDev* from the raw signal.
+### Errors
 
-   <img src="./downsampler/animation1.gif" alt="GIF" width="600"/>
+There is no retry and no dead-letter queue. The processor forwards every message it cannot handle
+unchanged and counts it in `messages_errored`. It never returns an error to Benthos, so it never
+blocks the pipeline. An invalid configuration shows as a rising `messages_errored` while the
+affected series passes unfiltered (see [Startup validation](#startup-validation)).
 
-Image Source: [emrumo/swingingdoor](https://github.com/emrumo/swingingdoor)
+### Limits
 
----
-
-**Practical take-away**
-
-* OT engineers still see smooth ramps without the "stair-step" artefacts a naïve dead-band would create.
-* IT teams hold up to **99 % fewer rows** and move far less data, with mathematically bounded error and an audit heartbeat that satisfies 21 CFR §11 / GxP record-liveness rules.
+Nothing is persisted. The idle flush writes into a queue that holds one batch, and only the
+processing of the next batch reads it. Its output therefore reaches the pipeline only if another
+batch arrives, and a second flush before that is lost. The downsampler does not suit pipelines
+where every sample must be kept. If a consumer needs the full raw stream, archive the unfiltered
+topic in parallel.

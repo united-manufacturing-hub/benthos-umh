@@ -67,27 +67,25 @@ pipeline:
     - downsampler:
         default:
           deadband:
-            threshold: 2.0       # Default threshold for numeric values
+            threshold: 2.0       # Default threshold for all topics
             max_time: 30s        # Default max interval
-          late_policy:
-            late_policy: passthrough  # Default: forward late messages unchanged (vs drop)
+          late_policy: passthrough
         overrides:
           - pattern: "*.temperature"
             deadband:
-              threshold: 0.5     # Fine-grained for temperature (numeric)
+              threshold: 0.5     # Fine-grained for temperature
           - pattern: "*.humidity" 
             deadband:
-              threshold: 1.0     # Medium sensitivity for humidity (numeric)
+              threshold: 1.0     # Medium sensitivity for humidity
           - pattern: "*.status"
             deadband:
-              threshold: 0.1     # Ignored for strings - uses equality check only
+              threshold: 0.1     # no effect: strings and booleans are kept only when they change
           - pattern: "*.machine_state" 
             deadband:
-              threshold: 0.1     # Ignored for booleans - uses equality check only
+              threshold: 0.1     # no effect: strings and booleans are kept only when they change
           - pattern: "*.critical_sensor"
-            late_policy:
-              late_policy: drop   # Drop late data for critical sensors
-          # Pressure will use default threshold of 2.0 (numeric)
+            late_policy: drop
+          # Pressure will use the default threshold of 2.0
 
 output:
   stdout:
@@ -95,19 +93,9 @@ output:
 
 # This configuration will:
 # 1. Generate five types of simulated sensor data:
-#    - Temperature: 20-30°C (custom threshold: 0.5°C for numeric comparison)
-#    - Humidity: 30-70% (custom threshold: 1.0% for numeric comparison)  
-#    - Pressure: 1000-1100 Pa (default threshold: 2.0 Pa for numeric comparison)
-#    - Status: Constant "RUNNING" string (threshold ignored, uses equality comparison)
-#    - Machine State: Boolean with 90% true (threshold ignored, uses equality comparison)
-# 2. Apply different deadband thresholds based on metric type (numeric values only)
-# 3. For strings and booleans: ignore thresholds, use equality comparison only
-# 4. Demonstrate constant value filtering behavior
-# 5. Output detailed debug logs showing threshold decisions
-#
-# Expected results: 
-# - Numeric values filtered based on configured thresholds
-# - String values kept only when they change (equality check)
-# - Boolean values kept only when they change (equality check)
-# - Constant string filtered after first message regardless of threshold
-# - Boolean changes kept when false/true transitions occur 
+#    - Temperature: 20-30°C (threshold 0.5)
+#    - Humidity: 30-70% (threshold 1.0)
+#    - Pressure: 1000-1100 Pa (default threshold 2.0)
+#    - Status: constant "RUNNING" string
+#    - Machine State: boolean with 90% true
+# 2. Apply a different deadband threshold per topic via overrides 

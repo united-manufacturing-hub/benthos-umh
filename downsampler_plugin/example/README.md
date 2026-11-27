@@ -69,9 +69,9 @@ The CSV files contain the following columns:
 ## Algorithm Details
 
 The swinging door compression algorithm:
-1. Maintains a "door" (tolerance band) around the trend line
-2. Keeps data points that fall outside this tolerance band
-3. Respects the maximum time interval to ensure temporal coverage
-4. Preserves important changes while filtering out noise
+1. Keeps the latest point as a held point and draws a tolerance band of the threshold around the trend from the last emitted point
+2. Emits the held point once a new point breaks this trend, and keeps the new point as the next held point
+3. Emits an arriving point once max_time has passed since the last emitted point, and then discards the held point
+4. Drops the points in between, which lie on the trend
 
-The threshold of 0.5 means that values must deviate by more than 0.5 units from the trend line to be preserved, and the max_time of 30s ensures that at least one sample is kept every 30 seconds regardless of value changes. 
+With a threshold of 0.5, a held point is emitted only once a later point leaves the trend by about 0.5 units. With a max_time of 30s, a point is emitted at least every 30 seconds while data keeps arriving.
