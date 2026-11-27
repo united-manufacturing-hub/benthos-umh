@@ -45,13 +45,13 @@
 // Every flag defaults to false: a missing compatibility block, a missing key
 // and an explicit false all leave the plugin on its previous behavior. Keys
 // the plugin does not recognize are ignored rather than rejected, because
-// retired flags stay in customer configs forever. Key lookup is exact: a key
-// spelled differently from the declared flag, even in casing, does not enable
-// the flag. A YAML merge key ("<<") is rejected instead of ignored, because
-// Benthos does not expand it and the merged flags would silently stay off.
+// retired flags stay in customer configs forever.
 package compat
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Flag is the handle for one compatibility flag, returned by Declare.
 //
@@ -68,8 +68,9 @@ type Flag struct {
 // plugin builds a single Flags value with New and Declare, and passes its
 // flags to Parse and Set.Enabled.
 type Flags struct {
-	flags map[string]*Flag
-	names []string // declaration order, kept for stable output
+	flags   map[string]*Flag
+	names   []string // declaration order, kept for stable output
+	fielded bool     // Field was called; later Declares would be missing from its description
 }
 
 // New returns an empty set of compatibility flags for one plugin.
@@ -77,24 +78,19 @@ func New() *Flags {
 	return &Flags{flags: make(map[string]*Flag)}
 }
 
-// Declare declares a compatibility flag by name and returns its handle. The
-// name is the key a customer writes inside the plugin's compatibility config
-// block, matched exactly, including case; the description is shown to users
-// as that flag's help text, in the Management Console and in the log.
+// Declare declares a compatibility flag and returns its handle. The name is
+// the key a customer writes in the compatibility block; the description is
+// the flag's help text in the Management Console and in the log.
 //
-// Call Declare before Field: Field renders its description from the flags
-// declared at the moment it is called, so a spec built before a Declare does
-// not list that flag even though Parse accepts it. The standard pattern is
-// to declare the flags and build the spec in the same init function.
-//
-// Declare panics if name is empty, if description is empty, or if name has
-// already been declared on this Flags. All three are programming errors, not
-// configuration problems: an empty name could never be written, and an empty
-// description would render a dangling colon in the Management Console and the
-// log.
+// Declare panics if name or description is empty, if name was already
+// declared in any casing, or if Field was already called on f, because Field's help text
+// would not list the flag.
 func (f *Flags) Declare(name string, description string) *Flag {
 	if f.flags == nil {
 		f.flags = make(map[string]*Flag)
+	}
+	if f.fielded {
+		panic(fmt.Sprintf("Declare called for the compatibility flag %q after Field: declare every flag before building the config spec", name))
 	}
 	if name == "" {
 		panic("Declare called with an empty flag name: a compatibility flag needs a name the customer can write in the compatibility block")
@@ -102,8 +98,10 @@ func (f *Flags) Declare(name string, description string) *Flag {
 	if description == "" {
 		panic(fmt.Sprintf("Declare called with an empty description for the compatibility flag %q: the description is shown in the Management Console and in the log when the flag is enabled", name))
 	}
-	if _, dup := f.flags[name]; dup {
-		panic(fmt.Sprintf("compatibility flag %q was declared twice on the same Flags", name))
+	for _, existing := range f.names {
+		if strings.EqualFold(existing, name) {
+			panic(fmt.Sprintf("compatibility flag %q was declared twice on the same Flags (as %q and %q; names are compared ignoring case)", name, existing, name))
+		}
 	}
 	fl := &Flag{name: name, description: description, flags: f}
 	f.flags[name] = fl

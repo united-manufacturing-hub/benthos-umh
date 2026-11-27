@@ -32,13 +32,9 @@ type Set struct {
 	enabled map[string]bool
 }
 
-// Enabled reports whether the customer enabled f.
-//
-// Enabled panics if f is nil or was not declared on the Flags that this Set
-// was parsed from. Such a mismatch is a programming error, and silently
-// reporting the flag as disabled would quietly fall back to legacy behavior,
-// which is the failure this package exists to prevent. The zero Set reports
-// every declared flag as disabled instead of panicking.
+// Enabled reports whether the customer enabled f. It panics if f is nil or
+// belongs to another Flags, because reporting false would silently keep the
+// legacy behavior.
 func (s Set) Enabled(f *Flag) bool {
 	if f == nil {
 		panic("Set.Enabled called with a nil *Flag; pass a flag returned by Declare")
@@ -52,25 +48,14 @@ func (s Set) Enabled(f *Flag) bool {
 	return s.enabled[f.name]
 }
 
-// Parse reads the compatibility block from a plugin's parsed config and
-// returns the resulting flag set.
-//
-// A missing block, an empty block and a missing key all leave every flag
-// disabled. Keys the plugin does not recognize are ignored — retired keys are
-// expected to remain in customer configs forever and nobody has to act on
-// them — and are reported together in a single Info line. Key lookup is
-// exact: a key spelled differently from the declared flag, even in casing,
-// is an unknown key and leaves the flag disabled.
-//
-// A recognized key whose value is not a boolean is an error, because it means
-// the customer wrote something the plugin cannot interpret. The YAML merge
-// key "<<" is also an error: Benthos does not expand merge keys inside the
-// compatibility block, so flags merged in would silently not apply.
-//
-// log may be nil, in which case nothing is logged.
+// Parse reads the compatibility block from a plugin's parsed config. Unknown
+// keys are ignored and logged at Info. It returns an error for a recognized
+// key that is not a boolean, for a key that matches a flag except for case,
+// and for the YAML merge key "<<", which Benthos does not expand here. log may
+// be nil.
 func (f *Flags) Parse(conf *service.ParsedConfig, log *service.Logger) (Set, error) {
 	if conf == nil {
-		return Set{}, nil
+		return Set{flags: f}, nil
 	}
 	m, err := conf.FieldAnyMap("compatibility")
 	if err != nil {
@@ -90,6 +75,9 @@ func (f *Flags) Parse(conf *service.ParsedConfig, log *service.Logger) (Set, err
 		}
 		fl, ok := f.flags[key]
 		if !ok {
+			if name, near := f.caseInsensitiveMatch(key); near {
+				return Set{}, fmt.Errorf("the compatibility key %q is not recognized, but matches the compatibility flag %q except for case. Keys are case-sensitive: write it as %q", key, name, name)
+			}
 			unknownKeys = append(unknownKeys, key)
 			continue
 		}
@@ -115,13 +103,20 @@ func (f *Flags) Parse(conf *service.ParsedConfig, log *service.Logger) (Set, err
 		for i, k := range unknownKeys {
 			quoted[i] = fmt.Sprintf("%q", k)
 		}
-		if len(unknownKeys) == 1 {
-			log.Infof("Ignoring the unknown key %s in the compatibility block. This plugin recognizes the following keys: %s. The unknown key has no effect.", quoted[0], f.recognizedKeys())
-		} else {
-			log.Infof("Ignoring the unknown keys %s in the compatibility block. This plugin recognizes the following keys: %s. The unknown keys have no effect.", strings.Join(quoted, ", "), f.recognizedKeys())
-		}
+		log.Infof("Ignoring the unknown compatibility keys %s. They have no effect. This plugin recognizes the following keys: %s.", strings.Join(quoted, ", "), f.recognizedKeys())
 	}
 	return set, nil
+}
+
+// caseInsensitiveMatch returns the declared flag that key matches except for
+// case, if any.
+func (f *Flags) caseInsensitiveMatch(key string) (string, bool) {
+	for _, name := range f.names {
+		if strings.EqualFold(key, name) {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 // recognizedKeys renders the declared flag names for log messages. A Flags

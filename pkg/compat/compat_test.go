@@ -102,9 +102,6 @@ var _ = Describe("compat", func() {
 			Entry("an unknown key holding an integer", "compatibility:\n  retired_key: 42\n"),
 			Entry("an unknown key holding a list", "compatibility:\n  retired_key: [a, b]\n"),
 			Entry("an unknown key holding a null", "compatibility:\n  retired_key:\n"),
-			// Key lookup is exact, including case: a differently spelled key is
-			// an unknown key, not the flag.
-			Entry("a key spelled with different casing than the flag", "compatibility:\n  Flag_A: true\n"),
 		)
 
 		It("turns on a flag that is explicitly true", func() {
@@ -253,6 +250,24 @@ var _ = Describe("compat", func() {
 		})
 	})
 
+	It("rejects a key that matches a flag except for case, naming the flag", func() {
+		// A customer who wrote Flag_A meant flag_a; ignoring it would keep
+		// the legacy behavior they tried to leave.
+		conf, err := spec.ParseYAML("compatibility:\n  Flag_A: true\n", nil)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = c.Parse(conf, nil)
+		Expect(err).To(MatchError(And(ContainSubstring(`"Flag_A"`), ContainSubstring(`"flag_a"`))))
+	})
+
+	It("checks the flag's owner on the Set returned for a nil config", func() {
+		other := compat.New()
+		foreignFlag := other.Declare("foreign_flag", "Declared on another Flags.")
+		set, err := c.Parse(nil, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(set.Enabled(flagA)).To(BeFalse())
+		Expect(func() { set.Enabled(foreignFlag) }).To(PanicWith(ContainSubstring("not declared")))
+	})
+
 	Describe("the zero value of Set", func() {
 		It("reports every declared flag as off", func() {
 			var set compat.Set
@@ -284,33 +299,34 @@ var _ = Describe("compat", func() {
 
 	Describe("programming errors", func() {
 		It("panics when a flag is declared twice with the same name", func() {
+			// Field has already been called on c, so use a fresh Flags.
+			fresh := compat.New()
+			fresh.Declare("flag_a", "First declaration.")
 			Expect(func() {
-				c.Declare("flag_a", "Declared again.")
-			}).To(Panic())
+				fresh.Declare("flag_a", "Declared again.")
+			}).To(PanicWith(And(ContainSubstring("flag_a"), ContainSubstring("twice"))))
+		})
 
-			// The panic must say what the caller did wrong.
-			done := make(chan any)
-			go func() {
-				defer func() { done <- recover() }()
-				c.Declare("flag_a", "Declared again.")
-			}()
-			r := <-done
-			Expect(fmt.Sprint(r)).To(ContainSubstring("flag_a"))
-			Expect(fmt.Sprint(r)).To(ContainSubstring("twice"))
+		It("panics when two flags differ only in case", func() {
+			fresh := compat.New()
+			fresh.Declare("flag_a", "First declaration.")
+			Expect(func() {
+				fresh.Declare("Flag_A", "Same key in other casing.")
+			}).To(PanicWith(And(ContainSubstring("Flag_A"), ContainSubstring("twice"))))
 		})
 
 		It("panics when Declare is called with an empty name", func() {
 			Expect(func() {
-				c.Declare("", "Declared without a name.")
-			}).To(Panic())
+				compat.New().Declare("", "Declared without a name.")
+			}).To(PanicWith(ContainSubstring("empty flag name")))
 		})
 
 		It("panics when Declare is called with an empty description", func() {
 			// An empty description would render a dangling "- flag_a: " line
 			// in the Management Console and "is enabled: " in the log.
 			Expect(func() {
-				c.Declare("flag_a", "")
-			}).To(Panic())
+				compat.New().Declare("flag_a", "")
+			}).To(PanicWith(ContainSubstring("empty description")))
 		})
 
 		It("panics when Enabled is called with a nil flag, even on the zero Set", func() {
@@ -334,16 +350,7 @@ var _ = Describe("compat", func() {
 			set := parseFlags(c, spec, "compatibility:\n  flag_a: true\n")
 			Expect(func() {
 				set.Enabled(foreignFlag)
-			}).To(Panic())
-
-			done := make(chan any)
-			go func() {
-				defer func() { done <- recover() }()
-				_ = set.Enabled(foreignFlag)
-			}()
-			r := <-done
-			Expect(fmt.Sprint(r)).To(ContainSubstring("foreign_flag"))
-			Expect(fmt.Sprint(r)).To(ContainSubstring("not declared"))
+			}).To(PanicWith(And(ContainSubstring("foreign_flag"), ContainSubstring("not declared"))))
 		})
 	})
 
@@ -383,48 +390,21 @@ var _ = Describe("compat", func() {
 				// The one thing a customer with an old config most needs to
 				// know: unknown keys do not fail validation.
 				Expect(doc).To(ContainSubstring("are ignored"))
+				// The example enables every declared flag, so the Management
+				// Console has a machine-readable list of the keys.
+				Expect(doc).To(ContainSubstring(`"examples":[{"flag_a":true,"flag_b":true}]`))
 			})
 
-			It("is a snapshot: a spec built before a Declare does not mention that flag, but Parse accepts it", func() {
-				// This is the standard Go trap: a package-level spec variable
-				// initializes before any init function that declares flags.
-				// The behavior is pinned here so the suite teaches it; the
-				// docs on Field and Declare demand the same init function.
-				env := service.NewEnvironment()
+			It("makes Declare panic once Field was called, so no flag is missing from the help text", func() {
+				// A package-level spec variable initializes before an init
+				// function that declares flags; this turns that silent gap
+				// into a startup panic.
 				fresh := compat.New()
-				earlySpec := service.NewConfigSpec().Field(fresh.Field())
-				lateFlag := fresh.Declare("late_flag", "Declared after the early spec was built.")
-				lateSpec := service.NewConfigSpec().Field(fresh.Field())
-
-				register := func(name string, spec *service.ConfigSpec) *service.ConfigView {
-					err := env.RegisterInput(name, spec, func(_ *service.ParsedConfig, _ *service.Resources) (service.Input, error) {
-						Fail("must not be constructed")
-						return nil, nil
-					})
-					Expect(err).NotTo(HaveOccurred())
-					view, ok := inputConfigView(env, name)
-					Expect(ok).To(BeTrue())
-					return view
-				}
-
-				earlyJSON, err := register("early_spec_probe", earlySpec).FormatJSON()
-				Expect(err).NotTo(HaveOccurred())
-				Expect(string(earlyJSON)).NotTo(ContainSubstring("late_flag"))
-				Expect(string(earlyJSON)).NotTo(ContainSubstring("Declared after the early spec was built."))
-				Expect(string(earlyJSON)).To(ContainSubstring("no compatibility flags"))
-
-				lateJSON, err := register("late_spec_probe", lateSpec).FormatJSON()
-				Expect(err).NotTo(HaveOccurred())
-				Expect(string(lateJSON)).To(ContainSubstring("late_flag"))
-				Expect(string(lateJSON)).To(ContainSubstring("Declared after the early spec was built."))
-
-				// The trap is only about the description: Parse accepts the
-				// flag through the early spec regardless.
-				conf, err := earlySpec.ParseYAML("compatibility:\n  late_flag: true\n", nil)
-				Expect(err).NotTo(HaveOccurred())
-				set, err := fresh.Parse(conf, nil)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(set.Enabled(lateFlag)).To(BeTrue())
+				fresh.Declare("early_flag", "Declared before Field.")
+				_ = fresh.Field()
+				Expect(func() {
+					fresh.Declare("late_flag", "Declared after Field.")
+				}).To(PanicWith(And(ContainSubstring("late_flag"), ContainSubstring("after Field"))))
 			})
 
 			It("is sensible for a Flags with no declared flags", func() {

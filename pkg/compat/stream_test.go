@@ -16,6 +16,7 @@ package compat_test
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -29,8 +30,8 @@ import (
 	compat "github.com/united-manufacturing-hub/benthos-umh/pkg/compat"
 )
 
-// stubInput is an input that never yields a message. The stream tests only
-// build their streams, they never run them.
+// stubInput is an input that blocks until its context is cancelled, so a
+// running stream stays healthy until the test cancels it.
 type stubInput struct{}
 
 func (stubInput) Connect(_ context.Context) error { return nil }
@@ -54,6 +55,9 @@ var _ = Describe("through the real public config surface", func() {
 		compatibility  *compat.Flags
 		correctTagPath *compat.Flag
 		enabled        *bool
+		// constructed receives the error Parse returned, once the input
+		// constructor has run. Sending after writing enabled orders the two.
+		constructed chan error
 	)
 
 	BeforeEach(func() {
@@ -62,16 +66,20 @@ var _ = Describe("through the real public config surface", func() {
 		correctTagPath = compatibility.Declare("correct_tag_path",
 			"Publish a tag under its browse path without its own name.")
 		enabled = new(bool)
+		constructed = make(chan error, 1)
 
 		spec := service.NewConfigSpec().
 			Field(service.NewStringField("endpoint")).
 			Field(compatibility.Field())
 		err := env.RegisterInput(pluginName, spec, func(conf *service.ParsedConfig, mgr *service.Resources) (service.Input, error) {
 			flags, err := compatibility.Parse(conf, mgr.Logger())
+			if err == nil {
+				*enabled = flags.Enabled(correctTagPath)
+			}
+			constructed <- err
 			if err != nil {
 				return nil, err
 			}
-			*enabled = flags.Enabled(correctTagPath)
 			return stubInput{}, nil
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -133,15 +141,35 @@ var _ = Describe("through the real public config surface", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		// runFor starts the stream, lets it tick, then shuts it down. The
-		// input constructor only runs once the stream is Run, not at Build.
-		// A healthy stream blocks until the context is done, so Run returns
-		// the context error; callers that care about construction errors
-		// must inspect it.
-		runFor := func(strm *service.Stream) error {
-			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		// runFor runs the stream until the input constructor has run, then
+		// shuts it down, and returns the error Parse returned and the error
+		// Run returned. The constructor only runs once the stream is Run, not
+		// at Build.
+		runFor := func(strm *service.Stream) (error, error) {
+			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			return strm.Run(ctx)
+			runDone := make(chan error, 1)
+			go func() { runDone <- strm.Run(ctx) }()
+			var parseErr error
+			select {
+			case parseErr = <-constructed:
+			case err := <-runDone:
+				Fail(fmt.Sprintf("Run returned before the input constructor ran: %v", err))
+			case <-time.After(5 * time.Second):
+				Fail("the input constructor did not run within 5s")
+			}
+			cancel()
+			return parseErr, <-runDone
+		}
+
+		// runHealthy runs the stream and asserts that the constructor accepted
+		// the config and the stream stopped only because it was cancelled.
+		runHealthy := func(strm *service.Stream) {
+			parseErr, runErr := runFor(strm)
+			ExpectWithOffset(1, parseErr).NotTo(HaveOccurred())
+			if runErr != nil {
+				ExpectWithOffset(1, runErr).To(MatchError(context.Canceled))
+			}
 		}
 
 		// What this file asserts about Parse's own output is only what only
@@ -156,7 +184,7 @@ var _ = Describe("through the real public config surface", func() {
 
 				strm, err := sb.Build()
 				Expect(err).NotTo(HaveOccurred())
-				_ = runFor(strm)
+				runHealthy(strm)
 				Expect(*enabled).To(BeFalse())
 			},
 			Entry("an unknown key holding a boolean", "    retired_key: true\n"),
@@ -177,7 +205,7 @@ var _ = Describe("through the real public config surface", func() {
 
 			strm, err := sb.Build()
 			Expect(err).NotTo(HaveOccurred())
-			_ = runFor(strm)
+			runHealthy(strm)
 			Expect(*enabled).To(BeTrue())
 		})
 
@@ -195,7 +223,8 @@ var _ = Describe("through the real public config surface", func() {
 
 			strm, err := sb.Build()
 			Expect(err).NotTo(HaveOccurred())
-			err = runFor(strm)
+			parseErr, err := runFor(strm)
+			Expect(parseErr).To(MatchError(ContainSubstring("<<")))
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("failed to init input"))
 			Expect(err.Error()).To(ContainSubstring("<<"))

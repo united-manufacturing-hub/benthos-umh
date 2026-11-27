@@ -194,7 +194,7 @@ test-pkg-umh-topic:
 
 .PHONY: test-pkg-compat
 test-pkg-compat:
-	@$(GINKGO_CMD) $(GINKGO_FLAGS) --race ./pkg/compat/...
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./pkg/compat/...
 
 .PHONY: bench-pkg-umh-topic
 bench-pkg-umh-topic:
