@@ -36,19 +36,20 @@ import (
 // refuses, stalls and drops (ENG-8131).
 //
 // Each scenario asserts twice. What the output did with the message, and
-// that the fault actually fired: a fault that silently failed to inject
-// would otherwise read as a fault the handshake handled.
+// that the fault actually fired -- on the handle the arm method returned,
+// which is the only witness: a fault that silently failed to arm would
+// otherwise read as a fault the handshake handled.
 
 // TestFault_AWriteTheMachineNeverApplies is the reason the read-back rule
 // exists. The machine answers Good and keeps its old value, so only reading
 // it back finds out, and the message must not be acknowledged.
 func TestFault_AWriteTheMachineNeverApplies(t *testing.T) {
-	srv := startFaultServer(t, map[string]any{"Setpoint": int32(7)})
-	srv.Inject(faultopcua.Fault{Node: "Setpoint", Kind: faultopcua.AcceptWriteNeverApply})
+	srv, node := startFaultServer(t, "Setpoint", int32(7))
+	fault := srv.AcceptWriteNeverApply(node)
 
 	err := runFaultHandshake(t, srv, handshake.Config{
 		Script: `
-			const SETPOINT = { nodeId: "` + srv.NodeID("Setpoint") + `", dataType: "Int32" };
+			const SETPOINT = { nodeId: "` + node.ID() + `", dataType: "Int32" };
 			opcua.write(SETPOINT, 4200);
 			if (opcua.read(SETPOINT) !== 4200) {
 				return opcua.error_persistent("the machine did not take the setpoint");
@@ -60,7 +61,7 @@ func TestFault_AWriteTheMachineNeverApplies(t *testing.T) {
 	}, map[string]any{})
 
 	assertOutcome(t, err, "persistent")
-	assertFired(t, srv, faultopcua.AcceptWriteNeverApply, "Setpoint")
+	assertFired(t, fault, "AcceptWriteNeverApply on Setpoint")
 }
 
 // TestFault_AReadTheMachineRefuses is the classification the whole outcome
@@ -77,12 +78,12 @@ func TestFault_AReadTheMachineRefuses(t *testing.T) {
 		{"a node that does not exist", ua.StatusBadNodeIDUnknown, "persistent"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := startFaultServer(t, map[string]any{"Ready": true})
-			srv.Inject(faultopcua.Fault{Node: "Ready", Kind: faultopcua.RefuseRead, Status: tc.status})
+			srv, node := startFaultServer(t, "Ready", true)
+			fault := srv.RefuseRead(node, tc.status)
 
 			err := runFaultHandshake(t, srv, handshake.Config{
 				Script: `
-					opcua.read({ nodeId: "` + srv.NodeID("Ready") + `" });
+					opcua.read({ nodeId: "` + node.ID() + `" });
 					return opcua.success({});
 				`,
 				MaxScriptRuntime: 5 * time.Second,
@@ -98,7 +99,7 @@ func TestFault_AReadTheMachineRefuses(t *testing.T) {
 			if err != nil && !strings.Contains(err.Error(), tc.status.Error()) {
 				t.Errorf("the failure should name %v, got %v", tc.status, err)
 			}
-			assertFired(t, srv, faultopcua.RefuseRead, "Ready")
+			assertFired(t, fault, "RefuseRead on Ready")
 		})
 	}
 }
@@ -107,18 +108,13 @@ func TestFault_AReadTheMachineRefuses(t *testing.T) {
 // for, and the one a fixture whose flag is already up never reaches. The
 // machine is working; it is just not finished yet.
 func TestFault_AMachineThatConfirmsLate(t *testing.T) {
-	srv := startFaultServer(t, map[string]any{"Loaded": true})
-	srv.Inject(faultopcua.Fault{
-		Node:  "Loaded",
-		Kind:  faultopcua.RaiseFlagLate,
-		After: 500 * time.Millisecond,
-		Until: false,
-	})
+	srv, node := startFaultServer(t, "Loaded", true)
+	fault := srv.RaiseFlagLate(node, false, 500*time.Millisecond)
 
 	start := time.Now()
 	err := runFaultHandshake(t, srv, handshake.Config{
 		Script: `
-			opcua.wait_until({ nodeId: "` + srv.NodeID("Loaded") + `" }, v => v === true, 5000, { pollMs: 50 });
+			opcua.wait_until({ nodeId: "` + node.ID() + `" }, v => v === true, 5000, { pollMs: 50 });
 			return opcua.success({});
 		`,
 		MaxScriptRuntime: 10 * time.Second,
@@ -129,20 +125,20 @@ func TestFault_AMachineThatConfirmsLate(t *testing.T) {
 	if waited := time.Since(start); waited < 400*time.Millisecond {
 		t.Errorf("the run finished in %v, so it never waited for the flag", waited)
 	}
-	assertFired(t, srv, faultopcua.RaiseFlagLate, "Loaded")
+	assertFired(t, fault, "RaiseFlagLate on Loaded")
 }
 
 // TestFault_AMachineThatAnswersTooLate is the deadline. The machine answers
 // correctly throughout, so nothing is wrong with it except the clock, and
 // the run has to end on its own timing rather than on the machine's.
 func TestFault_AMachineThatAnswersTooLate(t *testing.T) {
-	srv := startFaultServer(t, map[string]any{"Ready": true})
-	srv.Inject(faultopcua.Fault{Node: "Ready", Kind: faultopcua.AnswerLate, Delay: 3 * time.Second})
+	srv, node := startFaultServer(t, "Ready", true)
+	fault := srv.AnswerLate(node, 3*time.Second)
 
 	start := time.Now()
 	err := runFaultHandshake(t, srv, handshake.Config{
 		Script: `
-			opcua.read({ nodeId: "` + srv.NodeID("Ready") + `" });
+			opcua.read({ nodeId: "` + node.ID() + `" });
 			return opcua.success({});
 		`,
 		MaxScriptRuntime: 700 * time.Millisecond,
@@ -153,19 +149,19 @@ func TestFault_AMachineThatAnswersTooLate(t *testing.T) {
 	if waited := time.Since(start); waited > 2500*time.Millisecond {
 		t.Errorf("the run took %v, so it waited on the machine rather than on its own deadline", waited)
 	}
-	assertFired(t, srv, faultopcua.AnswerLate, "Ready")
+	assertFired(t, fault, "AnswerLate on Ready")
 }
 
 // TestFault_TheSessionDropsOnTheCommittingWrite is the half-state onError
 // exists for. The write reached the machine, the socket died before any
 // answer, and nobody can now say whether it landed.
 func TestFault_TheSessionDropsOnTheCommittingWrite(t *testing.T) {
-	srv := startFaultServer(t, map[string]any{"Apply": false})
-	srv.Inject(faultopcua.Fault{Node: "Apply", Kind: faultopcua.DropSession})
+	srv, node := startFaultServer(t, "Apply", false)
+	fault := srv.DropSession(node)
 
 	err := runFaultHandshake(t, srv, handshake.Config{
 		Script: `
-			opcua.write({ nodeId: "` + srv.NodeID("Apply") + `", dataType: "Boolean" }, true);
+			opcua.write({ nodeId: "` + node.ID() + `", dataType: "Boolean" }, true);
 			return opcua.success({});
 		`,
 		MaxScriptRuntime: 5 * time.Second,
@@ -175,29 +171,28 @@ func TestFault_TheSessionDropsOnTheCommittingWrite(t *testing.T) {
 	if err == nil {
 		t.Error("the message was acknowledged although nobody can say whether the write landed")
 	}
-	assertFired(t, srv, faultopcua.DropSession, "Apply")
+	assertFired(t, fault, "DropSession on Apply")
 	if n := srv.Cuts(); n == 0 {
 		t.Error("no connection was closed, so the run failed for some other reason")
 	}
 }
 
-// startFaultServer brings up a fault server holding the given nodes.
-func startFaultServer(t *testing.T, nodes map[string]any) *faultopcua.Server {
+// startFaultServer brings up a fault server holding one node, and hands back
+// the handle to it. The handle is the thing a fault is armed against and the
+// thing the script addresses, so there is no name to spell differently
+// between the two.
+func startFaultServer(t *testing.T, name string, value any) (*faultopcua.Server, *faultopcua.Variable) {
 	t.Helper()
-	srv, err := faultopcua.New()
-	if err != nil {
-		t.Fatalf("fault server: %v", err)
-	}
-	for name, value := range nodes {
-		srv.AddNode(name, value)
-	}
+	srv := faultopcua.New(t)
+	node := srv.AddVariable(name, value)
 	if err := srv.Start(context.Background()); err != nil {
 		t.Fatalf("start fault server: %v", err)
 	}
-	// NOT registered here. runFaultHandshake registers it after the
-	// connection's cleanup, because LIFO has to run the server's close
-	// first -- see the note there.
-	return srv
+	// New has already registered srv.Close with t.Cleanup, but that
+	// registration is the oldest one there is, so LIFO runs it after the
+	// connection's close -- the wrong way round. runFaultHandshake
+	// registers the copy that has to go first; see the note there.
+	return srv, node
 }
 
 // runFaultHandshake drives one message down the path a deployed config
@@ -225,6 +220,11 @@ func runFaultHandshake(t *testing.T, srv *faultopcua.Server, cfg handshake.Confi
 	// go first. Measured on the answers-too-late scenario: conn.Close alone
 	// took 2.32s with the order the other way round, against 3.8ms for the
 	// srv.Close that would have freed it.
+	//
+	// New has already registered its own Close, at creation time, which
+	// LIFO therefore runs last of all. The copy registered here runs
+	// first, ahead of the connection's close, and New's runs again
+	// afterwards, which Close tolerates.
 	t.Cleanup(func() { _ = conn.Close(context.Background()) })
 	t.Cleanup(func() { _ = srv.Close() })
 
@@ -267,11 +267,17 @@ func assertOutcome(t *testing.T, err error, want string) {
 	}
 }
 
-func assertFired(t *testing.T, srv *faultopcua.Server, kind faultopcua.Kind, node string) {
+// assertFired is the second half of every scenario. The handle the arm
+// method returned is the whole of the evidence that the misbehavior
+// happened: a fault that silently failed to arm reads exactly like a fault
+// the client handled, and the scenario then proves nothing about what it is
+// named for. What names the fault in the failure message, because the
+// handle itself no longer carries a kind or a node the test can read.
+func assertFired(t *testing.T, f *faultopcua.Fault, what string) {
 	t.Helper()
-	if !srv.Fired(kind, node) {
-		t.Errorf("the %s fault never fired on %s, so this scenario proved nothing; firings: %v",
-			kind, node, srv.Firings())
+	if !f.Fired() {
+		t.Errorf("the %s fault never took effect, so this scenario proved nothing; it fired %d time(s)",
+			what, f.Count())
 	}
 }
 
@@ -301,18 +307,13 @@ func TestFaultUAT0203_AMachineThatIsNeverReady(t *testing.T) {
 		{"the script knows better and says so", `, { onTimeout: "persistent" }`, "persistent"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := startFaultServer(t, map[string]any{"Ready": true})
+			srv, node := startFaultServer(t, "Ready", true)
 			// Held down for longer than the wait, so the flag never comes.
-			srv.Inject(faultopcua.Fault{
-				Node:  "Ready",
-				Kind:  faultopcua.RaiseFlagLate,
-				After: time.Hour,
-				Until: false,
-			})
+			fault := srv.RaiseFlagLate(node, false, time.Hour)
 
 			err := runFaultHandshake(t, srv, handshake.Config{
 				Script: `
-					opcua.wait_until({ nodeId: "` + srv.NodeID("Ready") + `" }, v => v === true, 300` +
+					opcua.wait_until({ nodeId: "` + node.ID() + `" }, v => v === true, 300` +
 					tc.onTimeout + `);
 					return opcua.success({});
 				`,
@@ -321,7 +322,7 @@ func TestFaultUAT0203_AMachineThatIsNeverReady(t *testing.T) {
 			}, map[string]any{})
 
 			assertOutcome(t, err, tc.want)
-			assertFired(t, srv, faultopcua.RaiseFlagLate, "Ready")
+			assertFired(t, fault, "RaiseFlagLate on Ready")
 		})
 	}
 }
@@ -341,12 +342,12 @@ func TestFaultUAT0607_TheMachineRefusesTheCommittingWrite(t *testing.T) {
 		{"a machine that is briefly unreachable", ua.StatusBadCommunicationError, "transient"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := startFaultServer(t, map[string]any{"Setpoint": int32(0)})
-			srv.Inject(faultopcua.Fault{Node: "Setpoint", Kind: faultopcua.RefuseWrite, Status: tc.status})
+			srv, node := startFaultServer(t, "Setpoint", int32(0))
+			fault := srv.RefuseWrite(node, tc.status)
 
 			err := runFaultHandshake(t, srv, handshake.Config{
 				Script: `
-					opcua.write({ nodeId: "` + srv.NodeID("Setpoint") + `", dataType: "Int32" }, 4200);
+					opcua.write({ nodeId: "` + node.ID() + `", dataType: "Int32" }, 4200);
 					return opcua.success({});
 				`,
 				MaxScriptRuntime: 5 * time.Second,
@@ -354,7 +355,7 @@ func TestFaultUAT0607_TheMachineRefusesTheCommittingWrite(t *testing.T) {
 			}, map[string]any{})
 
 			assertOutcome(t, err, tc.want)
-			assertFired(t, srv, faultopcua.RefuseWrite, "Setpoint")
+			assertFired(t, fault, "RefuseWrite on Setpoint")
 		})
 	}
 }
@@ -364,12 +365,12 @@ func TestFaultUAT0607_TheMachineRefusesTheCommittingWrite(t *testing.T) {
 // handshake that confirms on a single read believes the first answer it
 // likes; wait_until's predicate has to hold on the read that satisfies it.
 func TestFaultUAT19_AFlagThatFlaps(t *testing.T) {
-	srv := startFaultServer(t, map[string]any{"Loaded": true})
-	srv.Inject(faultopcua.Fault{Node: "Loaded", Kind: faultopcua.FlapValue, Until: false})
+	srv, node := startFaultServer(t, "Loaded", true)
+	fault := srv.FlapValue(node, false)
 
 	err := runFaultHandshake(t, srv, handshake.Config{
 		Script: `
-			opcua.wait_until({ nodeId: "` + srv.NodeID("Loaded") + `" }, v => v === true, 3000, { pollMs: 20 });
+			opcua.wait_until({ nodeId: "` + node.ID() + `" }, v => v === true, 3000, { pollMs: 20 });
 			return opcua.success({});
 		`,
 		MaxScriptRuntime: 10 * time.Second,
@@ -380,19 +381,14 @@ func TestFaultUAT19_AFlagThatFlaps(t *testing.T) {
 	// What this scenario pins is that it is satisfied by a read that saw
 	// the flag up, rather than by a stale or skipped one.
 	assertOutcome(t, err, "delivered")
-	assertFired(t, srv, faultopcua.FlapValue, "Loaded")
+	assertFired(t, fault, "FlapValue on Loaded")
 
 	// Asserting "delivered" alone would pass against a flag that never
 	// flapped at all, so count the reads: the flag is down on the first one
 	// and the wait has to come back for another. One read means the
-	// scenario never exercised the flapping it is named for.
-	reads := 0
-	for _, f := range srv.Firings() {
-		if f.Kind == faultopcua.FlapValue {
-			reads++
-		}
-	}
-	if reads < 2 {
+	// scenario never exercised the flapping it is named for. The handle
+	// counts every read the fault answered, which is the same count.
+	if reads := fault.Count(); reads < 2 {
 		t.Errorf("the flag was read %d time(s); the wait was satisfied without ever seeing it down", reads)
 	}
 }
