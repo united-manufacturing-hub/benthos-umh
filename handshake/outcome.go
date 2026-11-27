@@ -117,7 +117,7 @@ func detailErr(what string, detail any) error {
 	}
 	b, err := json.Marshal(detail)
 	if err != nil {
-		return fmt.Errorf("%s: <detail that cannot be rendered: %v>", what, err)
+		return fmt.Errorf("%s: <detail that cannot be rendered: %w>", what, err)
 	}
 	return fmt.Errorf("%s: %s", what, b)
 }
