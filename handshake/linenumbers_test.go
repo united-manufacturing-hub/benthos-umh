@@ -19,20 +19,14 @@ import (
 	"testing"
 )
 
-// TestCompile_AUsersFirstLineIsLineFour pins the number a customer sees when
+// TestCompile_AUsersFirstLineIsLineOne pins the number a customer sees when
 // their handshake script goes wrong.
 //
 // A script that throws reaches the flow as "handshake ended persistent:
-// Error: boom at script:4:7" -- so this number is in the dead-letter reason
+// Error: boom at script:1:...", so this number is in the dead-letter reason
 // and in the operator's logs, and it is how someone finds the fault in a
-// long script.
-//
-// It matters most for the change that has not happened yet. This package
-// runs on a stand-in runtime that is meant to be swapped for pkg/js_runtime.
-// If the two wraps disagree on length, that swap moves every line number a
-// customer has ever seen, silently, with nothing failing. They agree now,
-// and this test and its twin in pkg/js_runtime both go red if either drifts.
-func TestCompile_AUsersFirstLineIsLineFour(t *testing.T) {
+// long script. The wrap around the script must not move it.
+func TestCompile_AUsersFirstLineIsLineOne(t *testing.T) {
 	// A one-line script. The throw is on the user's line 1.
 	prog, err := compile("script", "throw new Error('boom');")
 	if err != nil {
@@ -42,14 +36,29 @@ func TestCompile_AUsersFirstLineIsLineFour(t *testing.T) {
 	if runErr == nil {
 		t.Fatal("the script was supposed to throw")
 	}
-	if !strings.Contains(runErr.Error(), "script:4:") {
-		t.Errorf("a user's first line should report as line 4, got %v", runErr)
+	if !strings.Contains(runErr.Error(), "script:1:") {
+		t.Errorf("a user's first line should report as line 1, got %v", runErr)
+	}
+
+	// A later line reports as itself too.
+	prog, err = compile("script", "const a = 1;\nconst b = 2;\nthrow new Error('boom');")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if _, runErr := runProgram(t.Context(), prog, nil); runErr == nil ||
+		!strings.Contains(runErr.Error(), "script:3:") {
+		t.Errorf("a user's third line should report as line 3, got %v", runErr)
 	}
 
 	// Syntax errors count lines too, and from the same origin.
 	if _, err := compile("script", "this is not javascript;;;"); err == nil {
 		t.Fatal("that was supposed to be a syntax error")
-	} else if !strings.Contains(err.Error(), "Line 4:") {
-		t.Errorf("a syntax error on the user's first line should report line 4, got %v", err)
+	} else if !strings.Contains(err.Error(), "Line 1:") {
+		t.Errorf("a syntax error on the user's first line should report line 1, got %v", err)
+	}
+
+	// A trailing line comment does not swallow the wrap's closing half.
+	if _, err := compile("script", "return 1; // the end"); err != nil {
+		t.Errorf("a script ending in a line comment must compile, got %v", err)
 	}
 }
