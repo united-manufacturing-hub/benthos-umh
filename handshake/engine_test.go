@@ -630,15 +630,13 @@ func TestConfig_ValidateRefusesAZeroOrNegativeScriptRuntime(t *testing.T) {
 	}
 }
 
-// The literal-wait scanner (LIB-9) reads the script as text, and every test
-// below is one of its edges. The scanner is the friendly early error, not the
-// safety mechanism — LIB-12's clamp is — so what each test pins is that the
-// scanner terminates on every input a user can write and keeps only what its
-// own rules call live code.
+// The literal-wait check (LIB-9) reads the parsed script, so only code
+// counts: a wait in a comment or a string is not a wait, and no literal of
+// another kind (a regex, a template) can hide a real one. The check is the
+// friendly early error, not the safety mechanism -- LIB-12's clamp is.
 
 // A `//` comment that runs to the end of the file, with no newline after it,
-// is not live code: the scanner stops there and counts nothing in it. A
-// script's last line being a comment is ordinary.
+// is not live code. A script's last line being a comment is ordinary.
 func TestLiteralWaitScanner_ALineCommentToTheEndOfTheFileIsNotLiveCode(t *testing.T) {
 	cfg := validConfig()
 	cfg.MaxScriptRuntime = 500 * time.Millisecond
@@ -648,22 +646,8 @@ func TestLiteralWaitScanner_ALineCommentToTheEndOfTheFileIsNotLiveCode(t *testin
 	}
 }
 
-// An unterminated `/*` ends the scan where it stands: the scanner keeps what
-// it read and terminates, rather than reading past the end. The parser would
-// refuse a real unterminated block comment before the scanner ever ran
-// (Validate compiles first), so the way a script reaches this is a regex
-// character class such as /[/*]/ — a desync the scanner's own comment
-// accepts as out of scope. What is pinned is the termination.
-func TestLiteralWaitScanner_AnUnterminatedBlockCommentEndsTheScan(t *testing.T) {
-	if got := stripComments("a /*b"); got != "a " {
-		t.Fatalf("an unterminated block comment must end the scan keeping the prefix, got %q", got)
-	}
-}
-
-// A `wait_until(` that is not a call — here, text inside a string literal —
-// has no matching close paren, so the scanner skips it and carries on, and
-// the real wait later in the script is still counted. The unmatched call is
-// what makes splitCall run off the end of the script.
+// Text that looks like a call inside a string is not a call, and the real
+// wait after it is still counted.
 func TestLiteralWaitScanner_StringContentIsSkippedAndTheScanCarriesOn(t *testing.T) {
 	cfg := validConfig()
 	cfg.MaxScriptRuntime = 500 * time.Millisecond
@@ -679,57 +663,43 @@ func TestLiteralWaitScanner_StringContentIsSkippedAndTheScanCarriesOn(t *testing
 	}
 }
 
-// An escaped quote does not end a string, so comment-looking text inside the
-// string is still scanned — the same rule the existing test pins for `//`
-// inside a string: string contents are live text to this scanner, comments
-// are not. Delete the escape handling and the string ends at the `\"`, the
-// rest of the line reads as a comment, and a 999999ms wait slips under a
-// 500ms deadline.
-func TestLiteralWaitScanner_AnEscapedQuoteDoesNotEndAString(t *testing.T) {
+// A wait spelled out inside a string, escaped quote and all, is text, not a
+// wait, so it does not refuse a script that has no waits.
+func TestLiteralWaitScanner_AWaitInsideAStringIsNotAWait(t *testing.T) {
 	cfg := validConfig()
 	cfg.MaxScriptRuntime = 500 * time.Millisecond
-	cfg.Script = `const s = "x\"; // opcua.wait_until(A, v => v === true, 999999)"; return opcua.success({s: s});`
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatalf("Validate accepted a script whose live wait exceeds its deadline")
-	}
-	if !strings.Contains(err.Error(), "MaxScriptRuntime") {
-		t.Fatalf("the refusal must name the deadline it violated: %v", err)
+	cfg.Script = `const s = "x\"; opcua.wait_until(A, v => v === true, 999999)"; return opcua.success({s: s});`
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate refused a script whose only wait is inside a string: %v", err)
 	}
 }
 
-// A string that is never closed ends the scan where it stands, keeping what
-// came after the opening quote: the scanner terminates on every input. A
-// real unterminated string does not compile, so the way a script reaches this
-// is a regex literal containing a quote, such as /"/ — the desync the
-// scanner's own comment accepts. Pinned twice: the function's own contract,
-// and the end-to-end behavior that follows from it (the comment after the
-// regex is string content to the scanner, so a wait inside it still counts —
-// the conservative direction for a safety check).
-func TestLiteralWaitScanner_AnUnterminatedStringEndsTheScanWhereItStands(t *testing.T) {
-	if got := stripComments(`a "unterminated`); got != `a "unterminated` {
-		t.Fatalf("an unterminated string must end the scan keeping the text, got %q", got)
-	}
+// A regex literal that holds a quote, a // or a /* is a regex, so the live
+// wait after it is still counted, and a wait in the comment after it is not.
+func TestLiteralWaitScanner_ARegexLiteralDoesNotHideAWait(t *testing.T) {
+	for _, re := range []string{`/"/`, `/[/*]/`, `/a\/\/b/`} {
+		t.Run(re, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.MaxScriptRuntime = 500 * time.Millisecond
+			cfg.Script = "var re = " + re + "; opcua.wait_until(A, v => v === true, 999999);\n" +
+				"return opcua.success({});"
+			if err := cfg.Validate(); err == nil {
+				t.Fatalf("a live wait after the regex %s was not counted", re)
+			}
 
-	cfg := validConfig()
-	cfg.MaxScriptRuntime = 500 * time.Millisecond
-	cfg.Script = "var re = /\"/; // opcua.wait_until(A, v => v === true, 999999)\n" +
-		"return opcua.success({});"
-	if err := cfg.Validate(); err == nil {
-		t.Fatalf("a wait the scanner swallows into string content must still count")
+			cfg.Script = "var re = " + re + "; // opcua.wait_until(A, v => v === true, 999999)\n" +
+				"return opcua.success({});"
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("a commented-out wait after the regex %s was counted: %v", re, err)
+			}
+		})
 	}
 }
 
-// A wait whose timeout argument is empty — a trailing comma, which the
-// parser allows — is not a literal wait: it is nothing a person wrote, so it
-// counts as zero and Validate carries on. The direct assertion is the only
-// one that can catch a mutation here: an empty timeout adds 0 either way, so
-// the end-to-end form passes whether the guard is right or not.
+// A wait whose timeout argument is empty -- a trailing comma, which the
+// parser allows -- has two arguments, so it is not a literal wait and counts
+// as nothing.
 func TestLiteralWaitScanner_AnEmptyTimeoutIsNotALiteralWait(t *testing.T) {
-	if ms, ok := literalMillis(""); ok || ms != 0 {
-		t.Fatalf("an empty timeout argument is not a literal wait, got (%d, %v)", ms, ok)
-	}
-
 	cfg := validConfig()
 	cfg.MaxScriptRuntime = 500 * time.Millisecond
 	cfg.Script = "opcua.wait_until(A, v => v === true, );\nreturn opcua.success({});"
@@ -738,8 +708,19 @@ func TestLiteralWaitScanner_AnEmptyTimeoutIsNotALiteralWait(t *testing.T) {
 	}
 }
 
-// The scanner's three counting faults, each of which defeated the friendly
-// early error in a different direction.
+// A wait in a var declaration is reached twice in goja's tree, once in the
+// function body and once in its declaration list, and counts once.
+func TestLiteralWaitScanner_AWaitInAVarDeclarationCountsOnce(t *testing.T) {
+	cfg := validConfig()
+	cfg.MaxScriptRuntime = 1500 * time.Millisecond
+	cfg.Script = "var v = opcua.wait_until(A, x => x, 1000); return opcua.success({v: v});"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("a 1s wait under a 1.5s budget was refused: %v", err)
+	}
+}
+
+// The counting rules, each pinned against a fault the earlier text scanner
+// had, which defeated the friendly early error in one direction or the other.
 func TestLiteralWaitScanner_CountsOnlyRealCalls(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -821,7 +802,7 @@ func TestLiteralWaitScanner_CountsOnlyRealCalls(t *testing.T) {
 			want:   5 * time.Second,
 		},
 		{
-			// Still computed, so still counted as nothing: the scanner must
+			// Still computed, so still counted as nothing: the check must
 			// not start guessing at expressions.
 			name:   "a name is still computed",
 			script: `opcua.wait_until(a, b, timeoutMs);`,
@@ -853,7 +834,11 @@ func TestLiteralWaitScanner_CountsOnlyRealCalls(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := literalWaitTotal(tc.script); got != tc.want {
+			_, tree, err := compile("script", tc.script)
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			if got := literalWaitTotal(tree); got != tc.want {
 				t.Errorf("literalWaitTotal = %v, want %v", got, tc.want)
 			}
 		})

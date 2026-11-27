@@ -28,7 +28,7 @@ import (
 // long script. The wrap around the script must not move it.
 func TestCompile_AUsersFirstLineIsLineOne(t *testing.T) {
 	// A one-line script. The throw is on the user's line 1.
-	prog, err := compile("script", "throw new Error('boom');")
+	prog, _, err := compile("script", "throw new Error('boom');")
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestCompile_AUsersFirstLineIsLineOne(t *testing.T) {
 	}
 
 	// A later line reports as itself too.
-	prog, err = compile("script", "const a = 1;\nconst b = 2;\nthrow new Error('boom');")
+	prog, _, err = compile("script", "const a = 1;\nconst b = 2;\nthrow new Error('boom');")
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -51,14 +51,14 @@ func TestCompile_AUsersFirstLineIsLineOne(t *testing.T) {
 	}
 
 	// Syntax errors count lines too, and from the same origin.
-	if _, err := compile("script", "this is not javascript;;;"); err == nil {
+	if _, _, err := compile("script", "this is not javascript;;;"); err == nil {
 		t.Fatal("that was supposed to be a syntax error")
 	} else if !strings.Contains(err.Error(), "Line 1:") {
 		t.Errorf("a syntax error on the user's first line should report line 1, got %v", err)
 	}
 
 	// A trailing line comment does not swallow the wrap's closing half.
-	if _, err := compile("script", "return 1; // the end"); err != nil {
+	if _, _, err := compile("script", "return 1; // the end"); err != nil {
 		t.Errorf("a script ending in a line comment must compile, got %v", err)
 	}
 }

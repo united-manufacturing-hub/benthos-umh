@@ -18,13 +18,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/dop251/goja"
 )
@@ -310,23 +306,17 @@ func (c Config) compileBlocks() (map[string]*goja.Program, error) {
 				block.name, block.budgetName, block.budget)
 		}
 	}
+	// Each block is parsed once: the AST is compiled to the program the
+	// engine runs, and read for the literal waits below.
+	//
+	// LIB-9, literal waits only: a script whose waits add up to more than
+	// its own limit is killed on a slow day, mid-commit. An early friendly
+	// error; the safety mechanism is wait_until clamping its timeout to the
+	// deadline. Every block's waits are summed against that block's own
+	// budget. Read from the parsed program, so a wait in a comment or a
+	// string is not a wait, and none hides behind a template or regex
+	// literal.
 	blocks := make(map[string]*goja.Program, 3)
-	for _, block := range []struct{ name, source string }{
-		{"script", c.Script}, {"onSuccess", c.OnSuccess}, {"onError", c.OnError},
-	} {
-		program, err := compile(block.name, block.source)
-		if err != nil {
-			return nil, err
-		}
-		blocks[block.name] = program
-	}
-	// LIB-9, literal waits only, and only live ones: a script whose waits
-	// add up to more than its own limit is killed on a slow day, mid-commit.
-	// An early friendly error; the safety mechanism is wait_until clamping
-	// its timeout to the deadline. Every block's waits are summed against
-	// that block's own budget, comments are not code, and a backtick
-	// template literal no longer desynchronises the scanner (round-2
-	// review, item 4).
 	for _, block := range []struct {
 		name, budgetName, source string
 		budget                   time.Duration
@@ -335,7 +325,12 @@ func (c Config) compileBlocks() (map[string]*goja.Program, error) {
 		{"onSuccess", "MaxOnSuccessRuntime", c.OnSuccess, c.MaxOnSuccessRuntime},
 		{"onError", "MaxOnErrorRuntime", c.OnError, c.MaxOnErrorRuntime},
 	} {
-		waits := literalWaitTotal(block.source)
+		program, tree, err := compile(block.name, block.source)
+		if err != nil {
+			return nil, err
+		}
+		blocks[block.name] = program
+		waits := literalWaitTotal(tree)
 		if waits > block.budget {
 			return nil, fmt.Errorf(
 				"%s's literal waits total %v, which exceeds %s %v",
@@ -445,267 +440,4 @@ func (e *Engine[UnifiedAddress]) Close() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return nil
-}
-
-// literalWaitTotal sums the literal timeouts of a block's wait_until calls.
-// A timeout that is not a plain number is computed, hence a person's to check
-// (SCR-4), and counts as nothing rather than refusing what it cannot read.
-// Waits inside comments are not code and are not counted.
-func literalWaitTotal(source string) time.Duration {
-	total := time.Duration(0)
-	for _, args := range waitCalls(stripComments(source)) {
-		if len(args) < 3 {
-			continue
-		}
-		ms, ok := literalMillis(strings.TrimSpace(args[2]))
-		if !ok {
-			continue
-		}
-		// Saturate, never wrap. literalMillis refuses a literal too big for
-		// int64 MILLISECONDS, but the sum is a time.Duration -- int64
-		// NANOSECONDS -- so a literal that merely fits overflows here:
-		// 9223372036855 made the total negative, the budget check passed,
-		// and a five-second wait was deployed under a one-second budget with
-		// no complaint. A wait this large is over every budget, which is the
-		// answer the check wants, so saturating gives it that answer.
-		if ms > maxLiteralMillis {
-			return maxLiteralWait
-		}
-		d := time.Duration(ms) * time.Millisecond
-		if total > maxLiteralWait-d {
-			return maxLiteralWait
-		}
-		total += d
-	}
-	return total
-}
-
-const (
-	// maxLiteralWait is what the scanner reports for a literal, or a sum,
-	// that it cannot hold. It is larger than any budget, so it always loses
-	// the comparison it exists for.
-	maxLiteralWait = time.Duration(math.MaxInt64)
-	// maxLiteralMillis is the largest millisecond literal that converts to a
-	// Duration without overflowing.
-	maxLiteralMillis = int64(maxLiteralWait / time.Millisecond)
-)
-
-// stripComments removes // and /* */ comments, leaving strings intact,
-// so the literal-wait scanner does not count a wait that is commented out.
-// A regex literal that contains // would be misread as a comment start; a
-// handshake script has no reason for one, and the scanner is the friendly
-// early error, not the safety mechanism, so it is not armored further.
-func stripComments(script string) string {
-	var b strings.Builder
-	for i := 0; i < len(script); {
-		switch {
-		case strings.HasPrefix(script[i:], "//"):
-			nl := strings.IndexByte(script[i:], '\n')
-			if nl < 0 {
-				return b.String() // comment to the end; nothing live remains
-			}
-			i += nl // keep the newline: it ends the comment
-		case strings.HasPrefix(script[i:], "/*"):
-			end := strings.Index(script[i:], "*/")
-			if end < 0 {
-				return b.String()
-			}
-			i += end + 2
-		case script[i] == '"' || script[i] == '\'' || script[i] == '`':
-			// String contents are LIVE TEXT to this scanner, deliberately.
-			// Scanning them counts a wait inside a string literal, which
-			// can refuse a deploy for a script that has no waits -- but
-			// NOT scanning them would miss a real wait hidden by a regex
-			// literal that desyncs the quote tracking, and for a check
-			// whose job is to catch a wait that cannot fit, a false refusal
-			// is the safer error than a miss. Pinned by
-			// TestLiteralWaitScanner_AnEscapedQuoteDoesNotEndAString and
-			// its neighbor. Open on ENG-8129 if that trade is wrong.
-			end := skipString(script, i)
-			b.WriteString(script[i : end+1])
-			i = end + 1
-		default:
-			b.WriteByte(script[i])
-			i++
-		}
-	}
-	return b.String()
-}
-
-// waitCalls finds every wait_until( in a script and returns its arguments,
-// split on the commas that sit outside brackets and strings.
-func waitCalls(script string) [][]string {
-	const call = "wait_until"
-	var calls [][]string
-	for i := 0; ; {
-		at := strings.Index(script[i:], call)
-		if at < 0 {
-			return calls
-		}
-		name := i + at
-		open := name + len(call)
-		// The name has to stand alone: mywait_until is somebody else's
-		// function and counting it refused a deploy that had no waits.
-		if name > 0 && isIdentRune(lastRune(script[:name])) {
-			i = open
-			continue
-		}
-		// JavaScript allows space before the parenthesis, and missing those
-		// let a real wait through the friendly error entirely.
-		for open < len(script) && (script[open] == ' ' || script[open] == '\t' ||
-			script[open] == '\n' || script[open] == '\r') {
-			open++
-		}
-		if open >= len(script) || script[open] != '(' {
-			i = name + len(call)
-			continue
-		}
-		if end, args, ok := splitCall(script, open); ok {
-			calls = append(calls, args)
-			i = end
-		} else {
-			i = open + 1
-		}
-	}
-}
-
-// isIdentRune reports whether r can be part of a JavaScript identifier, so
-// the scanner can tell a call to wait_until from the tail of another name.
-func isIdentRune(r rune) bool {
-	// unicode.IsLetter and not an ASCII range: goja compiles identifiers
-	// like ewait_until with an accent, so a call to a user's own function
-	// was counted as a wait_until and refused a deploy that had no waits in
-	// it at all. Reading the rune rather than the byte before the name is
-	// the other half -- a continuation byte matched nothing.
-	return r == '_' || r == '$' || unicode.IsLetter(r) || unicode.IsDigit(r)
-}
-
-// lastRune is the final rune of s, or -1 when s is empty. utf8 decoding and
-// not s[len(s)-1], which for a multi-byte rune is a continuation byte.
-func lastRune(s string) rune {
-	if s == "" {
-		return -1
-	}
-	r, _ := utf8.DecodeLastRuneInString(s)
-	return r
-}
-
-// splitCall takes the index of a '(' and splits the call's arguments on the
-// commas that sit outside every bracket and string, up to the matching ')'.
-func splitCall(script string, open int) (int, []string, bool) {
-	depth, start := 0, open+1
-	for i := open; i < len(script); i++ {
-		switch script[i] {
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			depth--
-			if depth == 0 {
-				return i, splitCommas(script[start:i]), true
-			}
-		case '"', '\'', '`':
-			i = skipString(script, i)
-		}
-	}
-	return 0, nil, false
-}
-
-// splitCommas splits on the commas at bracket depth zero.
-func splitCommas(s string) []string {
-	var args []string
-	depth, start := 0, 0
-	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			depth--
-		case '"', '\'', '`':
-			i = skipString(s, i)
-		case ',':
-			if depth == 0 {
-				args = append(args, s[start:i])
-				start = i + 1
-			}
-		}
-	}
-	return append(args, s[start:])
-}
-
-// skipString returns the index of the closing quote of the string starting at i.
-func skipString(s string, i int) int {
-	quote := s[i]
-	for i++; i < len(s); i++ {
-		if s[i] == '\\' {
-			i++
-			continue
-		}
-		if s[i] == quote {
-			return i
-		}
-	}
-	return len(s) - 1
-}
-
-// literalMillis reads a plain integer literal; anything else is computed and
-// beyond the check.
-func literalMillis(arg string) (int64, bool) {
-	// Numeric separators are part of the literal, not of the number, and a
-	// 1_000 the scanner could not read was counted as nothing -- a real
-	// one-second wait passing a 999ms budget unseen.
-	arg = strings.ReplaceAll(arg, "_", "")
-	if arg == "" {
-		return 0, false
-	}
-	// Hex is a plain number too, and 0x3E8 slipped through the same gap.
-	base, digits := int64(10), arg
-	if len(arg) > 2 && arg[0] == '0' && (arg[1] == 'x' || arg[1] == 'X') {
-		base, digits = 16, arg[2:]
-	}
-	// A unary plus is applied to a literal, not computed from one, and a
-	// script that writes +5000 means 5000.
-	if base == 10 && len(digits) > 1 && digits[0] == '+' {
-		digits = digits[1:]
-	}
-	// A plain number with a decimal point or an exponent is still a plain
-	// number: 5000.0, 5e3 and .5e4 are all the same five-second wait, and
-	// all three were read as "computed" and counted as nothing -- the
-	// identical false pass that hex and 1_000 were fixed for, in four more
-	// spellings. Only these characters, so a name or an expression still
-	// falls through to the "computed" answer.
-	if base == 10 && strings.ContainsAny(digits, ".eE") {
-		f, err := strconv.ParseFloat(digits, 64)
-		if err != nil || f < 0 || math.IsNaN(f) {
-			return 0, false
-		}
-		if f >= float64(maxLiteralMillis) {
-			return math.MaxInt64, true
-		}
-		return int64(f), true
-	}
-	var n int64
-	for _, r := range digits {
-		d := int64(-1)
-		switch {
-		case r >= '0' && r <= '9':
-			d = int64(r - '0')
-		case base == 16 && r >= 'a' && r <= 'f':
-			d = int64(r-'a') + 10
-		case base == 16 && r >= 'A' && r <= 'F':
-			d = int64(r-'A') + 10
-		}
-		if d < 0 {
-			return 0, false // not a plain number: computed, a person's to check
-		}
-		// Saturate rather than wrap, and saturate rather than give up: a
-		// literal too large for int64 is not a wait anyone meant, so the
-		// scanner must refuse the deploy over it instead of counting it as
-		// nothing. Letting the multiply wrap made the running total
-		// NEGATIVE, which masked every real wait beside it.
-		if n > (math.MaxInt64-d)/base {
-			return math.MaxInt64, true
-		}
-		n = n*base + d
-	}
-	return n, true
 }
