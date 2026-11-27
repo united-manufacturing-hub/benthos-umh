@@ -73,7 +73,15 @@ jobs:
 
       # Drops the "## [vX.Y.Z]" heading; the PR title already shows the version.
       - name: Write PR body
-        run: tail -n +2 "benthos-umh/.changelog/${VERSION}.md" > pr-body.md
+        run: |
+          tail -n +2 "benthos-umh/.changelog/${VERSION}.md" > pr-body.md
+          cat >> pr-body.md <<'EOF'
+
+          ## Changelog review
+          - [ ] Review copied changelog entries from a UMH Core user's perspective.
+          - [ ] Remove upstream availability disclaimers when this bump includes the fix (e.g. "this fix might not be in a umh-core release yet").
+          - [ ] For security fixes, verify the affected and fixed UMH Core versions.
+          EOF
 
       - name: Generate GitHub App Token
         id: generate-token
