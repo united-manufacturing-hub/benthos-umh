@@ -26,9 +26,9 @@ import (
 	"time"
 )
 
-// LIB-7: the script's own variables are reset for every run. A script's
-// globals must not reach the next message, which is the fact the spec's
-// no-memory limit rests on.
+// The script's own variables are reset for every run. A script's globals
+// must not reach the next message: a handshake has no memory between
+// messages.
 func TestRun_CarriesNothingBetweenRuns(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{}}
 	engine := newTestEngine(t, b, func(c *Config) {
@@ -52,7 +52,7 @@ func TestRun_CarriesNothingBetweenRuns(t *testing.T) {
 	}
 }
 
-// LIB-13: the value a binding returns reaches the script unchanged. The
+// The value a binding returns reaches the script unchanged. The
 // binding decides what counts as a value and what counts as an error.
 func TestRead_PassesTheBindingsValueThroughUnchanged(t *testing.T) {
 	values := map[string]any{
@@ -95,9 +95,9 @@ func jsLiteral(v any) string {
 	return "undefined"
 }
 
-// The engine offers call_method only when the binding can call (BND-7's
-// optional half), and a callable address carries its object and its method in
-// one object the script passes whole.
+// The engine offers call_method only when the binding implements Caller, and
+// a callable address carries its object and its method in one object the
+// script passes whole.
 func TestRun_OffersCallMethodOnlyWhenTheBindingCanCall(t *testing.T) {
 	t.Run("offered when the binding can call", func(t *testing.T) {
 		b := &fakeCaller{fakeBinding: fakeBinding{}, outputs: []any{int64(7)}}
@@ -122,10 +122,8 @@ func TestRun_OffersCallMethodOnlyWhenTheBindingCanCall(t *testing.T) {
 		engine := newTestEngine(t, b, func(c *Config) {
 			c.Script = `return opcua.success({});`
 		})
-		// Assert the absence, not an outcome: the mutation pass registered
-		// call_method unconditionally but made it refuse persistently, and
-		// the old assertions stayed green, because a wrong script and a
-		// refused method look alike from the result.
+		// Assert the absence, not an outcome: a wrong script and a method
+		// that always refuses look alike from the result.
 		ns := engine.namespace(&runState{}, true)
 		if _, offered := ns["call_method"]; offered {
 			t.Fatalf("call_method was offered to a binding that cannot call")
@@ -139,11 +137,8 @@ func TestRun_OffersCallMethodOnlyWhenTheBindingCanCall(t *testing.T) {
 }
 
 // A script fault a user reads must be the fault they wrote, not a
-// placeholder. The mutation pass replaced wrapRunError's return with a
-// fixed errors.New("script fault") and all 23 tests stayed green, because
-// the only test feeding the runErr→Result.Err link used a mock error.
-// This one throws a real exception through the real runtime and demands
-// its own text back.
+// placeholder. This test throws a real exception through the real runtime
+// and demands its own text back in Result.Err.
 func TestRun_AScriptFaultReachesTheResultUnmangled(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{}}
 	engine := newTestEngine(t, b, func(c *Config) {
@@ -205,9 +200,9 @@ func TestRun_AJSONNumberThatIsNoNumberCrossesAsItsOwnText(t *testing.T) {
 	}
 }
 
-// read's entry owns its argument conversion, so a bad address argument is a
-// TypeError with goja's own wording — the text a script that catches it
-// always read — and the machine is never asked for anything.
+// read's entry converts its own argument, so a bad address argument is a
+// TypeError with the wording of goja's reflective conversion, and the
+// machine is never asked for anything.
 func TestRead_ANonObjectAddressIsATypeErrorTheScriptCanCatch(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{}}
 	engine := newTestEngine(t, b, func(c *Config) {
@@ -234,9 +229,8 @@ func TestRead_ANonObjectAddressIsATypeErrorTheScriptCanCatch(t *testing.T) {
 	}
 }
 
-// readOp records a refused parse as the run's own fault (LIB-5): what a
-// binding marks is what Run reports, and the fault wraps the binding's
-// error so errors.Is still works.
+// A refused parse is the run's own fault: what a binding marks is what Run
+// reports, and the fault wraps the binding's error so errors.Is still works.
 func TestRead_AnAddressThatDoesNotParseIsTheRunsOwnFault(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{}}
 	engine := newTestEngine(t, b, func(c *Config) {
@@ -256,9 +250,9 @@ func TestRead_AnAddressThatDoesNotParseIsTheRunsOwnFault(t *testing.T) {
 }
 
 // wait_until's predicate argument has the same rule as every other argument:
-// a value that is not a function is a conversion failure with goja's own
-// wording, not the missing-predicate error — a wrong script either way, but
-// the script's author reads the text they always read.
+// a value that is not a function is a conversion failure with the wording of
+// goja's reflective conversion, not the missing-predicate error. Both are a
+// wrong script.
 func TestWaitUntil_APredicateThatIsNotAFunctionIsATypeError(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{"Loaded": false}}
 	engine := newTestEngine(t, b, func(c *Config) {
@@ -285,9 +279,9 @@ func TestWaitUntil_APredicateThatIsNotAFunctionIsATypeError(t *testing.T) {
 	}
 }
 
-// call_method's entries own their conversions, so a bad argument is evidence
-// at the dispatch boundary (door 8): a cleanup block that catches the throw
-// has still not handed the machine back (LIB-4). The machine is never asked.
+// call_method's entry converts its own arguments, so a bad argument is
+// evidence at the dispatch boundary: a cleanup block that catches the throw
+// has still not handed the machine back. The machine is never asked.
 func TestCallMethod_ANonObjectArgumentIsEvidenceTheBoundaryRecords(t *testing.T) {
 	caller := &fakeCaller{fakeBinding: fakeBinding{values: map[string]any{}}}
 	engine := newTestEngine(t, caller, func(c *Config) {
@@ -313,8 +307,8 @@ func TestCallMethod_ANonObjectArgumentIsEvidenceTheBoundaryRecords(t *testing.T)
 }
 
 // call_method's inputs argument may be omitted: a method with no inputs is
-// called with none, not refused — a missing argument converts to nil, and
-// ParseAddress-style refusal belongs to the binding's Call, not the entry.
+// called with none, not refused: a missing argument converts to nil, and
+// refusing it is the binding's Call's decision, not the entry's.
 func TestCallMethod_AnOmittedInputsArgumentMeansNoInputs(t *testing.T) {
 	caller := &fakeCaller{fakeBinding: fakeBinding{values: map[string]any{}}, outputs: []any{int64(1)}}
 	engine := newTestEngine(t, caller, func(c *Config) {
@@ -339,7 +333,7 @@ func TestCallMethod_AnOmittedInputsArgumentMeansNoInputs(t *testing.T) {
 
 // The other half of the inputs conversion: an argument that is present but
 // not an array is a conversion failure, and in a cleanup block it is the
-// boundary's evidence — caught or not, the block did not finish.
+// boundary's evidence: caught or not, the block did not finish.
 func TestCallMethod_ANonArrayInputsArgumentIsEvidenceTheBoundaryRecords(t *testing.T) {
 	caller := &fakeCaller{fakeBinding: fakeBinding{values: map[string]any{}}}
 	engine := newTestEngine(t, caller, func(c *Config) {
@@ -361,9 +355,9 @@ func TestCallMethod_ANonArrayInputsArgumentIsEvidenceTheBoundaryRecords(t *testi
 	}
 }
 
-// UAT-13's rule on the call seam: a call_method under a transaction that has
-// already been decided is refused before the machine is asked — the first
-// ending decided the transaction, and nothing may extend it.
+// A call_method under a transaction that has already been decided is
+// refused before the machine is asked: the first ending decided the
+// transaction, and nothing may extend it.
 func TestCallMethod_ACallUnderAnEndedTransactionIsRefused(t *testing.T) {
 	caller := &fakeCaller{fakeBinding: fakeBinding{values: map[string]any{}}, outputs: []any{}}
 	engine := newTestEngine(t, caller, func(c *Config) {

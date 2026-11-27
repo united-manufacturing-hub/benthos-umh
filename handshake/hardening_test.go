@@ -143,8 +143,8 @@ func TestWaitUntil_RefusesANaNTimeout(t *testing.T) {
 	}
 }
 
-// A script that catches its own success and calls success again delivered
-// once, with the data of the first call: the first ending decided the
+// A script that catches its own success and calls success again delivers
+// once, with the data of the first call: the first ending decides the
 // transaction, and the second cannot rewrite what it returned.
 func TestRun_TheFirstSuccessDataWins(t *testing.T) {
 	engine := newTestEngine(t, &fakeBinding{}, func(c *Config) {
@@ -160,8 +160,8 @@ func TestRun_TheFirstSuccessDataWins(t *testing.T) {
 	}
 }
 
-// A typo in a wait's options used to read as the default, so a wait meant to
-// end persistent ended Transient and the message was retried. Validate
+// A typo in a wait's options must not read as the default, or a wait meant
+// to end persistent ends Transient and the message is retried. Validate
 // refuses a literal one, naming the block and the value.
 func TestConfig_ValidateRefusesAnUnknownWaitOption(t *testing.T) {
 	for _, tc := range []struct{ name, opts, want string }{

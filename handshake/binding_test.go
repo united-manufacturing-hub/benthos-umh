@@ -56,7 +56,7 @@ func (f *fakeBinding) log(op string) {
 	f.ops = append(f.ops, op)
 }
 
-// count reports how many recorded operations start with op.
+// count reports how many recorded operations equal op.
 func (f *fakeBinding) count(op string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -86,10 +86,9 @@ func (f *fakeBinding) errFor(op string, addr string) error {
 }
 
 func (f *fakeBinding) Read(ctx context.Context, addr string) (ReadResponse, error) {
-	// A binding honors its context (BND-3): it does not touch the machine
-	// once ctx is done, so the operation is not recorded either. The
-	// mutation pass found the old `_ context.Context` let a cleanup run under
-	// a cancelled context without any test noticing.
+	// A binding honors its context: it does not touch the machine once ctx
+	// is done, so the operation is not recorded either. That is what lets a
+	// test see a cleanup that runs under a canceled context.
 	if err := ctx.Err(); err != nil {
 		return ReadResponse{}, err
 	}
@@ -122,8 +121,7 @@ func (f *fakeBinding) Read(ctx context.Context, addr string) (ReadResponse, erro
 }
 
 func (f *fakeBinding) Write(ctx context.Context, addr string, value any) error {
-	// The read's comment, word for word: a done context means the machine
-	// was not asked.
+	// Like Read: a done context means the machine was not asked.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -140,10 +138,9 @@ type fakeCaller struct {
 	callErr  error
 	outputs  []any
 	lastCall []any
-	// flipAfter and reads live on the embedded fakeBinding. Declaring them
-	// again here shadowed it: a test writing fakeCaller{flipAfter: ...}
-	// would have set this copy while Read consulted the embedded one, so
-	// the fake would have ignored its own configuration without saying so.
+	// flipAfter and reads live on the embedded fakeBinding only. A copy
+	// here would shadow them: a test setting it would configure nothing,
+	// because Read consults the embedded one.
 }
 
 func (f *fakeCaller) Call(_ context.Context, addr string, inputs []any) (CallResponse, error) {
@@ -157,8 +154,8 @@ func (f *fakeCaller) Call(_ context.Context, addr string, inputs []any) (CallRes
 	return CallResponse{Outputs: f.outputs}, nil
 }
 
-// flipAfter makes one address answer false until its nth read, then true, so
-// a wait_until can be shown re-reading until its predicate holds.
+// flip makes one address answer false until its nth read, then true, so a
+// wait_until can be shown re-reading until its predicate holds.
 func (f *fakeBinding) flip(addr string, after int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -43,9 +43,9 @@ func runEnding(t *testing.T, script string) Result {
 	return e.Run(context.Background(), map[string]any{})
 }
 
-// TestRun_AScriptThatNeverEndsIsPersistent pins the spec's rule that a script
-// which returns without declaring an ending is a wrong script, and a wrong
-// script cannot be fixed by repeating. classify's default case had no test.
+// TestRun_AScriptThatNeverEndsIsPersistent pins the rule that a script which
+// returns without declaring an ending is a wrong script, and a wrong script
+// cannot be fixed by repeating.
 func TestRun_AScriptThatNeverEndsIsPersistent(t *testing.T) {
 	res := runEnding(t, `var x = 1 + 1;`)
 	if res.Outcome != Persistent {

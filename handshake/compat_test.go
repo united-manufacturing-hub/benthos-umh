@@ -20,10 +20,9 @@ import (
 	"time"
 )
 
-// These two pin what goja's reflective binding did, after the entries were
-// rewritten to own their own argument conversion. Both behaviors were broken
-// by that rewrite and the whole suite stayed green, so they are here to make
-// the next rewrite go red instead.
+// These two tests pin what the entries keep from goja's reflective argument
+// conversion, because they convert their own arguments (see argObject).
+// Nothing else in the suite fails if either behavior drifts.
 
 type compatMachine struct{ reads int }
 
@@ -54,11 +53,11 @@ func runCompat(t *testing.T, script string) (Result, int) {
 	return engine.Run(context.Background(), map[string]any{}), m.reads
 }
 
-// TestWaitUntil_ATruthyPredicateSatisfiesTheWait pins JavaScript's own rule.
-// goja's reflective binding read a predicate's result with ToBoolean, so
-// `v.length`, 1 and "ok" satisfied a wait. A Go type assertion reads every one
-// of them as false, the wait runs its full timeout, and in a cleanup block that
-// turns a retryable message into a permanent failure with the machine armed.
+// TestWaitUntil_ATruthyPredicateSatisfiesTheWait pins JavaScript's own rule:
+// a predicate's result is read with ToBoolean, so `v.length`, 1 and "ok"
+// satisfy a wait. A Go type assertion would read every one of them as false,
+// the wait would run its full timeout, and in a cleanup block that turns a
+// retryable message into a permanent failure with the machine armed.
 func TestWaitUntil_ATruthyPredicateSatisfiesTheWait(t *testing.T) {
 	for _, body := range []string{
 		`return v.length;`, `return 1;`, `return "ok";`, `return {ready:true};`,
@@ -80,10 +79,10 @@ func TestWaitUntil_ATruthyPredicateSatisfiesTheWait(t *testing.T) {
 	}
 }
 
-// TestWaitUntil_ATimeoutCoercesLikeJavaScript pins the other half: goja's
-// ToFloat accepted a numeric string and a boolean, and a timeout read out of a
-// message often arrives as a string. A value ToFloat cannot read is still an
-// error.
+// TestWaitUntil_ATimeoutCoercesLikeJavaScript pins the other half: a timeout
+// converts with goja's ToFloat, which accepts a numeric string and a boolean,
+// and a timeout read out of a message often arrives as a string. A value
+// ToFloat cannot read is an error.
 func TestWaitUntil_ATimeoutCoercesLikeJavaScript(t *testing.T) {
 	for _, arg := range []string{`200`, `"200"`, `true`} {
 		res, _ := runCompat(t, `opcua.wait_until({nodeId:"Busy"}, function(v){ return v === "DONE"; }, `+arg+`);

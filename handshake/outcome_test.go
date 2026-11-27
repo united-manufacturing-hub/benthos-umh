@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-// LIB-5: a fault marked ErrPersistent is persistent; an unmarked error is
+// A fault marked ErrPersistent is persistent; an unmarked error is
 // transient. The outcome follows the fault, not whether the script returned
 // it or a call threw it.
 func TestRun_TreatsAnUnmarkedBindingErrorAsTransient(t *testing.T) {
@@ -72,7 +72,7 @@ func TestRun_TreatsAnUnmarkedBindingErrorAsTransient(t *testing.T) {
 	})
 }
 
-// LIB-8: the library never retries: one failed operation is attempted once.
+// The engine never retries: one failed operation is attempted once.
 // The output classifies and the flow retries.
 func TestRun_AttemptsEachOperationOnce(t *testing.T) {
 	t.Run("a failed write", func(t *testing.T) {
@@ -116,7 +116,7 @@ func TestRun_AttemptsEachOperationOnce(t *testing.T) {
 	})
 }
 
-// LIB-3: the outcome is decided before the cleanup runs, and a cleanup cannot
+// The outcome is decided before the cleanup runs, and a cleanup cannot
 // turn a failure into a delivery. Here the cleanup succeeds completely and
 // still does not rescue a persistent ending.
 func TestRun_DecidesTheOutcomeBeforeCleanupRuns(t *testing.T) {
@@ -144,7 +144,7 @@ func TestRun_DecidesTheOutcomeBeforeCleanupRuns(t *testing.T) {
 	}
 }
 
-// LIB-3: a cleanup cannot turn a failure into a delivery, however well it
+// A cleanup cannot turn a failure into a delivery, however well it
 // goes.
 func TestRun_CleanupCannotTurnAFailureIntoADelivery(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{"Ready": true}}
@@ -168,7 +168,7 @@ func TestRun_CleanupCannotTurnAFailureIntoADelivery(t *testing.T) {
 	}
 }
 
-// LIB-4: a run whose cleanup did not finish is persistent, whatever the fault
+// A run whose cleanup did not finish is persistent, whatever the fault
 // was: the machine's state is unknown.
 func TestRun_IsPersistentWhenTheCleanupDidNotFinish(t *testing.T) {
 	b := &fakeBinding{
@@ -192,7 +192,7 @@ func TestRun_IsPersistentWhenTheCleanupDidNotFinish(t *testing.T) {
 	}
 }
 
-// LIB-4: a transient fault whose cleanup finished is transient, so the message
+// A transient fault whose cleanup finished is transient, so the message
 // is safe to run again unchanged.
 func TestRun_IsTransientWhenTheCleanupFinished(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{}}
@@ -210,11 +210,10 @@ func TestRun_IsTransientWhenTheCleanupFinished(t *testing.T) {
 	}
 }
 
-// LIB-4, the hole the JavaScript `catch` left: a cleanup whose write the
-// machine refused has not handed the machine back, whether or not the block's
-// script swallowed the refusal. The outcome is persistent — the flow must not
-// retry a machine that was never returned to idle — and CleanupErr names the
-// block and the refused operation.
+// A cleanup whose write the machine refused has not handed the machine back,
+// whether or not the block's script swallowed the refusal. The outcome is
+// persistent, because the flow must not retry a machine that was never
+// returned to idle, and CleanupErr names the block and the refused operation.
 func TestRun_IsPersistentWhenTheCleanupWriteWasRefusedAndTheBlockCaughtIt(t *testing.T) {
 	b := &fakeBinding{
 		values: map[string]any{},
@@ -241,9 +240,9 @@ func TestRun_IsPersistentWhenTheCleanupWriteWasRefusedAndTheBlockCaughtIt(t *tes
 	}
 }
 
-// The same hole on the call seam: a refused call_method in a cleanup block
-// is a state-changing operation that did not reach the machine, caught or
-// not, so the cleanup did not finish.
+// The same rule for call_method: a refused call in a cleanup block is an
+// operation that can change the machine and did not reach it, caught or not,
+// so the cleanup did not finish.
 func TestRun_IsPersistentWhenTheCleanupCallWasRefusedAndTheBlockCaughtIt(t *testing.T) {
 	caller := &fakeCaller{
 		fakeBinding: fakeBinding{values: map[string]any{}},
@@ -264,8 +263,8 @@ func TestRun_IsPersistentWhenTheCleanupCallWasRefusedAndTheBlockCaughtIt(t *test
 	}
 }
 
-// The other half of the rule, and why the fix counts only state-changing
-// operations: a cleanup may probe. A read cannot change the machine, so a
+// The other half of the rule, and why only operations that can change the
+// machine count: a cleanup may probe. A read cannot change the machine, so a
 // probe whose refusal the block caught has not failed to hand the machine
 // back — this is how a script expresses an expected failure in a cleanup.
 func TestRun_AProbeTheCleanupCaughtIsNotAFailedCleanup(t *testing.T) {
@@ -294,13 +293,10 @@ func TestRun_AProbeTheCleanupCaughtIsNotAFailedCleanup(t *testing.T) {
 	}
 }
 
-// The write's counterpart to the probe rule above, and the door the
-// round-3 review found unguarded: a cleanup write whose address does not
-// parse never reached the machine, so the handback did not happen, caught
-// or not. What records that is the dispatch boundary (cleanupEvidence);
-// before this test nothing distinguished the parse's refusal from a probe
-// the block carried on from, because no cleanup ever asked for a write
-// with a typo in it.
+// The write's counterpart to the probe rule above: a cleanup write whose
+// address does not parse never reached the machine, so the handback did not
+// happen, caught or not. The dispatch boundary records it (cleanupEvidence),
+// unlike a probe the block carried on from.
 func TestRun_ACleanupWriteWhoseAddressDoesNotParseIsAFailedCleanup(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{}}
 	engine := newTestEngine(t, b, func(c *Config) {
@@ -321,9 +317,9 @@ func TestRun_ACleanupWriteWhoseAddressDoesNotParseIsAFailedCleanup(t *testing.T)
 	}
 }
 
-// LIB-11, the caught-failure hole on the success side: an onSuccess write the
-// machine refused and the block swallowed still means the cleanup did not
-// finish. The delivery stands, with CleanupErr naming onSuccess beside it.
+// The same rule on the success side: an onSuccess write the machine refused
+// and the block swallowed still means the cleanup did not finish. The
+// delivery stands, with CleanupErr naming onSuccess beside it.
 func TestRun_ReportsASwallowedCleanupFailureAfterADelivery(t *testing.T) {
 	b := &fakeBinding{
 		values: map[string]any{},
@@ -352,7 +348,7 @@ func TestRun_ReportsASwallowedCleanupFailureAfterADelivery(t *testing.T) {
 	}
 }
 
-// LIB-6: a script that exceeds its deadline is stopped, and the run is
+// A script that exceeds its deadline is stopped, and the run is
 // persistent: the deadline is configuration, so repeating cannot fix it.
 func TestRun_IsPersistentWhenTheDeadlineStopsTheScript(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{}}
@@ -370,7 +366,7 @@ func TestRun_IsPersistentWhenTheDeadlineStopsTheScript(t *testing.T) {
 	}
 }
 
-// LIB-11: a cleanup that fails after a delivery does not change the outcome;
+// A cleanup that fails after a delivery does not change the outcome;
 // the result still carries the delivery, with the cleanup failure beside it.
 func TestRun_ReportsCleanupFailureAfterADeliveryWithoutChangingTheOutcome(t *testing.T) {
 	b := &fakeBinding{
@@ -397,13 +393,10 @@ func TestRun_ReportsCleanupFailureAfterADeliveryWithoutChangingTheOutcome(t *tes
 	}
 }
 
-// LIB-4, the wait_until half of the caught-failure hole: a wait that runs out
-// inside a cleanup block means the block's job — returning the machine to a
-// state it can be asked from — did not complete, caught or not, so the
-// cleanup did not finish and the run is persistent. Before the fix the
-// timeout borrowed the script's ending slot, the reset was refused as
-// errEnded before it could be recorded, and the run
-// reported the machine handed back when it never saw the reset.
+// The same rule for wait_until: a wait that runs out inside a cleanup block
+// means the block's job, returning the machine to a state it can be asked
+// from, did not complete, caught or not, so the cleanup did not finish and
+// the run is persistent.
 func TestRun_IsPersistentWhenTheCleanupWaitTimedOutAndTheBlockCaughtIt(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{"Busy": true}}
 	engine := newTestEngine(t, b, func(c *Config) {
@@ -432,19 +425,19 @@ func TestRun_IsPersistentWhenTheCleanupWaitTimedOutAndTheBlockCaughtIt(t *testin
 	}
 	// The reset inside the same try never ran: the timeout throws, and a
 	// throw skips the rest of the try, caught or not. The block that wants
-	// to reset anyway catches the wait alone — that shape is the next test.
+	// to reset anyway catches the wait alone; that shape is the next test.
 	if n := b.count("write Reset=true"); n != 0 {
 		t.Fatalf("a throw inside the try skips the reset; it was attempted %d times", n)
 	}
 }
 
-// The decision's other half: a wait timeout inside a cleanup ends nothing,
-// so a block that catches the wait alone and resets still reaches the
-// machine. "The machine is not touched after the script has ended" protects
-// the transaction a script's first ending decided; a cleanup has no
-// transaction left to protect — the outcome was decided before it ran — and
-// the handback is its job, so the timeout records the failure without
-// disarming the block's remaining writes.
+// The other half: a wait timeout inside a cleanup ends nothing, so a block
+// that catches the wait alone and resets still reaches the machine. "The
+// machine is not touched after the script has ended" protects the
+// transaction a script's first ending decided; a cleanup has no transaction
+// left to protect, because the outcome was decided before it ran, and the
+// handback is its job. So the timeout records the failure without disarming
+// the block's remaining writes.
 func TestRun_TheCleanupCarriesOnAfterACaughtWaitTimeout(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{"Busy": true}}
 	engine := newTestEngine(t, b, func(c *Config) {
@@ -471,34 +464,26 @@ func TestRun_TheCleanupCarriesOnAfterACaughtWaitTimeout(t *testing.T) {
 	}
 }
 
-// The same cleanup, written both ways, must agree — for every way a
-// cleanup block's operations can fail. The block that catches the failure
-// and carries on, and the block that lets it throw, describe the same
-// machine state, so they must report the same outcome and the same
-// CleanupErr. The first three doors were each closed with a guard at the
-// failure site where they were found; door 6 — a wait_until called
-// without its predicate — is the one that made the pattern undeniable: it
-// returns before the machine is ever touched, so no guard inside the
-// operation can see it, and the caught shape reported the machine handed
-// back. Doors 7 and 8 are the two the return-value boundary could not see
-// at all: a callback that throws unwinds the entry's Go frame by panic
-// (7), and an argument goja cannot convert raises its TypeError at the
-// entry, before the Go body runs (8). This agreement table is what the
-// structural rule is measured against: the evidence is recorded where the
-// block's operations are dispatched, so a failure route that has not been
-// found yet inherits the rule instead of growing its own guard.
+// The same cleanup, written both ways, must agree, for every way a cleanup
+// block's operations can fail. The block that catches the failure and
+// carries on, and the block that lets it throw, describe the same machine
+// state, so they must report the same outcome and the same CleanupErr. The
+// table covers each way a failure reaches a dispatch entry: an error the
+// operation returns, a callback that throws and unwinds the entry's Go frame
+// by panic, and an argument that fails its conversion before the operation
+// runs (see namespace).
 func TestRun_TheCaughtAndUncaughtCleanupFailuresAgree(t *testing.T) {
-	// door is one way a cleanup block's operation can fail. call is the
-	// statement as the block writes it; machine configures the fake so that
-	// statement fails; names are the fragments the caught shape's CleanupErr
-	// must mention (the recorded failure names the operation), and
-	// uncaughtNames the uncaught shape's — there the block aborted, so
-	// CleanupErr carries goja's own text for the throw, which names the door
-	// only when the underlying error does (the timeout's message says "on
-	// Busy"; a refused read's says only what the binding said). withCaller
-	// binds the engine to a fakeCaller for the doors on the call seam.
-	doors := []struct {
-		door          string
+	// Each failure is one way a cleanup block's operation can fail. call is
+	// the statement as the block writes it; machine configures the fake so
+	// that statement fails; names are the fragments the caught shape's
+	// CleanupErr must mention (the recorded failure names the operation), and
+	// uncaughtNames the uncaught shape's: there the block aborted, so
+	// CleanupErr carries goja's own text for the throw, which names the
+	// address only when the underlying error does (the timeout's message says
+	// "on Busy"; a refused read's says only what the binding said). withCaller
+	// binds the engine to a fakeCaller for call_method.
+	failures := []struct {
+		name          string
 		call          string
 		machine       func(*fakeBinding)
 		withCaller    bool
@@ -506,7 +491,7 @@ func TestRun_TheCaughtAndUncaughtCleanupFailuresAgree(t *testing.T) {
 		uncaughtNames []string
 	}{
 		{
-			door: "timeout",
+			name: "timeout",
 			call: `opcua.wait_until({nodeId: "Busy"}, function(v){ return v === false; }, 200)`,
 			machine: func(b *fakeBinding) {
 				b.values["Busy"] = true // never false, so the wait runs out
@@ -515,7 +500,7 @@ func TestRun_TheCaughtAndUncaughtCleanupFailuresAgree(t *testing.T) {
 			uncaughtNames: []string{"Busy"},
 		},
 		{
-			door: "refused read inside the wait",
+			name: "refused read inside the wait",
 			call: `opcua.wait_until({nodeId: "Busy"}, function(v){ return v === false; }, 200)`,
 			machine: func(b *fakeBinding) {
 				b.values["Busy"] = false
@@ -524,18 +509,16 @@ func TestRun_TheCaughtAndUncaughtCleanupFailuresAgree(t *testing.T) {
 			names: []string{"Busy"},
 		},
 		{
-			door:    "wait address does not parse",
+			name:    "wait address does not parse",
 			call:    `opcua.wait_until({}, function(v){ return v === false; }, 200)`,
 			machine: func(_ *fakeBinding) {},
 			names:   []string{"parse"},
 		},
 		{
-			// Door 6: a wait_until called without its predicate is a wrong
-			// script that returns before the machine is touched, so the
-			// operation log stays empty — and the caught shape reported the
-			// machine handed back anyway, because the refusal never reached
-			// any failure site a guard could sit at.
-			door: "wait without its predicate",
+			// A wait_until called without its predicate is a wrong script
+			// that returns before the machine is touched, so the operation
+			// log stays empty, and the machine is still not handed back.
+			name: "wait without its predicate",
 			call: `opcua.wait_until({nodeId: "Idle"})`,
 			machine: func(b *fakeBinding) {
 				b.values["Idle"] = false
@@ -544,13 +527,11 @@ func TestRun_TheCaughtAndUncaughtCleanupFailuresAgree(t *testing.T) {
 			uncaughtNames: []string{"predicate"},
 		},
 		{
-			// Door 7: a callback the block passed into an operation — the
-			// wait's predicate — throws. goja unwinds the entry's Go frame by
-			// panic, so the wrapper that would record the evidence never
-			// runs. Measured on this branch: the caught shape reported the
-			// machine handed back while the reset the throw skipped never
-			// reached it.
-			door: "a predicate that throws",
+			// A callback the block passed into an operation, the wait's
+			// predicate, throws. goja unwinds the entry's Go frame by
+			// panic, so nothing returns through the entry, and the reset
+			// the throw skipped never reaches the machine.
+			name: "a predicate that throws",
 			call: `opcua.wait_until({nodeId: "Busy"}, function(v){ throw new Error("boom"); }, 1000)`,
 			machine: func(b *fakeBinding) {
 				b.values["Busy"] = false // the predicate throws on the first poll
@@ -559,19 +540,19 @@ func TestRun_TheCaughtAndUncaughtCleanupFailuresAgree(t *testing.T) {
 			uncaughtNames: []string{"boom"},
 		},
 		{
-			// Door 8: an argument goja cannot convert. The TypeError is
-			// raised at the entry, before the Go body runs, so no wrapper
-			// sees the failure. Every entry with a typed parameter has this
-			// door; write's is the one measured. The ops log stays empty —
-			// the machine was never asked for anything, and not handed back.
-			door:          "an argument that does not convert",
+			// An argument that does not convert. The TypeError is raised
+			// before the operation runs. Every entry with a typed parameter
+			// can fail this way; write's is the one tested. The ops log
+			// stays empty: the machine was never asked for anything, and
+			// not handed back.
+			name:          "an argument that does not convert",
 			call:          `opcua.write(42, false)`,
 			machine:       func(*fakeBinding) {},
 			names:         []string{"write", "could not convert"},
 			uncaughtNames: []string{"could not convert"},
 		},
 		{
-			door:          "call_method address does not parse",
+			name:          "call_method address does not parse",
 			call:          `opcua.call_method({}, [])`,
 			machine:       func(*fakeBinding) {},
 			withCaller:    true,
@@ -579,16 +560,15 @@ func TestRun_TheCaughtAndUncaughtCleanupFailuresAgree(t *testing.T) {
 			uncaughtNames: []string{"nodeId"},
 		},
 	}
-	for _, d := range doors {
-		d := d
-		t.Run(d.door, func(t *testing.T) {
+	for _, d := range failures {
+		t.Run(d.name, func(t *testing.T) {
 			run := func(catch bool) Result {
 				var bind Binding[string]
 				if d.withCaller {
 					// call_method exists only where the binding can call, so
-					// the call doors run against a fakeCaller. The machine
-					// is the caller's own embedded fakeBinding — a copy
-					// would move the lock (go vet) and the ops log with it.
+					// those cases run against a fakeCaller. The machine is
+					// the caller's own embedded fakeBinding; a copy would
+					// move the lock (go vet) and the ops log with it.
 					c := &fakeCaller{fakeBinding: fakeBinding{values: map[string]any{}}}
 					bind = c
 					d.machine(&c.fakeBinding)
@@ -612,11 +592,11 @@ func TestRun_TheCaughtAndUncaughtCleanupFailuresAgree(t *testing.T) {
 			caught, uncaught := run(true), run(false)
 			if caught.Outcome != uncaught.Outcome {
 				t.Fatalf("the caught %s is outcome %v, the uncaught one %v: the same cleanup must agree",
-					d.door, caught.Outcome, uncaught.Outcome)
+					d.name, caught.Outcome, uncaught.Outcome)
 			}
 			if (caught.CleanupErr == nil) != (uncaught.CleanupErr == nil) {
 				t.Fatalf("the caught %s reports CleanupErr %v, the uncaught one %v: the same cleanup must agree",
-					d.door, caught.CleanupErr, uncaught.CleanupErr)
+					d.name, caught.CleanupErr, uncaught.CleanupErr)
 			}
 			for name, res := range map[string]Result{"caught": caught, "uncaught": uncaught} {
 				t.Logf("%s: outcome=%v cleanupErr=%v", name, res.Outcome, res.CleanupErr)
@@ -625,7 +605,7 @@ func TestRun_TheCaughtAndUncaughtCleanupFailuresAgree(t *testing.T) {
 						name, res.Outcome, res.Err)
 				}
 				if res.CleanupErr == nil {
-					t.Errorf("%s: the %s must be reported in CleanupErr", name, d.door)
+					t.Errorf("%s: the %s must be reported in CleanupErr", name, d.name)
 					continue
 				}
 				want := d.names
