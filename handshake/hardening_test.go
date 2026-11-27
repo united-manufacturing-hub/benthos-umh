@@ -121,3 +121,41 @@ func TestRun_TheFaultThatStoppedTheRunDecidesTheClassOverAnEarlierCaughtOne(t *t
 		t.Fatalf("outcome %v, err %v", res.Outcome, res.Err)
 	}
 }
+
+// A NaN timeout is a computed timeout gone wrong, such as a missing message
+// field times 1000. The wait refuses it before it reads the machine, with a
+// message that says so, and the refusal is a script fault: Persistent.
+func TestWaitUntil_RefusesANaNTimeout(t *testing.T) {
+	for _, timeout := range []string{"NaN", "0/0", "msg.missing * 1000"} {
+		t.Run(timeout, func(t *testing.T) {
+			b := &fakeBinding{values: map[string]any{"Loaded": true}}
+			engine := newTestEngine(t, b, func(c *Config) {
+				c.Script = `opcua.wait_until({nodeId: "Loaded"}, v => v === true, ` + timeout + `); return opcua.success({});`
+			})
+			res := engine.Run(t.Context(), map[string]any{})
+			if res.Outcome != Persistent || res.Err == nil || !strings.Contains(res.Err.Error(), "not a number") {
+				t.Fatalf("outcome %v, err %v", res.Outcome, res.Err)
+			}
+			if n := b.count("read Loaded"); n != 0 {
+				t.Fatalf("a refused wait read the machine %d time(s)", n)
+			}
+		})
+	}
+}
+
+// A script that catches its own success and calls success again delivered
+// once, with the data of the first call: the first ending decided the
+// transaction, and the second cannot rewrite what it returned.
+func TestRun_TheFirstSuccessDataWins(t *testing.T) {
+	engine := newTestEngine(t, &fakeBinding{}, func(c *Config) {
+		c.Script = `try { opcua.success({n: 1}) } catch (e) {} return opcua.success({n: 2});`
+	})
+	res := engine.Run(t.Context(), map[string]any{})
+	if res.Outcome != Delivered {
+		t.Fatalf("outcome %v, err %v", res.Outcome, res.Err)
+	}
+	d, ok := res.Data.(map[string]any)
+	if !ok || d["n"] != int64(1) {
+		t.Fatalf("Data is %#v, want the first success's {n: 1}", res.Data)
+	}
+}

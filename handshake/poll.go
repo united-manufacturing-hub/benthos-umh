@@ -16,6 +16,7 @@ package handshake
 
 import (
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -64,9 +65,13 @@ func (e *Engine[UnifiedAddress]) waitUntil(
 	// a wildly large number overflow int64 nanoseconds, and the product then
 	// wraps past this very check -- and which way it wraps is per
 	// architecture (arm64 saturates to max where amd64 turns max into min),
-	// so the comparison has to happen before the conversion. Written as a
-	// negated <= so that a NaN, which loses every comparison, is refused
-	// rather than waved through.
+	// so the comparison has to happen before the conversion. The check is
+	// written as a negated <= so that it also refuses a NaN, but a NaN is
+	// refused first with its own message: it is a computed timeout gone
+	// wrong (0/0, a missing field times 1000), not a long one.
+	if math.IsNaN(timeoutMs) {
+		return nil, fmt.Errorf("wait_until on %s was given a timeout that is not a number (NaN)", describe)
+	}
 	if timeoutMs < 0 {
 		return nil, fmt.Errorf("wait_until on %s was given a negative timeout of %v ms", describe, timeoutMs)
 	}
