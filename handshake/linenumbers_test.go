@@ -33,15 +33,12 @@ import (
 // customer has ever seen, silently, with nothing failing. They agree now,
 // and this test and its twin in pkg/js_runtime both go red if either drifts.
 func TestCompile_AUsersFirstLineIsLineFour(t *testing.T) {
-	rt := newRuntime()
-	defer func() { _ = rt.close() }()
-
 	// A one-line script. The throw is on the user's line 1.
-	prog, err := rt.compile("script", "throw new Error('boom');")
+	prog, err := compile("script", "throw new Error('boom');")
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	_, runErr := rt.run(t.Context(), prog, nil)
+	_, runErr := runProgram(t.Context(), prog, nil)
 	if runErr == nil {
 		t.Fatal("the script was supposed to throw")
 	}
@@ -50,7 +47,7 @@ func TestCompile_AUsersFirstLineIsLineFour(t *testing.T) {
 	}
 
 	// Syntax errors count lines too, and from the same origin.
-	if _, err := rt.compile("script", "this is not javascript;;;"); err == nil {
+	if _, err := compile("script", "this is not javascript;;;"); err == nil {
 		t.Fatal("that was supposed to be a syntax error")
 	} else if !strings.Contains(err.Error(), "Line 4:") {
 		t.Errorf("a syntax error on the user's first line should report line 4, got %v", err)

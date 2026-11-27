@@ -25,27 +25,7 @@ import (
 	"github.com/dop251/goja"
 )
 
-// scriptRuntime is the seam to pkg/js_runtime (PR0, ENG-8128): Compile once,
-// run pooled, interrupt on ctx, close. The real package satisfies this shape
-// through an adapter when the branches are reconciled; until then newRuntime
-// builds the goja-backed stand-in below, and nothing else changes.
-type scriptRuntime interface {
-	compile(name, source string) (any, error)
-	run(ctx context.Context, program any, globals map[string]any) (any, error)
-	close() error
-}
-
-// newRuntime builds the scriptRuntime an Engine runs on. It is a variable so
-// the reconciliation with pkg/js_runtime swaps the implementation in one
-// place, and so tests substitute a fake where a real runtime would be slow.
-var newRuntime = func() scriptRuntime { return gojaRuntime{} }
-
-// gojaRuntime is the stand-in for pkg/js_runtime. It builds a fresh goja
-// runtime per run, which is the strict reset LIB-7 requires; pooling with a
-// global reset is PR0's to bring, not something this package re-invents.
-type gojaRuntime struct{}
-
-// Compile applies the function wrap every caller in this repo already uses,
+// compile applies the function wrap every caller in this repo already uses,
 // (function(){ 'use strict'; ... })(), so a script may use a top-level return.
 //
 // The prefix is three lines so a user's first line is line 4, the same as
@@ -59,7 +39,7 @@ type gojaRuntime struct{}
 // line number a customer has ever seen, silently, with nothing failing.
 // Matching now means the swap changes nothing. TestCompile_AUsersFirstLine
 // goes red if either side drifts.
-func (gojaRuntime) compile(name string, source string) (any, error) {
+func compile(name string, source string) (*goja.Program, error) {
 	wrapped := "\n\n(function(){'use strict';\n" + source + "\n})()"
 	program, err := goja.Compile(name, wrapped, false)
 	if err != nil {
@@ -68,12 +48,12 @@ func (gojaRuntime) compile(name string, source string) (any, error) {
 	return program, nil
 }
 
-// Run binds globals into a fresh runtime and executes program. The deadline
+// runProgram binds globals into a fresh goja runtime and executes prog. A
+// fresh runtime per run is the strict reset LIB-7 requires. The deadline
 // comes from ctx: the watcher goroutine interrupts the runtime when ctx is
 // done, and the returned error wraps ctx.Err(). The runtime is discarded
-// rather than pooled, so an interrupt that arrives late cannot hurt the next
-// run.
-func (gojaRuntime) run(ctx context.Context, program any, globals map[string]any) (result any, err error) { //nolint:nonamedreturns // a deferred recover assigns to it; naming is the mechanism
+// after the run, so an interrupt that arrives late cannot hurt the next one.
+func runProgram(ctx context.Context, prog *goja.Program, globals map[string]any) (result any, err error) { //nolint:nonamedreturns // a deferred recover assigns to it; naming is the mechanism
 	// No panic from a script or a binding leaves Run (round-2 review,
 	// item 2): goja fills a missing function argument with a nil func, a
 	// binding is protocol code that can blow up on a machine's bad answer,
@@ -87,10 +67,6 @@ func (gojaRuntime) run(ctx context.Context, program any, globals map[string]any)
 			err = fmt.Errorf("the script or a binding panicked: %v", r)
 		}
 	}()
-	prog, ok := program.(*goja.Program)
-	if !ok {
-		return nil, fmt.Errorf("program was not compiled by this runtime")
-	}
 	vm := goja.New()
 	for name, value := range globals {
 		if bindErr := vm.Set(name, jsValue(value)); bindErr != nil {
@@ -154,10 +130,6 @@ func jsValue(v any) any {
 		return v
 	}
 }
-
-// Close releases pooled runtimes. The stand-in pools none, so there is
-// nothing to release until the reconciliation replaces it.
-func (gojaRuntime) close() error { return nil }
 
 // wrapRunError keeps an interrupt recognizable as ctx's own error, by
 // leaving the chain intact; every other error is a script fault for the

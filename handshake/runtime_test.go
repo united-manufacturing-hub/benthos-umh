@@ -137,31 +137,6 @@ func TestRun_OffersCallMethodOnlyWhenTheBindingCanCall(t *testing.T) {
 	})
 }
 
-// The seam to pkg/js_runtime is an interface, so a fake can stand in where a
-// real runtime would be slow. This is that fake, proving the injection works.
-type fakeRuntime struct {
-	compileErr error
-	runErr     error
-}
-
-func (f fakeRuntime) compile(name string, _ string) (any, error) {
-	if f.compileErr != nil {
-		return nil, fmt.Errorf("%s: %w", name, f.compileErr)
-	}
-	return &fakeProgram{name: name}, nil
-}
-
-func (f fakeRuntime) run(_ context.Context, _ any, _ map[string]any) (any, error) {
-	if f.runErr != nil {
-		return nil, f.runErr
-	}
-	return nil, nil
-}
-
-func (f fakeRuntime) close() error { return nil }
-
-type fakeProgram struct{ name string }
-
 // A script fault a user reads must be the fault they wrote, not a
 // placeholder. The mutation pass replaced wrapRunError's return with a
 // fixed errors.New("script fault") and all 23 tests stayed green, because
@@ -183,14 +158,10 @@ func TestRun_AScriptFaultReachesTheResultUnmangled(t *testing.T) {
 	}
 }
 
-// The real stand-in runtime must stop a running script when its context
-// is done. The mutation pass found nothing pinned this: the fake-runtime
-// test above exercises the fake, and the engine tests reach the runtime
-// only indirectly. This drives the seam itself.
+// The runtime must stop a running script when its context is done. The
+// engine tests reach the runtime only indirectly; this drives it directly.
 func TestRuntime_TheRealRuntimeStopsWhenItsContextIsDone(t *testing.T) {
-	rt := newRuntime()
-	defer func() { _ = rt.close() }()
-	program, err := rt.compile("spin", `for (;;) {}`)
+	program, err := compile("spin", `for (;;) {}`)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -198,34 +169,12 @@ func TestRuntime_TheRealRuntimeStopsWhenItsContextIsDone(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	_, runErr := rt.run(ctx, program, nil)
+	_, runErr := runProgram(ctx, program, nil)
 	if runErr == nil || !errors.Is(runErr, context.DeadlineExceeded) {
 		t.Fatalf("a run under an expired context must stop with ctx's own error, got %v", runErr)
 	}
 	if wall := time.Since(start); wall > 2*time.Second {
 		t.Fatalf("the runtime did not stop when ctx was done: %v", wall)
-	}
-}
-
-// A fake runtime stands in the seam: the engine drives it through the same
-// interface the real package will satisfy.
-func TestRuntime_FakeStandsInTheSeam(t *testing.T) {
-	restore := newRuntime
-	newRuntime = func() scriptRuntime {
-		return fakeRuntime{runErr: fmt.Errorf("stopped: %w", context.Canceled)}
-	}
-	defer func() { newRuntime = restore }()
-
-	b := &fakeBinding{values: map[string]any{}}
-	engine := newTestEngine(t, b, func(c *Config) {
-		c.Script = `return opcua.success({});`
-	})
-	res := engine.Run(t.Context(), map[string]any{})
-	if res.Outcome != Persistent {
-		t.Fatalf("outcome %v, err %v", res.Outcome, res.Err)
-	}
-	if !errors.Is(res.Err, context.Canceled) {
-		t.Fatalf("Err does not wrap the runtime's error: %v", res.Err)
 	}
 }
 
@@ -441,9 +390,7 @@ func TestCallMethod_ACallUnderAnEndedTransactionIsRefused(t *testing.T) {
 // interrupts the VM on ctx must still stop. Under a ctx that is never done,
 // as an unbudgeted cleanup's is, a skipped stop leaks one goroutine per run.
 func TestRuntime_APanickingBindingDoesNotLeakTheWatcher(t *testing.T) {
-	rt := newRuntime()
-	defer func() { _ = rt.close() }()
-	program, err := rt.compile("script", `boom();`)
+	program, err := compile("script", `boom();`)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -451,7 +398,7 @@ func TestRuntime_APanickingBindingDoesNotLeakTheWatcher(t *testing.T) {
 
 	before := runtime.NumGoroutine()
 	for range 20 {
-		if _, runErr := rt.run(context.Background(), program, globals); runErr == nil ||
+		if _, runErr := runProgram(context.Background(), program, globals); runErr == nil ||
 			!strings.Contains(runErr.Error(), "panicked") {
 			t.Fatalf("the panic must come back as an error, got %v", runErr)
 		}
