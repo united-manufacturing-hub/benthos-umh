@@ -114,6 +114,7 @@ test-noderedjs:
 .PHONY: test-handshake
 test-handshake:
 	@go test -race -count=1 ./handshake/
+	@go test -race -count=1 -tags uat ./handshake/
 
 # The scenario suite drives the engine against a server that misbehaves
 # (opcua_plugin/internal/faultopcua). It needs no container and no network.

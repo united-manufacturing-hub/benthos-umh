@@ -71,6 +71,9 @@ func (e *Engine[UnifiedAddress]) waitUntil(
 	// so the comparison has to happen before the conversion. Written as a
 	// negated <= so that a NaN, which loses every comparison, is refused
 	// rather than waved through.
+	if timeoutMs < 0 {
+		return nil, fmt.Errorf("wait_until on %s was given a negative timeout of %v ms", describe, timeoutMs)
+	}
 	if !(timeoutMs <= maxIntervalMillis) {
 		return nil, fmt.Errorf(
 			"wait_until on %s was given a timeout of %.0f ms, longer than the %v a handshake is allowed: check the units -- this is milliseconds",
@@ -81,6 +84,7 @@ func (e *Engine[UnifiedAddress]) waitUntil(
 	if poll <= 0 {
 		poll = 100 * time.Millisecond // the documented default
 	}
+	poll = max(poll, time.Millisecond) // a sub-millisecond interval is no pause at all
 	if ms, ok := number(opts["pollMs"]); ok && ms > 0 {
 		// Bounded before the conversion, for the same reason the timeout
 		// above is. time.Duration(1e13) * time.Millisecond wraps NEGATIVE,
@@ -95,7 +99,9 @@ func (e *Engine[UnifiedAddress]) waitUntil(
 				"wait_until on %s was given a pollMs of %.0f, longer than the %v a handshake is allowed: check the units -- this is milliseconds",
 				describe, ms, MaxInterval)
 		}
-		poll = time.Duration(ms) * time.Millisecond
+		// Below 1ms the conversion truncates to no pause at all, which reads
+		// the machine at wire speed; 1ms is the floor.
+		poll = max(time.Duration(ms*float64(time.Millisecond)), time.Millisecond)
 	}
 	persistent := false
 	if s, ok := opts["onTimeout"].(string); ok {
