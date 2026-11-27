@@ -187,11 +187,7 @@ func (g *OPCUAConnection) GetOPCUAClientOptions(
 	}
 	opts = append(opts, opcua.ApplicationName("benthos-umh-predefined"))
 
-	// Auto reconnect? Pass the setting whichever way it goes. gopcua's own
-	// default is AutoReconnect(true) (config.go:37), so adding the option
-	// only when the field is true made the field one-way: autoReconnect:
-	// false, which the documentation gives as the default, left the
-	// reconnect monitor running on every connection.
+	// gopcua reconnects unless told otherwise, so false is passed too.
 	opts = append(opts, opcua.AutoReconnect(g.AutoReconnect))
 	if g.AutoReconnect {
 		reconnectInterval := time.Duration(g.ReconnectIntervalInSeconds) * time.Second

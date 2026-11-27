@@ -1,0 +1,3 @@
+kind: improvements
+body: 'OPC UA input (opcua) and OPC UA output (opcua) now honour `autoReconnect: false`, which is the default. Before, they rebuilt a dropped session on their own whatever the setting said. Now a dropped session stays dropped: the output keeps failing its writes, and the input stops delivering until it is restarted or, with `useHeartbeat` on, until it opens a new connection. Set `autoReconnect: true` to keep reconnecting as before (ENG-8155)'
+time: 2026-11-26T11:00:00.000000+01:00
