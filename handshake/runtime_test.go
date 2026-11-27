@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -433,5 +434,34 @@ func TestCallMethod_ACallUnderAnEndedTransactionIsRefused(t *testing.T) {
 	}
 	if n := caller.count("call Reset([])"); n != 0 {
 		t.Fatalf("the machine was called under a transaction that had already ended (ops: %v)", caller.snapshot())
+	}
+}
+
+// A binding that panics unwinds through RunProgram, and the watcher that
+// interrupts the VM on ctx must still stop. Under a ctx that is never done,
+// as an unbudgeted cleanup's is, a skipped stop leaks one goroutine per run.
+func TestRuntime_APanickingBindingDoesNotLeakTheWatcher(t *testing.T) {
+	rt := newRuntime()
+	defer func() { _ = rt.close() }()
+	program, err := rt.compile("script", `boom();`)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	globals := map[string]any{"boom": func() { panic("the binding blew up") }}
+
+	before := runtime.NumGoroutine()
+	for range 20 {
+		if _, runErr := rt.run(context.Background(), program, globals); runErr == nil ||
+			!strings.Contains(runErr.Error(), "panicked") {
+			t.Fatalf("the panic must come back as an error, got %v", runErr)
+		}
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for runtime.NumGoroutine() > before {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d goroutines before 20 panicking runs, %d after: the watcher leaked",
+				before, runtime.NumGoroutine())
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
