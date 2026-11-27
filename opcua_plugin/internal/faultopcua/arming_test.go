@@ -32,15 +32,19 @@ import (
 // subprocess and the parent asserts the child died with the refusal message.
 const armCaseEnv = "FAULTOPCUA_ARM_CASE"
 
-// TestArming_RefusesWhatItCannotArm pins the guards against arguments that
-// would make a fault meaningless:
+// TestArming_RefusesWhatItCannotArm pins the guards against arming a fault
+// whose parameter makes it meaningless:
 //
 //   - RefuseWrite (and RefuseRead, which shares the parameter) armed with a
 //     Good status would answer the machine's honest answer while recording a
 //     firing and reporting fired.
 //   - RaiseFlagLate with no wait would be over before it was armed: it would
-//     never take effect, and would read exactly like a fault that never
+//     never take effect and would read exactly like a fault that never
 //     injected.
+//   - AnswerLate with no delay would answer on time while reporting that it
+//     answered late.
+//
+// A node also holds only one fault at a time.
 //
 // An arm method cannot be called without the value it needs, and cannot be
 // called with a value that makes the fault meaningless.
@@ -77,9 +81,19 @@ func TestArming_RefusesWhatItCannotArm(t *testing.T) {
 			v := srv.AddVariable("Loaded", true)
 			srv.RaiseFlagLate(v, false, -time.Second)
 		}},
-		// Replacing the first fault silently would leave it in the caller's
-		// hand, never firing again, with Fired() answering false and no
-		// diagnostic.
+		{"AnswerLate with no delay at all", "delay must be positive", func(t *testing.T) {
+			srv := faultopcua.New(t)
+			v := srv.AddVariable("Flag", true)
+			srv.AnswerLate(v, 0)
+		}},
+		{"AnswerLate with a negative delay", "delay must be positive", func(t *testing.T) {
+			srv := faultopcua.New(t)
+			v := srv.AddVariable("Flag", true)
+			srv.AnswerLate(v, -time.Second)
+		}},
+		// Replacing a fault silently would leave the first *Fault in the
+		// caller's hand, never firing again, with Fired() answering false and
+		// no diagnostic.
 		{"arming a second fault on a node that already has one", "cannot arm FlapValue against \"Setpoint\": RefuseWrite is already armed", func(t *testing.T) {
 			srv := faultopcua.New(t)
 			v := srv.AddVariable("Setpoint", int32(7))

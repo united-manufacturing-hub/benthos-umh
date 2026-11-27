@@ -17,7 +17,6 @@ package faultopcua
 import (
 	"net"
 	"sync"
-	"testing"
 	"time"
 
 	"github.com/gopcua/opcua/id"
@@ -50,6 +49,10 @@ const (
 	idWriteRequest = id.WriteRequest_Encoding_DefaultBinary
 )
 
+// noConnection is the port a read or write carries when no client connection
+// is behind it: gopcua reading a node for a monitored item on its own.
+const noConnection = 0
+
 // faultNamespace is where a fault takes effect: it sits in front of the real
 // gopcua namespace and answers first, so a read or a write meets the fault
 // before it meets the node. Unexported, and the only place a fault kind is
@@ -62,9 +65,8 @@ type faultNamespace struct {
 
 	// t is the test this namespace serves, and the only witness a fault
 	// can call to when it catches itself lying at request time, on a
-	// goroutine that is not the test's own: t.Error is the one reporting
-	// call safe from any goroutine.
-	t *testing.T
+	// goroutine that is not the test's own.
+	t TB
 
 	mu     sync.Mutex
 	faults map[string]*Fault // keyed by the node's StringID; one armed fault per node
@@ -81,9 +83,10 @@ type faultNamespace struct {
 	// with the server rather than outliving the test that armed it.
 	closed chan struct{}
 
-	// onDrop cuts the connection underneath the client. The proxy keeps the
-	// count, because only the proxy can publish it before the close it
-	// records becomes visible to the client.
+	// onDrop cuts the connection that arrived on port and reports how many
+	// sockets it closed. The proxy keeps the count, because only the proxy
+	// can publish it before the close it records becomes visible to the
+	// client.
 	onDrop func(port int) int
 }
 
@@ -344,12 +347,12 @@ func (s *Server) isOurs(id *ua.NodeID) bool {
 // it is.
 func portOf(sc *uasc.SecureChannel) int {
 	if sc == nil {
-		return 0
+		return noConnection
 	}
 	if tcp, ok := sc.RemoteAddr().(*net.TCPAddr); ok {
 		return tcp.Port
 	}
-	return 0
+	return noConnection
 }
 
 // responseHeader is gopcua's own response header, built the same way its
@@ -395,10 +398,20 @@ func (ns *faultNamespace) drop(req *request, f *Fault) {
 	}
 	req.dropped = true
 	if cut := ns.onDrop(req.port); cut == 0 {
-		ns.t.Errorf("faultopcua: DropSession fired on %q with no connection to cut (the request's port was %d): "+
+		ns.report("faultopcua: DropSession fired on %q with no connection to cut (the request's port was %d): "+
 			"the session was not dropped and nothing was closed, so the fault has reported a firing it did not perform -- "+
 			"a fault that reports it fired while closing nothing is the one thing this package must never do", f.node, req.port)
 	}
+}
+
+// report fails the test from one of the server's goroutines. testing.T's
+// Errorf is safe there. GinkgoT's records the failure and then panics to end
+// the spec, which on a goroutine that is not the spec's would crash the whole
+// test binary instead, so the panic is recovered here once the failure is on
+// record, as GinkgoRecover would.
+func (ns *faultNamespace) report(format string, args ...any) {
+	defer func() { _ = recover() }()
+	ns.t.Errorf(format, args...)
 }
 
 // faultFor finds the fault armed against a node, if any.

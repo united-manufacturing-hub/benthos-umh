@@ -89,14 +89,14 @@ func (f *Fault) Count() int {
 // earlier.
 func (f *Fault) Disarm() {
 	if f.ns == nil {
-		return
+		return // never armed: the arm method refused it
 	}
 	f.disarmOnce.Do(func() { close(f.disarmed) })
 	f.ns.mu.Lock()
 	defer f.ns.mu.Unlock()
 	// Only let go of the node if this fault is still the one holding it:
-	// arming another fault on the same node takes the node over, and a
-	// disarm arriving late must not disarm the newcomer.
+	// once it is disarmed another fault can be armed on the node, and a
+	// second Disarm of this one must not disarm the newcomer.
 	if f.ns.faults[f.node] == f {
 		delete(f.ns.faults, f.node)
 	}
@@ -133,8 +133,9 @@ func (f *Fault) toggle() bool {
 // so call it from that test's goroutine, not from a subtest or a goroutine of its own.
 
 // AcceptWriteNeverApply answers a write with Good and leaves the node holding its
-// old value. TRUMPF's press does this, and it is why a client that must know a
-// write landed reads the value back.
+// old value. Some machine controllers do this when they are in a state that does
+// not take the parameter, without saying so, and it is the reason the handshake
+// reads a value back after writing it.
 func (s *Server) AcceptWriteNeverApply(v *Variable) *Fault {
 	return s.arm(v, &Fault{kind: faultAcceptWriteNeverApply})
 }
@@ -165,8 +166,16 @@ func (s *Server) FlapValue(v *Variable, other any) *Fault {
 
 // AnswerLate answers correctly, delay too late, on reads and on writes alike. It
 // tests a deadline: the client must stop waiting and its cleanup must still run,
-// while the machine is answering normally the whole time.
+// while the machine is answering normally the whole time. A delay of zero is
+// refused: a fault that delays nothing answers the way an honest machine does
+// while reporting that it fired.
 func (s *Server) AnswerLate(v *Variable, delay time.Duration) *Fault {
+	s.t.Helper()
+	if delay <= 0 {
+		s.t.Fatalf("faultopcua: AnswerLate: delay must be positive, got %v: "+
+			"a fault that delays nothing answers the way an honest machine does while reporting that it fired", delay)
+		return &Fault{kind: faultAnswerLate}
+	}
 	return s.arm(v, &Fault{kind: faultAnswerLate, delay: delay})
 }
 
@@ -184,9 +193,11 @@ func (s *Server) NeverAnswer(v *Variable) *Fault {
 // exercises. An after of zero is refused: a fault that is over before it is armed
 // records nothing, and reads as a fault that never fired.
 func (s *Server) RaiseFlagLate(v *Variable, until any, after time.Duration) *Fault {
+	s.t.Helper()
 	if after <= 0 {
 		s.t.Fatalf("faultopcua: RaiseFlagLate: after must be positive, got %v: "+
 			"a fault that is over before it is armed records nothing and reads as a fault that never fired", after)
+		return &Fault{kind: faultRaiseFlagLate}
 	}
 	return s.arm(v, &Fault{kind: faultRaiseFlagLate, served: until, after: after})
 }
@@ -210,8 +221,10 @@ func (s *Server) DropSession(v *Variable) *Fault {
 // the first would leave its *Fault in the caller's hand, never firing again,
 // with no diagnostic. Disarm the first fault before arming another.
 func (s *Server) arm(v *Variable, f *Fault) *Fault {
+	s.t.Helper()
 	if v == nil || v.ns == nil {
 		s.t.Fatalf("faultopcua: cannot arm a fault against a node this server does not have")
+		return f
 	}
 	f.node = v.id.StringID()
 	f.ns = v.ns
@@ -222,6 +235,7 @@ func (s *Server) arm(v *Variable, f *Fault) *Fault {
 	if other := v.ns.faults[f.node]; other != nil {
 		s.t.Fatalf("faultopcua: cannot arm %s against %q: %s is already armed there and would be silently replaced, so the first fault would stop firing with no diagnostic -- Disarm the first fault before arming another",
 			f.kind, f.node, other.kind)
+		return f
 	}
 	v.ns.faults[f.node] = f
 	return f
@@ -261,6 +275,7 @@ const statusSeverity ua.StatusCode = 0xC0000000
 // with success: such a fault would answer the way an honest machine does and
 // still record a firing, so the evidence would corroborate the wrong behavior.
 func (s *Server) refuseASuccessStatus(method string, status ua.StatusCode) {
+	s.t.Helper()
 	if status&statusSeverity == 0 {
 		s.t.Fatalf("faultopcua: %s: %v is a Good status, which means success; "+
 			"a fault that refuses with it answers the way an honest machine does "+
