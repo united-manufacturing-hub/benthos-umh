@@ -25,22 +25,17 @@ import (
 	"github.com/dop251/goja"
 )
 
-// compile applies the function wrap every caller in this repo already uses,
-// (function(){ 'use strict'; ... })(), so a script may use a top-level return.
+// compile wraps the source as (function(){'use strict'; ... })(), so a
+// script may use a top-level return, and compiles it.
 //
-// The prefix is three lines so a user's first line is line 4, the same as
-// pkg/js_runtime. That number is not cosmetic: a handshake script that
-// throws reaches the flow as "handshake ended persistent: Error: boom at
-// script:4:7", so it is in the dead-letter reason and in the operator's
-// logs, and it is how someone finds the fault in a long script.
-//
-// It matters most for what has not happened yet. When this stand-in is
-// swapped for pkg/js_runtime, a different prefix length would move every
-// line number a customer has ever seen, silently, with nothing failing.
-// Matching now means the swap changes nothing. TestCompile_AUsersFirstLine
-// goes red if either side drifts.
+// The prefix sits on the user's first line, so a line number in an error
+// is the user's own line: a script that throws on its first line reaches the
+// flow as "Error: boom at script:1:...", in the dead-letter reason and in
+// the operator's logs. Only columns on that first line are shifted, by the
+// prefix's length. The suffix starts on a new line, so a trailing // comment
+// cannot swallow it. TestCompile_AUsersFirstLineIsLineOne pins this.
 func compile(name string, source string) (*goja.Program, error) {
-	wrapped := "\n\n(function(){'use strict';\n" + source + "\n})()"
+	wrapped := "(function(){'use strict';" + source + "\n})()"
 	program, err := goja.Compile(name, wrapped, false)
 	if err != nil {
 		return nil, fmt.Errorf("%s does not compile: %w", name, err)
