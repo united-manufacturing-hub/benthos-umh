@@ -1,0 +1,3 @@
+kind: improvements
+body: 'OPC UA input and output: the bridge now refuses an OPC UA server whose connection handshake offers buffer sizes below the 8192-byte minimum the OPC UA specification sets, and values nested deeper than 100 levels or arrays with more than 32 dimensions. A server that sends such values, which the specification allows, can no longer be read; real data rarely comes close. If a connection fails with "uacp: server receive buffer … is below the … byte minimum", or a read returns Bad_EncodingLimitsExceeded after updating, please report the server and its firmware'
+time: 2026-11-27T13:24:42.000000+01:00
