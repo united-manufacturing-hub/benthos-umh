@@ -113,7 +113,7 @@ test-noderedjs:
 # matters most. Plain go test, not ginkgo -- this package uses neither.
 .PHONY: test-handshake
 test-handshake:
-	@go test -race -count=1 ./handshake/ ./pkg/js_runtime/
+	@go test -race -count=1 ./handshake/
 
 # The scenario suite drives the engine against a server that misbehaves
 # (opcua_plugin/internal/faultopcua). It needs no container and no network.

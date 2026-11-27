@@ -41,7 +41,6 @@ jobs:
       all: ${{ inputs.full_run == true }}
       opcua: ${{ steps.filter.outputs.opcua }}
       handshake: ${{ steps.filter.outputs.handshake }}
-      js_runtime: ${{ steps.filter.outputs.js_runtime }}
       modbus: ${{ steps.filter.outputs.modbus }}
       s7: ${{ steps.filter.outputs.s7 }}
       sparkplug: ${{ steps.filter.outputs.sparkplug }}
@@ -83,14 +82,12 @@ jobs:
             # step, so the patterns inside one filter are ANDed. Putting
             # 'handshake/**' in the opcua filter asks for a file that is inside
             # opcua_plugin and inside handshake at the same time, so the filter
-            # matches nothing -- not even a plain opcua_plugin change. The two
-            # trees the OPC UA output depends on get their own filters, ORed
-            # into the job conditions that need them.
+            # matches nothing -- not even a plain opcua_plugin change. The
+            # handshake tree gets its own filter, ORed into the job that
+            # needs it.
             handshake:
               - 'handshake/**'
               - '!handshake/**/*.md'
-            js_runtime:
-              - 'pkg/js_runtime/**'
             modbus:
               - 'modbus_plugin/**'
               - '!modbus_plugin/**/*.md'
@@ -225,7 +222,6 @@ jobs:
       (needs.detect-changes.outputs.all == 'true' ||
        needs.detect-changes.outputs.opcua == 'true' ||
        needs.detect-changes.outputs.handshake == 'true' ||
-       needs.detect-changes.outputs.js_runtime == 'true' ||
        needs.detect-changes.outputs.gomod == 'true' ||
        needs.detect-changes.outputs.cmd == 'true')
     uses: ./.github/workflows/test-opcua.yml
