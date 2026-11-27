@@ -322,8 +322,9 @@ func New[UnifiedAddress any](
 }
 
 // Run executes the handshake once for one message, where msg is the message as the
-// script sees it. It must not be called concurrently with itself on the same Engine.
-// Canceling ctx ends the run as a deadline does; OnError still runs.
+// script sees it. Concurrent calls on the same Engine run one after another, because
+// a machine takes one transaction at a time. Canceling ctx ends the run as a deadline
+// does; OnError still runs.
 func (e *Engine[UnifiedAddress]) Run(ctx context.Context, msg map[string]any) Result {
 	e.mu.Lock()
 	defer e.mu.Unlock()
