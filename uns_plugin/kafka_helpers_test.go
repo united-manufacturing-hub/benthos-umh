@@ -20,9 +20,7 @@ package uns_plugin
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kadm"
@@ -138,34 +136,4 @@ func drainGroup(t testingT, addr string, group string, want int) int {
 		fs.EachRecord(func(*kgo.Record) { count++ })
 	}
 	return count
-}
-
-// errPoison is the rejection a consumer returns to NACK a batch.
-var errPoison = errors.New("test: pipeline rejects this message")
-
-// deliveryLog counts how often each message body reaches the consumer. A
-// redelivery spec needs the repeat count, not just the set of bodies seen.
-type deliveryLog struct {
-	mu sync.Mutex
-	n  map[string]int
-}
-
-func newDeliveryLog() *deliveryLog { return &deliveryLog{n: map[string]int{}} }
-
-func (d *deliveryLog) add(body string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.n[body]++
-}
-
-func (d *deliveryLog) count(body string) int {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.n[body]
-}
-
-func (d *deliveryLog) distinct() int {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return len(d.n)
 }

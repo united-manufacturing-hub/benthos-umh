@@ -33,6 +33,36 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
+// errPoison is the rejection a consumer returns to NACK a batch.
+var errPoison = errors.New("test: pipeline rejects this message")
+
+// deliveryLog counts how often each message body reaches the consumer. A
+// redelivery spec needs the repeat count, not just the set of bodies seen.
+type deliveryLog struct {
+	mu sync.Mutex
+	n  map[string]int
+}
+
+func newDeliveryLog() *deliveryLog { return &deliveryLog{n: map[string]int{}} }
+
+func (d *deliveryLog) add(body string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.n[body]++
+}
+
+func (d *deliveryLog) count(body string) int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.n[body]
+}
+
+func (d *deliveryLog) distinct() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.n)
+}
+
 // runUnsBetaStream starts a StreamBuilder pipeline: uns_beta input -> consumerFn.
 // consumerFn's returned error NACKs the batch. Returns a stop func (see
 // startStream).
