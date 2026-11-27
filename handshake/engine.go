@@ -47,8 +47,7 @@ type runState struct {
 	data           any             // the object success returned
 	detail         any             // the detail an ending call passed
 	opErr          error           // the most recent binding operation that failed
-	faults         []recordedFault // every fault this run recorded, for classify to match the run's error against
-	opWhere        string          // which one, for the error message and for cleanupEvidence's pairing
+	opWhere        string          // which one, for the message of a run its deadline stopped
 	mutErr         error           // an operation a cleanup block asked for that came back with an error: the evidence the machine was not handed back, recorded at the dispatch boundary (cleanupEvidence)
 	mutWhere       string          // which one, for the cleanup's error message
 	waitPersistent bool            // a wait that ran out was told onTimeout persistent
@@ -65,56 +64,34 @@ func (rs *runState) finish(end ending, detail any) bool {
 	return true
 }
 
-// fail records a binding operation that failed; Result.Err wraps it, so a
-// caller can inspect it with errors.Is and errors.As.
+// fail records a binding operation that failed and returns the *fault the
+// operation throws into the script. Result.Err wraps the binding's error, so
+// a caller can inspect it with errors.Is and errors.As.
 //
-// The LATEST fault wins. A fault the script caught and carried on from did
-// not stop the run, so it cannot be the one that explains how the run
-// ended (the 2026-11-26 ruling, UAT-8b). Recording the first instead meant
-// a caught "machine unreachable" masked the persistent refusal that
-// actually ended the script, and the message was retried forever against a
-// machine that would never accept it.
-//
-// Whether a recorded fault reaches the outcome at all is classify's
-// question, not this one: an explicit ending outranks it, because reaching
-// an ending is the script saying it survived.
-func (rs *runState) fail(where string, err error) {
+// Which fault decides the outcome is classify's question: the one the run's
+// error carries, so the fault that stopped the run decides its class, and a
+// fault the script caught and carried on from does not (the 2026-11-26
+// ruling, UAT-8b). An explicit ending outranks both, because reaching an
+// ending is the script saying it survived.
+func (rs *runState) fail(where string, err error) error {
 	rs.opErr = err
 	rs.opWhere = where
-	// Every fault, not only the latest, because classify has to find the
-	// one the run's error actually is. Keeping only the latest meant a
-	// fault recorded while the stack unwound -- a failing operation inside
-	// a finally, or a rethrow -- displaced the fault that stopped the run,
-	// and the outcome then depended on whether an unrelated operation in an
-	// unwind path also failed.
-	//
-	// Bounded, because a script can fail as often as it likes and this is
-	// only ever searched for a match.
-	// The newest, not the oldest. The fault the run's error actually IS is
-	// the last one recorded, so a cap that kept the first 32 dropped the
-	// very fault this slice exists to find: with 31 caught faults the
-	// stopper was recorded and the run was Transient naming the node, with
-	// 32 it was dropped and the same machine fault became Persistent with a
-	// raw goja dump for an error. The class a flow branches on must not
-	// depend on how many times the script recovered first.
-	if len(rs.faults) == maxRecordedFaults {
-		copy(rs.faults, rs.faults[1:])
-		rs.faults = rs.faults[:maxRecordedFaults-1]
-	}
-	rs.faults = append(rs.faults, recordedFault{where: where, err: err})
+	return &fault{where: where, err: err}
 }
 
-// maxRecordedFaults bounds what one run keeps: the most recent this many.
-// A run that fails more often than this has told us what we need, and the
-// cap exists so a looping script cannot grow the slice without limit.
-const maxRecordedFaults = 32
-
-// recordedFault is one failed operation, kept so classify can match the
-// run's own error against it.
-type recordedFault struct {
-	where string
-	err   error
+// A fault is a binding operation that failed, as the operation throws it
+// into the script. It reads as the binding's own error, so a script that
+// catches it sees the binding's text, and it travels with the exception:
+// whatever stops the run, classify finds the fault in it with errors.As,
+// however many faults the script caught before and whatever failed while
+// the stack unwound.
+type fault struct {
+	where string // the operation, such as "write ns=2;s=Apply"
+	err   error  // the binding's error
 }
+
+func (f *fault) Error() string { return f.err.Error() }
+func (f *fault) Unwrap() error { return f.err }
 
 // failMutating records the evidence that a cleanup block did not hand the
 // machine back (LIB-4): the block asked for an operation and the operation
@@ -129,7 +106,7 @@ type recordedFault struct {
 // found yet inherits the rule at the boundary instead of growing its own
 // guard.
 func (rs *runState) failMutating(where string, err error) {
-	rs.fail(where, err)
+	_ = rs.fail(where, err)
 	if rs.mutErr == nil {
 		rs.mutErr = err
 		rs.mutWhere = where
@@ -170,8 +147,9 @@ func (rs *runState) cleanupEvidence(op string, err error) {
 		return
 	}
 	where := op
-	if rs.opErr != nil && errors.Is(err, rs.opErr) {
-		where = rs.opWhere
+	var f *fault
+	if errors.As(err, &f) {
+		where = f.where
 	}
 	rs.failMutating(where, err)
 }
