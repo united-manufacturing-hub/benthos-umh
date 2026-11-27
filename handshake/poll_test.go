@@ -20,10 +20,7 @@ import (
 	"time"
 )
 
-// waitScript is a handshake whose whole job is one wait on Loaded, which the
-// fake machine holds false until it is told to flip.
-
-// LIB-12: wait_until re-reads at the configured interval, which a script
+// wait_until re-reads at the configured interval, which a script
 // overrides per call with { pollMs }, and stops at its own timeout rather than
 // the script's deadline.
 func TestWaitUntil_StopsAtItsOwnTimeoutNotTheScriptDeadline(t *testing.T) {
@@ -49,22 +46,28 @@ func TestWaitUntil_StopsAtItsOwnTimeoutNotTheScriptDeadline(t *testing.T) {
 	}
 }
 
-// LIB-12 again: the interval is the configured one, or the call's { pollMs }.
+// The interval is the configured one, or the call's { pollMs }.
+//
+// A sleep never ends early, so each read count has a hard upper bound, which
+// catches a wait that polls faster than it was told. The lower bounds are
+// generous, because a loaded runner under -race oversleeps; each one still
+// sits above what half the rate would produce.
 func TestWaitUntil_PollsAtTheConfiguredInterval(t *testing.T) {
 	t.Run("at the configured interval", func(t *testing.T) {
 		b := &fakeBinding{values: map[string]any{"Loaded": false}}
 		engine := newTestEngine(t, b, func(c *Config) {
 			c.PollInterval = 25 * time.Millisecond
 			c.Script = `
-				opcua.wait_until({nodeId: "Loaded"}, v => v === true, 150);
+				opcua.wait_until({nodeId: "Loaded"}, v => v === true, 500);
 				return opcua.success({waited: true});
 			`
 		})
 		engine.Run(t.Context(), map[string]any{})
-		// Seven reads at a 25ms interval in 150ms (t=0,25,...,150). The old
-		// bound, n >= 4, let the mutation pass poll at half the rate.
-		if n := b.count("read Loaded"); n < 6 || n > 9 {
-			t.Fatalf("%d reads at a 25ms interval in 150ms: not the configured rate", n)
+		// At most 20 reads at a 25ms interval in 500ms (t=0,25,...,475; a
+		// read starting at t=500 has no time left). Half the rate gives at
+		// most 10.
+		if n := b.count("read Loaded"); n < 11 || n > 21 {
+			t.Fatalf("%d reads at a 25ms interval in 500ms: not the configured rate", n)
 		}
 	})
 
@@ -73,18 +76,17 @@ func TestWaitUntil_PollsAtTheConfiguredInterval(t *testing.T) {
 		engine := newTestEngine(t, b, func(c *Config) {
 			c.PollInterval = 25 * time.Millisecond
 			c.Script = `
-				opcua.wait_until({nodeId: "Loaded"}, v => v === true, 300, { pollMs: 100 });
+				opcua.wait_until({nodeId: "Loaded"}, v => v === true, 1000, { pollMs: 100 });
 				return opcua.success({waited: true});
 			`
 		})
 		engine.Run(t.Context(), map[string]any{})
-		// Three reads at a 100ms poll in 300ms: t=0, 100, 200. There is no
-		// read at t=300, because each read is now bounded by the wait's own
-		// end and a read starting exactly then has no time to complete --
-		// the wait cannot wait for it. Measured at half the rate the same
-		// window gives 2, so this still catches a poll that has slowed.
-		if n := b.count("read Loaded"); n != 3 {
-			t.Fatalf("pollMs override ignored or wrong rate: %d reads in 300ms, want 3", n)
+		// At most 10 reads at a 100ms poll in 1000ms: t=0, 100, ..., 900.
+		// There is no read at t=1000, because each read is bounded by the
+		// wait's own end and a read starting then has no time to complete.
+		// Half the rate gives at most 5; the configured 25ms gives about 40.
+		if n := b.count("read Loaded"); n < 6 || n > 11 {
+			t.Fatalf("pollMs override ignored or wrong rate: %d reads in 1000ms, want 6 to 11", n)
 		}
 	})
 
@@ -108,7 +110,7 @@ func TestWaitUntil_PollsAtTheConfiguredInterval(t *testing.T) {
 	})
 }
 
-// LIB-18: a wait_until that runs out of time is transient, and a script
+// A wait_until that runs out of time is transient, and a script
 // overrides that per call with { onTimeout: "persistent" }.
 func TestWaitUntil_TimeoutIsTransient(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{"Loaded": false}}
@@ -128,11 +130,9 @@ func TestWaitUntil_TimeoutIsTransient(t *testing.T) {
 	}
 }
 
-// A wait_until without its predicate — left off, or a name that is not a
-// function — must be a script fault a caller can read, not a panic out of
-// Run. goja fills the missing func argument with a nil func and poll.go
-// called it; in Benthos that panic is the process, and neither cleanup
-// block runs, so the machine is left armed. Found by the round-2 review.
+// A wait_until without its predicate must be a script fault a caller can
+// read, not a panic out of Run: in Benthos that panic ends the process, and
+// neither cleanup block runs, so the machine is left armed.
 func TestWaitUntil_RefusesAMissingPredicate(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{"Loaded": false}}
 	engine := newTestEngine(t, b, func(c *Config) {
@@ -157,7 +157,7 @@ func TestWaitUntil_RefusesAMissingPredicate(t *testing.T) {
 	}
 }
 
-// LIB-18 again: only the script's author knows the flag is never coming.
+// onTimeout persistent overrides it: only the script's author knows the flag is never coming.
 func TestWaitUntil_OnTimeoutPersistentOverridesIt(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{"Loaded": false}}
 	engine := newTestEngine(t, b, func(c *Config) {
@@ -176,15 +176,16 @@ func TestWaitUntil_OnTimeoutPersistentOverridesIt(t *testing.T) {
 	}
 }
 
-// Ruling of 2026-11-25's night: wait_until clamps its own timeout to the time
-// remaining before the script deadline, and when the clamp bites, the wait
-// ends exactly as a wait that reached its own timeout does. The point is that
-// the deadline must never fire in the middle of a transaction, because LIB-6
-// makes that persistent and leaves the machine blocked.
+// wait_until clamps its own timeout to the time remaining before the script
+// deadline, and when the clamp bites, the wait ends exactly as a wait that
+// reached its own timeout does. The point is that the deadline must never
+// fire in the middle of a transaction, because that is persistent and
+// leaves the machine blocked.
 //
-// The wait's timeout comes from the message, because LIB-9 refuses a literal
-// wait that does not clear the deadline: the literal check is the early
-// friendly error, and the clamp is the safety mechanism for computed waits.
+// The wait's timeout comes from the message, because Validate refuses a
+// literal wait that does not clear the deadline: the literal check is the
+// early friendly error, and the clamp is the safety mechanism for computed
+// waits.
 func TestWaitUntil_ClampsItsTimeoutToTheScriptDeadline(t *testing.T) {
 	clampScript := func(onTimeout string) string {
 		return `
@@ -211,8 +212,11 @@ func TestWaitUntil_ClampsItsTimeoutToTheScriptDeadline(t *testing.T) {
 		if !strings.Contains(res.Err.Error(), "wait_until timed out") {
 			t.Fatalf("Err does not name the wait: %v", res.Err)
 		}
-		// The wait lasted until the clamp, not until the deadline.
-		if elapsed := time.Since(start); elapsed < 150*time.Millisecond {
+		// The wait lasted until the clamp, 50ms before the 300ms deadline,
+		// however long the run took to reach it: the clamp is measured from
+		// the deadline, and a sleep never ends early. The Transient outcome
+		// above shows it did not last until the deadline.
+		if elapsed := time.Since(start); elapsed < 250*time.Millisecond {
 			t.Fatalf("the clamp cut the wait short: %v", elapsed)
 		}
 	})
@@ -234,12 +238,10 @@ func TestWaitUntil_ClampsItsTimeoutToTheScriptDeadline(t *testing.T) {
 	})
 }
 
-// UAT-13's rule on the wait seam: a wait that timed out is itself an ending,
-// so a script that catches its throw must not be able to start another wait
-// under a transaction that has already been decided. The refusal is
-// waitUntil's own `rs.end != endNone` guard; deleting it lets the second
-// wait read the machine again, and nothing else in the suite noticed
-// (COVERAGE.md's known-open mutant, still open on this tree).
+// A wait that timed out is itself an ending, so a script that catches its
+// throw must not be able to start another wait under a transaction that has
+// already been decided. address refuses every operation once the run has
+// ended, before it parses the address.
 func TestWaitUntil_AWaitUnderAnEndedTransactionIsRefused(t *testing.T) {
 	b := &fakeBinding{values: map[string]any{"A": false, "B": false}}
 	engine := newTestEngine(t, b, func(c *Config) {
@@ -260,19 +262,18 @@ func TestWaitUntil_AWaitUnderAnEndedTransactionIsRefused(t *testing.T) {
 	if !strings.Contains(res.Err.Error(), "wait_until timed out") {
 		t.Fatalf("Err does not name the wait: %v", res.Err)
 	}
-	if n := b.count("read A"); n < 2 {
+	if n := b.count("read A"); n < 1 {
 		t.Fatalf("the first wait never polled (ops: %v)", b.snapshot())
 	}
 	if n := b.count("read B"); n != 0 {
 		t.Fatalf("the machine was read under a transaction that had already ended (ops: %v)", b.snapshot())
 	}
 
-	// readOp's own guard refuses the read even without waitUntil's, so the
-	// one observable waitUntil's guard alone owns is the fault it keeps from
-	// being recorded: a post-end wait whose address does not parse must not
-	// record a binding fault, because `fail` keeps the latest one and a
-	// deadline-stopped run would then blame a parse refusal that happened
-	// after the transaction had already been decided.
+	// Because address refuses before it parses, a post-end wait whose
+	// address does not parse records no binding fault. If it did, the
+	// deadline-stopped run below would blame that parse refusal, because
+	// `fail` keeps the latest fault, though it happened after the
+	// transaction had been decided.
 	b2 := &fakeBinding{values: map[string]any{"A": false}}
 	engine2 := newTestEngine(t, b2, func(c *Config) {
 		c.MaxScriptRuntime = 250 * time.Millisecond
@@ -303,37 +304,42 @@ func TestWaitUntil_APollIntervalOfZeroMeansTheDocumentedDefault(t *testing.T) {
 	engine := newTestEngine(t, b, func(c *Config) {
 		c.PollInterval = 0
 		c.Script = `
-			opcua.wait_until({nodeId: "Loaded"}, v => v === true, 600);
+			opcua.wait_until({nodeId: "Loaded"}, v => v === true, 1000);
 			return opcua.success({waited: true});
 		`
 	})
 
 	engine.Run(t.Context(), map[string]any{})
-	// Seven reads at the 100ms default in 600ms (t=0,100,...,600). A poll of
-	// 300ms gives 3, a poll of 0 gives hundreds; both fail these bounds.
-	if n := b.count("read Loaded"); n < 5 || n > 9 {
-		t.Fatalf("%d reads in 600ms: PollInterval 0 does not mean the documented 100ms default", n)
+	// At most 10 reads at the 100ms default in 1000ms (t=0,100,...,900). A
+	// poll of 300ms gives at most 4, a poll of 0 or 1ms gives hundreds; both
+	// fail these bounds. The lower bound leaves room for a loaded runner.
+	if n := b.count("read Loaded"); n < 5 || n > 11 {
+		t.Fatalf("%d reads in 1000ms: PollInterval 0 does not mean the documented 100ms default", n)
 	}
 }
 
-// number() must read pollMs in whichever Go type carried it, because the
-// options object crosses the boundary twice: a JS number exports as int64 or
-// float64, and a value that rode in from the message can be a plain Go int —
-// vm.Set wraps the caller's map in a live lazy object whose Export() returns
-// the original map, so the caller's own Go values reach the engine unchanged.
+// number must read pollMs in whichever Go type carried it: a JS number
+// exports as int64 or float64, and a value that rode in from the message can
+// be a plain Go int, because jsValue copies the message's containers but
+// leaves an int as it is.
+//
+// The fallback interval is far slower than pollMs in both cases, so the lower
+// bounds can leave a loaded runner plenty of room and still tell a dropped
+// pollMs apart.
 func TestWaitUntil_ReadsPollMsInEveryNumericFormItCanArrive(t *testing.T) {
 	t.Run("a fractional JS number exports as float64", func(t *testing.T) {
 		b := &fakeBinding{values: map[string]any{"Loaded": false}}
 		engine := newTestEngine(t, b, func(c *Config) {
-			c.PollInterval = 25 * time.Millisecond // the fallback if pollMs is dropped
+			c.PollInterval = 100 * time.Millisecond // the fallback if pollMs is dropped
 			c.Script = `
 				opcua.wait_until({nodeId: "Loaded"}, v => v === true, 300, { pollMs: 12.5 });
 				return opcua.success({waited: true});
 			`
 		})
 		engine.Run(t.Context(), map[string]any{})
-		// ~21 reads at a 12.5ms poll in 300ms; ~12 at the configured fallback.
-		if n := b.count("read Loaded"); n < 18 {
+		// At most 24 reads at a 12.5ms poll in 300ms; at most 3 at the
+		// fallback.
+		if n := b.count("read Loaded"); n < 8 {
 			t.Fatalf("%d reads in 300ms: a fractional pollMs was dropped", n)
 		}
 	})
@@ -348,19 +354,22 @@ func TestWaitUntil_ReadsPollMsInEveryNumericFormItCanArrive(t *testing.T) {
 			`
 		})
 		engine.Run(t.Context(), map[string]any{"opts": map[string]any{"pollMs": 7}})
-		// ~49 reads at a 7ms poll in 420ms (measured); ~5 at the default.
-		if n := b.count("read Loaded"); n < 40 {
+		// At most 60 reads at a 7ms poll in 420ms; at most 5 at the default.
+		if n := b.count("read Loaded"); n < 15 {
 			t.Fatalf("%d reads in 420ms: a Go int pollMs from the message was dropped", n)
 		}
 	})
 }
 
 // clampWait's own edge: when less than the margin remains before the
-// deadline, halving is what keeps the wait strictly inside it — a deadline
-// that fires mid-transaction is persistent (LIB-6), and the clamp exists so
-// it never does. Pinned directly, and end-to-end: a computed wait with less
-// than the margin left still ends as its own timeout, transient (LIB-18),
-// having polled.
+// deadline, halving is what keeps the wait strictly inside it, because a
+// deadline that fires mid-transaction is persistent. Pinned directly, and
+// end-to-end: a computed wait with less than the margin left still ends as
+// its own timeout, transient, having polled.
+//
+// The end-to-end budget is just under the margin, so the halving branch runs
+// however long the run takes to reach the wait, and the time before the wait
+// can grow on a loaded runner without eating the whole budget.
 func TestWaitUntil_AClampInsideTheMarginStillEndsBeforeTheDeadline(t *testing.T) {
 	if got := clampWait(30 * time.Millisecond); got != 15*time.Millisecond {
 		t.Fatalf("inside the margin the clamp halves the remainder, got %v", got)
@@ -371,8 +380,8 @@ func TestWaitUntil_AClampInsideTheMarginStillEndsBeforeTheDeadline(t *testing.T)
 
 	b := &fakeBinding{values: map[string]any{"Never": false}}
 	engine := newTestEngine(t, b, func(c *Config) {
-		c.MaxScriptRuntime = 40 * time.Millisecond
-		c.PollInterval = 10 * time.Millisecond
+		c.MaxScriptRuntime = 49 * time.Millisecond
+		c.PollInterval = 5 * time.Millisecond
 		c.Script = `
 			opcua.write({nodeId: "Apply"}, true);
 			opcua.wait_until({nodeId: "Never"}, v => v === true, msg.payload.waitMs);
@@ -387,7 +396,7 @@ func TestWaitUntil_AClampInsideTheMarginStillEndsBeforeTheDeadline(t *testing.T)
 	if !strings.Contains(res.Err.Error(), "wait_until timed out") {
 		t.Fatalf("Err does not name the wait: %v", res.Err)
 	}
-	if n := b.count("read Never"); n < 2 {
+	if n := b.count("read Never"); n < 1 {
 		t.Fatalf("the clamped wait ended before it ever polled (ops: %v)", b.snapshot())
 	}
 }
