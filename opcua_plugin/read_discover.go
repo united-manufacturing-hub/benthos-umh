@@ -325,6 +325,11 @@ func (g *OPCUAInput) BrowseAndSubscribeIfNeeded(ctx context.Context) error {
 
 	g.NodeList = nodeList
 
+	// A bridge still on the legacy topic calculation is degraded before we
+	// drop it: if any discovered tag hits the bug, tell it once, here on the
+	// finished node list, that the compatibility flag exists.
+	g.warnTagPathCompatibility(nodeList)
+
 	// If subscription is enabled, start subscribing to the nodes
 	if g.SubscribeEnabled {
 		g.Log.Infof("Subscription is enabled, therefore start subscribing to the selected notes...")
@@ -722,6 +727,66 @@ func UpdateNodePaths(nodes []NodeDef) {
 			}
 		}
 	}
+}
+
+// nodesAffectedByTagPathBug returns the nodes from nodes whose topic parts
+// differ between the legacy and the corrected tag-path calculation: the nodes
+// the compatibility flag correct_tag_path would move to a new topic
+// (ENG-7953).
+//
+// Deciding which nodes the bug affects is its own job, separate from browsing
+// (which produces the node list) and from building a message (which uses one
+// mode), so it lives in its own function.
+func nodesAffectedByTagPathBug(nodes []NodeDef) []NodeDef {
+	var affected []NodeDef
+	for _, n := range nodes {
+		if legacyTagTopicPartsOf(n) != correctedTagTopicPartsOf(n) {
+			affected = append(affected, n)
+		}
+	}
+	return affected
+}
+
+// warnTagPathCompatibility warns a bridge that is still on the legacy
+// tag-path calculation when tags in its finished node list would publish to
+// a different topic under the corrected one. It names the compatibility flag
+// correct_tag_path so the operator can opt in, and it says what opting in
+// does: the affected tags move to a new topic and their history stays behind
+// on the old one.
+//
+// It logs once per connect, never per node (a large address space has tens
+// of thousands of tags), and nothing at all when the flag is enabled or no
+// node is affected.
+func (g *OPCUAInput) warnTagPathCompatibility(nodes []NodeDef) {
+	if g.CorrectTagPath {
+		return
+	}
+	affected := nodesAffectedByTagPathBug(nodes)
+	if len(affected) == 0 {
+		return
+	}
+
+	const maxExamples = 3
+	examples := make([]string, 0, min(maxExamples, len(affected)))
+	for _, n := range affected {
+		if len(examples) == maxExamples {
+			break
+		}
+		examples = append(examples, fmt.Sprintf("%s -> %s",
+			legacyTagTopicPartsOf(n).topic(), correctedTagTopicPartsOf(n).topic()))
+	}
+
+	// Name the count in real words: "1 tag(s) publish" reads as the
+	// machine shrugging at whoever is woken by it at night.
+	count := fmt.Sprintf("%d tags publish", len(affected))
+	if len(affected) == 1 {
+		count = "1 tag publishes"
+	}
+
+	// Some of the affected tags publish to the wrong topic, others (a tag
+	// inside a folder of the same name) do not publish at all.
+	g.Log.Warnf("%s to the wrong topic or not at all because their name also appears earlier in their browse path, for example: %s. Set compatibility.correct_tag_path: true on the OPC UA input to publish them under their correct topic. This moves those tags to a new topic and leaves their history behind on the old one, so dashboards and queries reading the old topic must be updated. Switching the flag back returns the tags to the old topic.",
+		count, strings.Join(examples, ", "))
 }
 
 // buildNodeListFromCache enumerates the visited map

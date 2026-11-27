@@ -1,0 +1,3 @@
+kind: improvements
+body: 'OPC UA input: tags whose browse name also appears earlier in their browse path now publish under the topic their browse path says when the compatibility flag correct_tag_path is on. Before, element 1 of array arr in data block DB1 published to DB.arr.1.1 instead of DB1.arr.1, and a tag inside a folder of the same name did not publish at all. The flag is off by default; switching it on moves the affected tags to a new topic and leaves their history behind on the old one (ENG-7953)'
+time: 2026-11-27T18:22:00.000000+01:00

@@ -114,8 +114,8 @@ tag_processor:
 })
 
 var _ = Describe("createMessageFromValue tag metadata", func() {
-	metaOf := func(path, browseName string, nodeID *ua.NodeID) (string, string, string) {
-		input := &OPCUAInput{OPCUAConnection: &OPCUAConnection{}}
+	metaOf := func(correctTagPath bool, path, browseName string, nodeID *ua.NodeID) (string, string, string) {
+		input := &OPCUAInput{OPCUAConnection: &OPCUAConnection{}, CorrectTagPath: correctTagPath}
 		dv := &ua.DataValue{Value: ua.MustVariant(int16(1)), Status: ua.StatusOK}
 		msg := input.createMessageFromValue(dv, NodeDef{NodeID: nodeID, BrowseName: browseName, Path: path})
 		Expect(msg).NotTo(BeNil())
@@ -125,9 +125,12 @@ var _ = Describe("createMessageFromValue tag metadata", func() {
 		return tagPath, tagGroup, tagName
 	}
 
-	DescribeTable("sets opcua_tag_path, opcua_tag_group and opcua_tag_name",
+	// Legacy mode (compatibility.correct_tag_path unset or false) is frozen
+	// behaviour: every expectation in this table is today's output, malformed
+	// paths and all, and must never change (ENG-7953).
+	DescribeTable("legacy mode: sets opcua_tag_path, opcua_tag_group and opcua_tag_name",
 		func(path, browseName, wantPath, wantGroup, wantName string) {
-			gotPath, gotGroup, gotName := metaOf(path, browseName, ua.NewNumericNodeID(3, 1))
+			gotPath, gotGroup, gotName := metaOf(false, path, browseName, ua.NewNumericNodeID(3, 1))
 			Expect(gotPath).To(Equal(wantPath), "opcua_tag_path")
 			Expect(gotGroup).To(Equal(wantGroup), "opcua_tag_group")
 			Expect(gotName).To(Equal(wantName), "opcua_tag_name")
@@ -144,5 +147,92 @@ var _ = Describe("createMessageFromValue tag metadata", func() {
 		Entry("node without a browse path", "", "ProductName", "", "ProductName", "ProductName"),
 		Entry("browse name that sanitize changes", "Line.Pump_1", "Pump 1", "Line.Pump_1", "Line.Pump_1", "Pump_1"),
 		Entry("root node whose browse name sanitize changes", "Pump_1", "Pump 1", "", "Pump_1", "Pump_1"),
+		// The bug cases, asserted in legacy mode to pin the frozen malformed
+		// output the flag opts out of.
+		Entry("array element 0 whose name repeats in the path",
+			"DB_00Line.Station.aSensor.0", "0",
+			"DB_0Line.Station.aSensor.0",
+			"DB_0Line.Station.aSensor.0", "0"),
+		Entry("name that ends a parent segment",
+			"Line.pump.pump", "pump",
+			"Line..pump",
+			"Line..pump", "pump"),
+		Entry("name that starts a parent segment",
+			"TempSensor.Temp", "Temp",
+			"Sensor.Temp",
+			"Sensor.Temp", "Temp"),
+		Entry("parent with the same name as the node",
+			"Temp.Temp", "Temp",
+			".Temp",
+			".Temp", "Temp"),
+		Entry("grandparent with the same name",
+			"Temp.Sub.Temp", "Temp",
+			".Sub.Temp",
+			".Sub.Temp", "Temp"),
 	)
+
+	// Corrected mode (compatibility.correct_tag_path: true), ENG-7953.
+	DescribeTable("corrected mode: sets opcua_tag_path, opcua_tag_group and opcua_tag_name",
+		func(path, browseName, wantPath, wantGroup, wantName string) {
+			gotPath, gotGroup, gotName := metaOf(true, path, browseName, ua.NewNumericNodeID(3, 1))
+			Expect(gotPath).To(Equal(wantPath), "opcua_tag_path")
+			Expect(gotGroup).To(Equal(wantGroup), "opcua_tag_group")
+			Expect(gotName).To(Equal(wantName), "opcua_tag_name")
+		},
+		Entry("array element 0 whose name repeats in the path",
+			"DB_00Line.Station.aSensor.0", "0",
+			"DB_00Line.Station.aSensor",
+			"DB_00Line.Station.aSensor", "0"),
+		Entry("name that ends a parent segment",
+			"Line.pump.pump", "pump",
+			"Line.pump",
+			"Line.pump", "pump"),
+		Entry("name that starts a parent segment",
+			"TempSensor.Temp", "Temp",
+			"TempSensor",
+			"TempSensor", "Temp"),
+		Entry("parent with the same name as the node",
+			"Temp.Temp", "Temp",
+			"Temp",
+			"Temp", "Temp"),
+		Entry("grandparent with the same name",
+			"Temp.Sub.Temp", "Temp",
+			"Temp.Sub",
+			"Temp.Sub", "Temp"),
+		Entry("node at the root of the browse", "xLifeBit", "xLifeBit", "", "xLifeBit", "xLifeBit"),
+		Entry("node with no browse path", "", "ProductName", "", "ProductName", "ProductName"),
+		Entry("browse name that sanitize changes", "Line.Pump_1", "Pump 1", "Line.Pump_1", "Line.Pump_1", "Pump_1"),
+		Entry("root node whose browse name sanitize changes", "Pump_1", "Pump 1", "", "Pump_1", "Pump_1"),
+	)
+
+	// UpdateNodePaths deduplicates two nodes with the same browse path by
+	// putting a sanitized NodeID in the last path segment. Cutting that
+	// segment (as the legacy calculation can, when the browse name also appears
+	// earlier in the path) would give both nodes the same topic again.
+	It("keeps two deduplicated nodes on two different topics in both modes", func() {
+		base := func() []NodeDef {
+			return []NodeDef{
+				{NodeID: ua.NewNumericNodeID(2, 1001), BrowseName: "Temp", Path: "Temp.Temp"},
+				{NodeID: ua.NewNumericNodeID(2, 1002), BrowseName: "Temp", Path: "Temp.Temp"},
+			}
+		}
+
+		legacyNodes := base()
+		UpdateNodePaths(legacyNodes)
+		correctedNodes := base()
+		UpdateNodePaths(correctedNodes)
+
+		// Deduplication itself is byte-identical between the modes: it runs
+		// before the topic calculation and knows nothing about the flag.
+		Expect(legacyNodes).To(Equal(correctedNodes))
+		Expect(legacyNodes[0].Path).To(Equal("Temp.ns_2_i_1001"))
+		Expect(legacyNodes[1].Path).To(Equal("Temp.ns_2_i_1002"))
+
+		for _, correct := range []bool{false, true} {
+			input := &OPCUAInput{OPCUAConnection: &OPCUAConnection{}, CorrectTagPath: correct}
+			first := input.tagTopicPartsOf(legacyNodes[0])
+			second := input.tagTopicPartsOf(legacyNodes[1])
+			Expect(first.topic()).NotTo(Equal(second.topic()), "mode correct_tag_path=%v", correct)
+		}
+	})
 })

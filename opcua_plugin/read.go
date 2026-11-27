@@ -69,7 +69,8 @@ var OPCUAConfigSpec = OPCUAConnectionConfigSpec.
 	Field(service.NewFloatField("samplingInterval").Description("The interval for sampling on the OPC UA server - notice 0.0 will get you updates as fast as possible").Default(DefaultSamplingInterval).
 		Optional().
 		Advanced().
-		Examples(0.0, 100.0, 1000.0))
+		Examples(0.0, 100.0, 1000.0)).
+	Field(compatibility.Field())
 
 func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
 	// Parse all nodeIDs to validate them.
@@ -88,9 +89,15 @@ func ParseNodeIDs(incomingNodes []string) []*ua.NodeID {
 	return parsedNodeIDs
 }
 
-func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
+func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (*OPCUAInput, error) {
 	// Parse the shared connection configuration
 	conn, err := ParseConnectionConfig(conf, mgr)
+	if err != nil {
+		return nil, err
+	}
+
+	// Compatibility flags: read them here, where a logger is available.
+	compatFlags, err := compatibility.Parse(conf, mgr.Logger())
 	if err != nil {
 		return nil, err
 	}
@@ -144,6 +151,7 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		NodeIDs:                      parsedNodeIDs,
 		SubscribeEnabled:             subscribeEnabled,
 		UseHeartbeat:                 useHeartbeat,
+		CorrectTagPath:               compatFlags.Enabled(correctTagPath),
 		LastHeartbeatMessageReceived: atomic.Uint32{},
 		LastMessageReceived:          atomic.Uint32{},
 		HeartbeatManualSubscribed:    false,
@@ -159,7 +167,7 @@ func newOPCUAInput(conf *service.ParsedConfig, mgr *service.Resources) (service.
 		m.unsubscribeAndResetHeartbeat(ctx)
 	}
 
-	return service.AutoRetryNacksBatched(m), nil
+	return m, nil
 }
 
 func init() {
@@ -167,7 +175,11 @@ func init() {
 		"opcua", OPCUAConfigSpec,
 		func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
 			mgr.Logger().Infof("Created & maintained by the United Manufacturing Hub. About us: www.umh.app")
-			return newOPCUAInput(conf, mgr)
+			m, err := newOPCUAInput(conf, mgr)
+			if err != nil {
+				return nil, err
+			}
+			return service.AutoRetryNacksBatched(m), nil
 		})
 	if err != nil {
 		panic(err)
@@ -240,11 +252,15 @@ type OPCUAInput struct {
 	*OPCUAConnection // Embed the shared connection configuration
 
 	// Input-specific fields
-	NodeIDs                      []*ua.NodeID
-	NodeList                     []NodeDef
-	SubscribeEnabled             bool
-	SubNotifyChan                chan *opcua.PublishNotificationData
-	UseHeartbeat                 bool
+	NodeIDs          []*ua.NodeID
+	NodeList         []NodeDef
+	SubscribeEnabled bool
+	SubNotifyChan    chan *opcua.PublishNotificationData
+	UseHeartbeat     bool
+	// CorrectTagPath is the parsed compatibility flag correct_tag_path: it
+	// selects the corrected tag-path calculation for opcua_tag_path,
+	// opcua_tag_name and opcua_tag_group (ENG-7953).
+	CorrectTagPath               bool
 	LastHeartbeatMessageReceived atomic.Uint32
 	LastMessageReceived          atomic.Uint32
 	HeartbeatManualSubscribed    bool
@@ -666,7 +682,7 @@ func (g *OPCUAInput) createMessageFromValue(dataValue *ua.DataValue, nodeDef Nod
 		message.MetaSet("opcua_heartbeat_message", "true")
 	}
 
-	tag := tagTopicPartsOf(nodeDef)
+	tag := g.tagTopicPartsOf(nodeDef)
 	message.MetaSet("opcua_tag_group", tag.group)
 	message.MetaSet("opcua_tag_name", tag.name)
 	message.MetaSet("opcua_tag_path", tag.path)
