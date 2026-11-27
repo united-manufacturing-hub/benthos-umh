@@ -71,7 +71,11 @@ func runProgram(ctx context.Context, prog *goja.Program, globals map[string]any)
 	}()
 	vm := goja.New()
 	for name, value := range globals {
-		if bindErr := vm.Set(name, jsValue(value)); bindErr != nil {
+		converted, convErr := jsValue(value, 0)
+		if convErr != nil {
+			return nil, fmt.Errorf("cannot bind global %q: %w", name, convErr)
+		}
+		if bindErr := vm.Set(name, converted); bindErr != nil {
 			return nil, fmt.Errorf("cannot bind global %q: %w", name, bindErr)
 		}
 	}
@@ -118,55 +122,84 @@ func runProgram(ctx context.Context, prog *goja.Program, globals map[string]any)
 //   - A float64 or float32 that is not finite crosses as the JavaScript
 //     number it is: Infinity, -Infinity or NaN. success refuses to return
 //     one, because it cannot be encoded as JSON.
+//   - A value nested deeper than maxMessageDepth is refused with an error.
+//     A message that contains itself, such as a map holding itself, would
+//     otherwise be copied until the Go stack overflows, which kills the
+//     process and cannot be recovered. A decoded JSON message cannot
+//     contain itself and is never nested that deep.
 //
-// Everything else crosses as it is.
-func jsValue(v any) any {
+// Everything else crosses as it is. depth is how many containers enclose v.
+func jsValue(v any, depth int) (any, error) {
+	if depth > maxMessageDepth {
+		return nil, fmt.Errorf(
+			"the message is nested more than %d levels deep, or contains itself", maxMessageDepth)
+	}
 	switch t := v.(type) {
 	case nil, string, bool, int, int64, float64:
-		return v
+		return v, nil
 	case json.Number:
 		if i, err := t.Int64(); err == nil {
-			return i
+			return i, nil
 		}
 		if f, err := t.Float64(); err == nil {
-			return f
+			return f, nil
 		}
-		return t.String()
+		return t.String(), nil
 	case map[string]any:
 		out := make(map[string]any, len(t))
 		for k, e := range t {
-			out[k] = jsValue(e)
+			c, err := jsValue(e, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			out[k] = c
 		}
-		return out
+		return out, nil
 	case []any:
 		out := make([]any, len(t))
 		for i, e := range t {
-			out[i] = jsValue(e)
+			c, err := jsValue(e, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = c
 		}
-		return out
+		return out, nil
 	}
 	rv := reflect.ValueOf(v)
 	switch rv.Kind() {
 	case reflect.Map:
 		key := mapKey(rv.Type().Key().Kind())
 		if key == nil {
-			return v
+			return v, nil
 		}
 		out := make(map[string]any, rv.Len())
 		for it := rv.MapRange(); it.Next(); {
-			out[key(it.Key())] = jsValue(it.Value().Interface())
+			c, err := jsValue(it.Value().Interface(), depth+1)
+			if err != nil {
+				return nil, err
+			}
+			out[key(it.Key())] = c
 		}
-		return out
+		return out, nil
 	case reflect.Slice, reflect.Array:
 		out := make([]any, rv.Len())
 		for i := range out {
-			out[i] = jsValue(rv.Index(i).Interface())
+			c, err := jsValue(rv.Index(i).Interface(), depth+1)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = c
 		}
-		return out
+		return out, nil
 	default:
-		return v
+		return v, nil
 	}
 }
+
+// maxMessageDepth is how deeply jsValue nests containers before it refuses
+// the message as one that contains itself.
+const maxMessageDepth = 1000
 
 // mapKey renders a map key of the given kind as an object key, or is nil
 // for a kind that has no natural object key, so the map crosses as it is.
