@@ -1,0 +1,3 @@
+kind: fixes
+body: 'S7 input: a STRING address now returns the whole text. Before, the last 2 characters were cut off, so `running` arrived as `runni`.'
+time: 2026-11-13T12:00:00.000000+01:00
