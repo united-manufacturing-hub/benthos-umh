@@ -63,9 +63,10 @@ func TestWaitUntil_PollsAtTheConfiguredInterval(t *testing.T) {
 			`
 		})
 		engine.Run(t.Context(), map[string]any{})
-		// At most 20 reads at a 25ms interval in 500ms (t=0,25,...,475; a
-		// read starting at t=500 has no time left). Half the rate gives at
-		// most 10.
+		// 20 reads at a 25ms interval in 500ms (t=0,25,...,475; a read
+		// starting at t=500 has no time left). The bound is 21: one read of
+		// slack on top of the 20, the read at t=0 that the 500/25 count
+		// leaves out. Half the rate gives at most 10.
 		if n := b.count("read Loaded"); n < 11 || n > 21 {
 			t.Fatalf("%d reads at a 25ms interval in 500ms: not the configured rate", n)
 		}
@@ -81,10 +82,12 @@ func TestWaitUntil_PollsAtTheConfiguredInterval(t *testing.T) {
 			`
 		})
 		engine.Run(t.Context(), map[string]any{})
-		// At most 10 reads at a 100ms poll in 1000ms: t=0, 100, ..., 900.
-		// There is no read at t=1000, because each read is bounded by the
-		// wait's own end and a read starting then has no time to complete.
-		// Half the rate gives at most 5; the configured 25ms gives about 40.
+		// 10 reads at a 100ms poll in 1000ms: t=0, 100, ..., 900. There is
+		// no read at t=1000, because each read is bounded by the wait's own
+		// end and a read starting then has no time to complete. The bound is 11:
+		// one read of slack, the read at t=0 that the 1000/100 count
+		// leaves out. Half the rate
+		// gives at most 5; the configured 25ms gives about 40.
 		if n := b.count("read Loaded"); n < 6 || n > 11 {
 			t.Fatalf("pollMs override ignored or wrong rate: %d reads in 1000ms, want 6 to 11", n)
 		}
