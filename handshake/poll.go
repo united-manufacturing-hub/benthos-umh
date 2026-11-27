@@ -21,7 +21,8 @@ import (
 )
 
 // waitUntil re-reads one address until the predicate holds or the wait's
-// timeout runs out. The timeout is clamped to the time remaining before the
+// timeout runs out. pollMs is the call's pollMs option, converted like the
+// timeout (optNumber), or nil when the call does not set one. The timeout is clamped to the time remaining before the
 // block's deadline, so the deadline never fires mid-transaction, which would
 // make the run persistent. A wait that runs out ends the run transient,
 // unless the call passed { onTimeout: "persistent" }. Inside a cleanup
@@ -29,7 +30,7 @@ import (
 // failure instead (cleanupEvidence).
 func (e *Engine[UnifiedAddress]) waitUntil(
 	rs *runState, raw map[string]any, pred func(any) bool,
-	timeoutMs float64, opts map[string]any,
+	timeoutMs float64, pollMs *float64, opts map[string]any,
 ) (any, error) {
 	// A wait without its predicate is a wrong script. It is persistent,
 	// so the fault propagates as an exception rather than being recorded
@@ -78,7 +79,19 @@ func (e *Engine[UnifiedAddress]) waitUntil(
 		poll = 100 * time.Millisecond // the documented default
 	}
 	poll = max(poll, time.Millisecond) // a sub-millisecond interval is no pause at all
-	if ms, ok := number(opts["pollMs"]); ok && ms > 0 {
+	if pollMs != nil {
+		ms := *pollMs
+		// A pollMs that is not a positive number is a wrong script, such as
+		// a computed interval gone wrong or a typo, refused like an unknown
+		// option rather than read as the default: the script asked for an
+		// interval, and silently polling at another one hides the mistake.
+		if math.IsNaN(ms) {
+			return nil, fmt.Errorf("wait_until on %s was given a pollMs that is not a number (NaN)", describe)
+		}
+		if ms <= 0 {
+			return nil, fmt.Errorf(
+				"wait_until on %s was given a pollMs of %v: it must be a positive number of milliseconds", describe, ms)
+		}
 		// Bounded before the conversion, for the same reason the timeout
 		// above is. time.Duration(1e13) * time.Millisecond wraps negative,
 		// and a negative poll interval means no pause between reads, so the
