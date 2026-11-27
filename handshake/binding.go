@@ -35,7 +35,7 @@ type Binding[UnifiedAddress any] interface {
 
 	// Read, Write and Call return promptly once ctx is done, and do not send
 	// a request to the machine after it is. The engine's deadline holds only
-	// as far as the binding honours ctx.
+	// as far as the binding honors ctx.
 	//
 	// Read returns what the machine currently holds for one address.
 	Read(ctx context.Context, address UnifiedAddress) (ReadResponse, error)
