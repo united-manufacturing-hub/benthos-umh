@@ -20,19 +20,26 @@
 //     • Accept only UMH‑core time‑series messages
 //       { "value": <scalar>, "timestamp_ms": <unix‑ms> }      (one tag, one topic)
 //     • Require metadata key `umh_topic`                      (series identity)
-//     • Emit message unaltered except for     _downsampler.algorithm_ metadata.
+//     • Emit message unaltered except for     `downsampled_by` / `downsampling_config`
+//       metadata.
 //
 // 2.  Purpose                                                  *WHY?*
 //     • Compress noisy or low‑value data points (Deadband, SDT).
-//     • Guarantee *at‑least‑once* delivery even when algorithms
-//       delay or reorder emissions (ACK buffering, idle flush).
+//     • No delivery guarantee beyond what is emitted: a filtered
+//       message is ACKed and discarded; a stashed emit‑previous
+//       candidate is ACKed when stashed and can still be dropped
+//       (max_time, superseded); points collected at Close() are
+//       never emitted.
 //
-// 3.  Critical safety levers
-//     • Dual use of `max_time`
-//         – Algorithm heartbeat: forces a periodic output even if no
-//           threshold exceeded.
-//         – Idle flush timer : guarantees buffered points are freed and
-//           ACKed if a series goes quiet.
+// 3.  Critical levers
+//     • Dual use of `max_time` – evaluated only on message arrival;
+//       a series that stops sending emits nothing.
+//         – Deadband heartbeat: an unchanged value that keeps
+//           arriving is re‑emitted every max_time.
+//         – Swinging door: when max_time is reached the pending
+//           candidate is discarded, not flushed.
+//         – Idle flush timer : moves buffered points into a one‑batch
+//           channel that is read only when a later batch arrives.
 //     • Late‑arrival policy (`passthrough` | `drop`) keeps historical
 //       accuracy configurable per topic.
 //
@@ -99,9 +106,10 @@ func init() {
 		Summary("Downsamples time-series data using configurable algorithms").
 		Description(`The downsampler reduces data volume by filtering out insignificant changes in time-series data using configurable algorithms.
 
-It processes UMH-core time-series data with data_contract "_historian",
-passing all other messages through unchanged. Each message that passes the downsampling filter is annotated
-with metadata indicating the algorithm used.
+It processes UMH-core time-series messages: JSON payloads with exactly the two keys
+"timestamp_ms" and "value", identified by the "umh_topic" metadata field. It does not check
+any data_contract. All other messages are passed through unchanged. Each message that passes
+the downsampling filter is annotated with metadata indicating the algorithm used.
 
 In typical UMH deployments, the downsampler is enabled by default with conservative settings to automatically
 compress time-series data. The tag_processor can be used upstream to selectively bypass downsampling for
@@ -128,8 +136,9 @@ The downsampler handles different data types as follows:
 - **String values**:
   Preserved as-is. Uses change-based logic - only emits when the string value changes.
 
-- **Other types**:
-  Rejected with an error to ensure data integrity.
+- **Other types** (null, objects, arrays):
+  Not downsampled: the conversion error triggers the fail-open path, which forwards the
+  original message unchanged and counts it in messages_errored.
 
 ## Selective Bypass with ds_ignore
 
@@ -150,7 +159,7 @@ Use with tag_processor for UMH deployments to selectively bypass downsampling ba
 					Description("Default maximum time interval for deadband algorithm.").
 					Optional(),
 				service.NewDurationField("min_time").
-					Description("Default minimum time between emissions for deadband algorithm.").
+					Description("Accepted but ignored: deadband does not use min_time. Set min_time under swinging_door only.").
 					Optional()).
 				Description("Default deadband algorithm parameters.").
 				Optional(),
@@ -167,13 +176,13 @@ Use with tag_processor for UMH deployments to selectively bypass downsampling ba
 				Description("Default swinging door algorithm parameters.").
 				Optional(),
 			service.NewStringEnumField("late_policy", "passthrough", "drop").
-				Description("Default policy for handling late-arriving messages (passthrough=forward unchanged, drop=discard with warning).").
+				Description("Default policy for handling late-arriving messages (passthrough=forward unchanged, drop=discard; drops are logged at debug level).").
 				Default("passthrough").
 				Optional()).
 			Description("Default algorithm parameters applied to all topics unless overridden.")).
 		Field(service.NewObjectListField("overrides",
 			service.NewStringField("pattern").
-				Description("Topic pattern for matching (supports exact matches and shell-style wildcards with * and ?). Examples: 'umh.v1.acme._historian.temp.sensor1' (exact), '*.temperature.*' (wildcard), '*pressure*' (contains)."),
+				Description("Topic pattern for matching (supports exact matches and shell-style wildcards with *, ? and [abc] character classes). The pattern is matched against the full umh_topic and, if that fails, against the last dot-separated segment of the topic; the first matching override wins. Examples: 'umh.v1.acme._historian.temp.sensor1' (exact), '*.temperature.*' (wildcard), '*pressure*' (contains), 'temperature' (matches the last segment of 'umh.v1.acme._historian.temperature')."),
 
 			service.NewObjectField("deadband",
 				service.NewFloatField("threshold").
@@ -183,7 +192,7 @@ Use with tag_processor for UMH deployments to selectively bypass downsampling ba
 					Description("Override maximum time interval for deadband algorithm.").
 					Optional(),
 				service.NewDurationField("min_time").
-					Description("Override minimum time between emissions for deadband algorithm.").
+					Description("Accepted but ignored: deadband does not use min_time. Set min_time under swinging_door only.").
 					Optional()).
 				Description("Deadband algorithm parameter overrides.").
 				Optional(),
@@ -200,7 +209,7 @@ Use with tag_processor for UMH deployments to selectively bypass downsampling ba
 				Description("Swinging door algorithm parameter overrides.").
 				Optional(),
 			service.NewStringEnumField("late_policy", "passthrough", "drop").
-				Description("Override policy for handling late-arriving messages (passthrough=forward unchanged, drop=discard with warning).").
+				Description("Override policy for handling late-arriving messages (passthrough=forward unchanged, drop=discard; drops are logged at debug level).").
 				Optional()).
 			Description("Topic-specific parameter overrides using pattern matching. Supports exact topic names and shell-style wildcards (* matches any sequence, ? matches any character).").
 			Optional()).

@@ -8,7 +8,7 @@ This section covers Benthos processors for data transformation and message handl
 
 - **[Classic to Core Processor](classic-to-core-processor.md)** - Converts UMH Historian Data Contract format messages into Core format, following the "one tag, one message, one topic" principle.
 
-- **[Downsampler](downsampler.md)** - Reduces time-series data volume by filtering out insignificant changes using configurable algorithms. Integrates with UMH data pipelines to compress historian data while preserving significant trends.
+- **[Downsampler](downsampler.md)** - Reduces time-series data volume by filtering out insignificant changes using configurable algorithms. Integrates with UMH data pipelines to compress time-series data while preserving significant trends.
 
 - **[Topic Browser](topic-browser.md)** - **[Internal]** Transforms UMH messages into structured data for the Topic Browser interface. Extracts hierarchical topic information and event data to enable real-time topic exploration, metadata search, and debugging in the Management Console.
 

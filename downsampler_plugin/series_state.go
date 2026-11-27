@@ -28,14 +28,16 @@ import (
 // ## ACK Buffering Implementation
 //
 // This struct implements message buffering to support "emit-previous" algorithms like SDT.
-// The buffering ensures at-least-once delivery while allowing algorithms to emit historical
-// points when needed.
+// The buffering holds the candidate message while the algorithm decides and releases it for
+// emission when needed. A buffered candidate can still be dropped (superseded, max_time,
+// shutdown), so this is not a delivery guarantee.
 //
 // ### Buffer Lifecycle:
 // 1. **stash()**: Store message when algorithm doesn't emit (filtered)
 // 2. **releaseCandidate()**: Retrieve and clear buffered message for emission
 // 3. **Idle timeout**: Automatic flush based on algorithm's max_time setting
-// 4. **Shutdown**: Proper emission of all buffered messages
+// 4. **Shutdown**: Close() moves buffered messages into a shutdown batch that is
+//    emitted only if another batch is processed afterwards
 //
 // ### Memory Safety:
 // - Only one message buffered per series (bounded memory usage)

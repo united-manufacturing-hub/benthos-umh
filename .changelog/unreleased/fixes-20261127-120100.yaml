@@ -1,0 +1,3 @@
+kind: fixes
+body: 'downsampler example config (config/downsampler_example.yaml) starts again; its late_policy was nested under itself where the schema expects a string, so a config copied from it failed lint before it could run (ENG-8206)'
+time: 2026-11-27T12:01:00.000000+01:00
