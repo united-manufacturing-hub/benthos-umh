@@ -152,7 +152,7 @@ func (s *Server) Dials() int { return s.proxy.dialCount() }
 // says a socket died. Shutting the server down does not change it.
 func (s *Server) Cuts() int { return s.proxy.cutCount() }
 
-// Start listens and serves until Close is called. Cancelling ctx stops gopcua's
+// Start listens and serves until Close is called. Canceling ctx stops gopcua's
 // accept and service loops too, but only Close releases the requests a fault is
 // holding and shuts the proxy down, so a test closes the server either way.
 func (s *Server) Start(ctx context.Context) error {
