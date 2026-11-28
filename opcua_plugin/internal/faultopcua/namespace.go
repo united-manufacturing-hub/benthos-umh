@@ -79,8 +79,9 @@ type faultNamespace struct {
 	// the client never made.
 	writingThrough map[string]int
 
-	// closed releases anything NeverAnswer is holding, so a stuck read ends
-	// with the server rather than outliving the test that armed it.
+	// closed releases anything NeverAnswer or AnswerLate is holding, so a
+	// stuck request ends with the server rather than outliving the test that
+	// armed it.
 	closed chan struct{}
 
 	// onDrop cuts the connection that arrived on port and reports how many

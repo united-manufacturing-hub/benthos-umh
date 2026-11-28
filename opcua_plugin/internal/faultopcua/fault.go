@@ -85,8 +85,8 @@ func (f *Fault) Count() int {
 
 // Disarm stops the fault, leaving an honest machine and freeing the node for
 // another fault. A request the fault is holding is answered at once: AnswerLate's
-// with the real answer, NeverAnswer's with BadServerHalted. Its record is kept, so a scenario can disarm and still prove the fault fired
-// earlier.
+// with the real answer, NeverAnswer's with BadServerHalted. Its record is kept,
+// so a scenario can disarm and still prove the fault fired earlier.
 func (f *Fault) Disarm() {
 	if f.ns == nil {
 		return // never armed: the arm method refused it
@@ -144,7 +144,9 @@ func (s *Server) AcceptWriteNeverApply(v *Variable) *Fault {
 // persistent fault a plant produces, and the one a simulator never produces,
 // because a simulator takes everything.
 func (s *Server) RefuseWrite(v *Variable, status ua.StatusCode) *Fault {
-	s.refuseASuccessStatus("RefuseWrite", status)
+	if !s.refuseASuccessStatus("RefuseWrite", status) {
+		return &Fault{kind: faultRefuseWrite}
+	}
 	return s.arm(v, &Fault{kind: faultRefuseWrite, status: status})
 }
 
@@ -152,7 +154,9 @@ func (s *Server) RefuseWrite(v *Variable, status ua.StatusCode) *Fault {
 // the client should do, so this is the fault that separates "try again later" from
 // "park it".
 func (s *Server) RefuseRead(v *Variable, status ua.StatusCode) *Fault {
-	s.refuseASuccessStatus("RefuseRead", status)
+	if !s.refuseASuccessStatus("RefuseRead", status) {
+		return &Fault{kind: faultRefuseRead}
+	}
 	return s.arm(v, &Fault{kind: faultRefuseRead, status: status})
 }
 
@@ -274,11 +278,15 @@ const statusSeverity ua.StatusCode = 0xC0000000
 // refuseASuccessStatus fails the test rather than arming a refusal that answers
 // with success: such a fault would answer the way an honest machine does and
 // still record a firing, so the evidence would corroborate the wrong behavior.
-func (s *Server) refuseASuccessStatus(method string, status ua.StatusCode) {
+// It reports whether status means failure, so the caller arms nothing when
+// Fatalf returns.
+func (s *Server) refuseASuccessStatus(method string, status ua.StatusCode) bool {
 	s.t.Helper()
 	if status&statusSeverity == 0 {
 		s.t.Fatalf("faultopcua: %s: %v is a Good status, which means success; "+
 			"a fault that refuses with it answers the way an honest machine does "+
 			"while reporting that it misbehaved -- arm it with a status that means failure", method, status)
+		return false
 	}
+	return true
 }

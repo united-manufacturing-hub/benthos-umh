@@ -157,13 +157,15 @@ func (s *Server) Cuts() int { return s.proxy.cutCount() }
 // holding and shuts the proxy down, so a test closes the server either way.
 func (s *Server) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
+	// Stored before gopcua starts, so a Close that runs while Start is still
+	// starting finds the cancel and stops the loops.
+	s.mu.Lock()
+	s.cancel = cancel
+	s.mu.Unlock()
 	if err := s.srv.Start(ctx); err != nil {
 		cancel()
 		return fmt.Errorf("faultopcua: start: %w", err)
 	}
-	s.mu.Lock()
-	s.cancel = cancel
-	s.mu.Unlock()
 	return nil
 }
 
