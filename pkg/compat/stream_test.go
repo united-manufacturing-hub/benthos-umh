@@ -16,6 +16,7 @@ package compat_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -167,7 +168,15 @@ var _ = Describe("through the real public config surface", func() {
 				Fail("the input constructor did not run within 5s")
 			}
 			cancel()
-			return parseErr, <-runDone
+			runErr := <-runDone
+			// Run returns on cancellation without stopping the pipeline, so
+			// stop it here with a fresh deadline; the cancelled ctx would
+			// make Stop give up at once. If Run failed instead, the pipeline
+			// never started and there is nothing to stop.
+			if errors.Is(runErr, context.Canceled) {
+				ExpectWithOffset(1, strm.StopWithin(5*time.Second)).To(Succeed())
+			}
+			return parseErr, runErr
 		}
 
 		// runHealthy runs the stream and asserts that the constructor accepted
