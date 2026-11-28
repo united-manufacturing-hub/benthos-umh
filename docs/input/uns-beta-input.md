@@ -138,12 +138,14 @@ a counter or a projection, must tolerate the rewind as well as the duplicates.
 **State.** The plugin keeps none. The read position lives in the Kafka consumer group and
 survives a restart. A new `consumer_group` always starts at the oldest available message, and
 there is no way to start from "now": a new flow on a busy topic reads the whole history first.
-On a compacted topic that history is only the latest value per topic, not every value ever
-written.
+On a compacted topic, compaction removes older values in the background, so the history holds
+the latest value per topic and possibly some older ones. Do not treat it as a snapshot of the
+current state.
 
-**Time.** `kafka_timestamp_ms` is when the broker stored the record, not when the measurement
-was taken. Event time, if you need it, is whatever your payload carries. The plugin does not
-read, set or reorder by event time.
+**Time.** `kafka_timestamp_ms` is the Kafka record timestamp, not when the measurement was
+taken. Under the topic's default `CreateTime` the producer sets it when it sends the record;
+under `LogAppendTime` it is when the broker stored the record. Event time, if you need it, is
+whatever your payload carries. The plugin does not read, set or reorder by event time.
 
 **Errors.** There is no retry limit and no dead-letter queue. A message your pipeline rejects
 every time is redelivered forever and holds up every later message on its partition. That
