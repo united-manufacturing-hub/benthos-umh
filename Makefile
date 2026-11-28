@@ -107,6 +107,15 @@ test-noderedjs:
 	@TEST_NODERED_JS=true \
 		$(GINKGO_CMD) $(GINKGO_FLAGS) ./nodered_js_plugin/...
 
+# The handshake engine decides whether a machine got its instruction, so its
+# tests run with -race: the engine hands a binding to a script and a cleanup
+# block, and a run that outlives its own deadline is the failure mode that
+# matters most. Plain go test, not ginkgo -- this package uses neither.
+.PHONY: test-handshake
+test-handshake:
+	@go test -race -count=1 ./handshake/
+	@go test -race -count=1 -tags uat ./handshake/
+
 .PHONY: test-unit-opc
 test-unit-opc:
 	@TEST_OPCUA_UNIT=true \
