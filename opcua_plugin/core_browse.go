@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/gopcua/opcua/ua"
+
+	compat "github.com/united-manufacturing-hub/benthos-umh/pkg/compat"
 )
 
 const (
@@ -106,9 +108,39 @@ type tagTopicParts struct {
 	group string
 }
 
-// tagTopicPartsOf returns the topic parts of n. The group is the path, or the
-// name where the path is empty.
-func tagTopicPartsOf(n NodeDef) tagTopicParts {
+// compatibility is the set of compatibility flags the OPC UA input
+// recognizes inside its `compatibility` config block.
+var compatibility = compat.New()
+
+// correctTagPath is the compatibility flag correct_tag_path: publish a tag
+// under its browse path without the tag's own name, which opcua_tag_name
+// already carries. Off by default because switching it moves affected tags
+// to a new topic and leaves their history behind on the old one (ENG-7953).
+var correctTagPath = compatibility.Declare("correct_tag_path",
+	"Publishes tags whose browse name also appears earlier in their browse path under their correct topic, including tags inside a folder of the same name, which do not publish at all today. Off by default: switching it on moves the affected tags to a new topic and leaves their history behind on the old one.")
+
+// tagTopicPartsOf returns the topic parts of n in this input's compatibility
+// mode: the corrected calculation when the compatibility flag correct_tag_path
+// is enabled, the legacy one otherwise.
+func (g *OPCUAInput) tagTopicPartsOf(n NodeDef) tagTopicParts {
+	if g.CorrectTagPath {
+		return correctedTagTopicPartsOf(n)
+	}
+	return legacyTagTopicPartsOf(n)
+}
+
+// legacyTagTopicPartsOf returns the topic parts of n as every benthos-umh
+// release so far has computed them: it cuts the first occurrence of the
+// browse name anywhere in the path, not the last segment. A tag whose name
+// also appears earlier in its browse path therefore lands in a misspelled
+// folder (element 1 of array arr in data block DB1 publishes to DB.arr.1.1
+// instead of DB1.arr.1), and a tag inside a folder of the same name does not
+// publish at all.
+//
+// This is frozen behavior that bridges depend on: never change it. It stays
+// available as the default of the compatibility flag correct_tag_path
+// (ENG-7953).
+func legacyTagTopicPartsOf(n NodeDef) tagTopicParts {
 	name := sanitize(n.BrowseName)
 	group := strings.TrimSuffix(strings.Replace(n.Path, n.BrowseName, "", 1), ".")
 	if group == "" {
@@ -119,6 +151,52 @@ func tagTopicPartsOf(n NodeDef) tagTopicParts {
 		path = ""
 	}
 	return tagTopicParts{path: path, name: name, group: group}
+}
+
+// correctedTagTopicPartsOf returns the topic parts of n under the corrected
+// tag-path calculation, selected by the compatibility flag correct_tag_path
+// (ENG-7953): the tag path is the node's browse path without the node's own
+// name, which opcua_tag_name already carries.
+func correctedTagTopicPartsOf(n NodeDef) tagTopicParts {
+	name := sanitize(n.BrowseName)
+	path := tagPathOf(n.Path, n.BrowseName)
+	group := path
+	if group == "" {
+		group = name
+	}
+	return tagTopicParts{path: path, name: name, group: group}
+}
+
+// tagPathOf returns the opcua_tag_path of the node at path: its browse path
+// without the node's own name, which opcua_tag_name already carries. Browse
+// builds path from sanitized names; browseName is the node's BrowseName before
+// sanitize.
+func tagPathOf(path string, browseName string) string {
+	parent, last := splitLast(path)
+
+	// Compared before sanitize, so a name that sanitize changes keeps its
+	// segment: "Pump 1" at Line.Pump_1 gets the tag path Line.Pump_1. Comparing
+	// after sanitize would change the topic of those tags (ENG-7956).
+	if last == browseName {
+		return parent
+	}
+
+	// Root nodes whose name sanitize changes already publish with an empty
+	// tag path. Keep them there (ENG-7956).
+	if parent == "" && last == sanitize(browseName) {
+		return ""
+	}
+
+	// The last segment is a name that sanitize changed (see above), or a NodeID
+	// that UpdateNodePaths put there because two nodes had the same path.
+	// Cutting the NodeID would give both nodes the same topic again.
+	return path
+}
+
+// topic returns the UNS topic the tag publishes under: the tag path joined
+// with the tag name.
+func (t tagTopicParts) topic() string {
+	return join(t.path, t.name)
 }
 
 type Logger interface {
