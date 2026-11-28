@@ -16,7 +16,7 @@ There is no retry limit and no dead-letter queue yet. A message that your
 pipeline rejects every time, for example one that a processor always fails on,
 is redelivered forever and holds up every later message on its partition.
 
-#### 1 Quick-start
+## 1 Quick-start
 
 Two fields are required: `consumer_group` names the consumer, and `umh_topics`
 declares which topics it wants.
@@ -52,7 +52,7 @@ to consume from an external broker.
 | **Broker address** | the embedded Redpanda (`localhost:9092`) |
 | **Kafka topic** | `umh.messages` |
 
-#### 2 Configuration
+## 2 Configuration
 
 | Field | Purpose & Default |
 |-------|-------------------|
@@ -65,7 +65,7 @@ to consume from an external broker.
 older `topic` field from `uns` are not available here. Use `umh_topics` with one
 or more patterns instead.
 
-#### 3 What the plugin does behind the scenes
+## 3 What the plugin does behind the scenes
 
 1. **Consume** `umh.messages` through the official Redpanda Connect engine,
    starting from the earliest offset on first connect.
@@ -99,7 +99,7 @@ or more patterns instead.
   `umh\\.v1\\.acme\\.(berlin|munich)\\..+` over `.*temperature.*` when throughput
   matters.
 
-#### 4 Migrating from `uns`
+## 4 Migrating from `uns`
 
 - Replace `umh_topic: "<pattern>"` (or `topic:`) with `umh_topics: ["<pattern>"]`.
   `umh_topics` is required: `uns` defaulted to `.*` (the whole namespace),
@@ -110,7 +110,7 @@ or more patterns instead.
   because an empty key produces an empty `umh_topic` that the `uns` output would
   reject forever.
 
-#### 5 Delivery guarantees
+## 5 Delivery guarantees
 
 **Delivery and acknowledgement.** At-least-once. A message stays in flight until your pipeline
 acknowledges it; a rejected message is redelivered until it is accepted, and the committed
@@ -162,7 +162,7 @@ as you can, since a spoofed topic still has to match your patterns. Suited to fo
 to systems that tolerate duplicates. Not suited, yet, to a flow that must give up on a message it
 cannot process.
 
-#### 6 Metrics
+## 6 Metrics
 
 `uns_beta` adds three counters to the standard Redpanda Connect input metrics.
 Each counts records it drops. A counter that has not counted anything yet does
@@ -196,7 +196,7 @@ consumer-group lag), see the Redpanda Connect
 and [metrics](https://docs.redpanda.com/redpanda-connect/components/metrics/about)
 documentation.
 
-#### 7 FAQs / Troubleshooting
+## 7 FAQs / Troubleshooting
 
 - **"No messages appear":** your `umh_topics` patterns filtered everything out.
   Start with `[".*"]`, confirm the flow, then tighten. The drop counters under
