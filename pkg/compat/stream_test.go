@@ -153,8 +153,16 @@ var _ = Describe("through the real public config surface", func() {
 			var parseErr error
 			select {
 			case parseErr = <-constructed:
-			case err := <-runDone:
-				Fail(fmt.Sprintf("Run returned before the input constructor ran: %v", err))
+			case runErr := <-runDone:
+				// A constructor that returns an error can make Run exit at
+				// once, so both channels may be ready and select picks one
+				// at random. Only fail if the constructor really never ran.
+				select {
+				case parseErr = <-constructed:
+					return parseErr, runErr
+				default:
+					Fail(fmt.Sprintf("Run returned before the input constructor ran: %v", runErr))
+				}
 			case <-time.After(5 * time.Second):
 				Fail("the input constructor did not run within 5s")
 			}
