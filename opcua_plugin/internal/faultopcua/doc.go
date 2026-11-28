@@ -18,26 +18,14 @@
 // the simulators answer correctly by design. opc-plc accepts a write and applies
 // it, answers every read, and never drops a session, so a client that handles
 // none of those faults passes against it exactly as well as one that handles all
-// of them. This package is the other half of that pair.
+// of them. This package is the instrument beside that control: opc-plc green and
+// faultopcua red is a statement about our code.
 //
-// # The control and the instrument
-//
-// Keep both servers, with different jobs. opc-plc stays in CI as the CONTROL,
-// answering "is our client behaving normally against a server that works". This
-// package is the INSTRUMENT, answering "does our client do the right thing when
-// the machine does the wrong thing".
-//
-// Read them together. A red test on the instrument with a green control points
-// at our code. Both red points at the server underneath, which matters, because
-// gopcua's server has its own open bugs.
-//
-// # A fault must prove it fired
-//
-// A fault that silently fails to inject looks exactly like a fault the client
-// handled: the test passes either way, and the pass means nothing. So every
-// fault records itself when it takes effect, and Firings reports what actually
-// happened on the wire. A test that asserts only the client's reaction is not
-// finished; it has to assert the firing too.
+// A test builds a server with [New], gives it nodes with [Server.AddVariable],
+// arms one fault with the arm method carrying that fault's own parameters, runs
+// its client against [Server.Endpoint], and asserts two things: what the client
+// did, and that the fault fired. The second assertion is not optional. A fault
+// that silently failed to inject reads exactly like a fault the client handled.
 //
 // # One service loop
 //
@@ -56,6 +44,6 @@
 // their cleanups accordingly, and LIFO makes that the reverse of how it
 // reads.
 //
-// This is a test instrument. It is not an OPC UA server anyone should point a
-// plant at, and it implements only what a fault needs.
+// It is not a general OPC UA server. It implements what a fault needs and nothing
+// more, and nobody should point a plant at it.
 package faultopcua

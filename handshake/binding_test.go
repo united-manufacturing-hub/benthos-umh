@@ -1,0 +1,169 @@
+// Copyright 2025 UMH Systems GmbH
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package handshake
+
+import (
+	"context"
+	"fmt"
+	"sync"
+)
+
+// fakeBinding is one machine for tests: it records every operation in order
+// and answers reads from a table. Its address is the nodeId a script passes.
+// It is the protocol the engine is tested against, so it is deliberately
+// ordinary: one operation is one request, answered once, and nothing the
+// seam does not describe is added.
+type fakeBinding struct {
+	mu     sync.Mutex
+	ops    []string       // every operation, in the order the machine saw them
+	values map[string]any // what Read answers, by nodeId
+	errs   map[string]error
+	// flipAfter makes one address answer false until its nth read, then true.
+	flipAfter map[string]int
+	reads     map[string]int
+	// blockRead, when set, replaces the table lookup: one address's reads
+	// go to it, so a test can block until ctx is done and answer with ctx's
+	// own error, exactly as a binding that honors its context does.
+	blockRead func(ctx context.Context) (ReadResponse, error)
+}
+
+func (f *fakeBinding) Namespace() string { return "opcua" }
+
+func (f *fakeBinding) ParseAddress(raw map[string]any) (string, error) {
+	id, _ := raw["nodeId"].(string)
+	if id == "" {
+		// No retry makes a typo into an address.
+		return "", fmt.Errorf("address has no nodeId: %w", ErrPersistent)
+	}
+	return id, nil
+}
+
+func (f *fakeBinding) log(op string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ops = append(f.ops, op)
+}
+
+// count reports how many recorded operations equal op.
+func (f *fakeBinding) count(op string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, recorded := range f.ops {
+		if recorded == op {
+			n++
+		}
+	}
+	return n
+}
+
+func (f *fakeBinding) snapshot() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.ops...)
+}
+
+// errFor returns the injected error for one operation on one address, if any.
+func (f *fakeBinding) errFor(op string, addr string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.errs == nil {
+		return nil
+	}
+	return f.errs[op+":"+addr]
+}
+
+func (f *fakeBinding) Read(ctx context.Context, addr string) (ReadResponse, error) {
+	// A binding honors its context: it does not touch the machine once ctx
+	// is done, so the operation is not recorded either. That is what lets a
+	// test see a cleanup that runs under a canceled context.
+	if err := ctx.Err(); err != nil {
+		return ReadResponse{}, err
+	}
+	f.log("read " + addr)
+	if err := f.errFor("read", addr); err != nil {
+		return ReadResponse{}, err
+	}
+	f.mu.Lock()
+	block := f.blockRead
+	f.mu.Unlock()
+	if block != nil {
+		return block(ctx)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	value, ok := f.values[addr]
+	if !ok {
+		// Loud on purpose: a test that reads an unconfigured address is a
+		// broken test, not a machine answering.
+		return ReadResponse{}, fmt.Errorf("no value configured for %s: %w", addr, ErrPersistent)
+	}
+	if after, flips := f.flipAfter[addr]; flips {
+		f.reads[addr]++
+		if f.reads[addr] > after {
+			return ReadResponse{Value: true}, nil
+		}
+		return ReadResponse{Value: false}, nil
+	}
+	return ReadResponse{Value: value}, nil
+}
+
+func (f *fakeBinding) Write(ctx context.Context, addr string, value any) error {
+	// Like Read: a done context means the machine was not asked.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f.log(fmt.Sprintf("write %s=%v", addr, value))
+	return f.errFor("write", addr)
+}
+
+func (f *fakeBinding) Describe(addr string) string { return addr }
+
+// fakeCaller is a fakeBinding whose protocol has callable addresses, so the
+// engine offers call_method to it (the optional half of the seam).
+type fakeCaller struct {
+	fakeBinding
+	callErr  error
+	outputs  []any
+	lastCall []any
+	// flipAfter and reads live on the embedded fakeBinding only. A copy
+	// here would shadow them: a test setting it would configure nothing,
+	// because Read consults the embedded one.
+}
+
+func (f *fakeCaller) Call(_ context.Context, addr string, inputs []any) (CallResponse, error) {
+	f.log(fmt.Sprintf("call %s(%v)", addr, inputs))
+	f.mu.Lock()
+	f.lastCall = append([]any(nil), inputs...)
+	f.mu.Unlock()
+	if f.callErr != nil {
+		return CallResponse{}, f.callErr
+	}
+	return CallResponse{Outputs: f.outputs}, nil
+}
+
+// flip makes one address answer false until its nth read, then true, so a
+// wait_until can be shown re-reading until its predicate holds.
+func (f *fakeBinding) flip(addr string, after int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.flipAfter == nil {
+		f.flipAfter = map[string]int{}
+	}
+	if f.reads == nil {
+		f.reads = map[string]int{}
+	}
+	f.flipAfter[addr] = after
+}

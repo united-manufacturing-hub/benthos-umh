@@ -23,8 +23,8 @@ import (
 // proxy forwards bytes between a client and the OPC UA server and can cut
 // the connection underneath them.
 //
-// A session drop is the one fault the namespace cannot produce, because it
-// happens below the services: the question is what a client does when the
+// A session drop is the one fault the namespace cannot produce alone, because
+// it happens below the services: the question is what a client does when the
 // socket dies between a write and the read-back that checks it, and by then
 // the namespace has already been asked and answered. Every client connects
 // through here, so the drop is a real TCP close on a real connection rather
@@ -34,23 +34,32 @@ type proxy struct {
 	backend string
 
 	mu    sync.Mutex
-	conns []net.Conn
+	pairs map[int]*connPair // keyed by the backend's local port
 	dials int
 	done  bool
 
-	// cutMu is held for the whole of a cut -- taking the connections, every
+	// cutMu is held for the whole of a cut -- taking the connection, every
 	// Close, and the count that records them -- and by cutCount, so nobody
-	// can read the count in the window where the sockets are already dying.
+	// can read the count in the window where the socket is already dying.
 	//
 	// Keeping the count under the connection mutex is not enough. A client
 	// sees EOF microseconds after its socket closes, so a test that reacts
-	// to the client's own error and then asks for the count was racing the
-	// accounting and read zero although a connection HAD been closed: four
-	// failures in fourteen runs, and the test then blamed the client. It is
-	// an ordering race and not a data race, so -race neither caught it nor
-	// changed it.
+	// to the client's own error and then asks for the count would race the
+	// accounting and could read zero although a connection had been closed,
+	// and then blame the client. It is an ordering race and not a data
+	// race, so -race neither catches it nor changes it.
 	cutMu  sync.Mutex
 	closed int
+}
+
+// connPair is one client's hop through the proxy. The key is the backend's
+// local port, because that is how the server's side names the connection:
+// the remote address a secure channel reports, seen from the server, is the
+// port the proxy dialed the server on.
+type connPair struct {
+	client  net.Conn // the socket underneath the client
+	backend net.Conn // the proxy's end of the hop to the server
+	port    int
 }
 
 // dialCount is how many connections have been accepted since the server
@@ -71,7 +80,7 @@ func newProxy(backend string) (*proxy, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &proxy{ln: ln, backend: backend}
+	p := &proxy{ln: ln, backend: backend, pairs: map[int]*connPair{}}
 	go p.accept()
 	return p, nil
 }
@@ -84,7 +93,7 @@ func (p *proxy) accept() {
 		if err != nil {
 			return // the listener is closed; nothing left to accept
 		}
-		server, err := net.Dial("tcp", p.backend)
+		backend, err := net.Dial("tcp", p.backend)
 		if err != nil {
 			_ = client.Close()
 			continue
@@ -92,42 +101,48 @@ func (p *proxy) accept() {
 		p.mu.Lock()
 		p.dials++
 		p.mu.Unlock()
-		p.track(client, server)
-		go pipe(client, server)
-		go pipe(server, client)
+		p.track(client, backend)
+		go pipe(client, backend)
+		go pipe(backend, client)
 	}
 }
 
-func (p *proxy) track(conns ...net.Conn) {
+func (p *proxy) track(client net.Conn, backend net.Conn) {
+	pair := &connPair{client: client, backend: backend}
+	if tcp, ok := backend.LocalAddr().(*net.TCPAddr); ok {
+		pair.port = tcp.Port
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.done {
-		for _, c := range conns {
-			_ = c.Close()
-		}
+		_ = client.Close()
+		_ = backend.Close()
 		return
 	}
-	p.conns = append(p.conns, conns...)
+	p.pairs[pair.port] = pair
 }
 
-// cut closes every connection now open and reports how many it actually
-// closed. The count is what a test asserts, so it counts closes that
-// succeeded rather than connections it intended to close: a count of
-// connections would still read as evidence if the close were removed, and a
-// mutation proved that nothing noticed.
-func (p *proxy) cut() int {
+// cutPort closes the one connection that arrived on this port, which is the
+// connection that touched the faulted node, and reports how many sockets
+// underneath a client it actually closed. The count is what a test asserts,
+// so it counts closes that succeeded rather than connections it intended to
+// close: a count of connections would still read as evidence if the close
+// were removed.
+func (p *proxy) cutPort(port int) int {
 	p.cutMu.Lock()
 	defer p.cutMu.Unlock()
 	p.mu.Lock()
-	conns := p.conns
-	p.conns = nil
+	pair := p.pairs[port]
+	delete(p.pairs, port)
 	p.mu.Unlock()
-	closed := 0
-	for _, c := range conns {
-		if err := c.Close(); err == nil {
-			closed++
-		}
+	if pair == nil {
+		return 0
 	}
+	closed := 0
+	if err := pair.client.Close(); err == nil {
+		closed++
+	}
+	_ = pair.backend.Close()
 	p.closed += closed
 	return closed
 }
@@ -141,12 +156,23 @@ func (p *proxy) cutCount() int {
 	return p.closed
 }
 
-func (p *proxy) close() {
+// shutdown stops the proxy and tears its connections down without counting
+// them, because a server closing is not a session drop. Counting here would
+// let a plain shutdown read as drop evidence in Cuts, which is exactly the
+// confusion the count exists to settle.
+func (p *proxy) shutdown() {
 	p.mu.Lock()
 	p.done = true
+	pairs := p.pairs
+	p.pairs = map[int]*connPair{}
 	p.mu.Unlock()
-	_ = p.ln.Close()
-	p.cut()
+	if p.ln != nil {
+		_ = p.ln.Close()
+	}
+	for _, pair := range pairs {
+		_ = pair.client.Close()
+		_ = pair.backend.Close()
+	}
 }
 
 func pipe(dst net.Conn, src net.Conn) {

@@ -1,0 +1,872 @@
+// Copyright 2025 UMH Systems GmbH
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package handshake
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+)
+
+// validConfig returns a configuration that can run, for tests that adapt it.
+func validConfig() Config {
+	return Config{
+		Script:              `return opcua.success({});`,
+		OnSuccess:           ``,
+		OnError:             ``,
+		MaxScriptRuntime:    time.Minute,
+		MaxOnSuccessRuntime: time.Second,
+		MaxOnErrorRuntime:   time.Second,
+		PollInterval:        100 * time.Millisecond,
+	}
+}
+
+// newTestEngine builds an engine around a fake machine and a configuration.
+func newTestEngine(t *testing.T, b Binding[string], mutate func(*Config)) *Engine[string] {
+	t.Helper()
+	cfg := validConfig()
+	if mutate != nil {
+		mutate(&cfg)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("test config does not validate: %v", err)
+	}
+	engine, err := New(cfg, b)
+	if err != nil {
+		t.Fatalf("New refused a valid config: %v", err)
+	}
+	t.Cleanup(func() { _ = engine.Close() })
+	return engine
+}
+
+// The script runs exactly once per write request. A repeat is a new
+// delivery decided by the flow, never by the engine.
+func TestRun_RunsTheScriptOncePerMessage(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{"Ready": true}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.Script = `
+			if (opcua.read({nodeId: "Ready"}) !== true) { return opcua.error_not_ready(); }
+			opcua.write({nodeId: "Apply"}, true);
+			return opcua.success({done: true});
+		`
+	})
+
+	res := engine.Run(t.Context(), map[string]any{})
+	if res.Outcome != Delivered {
+		t.Fatalf("first run: outcome %v, err %v", res.Outcome, res.Err)
+	}
+	res = engine.Run(t.Context(), map[string]any{})
+	if res.Outcome != Delivered {
+		t.Fatalf("second run: outcome %v, err %v", res.Outcome, res.Err)
+	}
+
+	// Two write requests, so the script ran twice and only twice: one read and
+	// one write each, and nothing the engine added on top.
+	if n := b.count("read Ready"); n != 2 {
+		t.Fatalf("script ran %d times, not once per message", n)
+	}
+	if n := b.count("write Apply=true"); n != 2 {
+		t.Fatalf("script wrote %d times, not once per message", n)
+	}
+	if ops := b.snapshot(); len(ops) != 4 {
+		t.Fatalf("machine saw %d operations, want 4: %v", len(ops), ops)
+	}
+}
+
+// A script that returns success is Delivered, and the object it
+// returns is carried in Result.Data.
+func TestRun_DeliversWhenScriptReturnsSuccess(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{"Ready": true}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.Script = `
+			const ready = opcua.read({nodeId: "Ready"});
+			return opcua.success({ready: ready, tag: "42", ok: true});
+		`
+	})
+
+	res := engine.Run(t.Context(), map[string]any{"payload": map[string]any{"value": 42}})
+	if res.Outcome != Delivered {
+		t.Fatalf("outcome %v, err %v", res.Outcome, res.Err)
+	}
+	want := map[string]any{"ready": true, "tag": "42", "ok": true}
+	if !reflect.DeepEqual(res.Data, want) {
+		t.Fatalf("Data is %v, want %v", res.Data, want)
+	}
+	if res.Err != nil || res.CleanupErr != nil {
+		t.Fatalf("a delivered run carries no fault: err %v, cleanup %v", res.Err, res.CleanupErr)
+	}
+}
+
+// The message reaches the script as the flow decoded it, and a JSON number
+// is json.Number in Go, the type benthos' structured messages carry. In the
+// script it must be a number: a customer's read-back guard is
+// v === msg.setpoint, and against a string-kind object it is always false.
+func TestRun_TheScriptSeesJSONNumbersAsNumbers(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.Script = `
+			if (typeof msg.setpoint !== "number") {
+				return opcua.error_persistent("msg.setpoint is a " + typeof msg.setpoint);
+			}
+			if (msg.setpoint !== 1.5) {
+				return opcua.error_persistent("msg.setpoint is " + msg.setpoint);
+			}
+			if (msg.list[0] !== 2 || msg.nested.deep !== 3.25) {
+				return opcua.error_persistent("nested numbers did not convert");
+			}
+			return opcua.success({seen: msg.setpoint});
+		`
+	})
+	res := engine.Run(t.Context(), map[string]any{
+		"setpoint": json.Number("1.5"),
+		"list":     []any{json.Number("2")},
+		"nested":   map[string]any{"deep": json.Number("3.25")},
+	})
+	if res.Outcome != Delivered {
+		t.Fatalf("outcome %v, err %v", res.Outcome, res.Err)
+	}
+	d, ok := res.Data.(map[string]any)
+	if !ok || d["seen"] != 1.5 {
+		t.Fatalf("Data is %#v", res.Data)
+	}
+}
+
+// Validate compiles all three blocks; a script that does not parse is
+// refused at deploy time, not against a machine.
+func TestConfig_ValidateRefusesAScriptThatDoesNotCompile(t *testing.T) {
+	for name, mutate := range map[string]func(*Config){
+		"script":    func(c *Config) { c.Script = `return {` },
+		"onSuccess": func(c *Config) { c.OnSuccess = `opcua.write(` },
+		"onError":   func(c *Config) { c.OnError = `function(){` },
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := validConfig()
+			mutate(&cfg)
+			if err := cfg.Validate(); err == nil {
+				t.Fatalf("Validate accepted a %s that does not compile", name)
+			}
+		})
+	}
+
+	cfg := validConfig()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate refused a config that can run: %v", err)
+	}
+}
+
+// A cleanup block with no deadline would run unbounded: runCleanup reads a
+// budget of zero or less as 'no limit', so an omitted YAML field plus a
+// machine that never goes idle would hang Run and Close forever with
+// nothing logged. Either block may be empty; a non-empty one must be
+// budgeted.
+func TestConfig_ValidateRefusesAnUnbudgetedCleanup(t *testing.T) {
+	refuses := func(t *testing.T, mutate func(*Config), want ...string) {
+		t.Helper()
+		cfg := validConfig()
+		mutate(&cfg)
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatalf("Validate accepted a cleanup block with no deadline")
+		}
+		for _, name := range want {
+			if !strings.Contains(err.Error(), name) {
+				t.Fatalf("the refusal must name %s, got: %v", name, err)
+			}
+		}
+	}
+
+	t.Run("onError with no budget", func(t *testing.T) {
+		refuses(t, func(c *Config) {
+			c.OnError = `opcua.write({nodeId: "Apply"}, false);`
+			c.MaxOnErrorRuntime = 0
+		}, "onError", "MaxOnErrorRuntime")
+	})
+	t.Run("onSuccess with no budget", func(t *testing.T) {
+		refuses(t, func(c *Config) {
+			c.OnSuccess = `opcua.write({nodeId: "Apply"}, false);`
+			c.MaxOnSuccessRuntime = 0
+		}, "onSuccess", "MaxOnSuccessRuntime")
+	})
+	t.Run("an empty block needs no budget", func(t *testing.T) {
+		cfg := validConfig()
+		cfg.MaxOnSuccessRuntime = 0
+		cfg.MaxOnErrorRuntime = 0
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("an empty cleanup block needs no deadline: %v", err)
+		}
+	})
+}
+
+// A configuration whose literal waits do not clear the script deadline
+// is refused. Literal waits only; a computed wait is a person's to check.
+func TestConfig_ValidateRefusesWaitsThatExceedTheScriptDeadline(t *testing.T) {
+	tests := []struct {
+		name    string
+		script  string
+		limit   time.Duration
+		wantErr bool
+	}{
+		{
+			name:    "one wait over the limit",
+			script:  `opcua.wait_until(A, v => v === true, 5000); return opcua.success({});`,
+			limit:   3 * time.Second,
+			wantErr: true,
+		},
+		{
+			name: "waits that add up over the limit",
+			script: `opcua.wait_until(A, v => v === true, 4000);
+				 opcua.wait_until(B, v => v === true, 7000);
+				 return opcua.success({});`,
+			limit:   10 * time.Second,
+			wantErr: true,
+		},
+		{
+			name:    "waits inside the limit",
+			script:  `opcua.wait_until(A, v => v === true, 5000); return opcua.success({});`,
+			limit:   6 * time.Second,
+			wantErr: false,
+		},
+		{
+			// A computed wait is a person's to check, not Validate's.
+			name:    "computed wait is beyond it",
+			script:  `opcua.wait_until(A, v => v === true, msg.payload.wait); return opcua.success({});`,
+			limit:   time.Second,
+			wantErr: false,
+		},
+		{
+			// An address object with commas in it is one argument.
+			name:    "address object with a comma",
+			script:  `opcua.wait_until({nodeId: "ns=2;s=A", dataType: "Boolean"}, v => v === true, 100); return opcua.success({});`,
+			limit:   time.Second,
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Script = tt.script
+			cfg.MaxScriptRuntime = tt.limit
+			err := cfg.Validate()
+			if tt.wantErr && err == nil {
+				t.Fatalf("Validate accepted a script whose waits exceed its deadline")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("Validate refused a script whose waits clear its deadline: %v", err)
+			}
+			if err != nil && !strings.Contains(err.Error(), "MaxScriptRuntime") {
+				t.Fatalf("refusal does not name the deadline it violated: %v", err)
+			}
+		})
+	}
+}
+
+// The literal-wait check reads only live code: a wait inside a comment is
+// not a wait, a backtick template literal does not hide the arguments
+// after it (a 600s wait under a 2s deadline must be refused), and each
+// cleanup block's waits are summed against that block's own budget.
+func TestConfig_ValidateScansOnlyLiveWaitsInEveryBlock(t *testing.T) {
+	accepts := func(t *testing.T, mutate func(*Config)) {
+		t.Helper()
+		cfg := validConfig()
+		mutate(&cfg)
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate refused a config that can run: %v", err)
+		}
+	}
+	refuses := func(t *testing.T, mutate func(*Config), want ...string) {
+		t.Helper()
+		cfg := validConfig()
+		mutate(&cfg)
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatalf("Validate accepted a config whose waits exceed their deadline")
+		}
+		for _, name := range want {
+			if !strings.Contains(err.Error(), name) {
+				t.Fatalf("the refusal must name %s, got: %v", name, err)
+			}
+		}
+	}
+
+	t.Run("a wait inside a line comment is not live code", func(t *testing.T) {
+		accepts(t, func(c *Config) {
+			c.MaxScriptRuntime = 2 * time.Second
+			c.Script = `
+				// opcua.wait_until({nodeId: "ns=2;s=Loaded"}, v => v === true, 600000);
+				return opcua.success({});
+			`
+		})
+	})
+	t.Run("a wait inside a block comment is not live code", func(t *testing.T) {
+		accepts(t, func(c *Config) {
+			c.MaxScriptRuntime = 2 * time.Second
+			c.Script = `
+				/* opcua.wait_until({nodeId: "ns=2;s=Loaded"}, v => v === true, 600000); */
+				return opcua.success({});
+			`
+		})
+	})
+	t.Run("a backtick template literal does not desynchronise the scanner", func(t *testing.T) {
+		refuses(t, func(c *Config) {
+			c.MaxScriptRuntime = 2 * time.Second
+			c.Script = "opcua.wait_until({nodeId: `A) B`}, v => v === true, 600000); return opcua.success({});"
+		}, "MaxScriptRuntime")
+	})
+	t.Run("a string with a // inside is still scanned as code", func(t *testing.T) {
+		refuses(t, func(c *Config) {
+			c.MaxScriptRuntime = 2 * time.Second
+			c.Script = `
+				const where = "see // docs";
+				opcua.wait_until({nodeId: "ns=2;s=Loaded"}, v => v === true, 600000);
+				return opcua.success({where: where});
+			`
+		}, "MaxScriptRuntime")
+	})
+	t.Run("onError's waits are summed against its own budget", func(t *testing.T) {
+		refuses(t, func(c *Config) {
+			c.OnError = `opcua.wait_until({nodeId: "ns=2;s=Idle"}, v => v === true, 600000);`
+			c.MaxOnErrorRuntime = 500 * time.Millisecond
+		}, "onError", "MaxOnErrorRuntime")
+	})
+	t.Run("onSuccess's waits are summed against its own budget", func(t *testing.T) {
+		refuses(t, func(c *Config) {
+			c.OnSuccess = `opcua.wait_until({nodeId: "ns=2;s=Idle"}, v => v === true, 600000);`
+			c.MaxOnSuccessRuntime = 500 * time.Millisecond
+		}, "onSuccess", "MaxOnSuccessRuntime")
+	})
+	t.Run("a cleanup wait inside its budget is accepted", func(t *testing.T) {
+		accepts(t, func(c *Config) {
+			c.OnError = `opcua.wait_until({nodeId: "ns=2;s=Idle"}, v => v === true, 500);`
+			c.MaxOnErrorRuntime = 5 * time.Second
+		})
+	})
+}
+
+// Exactly one of onSuccess/onError runs after every ending. The two tests
+// after this one cover a run the deadline stopped and one a canceled
+// context ended.
+func TestRun_RunsOnSuccessAfterSuccessAndOnErrorAfterEverythingElse(t *testing.T) {
+	onSuccess := `
+		opcua.write({nodeId: "SuccessMarker"}, true);
+	`
+	onError := `
+		opcua.write({nodeId: "ErrorMarker"}, true);
+	`
+	ends := map[string]struct {
+		script string
+		want   string // the marker the machine must have seen
+		not    string // the one it must not
+	}{
+		"success":          {`return opcua.success({});`, "SuccessMarker", "ErrorMarker"},
+		"not_ready":        {`return opcua.error_not_ready();`, "ErrorMarker", "SuccessMarker"},
+		"error_transient":  {`return opcua.error_transient("detail");`, "ErrorMarker", "SuccessMarker"},
+		"error_persistent": {`return opcua.error_persistent("detail");`, "ErrorMarker", "SuccessMarker"},
+		"a thrown fault":   {`throw new Error("script bug");`, "ErrorMarker", "SuccessMarker"},
+	}
+
+	for name, end := range ends {
+		t.Run(name, func(t *testing.T) {
+			b := &fakeBinding{values: map[string]any{}}
+			engine := newTestEngine(t, b, func(c *Config) {
+				c.Script = end.script
+				c.OnSuccess = onSuccess
+				c.OnError = onError
+			})
+			res := engine.Run(t.Context(), map[string]any{})
+			if res.Outcome == Delivered && end.want != "SuccessMarker" {
+				t.Fatalf("outcome %v, err %v", res.Outcome, res.Err)
+			}
+			if n := b.count("write " + end.want + "=true"); n != 1 {
+				t.Fatalf("the %s block did not run (ops: %v)", end.want, b.snapshot())
+			}
+			if n := b.count("write " + end.not + "=true"); n != 0 {
+				t.Fatalf("both cleanup blocks ran (ops: %v)", b.snapshot())
+			}
+		})
+	}
+}
+
+// onError also runs when the deadline stops the script, which a
+// JavaScript finally cannot.
+func TestRun_RunsOnErrorWhenTheScriptIsStoppedByItsDeadline(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{"Ready": true}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.MaxScriptRuntime = 100 * time.Millisecond
+		c.OnError = `opcua.write({nodeId: "Apply"}, false);`
+		c.Script = `
+			opcua.read({nodeId: "Ready"});
+			for (;;) {}
+		`
+	})
+
+	res := engine.Run(t.Context(), map[string]any{})
+	if res.Outcome != Persistent {
+		t.Fatalf("outcome %v, err %v", res.Outcome, res.Err)
+	}
+	if n := b.count("write Apply=false"); n != 1 {
+		t.Fatalf("onError did not run after the deadline (ops: %v)", b.snapshot())
+	}
+}
+
+// onError runs when a canceled context ends the run.
+func TestRun_RunsOnErrorWhenTheContextIsCancelled(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.OnError = `opcua.write({nodeId: "Apply"}, false);`
+		c.Script = `for (;;) {}`
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	res := engine.Run(ctx, map[string]any{})
+	if res.Outcome != Persistent {
+		t.Fatalf("outcome %v, err %v", res.Outcome, res.Err)
+	}
+	if !errors.Is(res.Err, context.DeadlineExceeded) {
+		t.Fatalf("Err does not name the cancellation: %v", res.Err)
+	}
+	if res.CleanupErr != nil {
+		t.Fatalf("the cleanup ran on its own clock and finished: %v", res.CleanupErr)
+	}
+	if n := b.count("write Apply=false"); n != 1 {
+		t.Fatalf("onError did not run after the cancellation (ops: %v)", b.snapshot())
+	}
+}
+
+// The deadline is configuration, so repeating cannot fix it. A binding
+// that honors its context and returns ctx's own error when the deadline
+// fires mid-operation must not turn that stop into an unmarked, retryable
+// fault: the stop decides the outcome, not the fault's kind.
+func TestRun_IsPersistentWhenTheDeadlineStopsAnOperation(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{"Ready": true}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.MaxScriptRuntime = 100 * time.Millisecond
+		c.Script = `
+			opcua.write({nodeId: "Apply"}, true);
+			opcua.read({nodeId: "Slow"});
+			return opcua.success({});
+		`
+	})
+	// The read blocks until the run's context is done, then answers with
+	// the context's own error, exactly as a binding that honors ctx does.
+	b.blockRead = func(ctx context.Context) (ReadResponse, error) {
+		<-ctx.Done()
+		return ReadResponse{}, ctx.Err()
+	}
+
+	res := engine.Run(t.Context(), map[string]any{})
+	if res.Outcome != Persistent {
+		t.Fatalf("outcome %v, want Persistent: a deadline that stops the script mid-operation is not retryable (err %v)", res.Outcome, res.Err)
+	}
+	if !errors.Is(res.Err, context.DeadlineExceeded) {
+		t.Fatalf("Err does not name the deadline: %v", res.Err)
+	}
+	if !strings.Contains(res.Err.Error(), "read Slow failed") {
+		t.Fatalf("Err does not name the read the deadline cut off: %v", res.Err)
+	}
+}
+
+// A fault the script caught before its deadline is not part of the stop: the
+// run is Persistent for the deadline alone, and the caught fault is neither
+// named in the message nor found in Result.Err by errors.Is, which would
+// send someone to a machine fault that stopped nothing.
+func TestRun_ACaughtFaultIsNotInTheMessageOfARunItsDeadlineStopped(t *testing.T) {
+	b := &fakeBinding{errs: map[string]error{"read:A": io.EOF}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.MaxScriptRuntime = 100 * time.Millisecond
+		c.Script = `try { opcua.read({nodeId: "A"}) } catch (e) {} for (;;) {}`
+	})
+	res := engine.Run(t.Context(), map[string]any{})
+	if res.Outcome != Persistent {
+		t.Fatalf("outcome %v, want Persistent: the deadline stopped the script (err %v)", res.Outcome, res.Err)
+	}
+	if !errors.Is(res.Err, context.DeadlineExceeded) {
+		t.Fatalf("Err does not name the deadline: %v", res.Err)
+	}
+	if errors.Is(res.Err, io.EOF) || strings.Contains(res.Err.Error(), "read A") {
+		t.Fatalf("a fault the script caught reached the deadline's message: %v", res.Err)
+	}
+}
+
+// The ending functions abort the script by throwing, and a throw is
+// catchable, so a script that catches its own ending must not be able to
+// carry the transaction on. The first ending wins, and the machine is not
+// touched after it.
+func TestRun_RefusesOperationsAfterTheScriptEnded(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{"Ready": true}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.Script = `
+			if (opcua.read({nodeId: "Ready"}) !== true) { return opcua.error_not_ready(); }
+			opcua.write({nodeId: "Apply"}, true);
+			try {
+				return opcua.success({done: true});
+			} catch (e) {
+				// The ending threw; a buggy script carries on.
+			}
+			// The read comes first, deliberately: once the write is
+			// refused and throws, nothing later in the block runs, so a
+			// read placed after it would pass whether or not reads are
+			// refused. With the read first, its own refusal is what the
+			// count pins.
+			opcua.read({nodeId: "Ready"});
+			opcua.write({nodeId: "Extra"}, 7);
+			return opcua.error_transient("unreachable in practice");
+		`
+	})
+
+	res := engine.Run(t.Context(), map[string]any{})
+	// The first ending decides, and is the outcome.
+	if res.Outcome != Delivered {
+		t.Fatalf("outcome %v, want Delivered: the first ending wins (err %v)", res.Outcome, res.Err)
+	}
+	if n := b.count("write Extra=7"); n != 0 {
+		t.Fatalf("the machine was written after the transaction ended (ops: %v)", b.snapshot())
+	}
+	if n := b.count("read Ready"); n != 1 {
+		t.Fatalf("the guard read before the ending is the only read (ops: %v)", b.snapshot())
+	}
+	if n := b.count("write Apply=true"); n != 1 {
+		t.Fatalf("the committing write happened once (ops: %v)", b.snapshot())
+	}
+}
+
+// The ending functions abort the script by throwing, and a throw is
+// catchable, so a script that catches its ending and carries on is
+// stopped by the deadline, not by the ending it recorded on the way.
+// That run is not a delivery: a run the deadline stopped is persistent
+// and runs onError, because the script never stopped for the ending it
+// recorded. Running onSuccess here would hand back a machine whose
+// transaction was cut in half.
+func TestRun_TheDeadlineOutranksAnEndingTheScriptNeverStoppedFor(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.MaxScriptRuntime = 150 * time.Millisecond
+		c.OnSuccess = `opcua.write({nodeId: "SuccessMarker"}, true);`
+		c.OnError = `opcua.write({nodeId: "ErrorMarker"}, true);`
+		c.Script = `
+			try {
+				return opcua.success({x: 1});
+			} catch (e) {}
+			for (;;) {}
+		`
+	})
+
+	res := engine.Run(t.Context(), map[string]any{})
+	if res.Outcome != Persistent {
+		t.Fatalf("outcome %v, want Persistent: the deadline stopped the script (err %v)", res.Outcome, res.Err)
+	}
+	if res.Data != nil {
+		t.Fatalf("a run the deadline stopped carries no data, got %v", res.Data)
+	}
+	if !errors.Is(res.Err, context.DeadlineExceeded) {
+		t.Fatalf("Err does not name the deadline: %v", res.Err)
+	}
+	if n := b.count("write SuccessMarker=true"); n != 0 {
+		t.Fatalf("onSuccess ran for a run the deadline stopped (ops: %v)", b.snapshot())
+	}
+	if n := b.count("write ErrorMarker=true"); n != 1 {
+		t.Fatalf("onError did not run (ops: %v)", b.snapshot())
+	}
+}
+
+// No panic from a script or a binding leaves Run: the recovered value is a
+// persistent fault, and the cleanup still runs, because a binding is
+// protocol code that can panic under a machine's bad answer as easily as a
+// script can call something wrongly.
+func TestRun_ABindingPanicIsAPersistentFaultNotACrash(t *testing.T) {
+	b := &fakeBinding{values: map[string]any{}}
+	engine := newTestEngine(t, b, func(c *Config) {
+		c.OnError = `opcua.write({nodeId: "Apply"}, false);`
+		c.Script = `
+			opcua.write({nodeId: "Setpoint"}, 42);
+			opcua.read({nodeId: "Loaded"});
+			return opcua.success({});
+		`
+	})
+	b.blockRead = func(context.Context) (ReadResponse, error) {
+		panic("machine answered a 0x0f status the driver does not map")
+	}
+
+	res := engine.Run(t.Context(), map[string]any{}) // must not take the process with it
+	if res.Outcome != Persistent {
+		t.Fatalf("outcome %v, want Persistent: a panic is not a delivery and not a retry (err %v)",
+			res.Outcome, res.Err)
+	}
+	if res.Err == nil || !strings.Contains(res.Err.Error(), "panicked") {
+		t.Fatalf("Err must say the run panicked, got %v", res.Err)
+	}
+	if n := b.count("write Setpoint=42"); n != 1 {
+		t.Fatalf("the write before the panic happened once (ops: %v)", b.snapshot())
+	}
+	if n := b.count("write Apply=false"); n != 1 {
+		t.Fatalf("onError did not run after the panic (ops: %v)", b.snapshot())
+	}
+}
+
+// A config with no script deadline at all is reachable from one omitted YAML
+// field, like the unbudgeted cleanup: a zero MaxScriptRuntime makes every
+// run expire its context before the script starts, so Validate refuses it
+// the way it refuses the cleanup budgets.
+// The refusal names the field, so a person reading it knows which line to add.
+func TestConfig_ValidateRefusesAZeroOrNegativeScriptRuntime(t *testing.T) {
+	for _, budget := range []time.Duration{0, -time.Second} {
+		cfg := validConfig()
+		cfg.MaxScriptRuntime = budget
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatalf("Validate accepted MaxScriptRuntime %v", budget)
+		}
+		if !strings.Contains(err.Error(), "MaxScriptRuntime") {
+			t.Fatalf("the refusal must name MaxScriptRuntime, got: %v", err)
+		}
+	}
+}
+
+// The literal-wait check reads the parsed script, so only code counts: a
+// wait in a comment or a string is not a wait, and no literal of another
+// kind (a regex, a template) can hide a real one. The check is the
+// friendly early error, not the safety mechanism; wait_until's clamp is.
+
+// A `//` comment that runs to the end of the file, with no newline after it,
+// is not live code. A script's last line being a comment is ordinary.
+func TestLiteralWaitScanner_ALineCommentToTheEndOfTheFileIsNotLiveCode(t *testing.T) {
+	cfg := validConfig()
+	cfg.MaxScriptRuntime = 500 * time.Millisecond
+	cfg.Script = "opcua.write(A, 1); // opcua.wait_until(A, v => v === true, 999999)"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate refused a script whose only wait is commented out: %v", err)
+	}
+}
+
+// Text that looks like a call inside a string is not a call, and the real
+// wait after it is still counted.
+func TestLiteralWaitScanner_StringContentIsSkippedAndTheScanCarriesOn(t *testing.T) {
+	cfg := validConfig()
+	cfg.MaxScriptRuntime = 500 * time.Millisecond
+	cfg.Script = "var s = 'wait_until(';\n" +
+		"opcua.wait_until(A, v => v === true, 999999);\n" +
+		"return opcua.success({});"
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatalf("Validate accepted a script whose live wait exceeds its deadline")
+	}
+	if !strings.Contains(err.Error(), "MaxScriptRuntime") {
+		t.Fatalf("the refusal must name the deadline it violated: %v", err)
+	}
+}
+
+// A wait spelled out inside a string, escaped quote and all, is text, not a
+// wait, so it does not refuse a script that has no waits.
+func TestLiteralWaitScanner_AWaitInsideAStringIsNotAWait(t *testing.T) {
+	cfg := validConfig()
+	cfg.MaxScriptRuntime = 500 * time.Millisecond
+	cfg.Script = `const s = "x\"; opcua.wait_until(A, v => v === true, 999999)"; return opcua.success({s: s});`
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate refused a script whose only wait is inside a string: %v", err)
+	}
+}
+
+// A regex literal that holds a quote, a // or a /* is a regex, so the live
+// wait after it is still counted, and a wait in the comment after it is not.
+func TestLiteralWaitScanner_ARegexLiteralDoesNotHideAWait(t *testing.T) {
+	for _, re := range []string{`/"/`, `/[/*]/`, `/a\/\/b/`} {
+		t.Run(re, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.MaxScriptRuntime = 500 * time.Millisecond
+			cfg.Script = "var re = " + re + "; opcua.wait_until(A, v => v === true, 999999);\n" +
+				"return opcua.success({});"
+			if err := cfg.Validate(); err == nil {
+				t.Fatalf("a live wait after the regex %s was not counted", re)
+			}
+
+			cfg.Script = "var re = " + re + "; // opcua.wait_until(A, v => v === true, 999999)\n" +
+				"return opcua.success({});"
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("a commented-out wait after the regex %s was counted: %v", re, err)
+			}
+		})
+	}
+}
+
+// A wait whose timeout argument is empty -- a trailing comma, which the
+// parser allows -- has two arguments, so it is not a literal wait and counts
+// as nothing.
+func TestLiteralWaitScanner_AnEmptyTimeoutIsNotALiteralWait(t *testing.T) {
+	cfg := validConfig()
+	cfg.MaxScriptRuntime = 500 * time.Millisecond
+	cfg.Script = "opcua.wait_until(A, v => v === true, );\nreturn opcua.success({});"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate refused a script whose only wait has no timeout: %v", err)
+	}
+}
+
+// A wait in a var declaration is reached twice in goja's tree, once in the
+// function body and once in its declaration list, and counts once.
+func TestLiteralWaitScanner_AWaitInAVarDeclarationCountsOnce(t *testing.T) {
+	cfg := validConfig()
+	cfg.MaxScriptRuntime = 1500 * time.Millisecond
+	cfg.Script = "var v = opcua.wait_until(A, x => x, 1000); return opcua.success({v: v});"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("a 1s wait under a 1.5s budget was refused: %v", err)
+	}
+}
+
+// The counting rules. Each case is a script the check could get wrong in
+// one direction or the other: refusing a deploy it should accept, or
+// passing a real wait it should count.
+func TestLiteralWaitScanner_CountsOnlyRealCalls(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		script string
+		want   time.Duration
+	}{
+		{
+			// Counting it would refuse a deploy whose only "wait" is the
+			// tail of somebody else's function name.
+			name:   "an identifier ending in wait_until is not a call",
+			script: `mywait_until(a, b, 4000);`,
+			want:   0,
+		},
+		{
+			// JavaScript allows the space, so this is a real
+			// five-second wait.
+			name:   "a space before the parenthesis is still a call",
+			script: `opcua.wait_until ({nodeId: "A"}, v => v, 5000);`,
+			want:   5 * time.Second,
+		},
+		{
+			// The literal overflows int64, and a total that wrapped
+			// negative would mask the real wait beside it. It saturates
+			// rather than counting as nothing, because a wait nobody can
+			// have meant should refuse the deploy rather than be quietly
+			// ignored.
+			name:   "a literal too large to be a wait saturates the total",
+			script: `opcua.wait_until(a, b, 5000); opcua.wait_until(c, d, 99999999999999999999);`,
+			want:   maxLiteralWait,
+		},
+		{
+			// This literal fits int64 milliseconds but not int64
+			// nanoseconds, so the millisecond-to-nanosecond multiply
+			// under the sum must saturate too, or a real five-second wait
+			// passes a one-second budget.
+			name:   "a literal that fits int64 milliseconds still cannot wrap the total",
+			script: `opcua.wait_until(a, b, 5000); opcua.wait_until(c, d, 9223372036855);`,
+			want:   maxLiteralWait,
+		},
+		{
+			// An optional call runs the wait whenever wait_until exists,
+			// which it always does, so it is a real wait.
+			name:   "an optional call is still a call",
+			script: `opcua.wait_until?.({nodeId: "A"}, v => v, 5000);`,
+			want:   5 * time.Second,
+		},
+		{
+			name:   "an optional chain on the namespace is still a call",
+			script: `opcua?.wait_until({nodeId: "A"}, v => v, 5000);`,
+			want:   5 * time.Second,
+		},
+		{
+			name:   "a string literal in brackets names the call",
+			script: `opcua["wait_until"]({nodeId: "A"}, v => v, 5000);`,
+			want:   5 * time.Second,
+		},
+		{
+			// A computed member has no name to match, so it is left to a
+			// person, like a computed timeout.
+			name:   "a computed member in brackets is not named",
+			script: `opcua[name]({nodeId: "A"}, v => v, 5000);`,
+			want:   0,
+		},
+		{
+			// Both are plain numbers, so both count. Read as computed,
+			// a real one-second wait would pass a 999ms budget unseen.
+			name:   "a hex literal is a plain number",
+			script: `opcua.wait_until(a, b, 0x3E8);`,
+			want:   time.Second,
+		},
+		{
+			name:   "a numeric separator does not hide the number",
+			script: `opcua.wait_until(a, b, 1_000);`,
+			want:   time.Second,
+		},
+		{
+			// Four more spellings of a plain number, each of which must
+			// count for the same reason hex and 1_000 do.
+			name:   "a float literal is a plain number",
+			script: `opcua.wait_until(a, b, 5000.0);`,
+			want:   5 * time.Second,
+		},
+		{
+			name:   "an exponent is a plain number",
+			script: `opcua.wait_until(a, b, 5e3);`,
+			want:   5 * time.Second,
+		},
+		{
+			name:   "a leading-dot exponent is a plain number",
+			script: `opcua.wait_until(a, b, .5e4);`,
+			want:   5 * time.Second,
+		},
+		{
+			name:   "a unary plus is applied to a literal, not computed from one",
+			script: `opcua.wait_until(a, b, +5000);`,
+			want:   5 * time.Second,
+		},
+		{
+			// Still computed, so still counted as nothing: the check must
+			// not start guessing at expressions.
+			name:   "a name is still computed",
+			script: `opcua.wait_until(a, b, timeoutMs);`,
+			want:   0,
+		},
+		{
+			name:   "arithmetic is still computed",
+			script: `opcua.wait_until(a, b, 5 * 1000);`,
+			want:   0,
+		},
+		{
+			name:   "a float too large for a Duration saturates like an integer one",
+			script: `opcua.wait_until(a, b, 1e300);`,
+			want:   maxLiteralWait,
+		},
+		{
+			// goja compiles this, and it is a call to somebody else's
+			// function, whose name only ends in wait_until.
+			name:   "a call to a Unicode-named function is not a wait",
+			script: "\u00e9wait_until(a, b, 4000);",
+			want:   0,
+		},
+		{
+			name:   "an ordinary call still counts",
+			script: `opcua.wait_until({nodeId: "A"}, v => v === true, 4000);`,
+			want:   4 * time.Second,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, tree, err := compile("script", tc.script)
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			if got := literalWaitTotal(tree); got != tc.want {
+				t.Errorf("literalWaitTotal = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
