@@ -29,6 +29,22 @@ BENTHOS_BIN := tmp/bin/benthos
 LOG_LEVEL ?= INFO
 CONFIG ?= ./config/opcua-hex-test.yaml
 
+# uns_beta needs two patches to the pinned redpanda Connect module:
+# connect-key-filter.patch drops records that fail key_pattern before a message
+# is built, and connect-redpanda-forward.patch exports the redpanda input's
+# constructor and config fields. patch-connect applies them to a copy in
+# .connect-patched/ and points a side modfile (go.patched.mod) at it, so the
+# committed go.mod never changes. A connect bump that moves the patched code
+# fails patch-connect. Build and test with GOFLAGS="$(PATCHED_GOFLAGS)";
+# without it, uns_beta fails at startup.
+CONNECT_PKG := github.com/redpanda-data/connect/v4
+CONNECT_KEY_FILTER_PATCH := patches/connect-key-filter.patch
+CONNECT_FORWARD_PATCH := patches/connect-redpanda-forward.patch
+CONNECT_VENDOR := .connect-patched
+PATCHED_MODFILE := go.patched.mod
+PATCHED_SUMFILE := go.patched.sum
+PATCHED_GOFLAGS := -modfile=$(PATCHED_MODFILE) -tags=connect_patched
+
 .PHONY: all
 all: clean build
 
@@ -40,18 +56,45 @@ clean:
 	rm -rf tmp/bin tmp/benthos-*.zip .tools/*
 
 .PHONY: run
-run:
-	go run cmd/benthos/main.go run --log.level $(LOG_LEVEL) $(CONFIG)
+run: patch-connect
+	GOFLAGS="$(PATCHED_GOFLAGS)" go run cmd/benthos/main.go run --log.level $(LOG_LEVEL) $(CONFIG)
 
 .PHONY: build
-build:
+build: patch-connect
 	@mkdir -p $(dir $(BENTHOS_BIN))
-	@go build \
+	@GOFLAGS="$(PATCHED_GOFLAGS)" go build \
        -ldflags "-s -w \
        -X github.com/redpanda-data/benthos/v4/internal/cli.Version=temp \
        -X github.com/redpanda-data/benthos/v4/internal/cli.DateBuilt=$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
        -o $(BENTHOS_BIN) \
        cmd/benthos/main.go
+
+.PHONY: patch-connect
+patch-connect:
+	@GOFLAGS= go mod download $(CONNECT_PKG) && \
+	CONNECT_SRC=$$(GOFLAGS= go list -m -f '{{.Dir}}' $(CONNECT_PKG)) && \
+	test -n "$$CONNECT_SRC" && \
+	rm -rf $(CONNECT_VENDOR) $(PATCHED_MODFILE) $(PATCHED_SUMFILE) && mkdir -p $(CONNECT_VENDOR) && \
+	cp -R "$$CONNECT_SRC"/. $(CONNECT_VENDOR)/ && \
+	chmod -R u+w $(CONNECT_VENDOR) && \
+	( cd $(CONNECT_VENDOR) && git init -q && \
+	  git apply -p1 ../$(CONNECT_KEY_FILTER_PATCH) && \
+	  git apply -p1 ../$(CONNECT_FORWARD_PATCH) ) && \
+	cp go.mod $(PATCHED_MODFILE) && cp go.sum $(PATCHED_SUMFILE) && \
+	go mod edit -replace $(CONNECT_PKG)=./$(CONNECT_VENDOR) $(PATCHED_MODFILE) && \
+	echo "patched $(CONNECT_PKG) -> ./$(CONNECT_VENDOR); committed go.mod untouched." && \
+	echo "build/test patched with: GOFLAGS=\"$(PATCHED_GOFLAGS)\""
+
+.PHONY: unpatch-connect
+unpatch-connect:
+	@rm -f $(PATCHED_MODFILE) $(PATCHED_SUMFILE) && \
+	rm -rf $(CONNECT_VENDOR) && \
+	echo "removed $(PATCHED_MODFILE)/$(PATCHED_SUMFILE) and $(CONNECT_VENDOR); committed go.mod was never touched"
+
+# Run the uns_beta specs against the patched build.
+.PHONY: test-uns-patched
+test-uns-patched: patch-connect
+	@GOFLAGS="$(PATCHED_GOFLAGS)" go test -count=1 -timeout=900s ./uns_plugin/... -args -ginkgo.label-filter='uns_beta'
 
 .PHONY: lint
 lint: $(LINT)
@@ -88,7 +131,8 @@ update-benthos:
 
 .PHONY: test
 test: setup-test-deps
-	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./...
+	@# uns_beta specs need the patched build; test-uns-patched runs them.
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='!uns_beta' ./...
 
 .PHONY: test-schema-export
 test-schema-export: $(GOTESTSUM)
@@ -116,13 +160,14 @@ test-unit-opc:
 test-integration-opc:
 	@$(GINKGO_CMD) $(GINKGO_FLAGS) ./opcua_plugin/...
 
+# uns_beta specs need the patched build; test-uns-patched runs them.
 .PHONY: test-uns
 test-uns:
-	@$(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='!redpanda' ./uns_plugin/...
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='!redpanda && !uns_beta' ./uns_plugin/...
 
 .PHONY: test-uns-redpanda
 test-uns-redpanda:
-	@$(GINKGO_CMD) $(GINKGO_FLAGS)  ./uns_plugin/...
+	@$(GINKGO_CMD) $(GINKGO_FLAGS) --label-filter='!uns_beta' ./uns_plugin/...
 
 .PHONY: test-historian
 test-historian:

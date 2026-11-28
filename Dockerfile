@@ -23,6 +23,11 @@ ENV GOPROXY=https://golangproxy.umh.app,https://proxy.golang.org,direct
 COPY go.mod go.sum ./
 RUN go mod download
 
+# uns_beta needs the connect patches (see Makefile patch-connect).
+COPY Makefile Makefile.Common ./
+COPY ./patches ./patches
+RUN make patch-connect
+
 COPY ./pkg ./pkg
 COPY ./cmd ./cmd
 COPY ./beckhoff_ads_plugin ./beckhoff_ads_plugin
@@ -43,7 +48,7 @@ COPY ./snowflake_put_plugin ./snowflake_put_plugin
 COPY ./historian_plugin ./historian_plugin
 
 ENV CGO_ENABLED=0
-RUN go build \
+RUN GOFLAGS="-modfile=go.patched.mod -tags=connect_patched" go build \
     -ldflags "-s -w \
     -X github.com/redpanda-data/benthos/v4/internal/cli.Version=${APP_VERSION} \
     -X github.com/redpanda-data/benthos/v4/internal/cli.DateBuilt=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \

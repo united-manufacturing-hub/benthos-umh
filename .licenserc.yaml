@@ -57,5 +57,7 @@ header:
     - "topic_browser_plugin/testing/sample_output_small.txt"
     - "stream_processor_plugin/docs/diagrams/processing_flow.*"
     - "sparkplug_plugin/sparkplugb/sparkplug_b_official.pb.go"
+    # Upstream redpanda-data/connect diffs, regenerated via `git diff` (see Makefile patch-connect)
+    - "patches/*.patch"
 
   comment: never

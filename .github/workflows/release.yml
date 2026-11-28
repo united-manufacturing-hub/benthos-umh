@@ -130,8 +130,11 @@ jobs:
       - name: Build Binary
         run: |
           mkdir -p ./dist
+          # uns_beta needs the connect patches (see Makefile patch-connect).
+          GOPROXY=https://golangproxy.umh.app,https://proxy.golang.org,direct make patch-connect
           GOOS=${{ env.GOOS }} GOARCH=${{ env.GOARCH }} \
             CGO_ENABLED=0 GOPROXY=https://golangproxy.umh.app,https://proxy.golang.org,direct \
+            GOFLAGS="-modfile=go.patched.mod -tags=connect_patched" \
             go build \
             -ldflags "-s -w \
             -X github.com/redpanda-data/benthos/v4/internal/cli.Version=${{ env.APP_VERSION }} \

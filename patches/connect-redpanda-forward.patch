@@ -1,0 +1,73 @@
+diff --git a/internal/impl/kafka/input_redpanda.go b/internal/impl/kafka/input_redpanda.go
+index 786cf22..12a4a81 100644
+--- a/internal/impl/kafka/input_redpanda.go
++++ b/internal/impl/kafka/input_redpanda.go
+@@ -164,9 +164,17 @@ To change strategies on a running group, first roll out a list with the old stra
+ 	)
+ }
+ 
++// RedpandaInputConfigFields returns the redpanda input's config fields.
++func RedpandaInputConfigFields() []*service.ConfigField {
++	return redpandaInputConfigFields()
++}
++
+ func init() {
+-	service.MustRegisterBatchInput("redpanda", redpandaInputConfig(),
+-		func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
++	service.MustRegisterBatchInput("redpanda", redpandaInputConfig(), NewRedpandaInputFromConfig)
++}
++
++// NewRedpandaInputFromConfig builds the redpanda input; init registers it.
++var NewRedpandaInputFromConfig = func(conf *service.ParsedConfig, mgr *service.Resources) (service.BatchInput, error) {
+ 			connDetails, err := FranzConnectionDetailsFromConfig(conf, mgr.Logger())
+ 			if err != nil {
+ 				return nil, err
+@@ -229,7 +237,6 @@ func init() {
+ 			}
+ 
+ 			return rdr, nil
+-		})
+ }
+ 
+ func redpandaPartitionAssignmentFromConfig(conf *service.ParsedConfig) ([]kgo.GroupBalancer, error) {
+diff --git a/public/components/kafka/redpandaforward/redpandaforward.go b/public/components/kafka/redpandaforward/redpandaforward.go
+new file mode 100644
+index 0000000..2b49fed
+--- /dev/null
++++ b/public/components/kafka/redpandaforward/redpandaforward.go
+@@ -0,0 +1,35 @@
++// Copyright 2025 Redpanda Data, Inc.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//    http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++// Package redpandaforward lets packages outside connect build the redpanda
++// input. Only packages inside connect can import internal/impl/kafka.
++package redpandaforward
++
++import (
++	"github.com/redpanda-data/benthos/v4/public/service"
++
++	"github.com/redpanda-data/connect/v4/internal/impl/kafka"
++)
++
++// ConfigFields returns the redpanda input's config fields plus key_pattern.
++func ConfigFields() []*service.ConfigField {
++	return append(kafka.RedpandaInputConfigFields(), kafka.FranzReaderOrderedKeyPatternField())
++}
++
++// NewRedpandaInput builds a redpanda input with connect's own constructor.
++// A caller that sets key_pattern must drop the empty placeholder messages it
++// produces.
++func NewRedpandaInput(conf *service.ParsedConfig, res *service.Resources) (service.BatchInput, error) {
++	return kafka.NewRedpandaInputFromConfig(conf, res)
++}
